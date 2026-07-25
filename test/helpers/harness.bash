@@ -18,8 +18,14 @@
 #   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
 #   set_config KEY VALUE           override a config key in ralph.config.sh
 #   run_loop [args ...]            run the real loop.sh through `run`
+#   pack_run CODE                  run pack code as a process, config+libs loaded
+#   pack_run_bg CODE               same, detached; pid in $PACK_BG_PID
+#   wait_for_file PATH [tries]     wait on a background process's marker
 #   ticket_file NN-slug            path of a ticket in the tracker
 #   ticket_status NN-slug          its Status: value
+#   ticket_field NN-slug NAME      any field, read without using the pack
+#   ticket_has_field NN-slug NAME  whether the field is present at all
+#   run_lock_dir                   where the run lock lives for this feature
 #   script_claude                  read a script on stdin, use it as fake claude
 #   claude_call_count              how many times claude was spawned
 #   claude_call_argv N             argv of the Nth spawn
@@ -39,7 +45,9 @@ RALPH_FIXTURES="$RALPH_PACK_ROOT/test/fixtures"
 
 harness_setup() {
   RALPH_TEST_FEATURE="${1:-demo}"
-  RALPH_TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ralph-test.XXXXXX")"
+  # Normalised: macOS TMPDIR ends in a slash, and the pack reports paths that
+  # went through `cd && pwd`, so raw concatenation would not compare equal.
+  RALPH_TEST_DIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/ralph-test.XXXXXX")" && pwd -P)"
   PROJECT_DIR="$RALPH_TEST_DIR/project"
   PACK_DIR="$PROJECT_DIR/.claude"
   SHIM_BIN="$RALPH_TEST_DIR/bin"
@@ -175,13 +183,74 @@ ticket_file() {
 }
 
 ticket_status() {
-  sed -n 's/^\*\*Status:\*\*[[:space:]]*//p' "$(ticket_file "$1")" | head -1
+  ticket_field "$1" Status
+}
+
+# Read a ticket field without going through the pack: an assertion that used
+# the pack's own reader could not catch the pack writing nonsense.
+ticket_field() {
+  sed -n "s/^\*\*$2:\*\*[[:space:]]*//p" "$(ticket_file "$1")" | awk 'NR == 1 { print }'
+}
+
+ticket_has_field() {
+  grep -q "^\*\*$2:\*\*" "$(ticket_file "$1")"
+}
+
+run_lock_dir() {
+  printf '%s/.run.lock' "$FEATURE_DIR"
 }
 
 # ── driving the pack ─────────────────────────────────────────────────────────
 
 run_loop() {
   run bash "$PACK_DIR/loop.sh" "$@"
+}
+
+# Run pack code as a real process, with the config and libs loaded the way
+# loop.sh loads them. Mirrors that bootstrap deliberately: the smoke test keeps
+# loop.sh honest, this keeps the libs drivable before the loop uses them.
+pack_run() {
+  run env RALPH_CONFIG="$RALPH_CONFIG_FILE" bash -c '
+    set -euo pipefail
+    RALPH_DIR="$1"
+    shift
+    export RALPH_DIR
+    . "$RALPH_CONFIG"
+    for lib in "$RALPH_DIR"/lib/*.sh; do
+      [ -e "$lib" ] || continue
+      . "$lib"
+    done
+    eval "$@"
+  ' _ "$PACK_DIR" "$*"
+}
+
+# Same, detached, so a test can hold something (a run lock) while it inspects
+# the tracker. Returns the pid in $PACK_BG_PID.
+pack_run_bg() {
+  env RALPH_CONFIG="$RALPH_CONFIG_FILE" bash -c '
+    set -euo pipefail
+    RALPH_DIR="$1"
+    shift
+    export RALPH_DIR
+    . "$RALPH_CONFIG"
+    for lib in "$RALPH_DIR"/lib/*.sh; do
+      [ -e "$lib" ] || continue
+      . "$lib"
+    done
+    eval "$@"
+  ' _ "$PACK_DIR" "$*" >"$RALPH_TEST_DIR/bg.out" 2>&1 &
+  PACK_BG_PID=$!
+}
+
+# Wait for a file to appear, so a test never races a background process.
+wait_for_file() {
+  local target="$1" tries="${2:-100}"
+  while [ "$tries" -gt 0 ]; do
+    [ -e "$target" ] && return 0
+    tries=$((tries - 1))
+    sleep 0.05
+  done
+  return 1
 }
 
 # ── scripting the shims ──────────────────────────────────────────────────────
