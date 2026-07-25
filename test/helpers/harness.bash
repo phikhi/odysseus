@@ -43,33 +43,112 @@ RALPH_HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RALPH_PACK_ROOT="$(cd "$RALPH_HARNESS_DIR/../.." && pwd)"
 RALPH_FIXTURES="$RALPH_PACK_ROOT/test/fixtures"
 
+RALPH_TEMPLATE_FEATURE=demo
+
 harness_setup() {
-  RALPH_TEST_FEATURE="${1:-demo}"
+  RALPH_TEST_FEATURE="${1:-$RALPH_TEMPLATE_FEATURE}"
   # Normalised: macOS TMPDIR ends in a slash, and the pack reports paths that
   # went through `cd && pwd`, so raw concatenation would not compare equal.
   RALPH_TEST_DIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/ralph-test.XXXXXX")" && pwd -P)"
-  PROJECT_DIR="$RALPH_TEST_DIR/project"
-  PACK_DIR="$PROJECT_DIR/.claude"
   SHIM_BIN="$RALPH_TEST_DIR/bin"
   SHIM_STATE="$RALPH_TEST_DIR/shim-state"
+  mkdir -p "$SHIM_BIN" "$SHIM_STATE" "$RALPH_TEST_DIR/home"
+
+  # The project is stamped out of a template built once per pack revision:
+  # every test used to pay for a full `git init` plus commits, which is most of
+  # a test's runtime when the test itself only reads a markdown file.
+  # Resolved before the per-test paths exist, because building it borrows them.
+  local template
+  template="$(harness__template)"
+
+  PROJECT_DIR="$RALPH_TEST_DIR/project"
+  PACK_DIR="$PROJECT_DIR/.claude"
   FEATURE_DIR="$PROJECT_DIR/.scratch/$RALPH_TEST_FEATURE"
   TRACKER_DIR="$FEATURE_DIR/issues"
   RALPH_CONFIG_FILE="$PACK_DIR/ralph.config.sh"
 
-  mkdir -p "$PACK_DIR/lib" "$SHIM_BIN" "$SHIM_STATE" "$TRACKER_DIR" \
-    "$RALPH_TEST_DIR/home" "$RALPH_TEST_DIR/git-template"
-
-  harness__install_pack
+  cp -R "$template/project" "$PROJECT_DIR"
   harness__install_shims
 
-  cp "$RALPH_FIXTURES/CONTEXT.md" "$PROJECT_DIR/CONTEXT.md"
+  if [ "$RALPH_TEST_FEATURE" != "$RALPH_TEMPLATE_FEATURE" ]; then
+    mkdir -p "$TRACKER_DIR"
+    cp "$RALPH_FIXTURES/spec.md" "$FEATURE_DIR/spec.md"
+    set_config FEATURE "$RALPH_TEST_FEATURE"
+  fi
+
+  cd "$PROJECT_DIR" || return 1
+}
+
+# ── project template ─────────────────────────────────────────────────────────
+
+# Keyed by the content of the pack and the fixtures, so editing either one
+# builds a fresh template instead of testing a stale copy.
+harness__template() {
+  local key root tries
+  key="$(harness__pack_fingerprint)"
+  root="${TMPDIR:-/tmp}/ralph-harness.$key"
+
+  [ -f "$root/.ready" ] && {
+    printf '%s\n' "$root"
+    return 0
+  }
+
+  # mkdir is the test-and-set: exactly one concurrent runner builds it.
+  if mkdir "$root" 2>/dev/null; then
+    # Each pack revision leaves a template behind; drop the stale ones rather
+    # than accumulating them on a machine that never reboots.
+    find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'ralph-harness.*' -mtime +7 \
+      -exec rm -rf {} + 2>/dev/null || true
+    harness__build_project "$root/project"
+    : >"$root/.ready"
+    printf '%s\n' "$root"
+    return 0
+  fi
+
+  tries=200
+  while [ ! -f "$root/.ready" ] && [ "$tries" -gt 0 ]; do
+    sleep 0.05
+    tries=$((tries - 1))
+  done
+
+  # The builder died mid-way. Fall back to a private copy rather than hand out
+  # a half-built project.
+  if [ ! -f "$root/.ready" ]; then
+    root="$RALPH_TEST_DIR/template"
+    mkdir -p "$root"
+    harness__build_project "$root/project"
+  fi
+  printf '%s\n' "$root"
+}
+
+harness__pack_fingerprint() {
+  (
+    cd "$RALPH_PACK_ROOT" || return 1
+    find .claude test/fixtures -type f ! -name 'settings.local.json' |
+      LC_ALL=C sort |
+      tr '\n' '\0' |
+      xargs -0 cat
+  ) | cksum | awk '{print $1}'
+}
+
+harness__build_project() {
+  local dest="$1"
+  PROJECT_DIR="$dest"
+  PACK_DIR="$dest/.claude"
+  FEATURE_DIR="$dest/.scratch/$RALPH_TEMPLATE_FEATURE"
+  TRACKER_DIR="$FEATURE_DIR/issues"
+  RALPH_CONFIG_FILE="$PACK_DIR/ralph.config.sh"
+
+  mkdir -p "$PACK_DIR/lib" "$TRACKER_DIR" "$dest/.git-template"
+
+  harness__install_pack
+  cp "$RALPH_FIXTURES/CONTEXT.md" "$dest/CONTEXT.md"
   cp "$RALPH_FIXTURES/spec.md" "$FEATURE_DIR/spec.md"
 
   # Committed last: a run starts from a clean tree, which is what the pre-spawn
   # HEAD snapshot and the scope-guard diff both assume.
   harness__init_git
-
-  cd "$PROJECT_DIR" || return 1
+  rmdir "$dest/.git-template" 2>/dev/null || true
 }
 
 harness_teardown() {
@@ -155,8 +234,10 @@ NONODE
 
 harness__init_git() {
   export GIT_CONFIG_NOSYSTEM=1
+  # An empty template directory: the machine's git templates and hooks must not
+  # leak into a fixture project.
   git -c init.defaultBranch=main init -q \
-    --template="$RALPH_TEST_DIR/git-template" "$PROJECT_DIR"
+    --template="$PROJECT_DIR/.git-template" "$PROJECT_DIR"
   git -C "$PROJECT_DIR" config user.name "ralph test"
   git -C "$PROJECT_DIR" config user.email "ralph@test.invalid"
   git -C "$PROJECT_DIR" config commit.gpgsign false

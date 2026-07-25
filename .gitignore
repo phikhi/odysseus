@@ -3,3 +3,10 @@
 
 # Claude Code — réglages locaux à la machine (settings.json partagé reste versionné)
 .claude/settings.local.json
+
+# Artefacts de run de la ralph loop — le tracker (tickets, spec) reste versionné.
+# Le journal de run est machine et non autoritaire ; le verrou et le flux de
+# session sont transitoires. Le sort des reçus d'audit se décide en [18].
+.scratch/*/.run.lock/
+.scratch/*/run.log
+.scratch/*/.session.*.jsonl

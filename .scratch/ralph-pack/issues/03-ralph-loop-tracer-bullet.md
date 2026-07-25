@@ -34,4 +34,4 @@
 
 - **Ce qui reste stubbé ici** : `loop_gate` renvoie vert. Les checks objectifs, les lentilles et les échecs typés (pause budget, re-slice, retry-N puis escalade, rollback) arrivent en [05]/[07]. Aujourd'hui un échec rend simplement le ticket à la frontière, et c'est le détecteur stérile qui borne le run.
 
-- **La suite prend ~2 min** (69 tests, chacun avec un `git init` et plusieurs process). À surveiller : le canari full-loop doit rester exécutable à chaque itération sans alourdir le gate.
+- **La suite prend 37 s** pour 69 tests (une première mesure annonçait 2 min : elle chronométrait trois exécutions enchaînées — microbats, bats-core, PATH minimal). Ramenée à 28 s ensuite en montant le projet-fixture depuis un template construit une fois par révision du pack. Le montage n'est plus le poste dominant (80 ms sur ~400 ms par test) ; le reste est le coût assumé du seam process.
