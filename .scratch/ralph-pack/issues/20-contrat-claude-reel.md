@@ -15,3 +15,17 @@
 - [ ] Les invariants vérifiés sont ceux dont la boucle dépend : sortie NDJSON une ligne par événement, dernière ligne `{"type":"result"…}`, champs `subtype` / `is_error` / `num_turns` / `total_cost_usd` présents et lisibles **par l'extracteur du pack lui-même**, exit code 0 sur succès.
 - [ ] Le prompt passé sur stdin est bien reçu par la session : le contrat le prouve en demandant un marqueur précis dans la réponse.
 - [ ] L'échec dit quoi corriger : soit le shim a divergé du réel, soit le pack s'appuie sur un champ qui n'existe plus.
+
+## Comments
+
+- **Le run réel du 25/07/2026 a déjà montré l'écart.** La boucle a broyé un ticket trivial de bout en bout contre le vrai `claude` (exit 0, fichier créé, ticket `resolved`, `turns=5 cost=0.0346` correctement extraits) : l'extracteur du pack lit bien le vrai format. Mais le flux, lui, ne ressemble pas à ce que le shim émet.
+
+  | | shim actuel | `claude` réel (2.1.220, haiku) |
+  |---|---|---|
+  | événements | `system/init`, `assistant`, `result` | `system/init`, **`rate_limit_event`**, **`system/thinking_tokens` ×4**, `assistant` ×2, `result/success` |
+  | clés du `result` | 8 | 21 — dont `stop_reason`, `terminal_reason`, `api_error_status`, `permission_denials`, `modelUsage` |
+
+  Sans conséquence aujourd'hui (la boucle ne lit que la dernière ligne), mais [04] surveille le flux pour le seuil 150K et [08] veut y lire le budget : les deux seraient conçus contre une fiction. Le shim doit être réaligné sur une capture réelle, et c'est précisément ce que ce ticket doit rendre impossible à oublier.
+
+- Une capture de référence du flux réel est facile à reproduire :
+  `printf 'Reply with PONG and nothing else.\n' | claude -p --model haiku --output-format stream-json --verbose`
