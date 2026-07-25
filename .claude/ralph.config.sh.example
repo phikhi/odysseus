@@ -1,0 +1,143 @@
+# shellcheck shell=bash
+# ralph.config.sh — the only file you tune per project.
+#
+# `init.sh` copies this file to `.claude/ralph.config.sh`; edit that copy.
+# Every key is written as KEY="${KEY:-<default>}" so an already-exported
+# environment variable wins over the file. That makes a run scriptable
+# (CI, tests, one-shot successor) without editing the config.
+#
+# Keys marked FORCED CONFIRMATION have no safe default: a wrong value would
+# make the quality gate green without proving anything, so the installer must
+# make you confirm them and the loop refuses to run while they are empty.
+
+# ── Run target ───────────────────────────────────────────────────────────────
+
+# Tracker directory the run grinds: .scratch/<FEATURE>/issues/
+FEATURE="${FEATURE:-}"
+
+# Model used by delivery sessions. Alias (sonnet/opus/haiku) or full model id.
+# `sonnet` is the default: delivery burns many sessions and opus draws from a
+# separate, smaller weekly bucket (seven_day_opus).
+MODEL="${MODEL:-sonnet}"
+
+# ── Objective checks — FORCED CONFIRMATION ───────────────────────────────────
+
+# Full test suite. Must exit non-zero on failure.
+TEST_CMD="${TEST_CMD:-}"
+
+# Type/static check. Leave empty only if the project genuinely has none.
+TYPECHECK_CMD="${TYPECHECK_CMD:-}"
+
+# ── Smart-zone net ───────────────────────────────────────────────────────────
+
+# Soft context ceiling: a session crossing it gets a graceful SIGTERM, well
+# before the ~200K hard dumb-zone frontier.
+SOFT_LIMIT_TOKENS="${SOFT_LIMIT_TOKENS:-150000}"
+
+# ── Usage budget ─────────────────────────────────────────────────────────────
+
+# Utilization ratios (0..1) at or above which the loop stops spawning.
+# Asymmetric on purpose: the 5h window refills soon, so burn it; the weekly
+# cap does not, so keep headroom for the human.
+THRESH_5H="${THRESH_5H:-0.95}"
+THRESH_WEEK="${THRESH_WEEK:-0.80}"
+
+# User-Agent sent to GET /api/oauth/usage. MUST look like claude-code/<version>
+# or the endpoint answers persistent 429s. Refresh with `claude --version`.
+USAGE_UA="${USAGE_UA:-claude-code/2.1.220}"
+
+# ── Runaway guards & retries ─────────────────────────────────────────────────
+
+# Hard stop on the number of iterations in a single run.
+ITER_CAP="${ITER_CAP:-50}"
+
+# Sterile-run detector: stop after K consecutive iterations that resolve nothing.
+STERILE_K="${STERILE_K:-3}"
+
+# Fresh retries of a failed ticket before it is escalated to ready-for-human.
+RETRY_N="${RETRY_N:-2}"
+
+# Pause for a human checkpoint every N resolved tickets (0 = never).
+HUMAN_CHECKPOINT_EVERY="${HUMAN_CHECKPOINT_EVERY:-0}"
+
+# ── Weekly wall & one-shot successor ─────────────────────────────────────────
+
+# Scheduler used to arm the successor: auto | at | systemd-run | none.
+# `auto` probes the chain ordered by reboot survival.
+SCHEDULER="${SCHEDULER:-auto}"
+
+# What to do when the weekly cap blocks the run: schedule | human.
+# `schedule` arms a one-shot successor at the reset (never more than 7 days
+# out); `human` escalates instead of scheduling.
+WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
+
+# ── Per-ticket concurrency ───────────────────────────────────────────────────
+
+# Max concurrent iterations. Keep 1 when the test suite shares state
+# (database, fixed ports, snapshot files).
+MAX_PARALLEL="${MAX_PARALLEL:-1}"
+
+# Backstop, in seconds, after which a claim is considered dead even if the
+# owning pid cannot be checked.
+CLAIM_TTL="${CLAIM_TTL:-5400}"
+
+# ── Tracker backend ──────────────────────────────────────────────────────────
+
+# local | github | gitlab
+TRACKER_BACKEND="${TRACKER_BACKEND:-local}"
+
+# Wait for CI before marking a remote ticket resolved: auto | on | off.
+# `auto` turns it on when the backend reports CI on the pull/merge request.
+WAIT_CI="${WAIT_CI:-auto}"
+
+# ── Feature-level value gate — FORCED CONFIRMATION ───────────────────────────
+
+# Command that renders the visible surface for the fidelity/visual check.
+VISUAL_CMD="${VISUAL_CMD:-}"
+
+# 1 = VISUAL_CMD runs against real assets (real data, real build), not mocks.
+# The value gate only counts a playthrough run on real assets.
+VISUAL_REAL_ASSETS="${VISUAL_REAL_ASSETS:-0}"
+
+# Command that starts the feature end to end for the terminal playthrough.
+RUN_CMD="${RUN_CMD:-}"
+
+# Max times a red playthrough may re-inject a wiring ticket before escalating.
+PLAYTHROUGH_REINJECT_MAX="${PLAYTHROUGH_REINJECT_MAX:-2}"
+
+# ── Review lenses ────────────────────────────────────────────────────────────
+
+# Space-separated globs. A ticket whose write-surface intersects them triggers
+# the Security lens.
+SECURITY_PATHS="${SECURITY_PATHS:-}"
+
+# Space-separated files handed to the Security lens as its rubric.
+SECURITY_REFS="${SECURITY_REFS:-}"
+
+# Space-separated design references (mockups, specs) for the Fidelity lens.
+FIDELITY_REFS="${FIDELITY_REFS:-}"
+
+# ── Languages ────────────────────────────────────────────────────────────────
+
+# Language spoken to the human. HITL only — never used by the AFK loop.
+LANG_INTERACT="${LANG_INTERACT:-en}"
+
+# Language of durable written prose: docs, tracker, comments, commits, PRs.
+# Not the code itself, not this pack.
+LANG_ARTIFACT="${LANG_ARTIFACT:-en}"
+
+# Objective language gate — FORCED CONFIRMATION: on | off.
+# Post-hoc, per-file, tolerant detection; doubles the soft CLAUDE.md rule.
+LANG_CHECK="${LANG_CHECK:-on}"
+
+# Share of detected prose that must match LANG_ARTIFACT for a file to pass.
+LANG_CHECK_THRESHOLD="${LANG_CHECK_THRESHOLD:-0.80}"
+
+# ── Noise caps ───────────────────────────────────────────────────────────────
+
+# Max entries kept in the LEARNINGS index (it is injected into every fresh
+# session, so it has to stay small).
+LEARNINGS_INDEX_MAX="${LEARNINGS_INDEX_MAX:-40}"
+
+# Days an audit receipt is kept before pruning.
+RECEIPTS_RETENTION_DAYS="${RECEIPTS_RETENTION_DAYS:-30}"
