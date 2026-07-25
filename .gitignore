@@ -1,0 +1,5 @@
+# OS
+.DS_Store
+
+# Claude Code — réglages locaux à la machine (settings.json partagé reste versionné)
+.claude/settings.local.json
