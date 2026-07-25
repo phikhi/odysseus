@@ -144,6 +144,60 @@ LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
   assert_output_contains "the ticket body"
 }
 
+@test "the fake stream mirrors the real one, event for event" {
+  run bash -c 'printf "x\n" | claude -p --model probe-model --output-format stream-json --verbose'
+  assert_success
+
+  # Sequence captured from claude 2.1.220. The smart-zone net watches this
+  # stream and the budget gate reads rate_limit_event out of it, so an
+  # invented stream would let both be designed against a fiction.
+  assert_output_contains '"type":"system","subtype":"init"'
+  assert_output_contains '"type":"rate_limit_event"'
+  assert_output_contains '"rateLimitType":"five_hour"'
+  assert_output_contains '"subtype":"thinking_tokens"'
+  assert_output_contains '"type":"assistant"'
+  assert_output_contains '"type":"result"'
+
+  # init echoes back the model actually requested, as the real one does.
+  assert_output_contains '"model":"probe-model"'
+
+  # Keys on the final result that the loop reads today, or will.
+  assert_output_contains '"num_turns"'
+  assert_output_contains '"total_cost_usd"'
+  assert_output_contains '"stop_reason"'
+  assert_output_contains '"terminal_reason"'
+  assert_output_contains '"api_error_status"'
+  assert_output_contains '"permission_denials"'
+}
+
+@test "every line of the fake stream is valid JSON" {
+  if ! command -v python3 >/dev/null 2>&1; then
+    skip "no python3 to parse with"
+  fi
+
+  bash -c 'printf "x\n" | claude -p --output-format stream-json --verbose' \
+    >"$RALPH_TEST_DIR/stream.jsonl"
+
+  run python3 -c '
+import json, sys
+for i, line in enumerate(open(sys.argv[1]), 1):
+    if line.strip():
+        json.loads(line)
+print("ndjson ok")
+' "$RALPH_TEST_DIR/stream.jsonl"
+  assert_success
+  assert_output_contains "ndjson ok"
+}
+
+@test "the in-band rate limit signal is scriptable" {
+  claude_rate_limit '{"status":"blocked","resetsAt":1784979600,"rateLimitType":"seven_day","isUsingOverage":false}'
+
+  run bash -c 'printf "x\n" | claude -p'
+  assert_success
+  assert_output_contains '"status":"blocked"'
+  assert_output_contains '"rateLimitType":"seven_day"'
+}
+
 @test "the claude shim is scriptable per scenario" {
   script_claude <<'FAKE'
 #!/usr/bin/env bash

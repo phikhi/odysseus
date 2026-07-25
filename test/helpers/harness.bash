@@ -30,6 +30,7 @@
 #   claude_call_count              how many times claude was spawned
 #   claude_call_argv N             argv of the Nth spawn
 #   claude_call_stdin N            stdin (the prompt) of the Nth spawn
+#   claude_rate_limit JSON         the in-band rate_limit_info the stream carries
 #   stub_exit NAME CODE            exit code for `stub-cmd NAME`
 #   stub_call_count NAME           how many times it ran
 #   usage_respond JSON             body served for /api/oauth/usage
@@ -353,6 +354,12 @@ claude_call_argv() {
 
 claude_call_stdin() {
   cat "$SHIM_STATE/claude.calls/${1:-1}.stdin" 2>/dev/null
+}
+
+# Drive the in-band budget signal the real binary emits right after init.
+# Takes the JSON body of rate_limit_info.
+claude_rate_limit() {
+  printf '%s' "$1" >"$SHIM_STATE/claude.rate_limit"
 }
 
 stub_exit() {

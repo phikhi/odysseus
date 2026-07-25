@@ -4,6 +4,15 @@
 # Records argv and stdin (the prompt) so a test can assert what the loop asked
 # for, then either runs the scenario the test installed via `script_claude` or
 # emits a default stream-json success.
+#
+# The default stream is modelled on a real capture (claude 2.1.220, haiku):
+# same event sequence, same keys on the final `result`. That fidelity matters —
+# the smart-zone net watches this stream for the soft token limit and the
+# budget gate reads `rate_limit_event` out of it, so a stream invented here
+# would have those features designed against a fiction. Re-capture with:
+#
+#   printf 'Reply with PONG.\n' | claude -p --model haiku \
+#     --output-format stream-json --verbose
 set -uo pipefail
 
 state="${RALPH_SHIM_STATE:?claude shim: RALPH_SHIM_STATE is not set}"
@@ -13,8 +22,15 @@ n=$(($(cat "$state/claude.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$n" >"$state/claude.count"
 
 : >"$state/claude.calls/$n.argv"
+model="test-model"
+want_model=0
 for arg in "$@"; do
   printf '%s\n' "$arg" >>"$state/claude.calls/$n.argv"
+  if [ "$want_model" = 1 ]; then
+    model="$arg"
+    want_model=0
+  fi
+  [ "$arg" = "--model" ] && want_model=1
 done
 
 # Never block on a terminal: a test may run the loop without a pipe on stdin.
@@ -29,8 +45,16 @@ if [ -x "$state/claude.script" ]; then
 fi
 
 session="test-session-$n"
+
+# Scriptable so a budget test can drive the in-band signal. resetsAt is an
+# epoch, here far in the future.
+rate_limit="$(cat "$state/claude.rate_limit" 2>/dev/null || true)"
+[ -n "$rate_limit" ] || rate_limit='{"status":"allowed","resetsAt":4102444800,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}'
+
 cat <<EOF
-{"type":"system","subtype":"init","session_id":"$session","model":"test-model","tools":[],"permissionMode":"bypassPermissions"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"parent_tool_use_id":null,"session_id":"$session"}
-{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"$session","num_turns":2,"duration_ms":1000,"total_cost_usd":0.01,"usage":{"input_tokens":1000,"output_tokens":200}}
+{"type":"system","subtype":"init","cwd":"$PWD","session_id":"$session","uuid":"uuid-$n-init","model":"$model","permissionMode":"bypassPermissions","apiKeySource":"none","claude_code_version":"0.0.0-shim","output_style":"default","tools":[],"mcp_servers":[],"slash_commands":[],"agents":[],"skills":[],"plugins":[],"memory_paths":[],"capabilities":[],"analytics_disabled":true,"product_feedback_disabled":true,"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}
+{"type":"rate_limit_event","rate_limit_info":$rate_limit,"uuid":"uuid-$n-rate","session_id":"$session"}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":3,"estimated_tokens_delta":3,"uuid":"uuid-$n-think","session_id":"$session"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"parent_tool_use_id":null,"request_id":"req-$n","session_id":"$session","uuid":"uuid-$n-msg","timestamp":"2026-07-25T00:00:00.000Z"}
+{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"$session","uuid":"uuid-$n-result","num_turns":2,"duration_ms":1000,"duration_api_ms":900,"ttft_ms":100,"ttft_stream_ms":90,"time_to_request_ms":10,"total_cost_usd":0.01,"stop_reason":"end_turn","terminal_reason":"completed","api_error_status":null,"permission_denials":[],"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"service_tier":"standard"},"modelUsage":{"$model":{"inputTokens":1000,"outputTokens":200,"costUSD":0.01,"contextWindow":200000}}}
 EOF
