@@ -16,12 +16,10 @@ teardown() {
 }
 
 @test "loop.sh boots in the injected environment and exits clean" {
-  use_tickets
   run_loop
   assert_success
-  assert_output_contains "skeleton ok"
-  assert_output_contains "feature=demo"
-  assert_output_contains "backend=local"
+  assert_output_contains "run start (feature=demo backend=local"
+  assert_output_contains "frontier empty"
 }
 
 @test "loop.sh sources every lib, and an empty lib/ is not an error" {
@@ -210,8 +208,12 @@ FAKE
 }
 
 @test "set_config overrides a key the pack then reads" {
-  set_config TRACKER_BACKEND github
+  use_tickets 01-alpha
+  set_config MODEL zzz-probe
+
   run_loop
   assert_success
-  assert_output_contains "backend=github"
+
+  run claude_call_argv 1
+  assert_output_contains "zzz-probe"
 }
