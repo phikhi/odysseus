@@ -74,6 +74,26 @@ LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
   assert_file_contains "$PACK_DIR/settings.json" '"DISABLE_AUTO_COMPACT"'
 }
 
+@test "the environment is hermetic: an exported config key does not leak in" {
+  # Every key is written KEY="${KEY:-default}", so a developer with MODEL or
+  # DISABLE_AUTO_COMPACT exported would otherwise be testing their shell.
+  harness_teardown
+  export MODEL=leaked-model
+  export DISABLE_AUTO_COMPACT=leaked-value
+  harness_setup
+  use_tickets 01-alpha
+
+  run_loop
+  assert_success
+
+  run claude_call_argv 1
+  refute_output_contains "leaked-model"
+
+  run claude_call_env 1
+  refute_output_contains "leaked-value"
+  assert_output_contains "DISABLE_AUTO_COMPACT=1"
+}
+
 @test "node, npm and npx are shadowed: the pack stays bash-only" {
   # 99, not 127: a plain "command not found" would be indistinguishable from
   # the tool simply being absent, and it makes bats warn.

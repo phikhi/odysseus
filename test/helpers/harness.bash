@@ -30,6 +30,7 @@
 #   claude_call_count              how many times claude was spawned
 #   claude_call_argv N             argv of the Nth spawn
 #   claude_call_stdin N            stdin (the prompt) of the Nth spawn
+#   claude_call_env N              environment the Nth spawn was given
 #   claude_rate_limit JSON         the in-band rate_limit_info the stream carries
 #   stub_exit NAME CODE            exit code for `stub-cmd NAME`
 #   stub_call_count NAME           how many times it ran
@@ -47,6 +48,7 @@ RALPH_FIXTURES="$RALPH_PACK_ROOT/test/fixtures"
 RALPH_TEMPLATE_FEATURE=demo
 
 harness_setup() {
+  harness__clear_env
   RALPH_TEST_FEATURE="${1:-$RALPH_TEMPLATE_FEATURE}"
   # Normalised: macOS TMPDIR ends in a slash, and the pack reports paths that
   # went through `cd && pwd`, so raw concatenation would not compare equal.
@@ -78,6 +80,23 @@ harness_setup() {
   fi
 
   cd "$PROJECT_DIR" || return 1
+}
+
+# Wipe anything in the developer's environment that the pack would read.
+#
+# This is not paranoia: every config key is written `KEY="${KEY:-default}"`, so
+# an exported MODEL or TEST_CMD silently overrides the test's own config. And
+# the pack's own settings.json exports DISABLE_AUTO_COMPACT into every session
+# of this repository — which made the auto-compact test pass while measuring
+# the environment rather than the loop.
+harness__clear_env() {
+  local key
+  for key in $(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/\1/p' \
+    "$RALPH_PACK_ROOT/.claude/ralph.config.sh.example"); do
+    unset "$key"
+  done
+  unset DISABLE_AUTO_COMPACT DISABLE_COMPACT RALPH_CONFIG RALPH_DIR \
+    RALPH_PROJECT_ROOT RALPH_RUN_LOCK RALPH_SOFT_LIMIT_HIT
 }
 
 # ── project template ─────────────────────────────────────────────────────────
@@ -354,6 +373,10 @@ claude_call_argv() {
 
 claude_call_stdin() {
   cat "$SHIM_STATE/claude.calls/${1:-1}.stdin" 2>/dev/null
+}
+
+claude_call_env() {
+  cat "$SHIM_STATE/claude.calls/${1:-1}.env" 2>/dev/null
 }
 
 # Drive the in-band budget signal the real binary emits right after init.

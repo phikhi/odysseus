@@ -89,15 +89,29 @@ PROMPT
 
 # A fresh session: never --continue, never --resume. Those are exactly the
 # flags that would replay history and drag the context toward the dumb zone.
+#
+# DISABLE_AUTO_COMPACT is set here as well as in settings.json: compaction is
+# the mechanism that produces a dumb-zone session, and the guarantee must not
+# depend on a settings file the target project could overwrite.
+#
+# The session runs in the background so the smart-zone net can watch its stream
+# and stop it while it is still running. Sets RALPH_SOFT_LIMIT_HIT when it does.
 loop_spawn_session() {
-  local ticket="$1" outfile="$2"
+  local ticket="$1" outfile="$2" pid rc=0
+  RALPH_SOFT_LIMIT_HIT=0
+
   loop_session_prompt "$ticket" |
-    claude -p \
+    DISABLE_AUTO_COMPACT=1 claude -p \
       --model "$MODEL" \
       --output-format stream-json \
       --verbose \
       --dangerously-skip-permissions \
-      >"$outfile"
+      >"$outfile" &
+  pid=$!
+
+  monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS" || RALPH_SOFT_LIMIT_HIT=1
+  wait "$pid" || rc=$?
+  return "$rc"
 }
 
 # Pull one field out of the final `result` event. Deliberately not jq: the pack
@@ -128,9 +142,9 @@ loop_gate() {
 # Append-only, one line per iteration, never read back to decide anything. The
 # tracker stays the only authority; a line lost to a crash costs nothing.
 loop_journal_append() {
-  local ticket="$1" outcome="$2" turns="$3" cost="$4"
-  printf '%s\t%s\t%s\tturns=%s\tcost=%s\n' \
-    "$(ralph_now)" "$ticket" "$outcome" "${turns:-0}" "${cost:-0}" \
+  local ticket="$1" outcome="$2" turns="$3" cost="$4" tokens="$5"
+  printf '%s\t%s\t%s\tturns=%s\tcost=%s\ttokens=%s\n' \
+    "$(ralph_now)" "$ticket" "$outcome" "${turns:-0}" "${cost:-0}" "${tokens:-0}" \
     >>"$(ralph_feature_dir)/run.log"
 }
 
@@ -146,7 +160,7 @@ loop_main() {
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
-  local iteration=0 sterile=0 ticket outfile rc turns cost outcome
+  local iteration=0 sterile=0 ticket outfile rc turns cost tokens outcome
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -183,8 +197,9 @@ loop_main() {
 
     turns="$(loop_result_field "$outfile" num_turns)"
     cost="$(loop_result_field "$outfile" total_cost_usd)"
+    tokens="$(monitor_peak_tokens "$outfile")"
 
-    if [ "$rc" -eq 0 ] && loop_gate "$ticket"; then
+    if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ] && loop_gate "$ticket"; then
       tracker_mark_resolved "$ticket"
       outcome=resolved
       sterile=0
@@ -193,12 +208,17 @@ loop_main() {
       # arrive with the failure-handling ticket. For now the ticket simply goes
       # back to the frontier and the sterile detector keeps the run bounded.
       tracker_unclaim "$ticket"
-      outcome=failed
+      if [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
+        outcome=over-soft-limit
+        loop_log "session crossed the ${SOFT_LIMIT_TOKENS}-token soft limit (peak $tokens) — terminated"
+      else
+        outcome=failed
+      fi
       sterile=$((sterile + 1))
     fi
 
-    loop_journal_append "$ticket" "$outcome" "$turns" "$cost"
-    rm -f "$outfile"
+    loop_journal_append "$ticket" "$outcome" "$turns" "$cost" "$tokens"
+    rm -f "$outfile" "$outfile.tokens"
     loop_log "iteration $iteration: $ticket -> $outcome"
   done
 }

@@ -33,6 +33,10 @@ for arg in "$@"; do
   [ "$arg" = "--model" ] && want_model=1
 done
 
+# The environment the loop spawned us with — the auto-compact posture is only
+# assertable from here.
+env >"$state/claude.calls/$n.env"
+
 # Never block on a terminal: a test may run the loop without a pipe on stdin.
 if [ -t 0 ]; then
   : >"$state/claude.calls/$n.stdin"
