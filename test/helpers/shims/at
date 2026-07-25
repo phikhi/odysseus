@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake `at` on PATH — stands in for the one-shot successor scheduler.
+#
+# Records the schedule expression (argv) and the queued command (stdin) so a
+# test can assert what would have been armed, without touching the real queue.
+set -uo pipefail
+
+state="${RALPH_SHIM_STATE:?at shim: RALPH_SHIM_STATE is not set}"
+
+n=$(($(cat "$state/at.count" 2>/dev/null || echo 0) + 1))
+printf '%s\n' "$n" >"$state/at.count"
+
+queued=""
+[ -t 0 ] || queued="$(cat)"
+
+{
+  printf 'argv:'
+  for arg in "$@"; do printf ' %s' "$arg"; done
+  printf '\n'
+  printf 'command: %s\n' "$queued"
+} >>"$state/at.calls"
+
+code="$(cat "$state/at.exit" 2>/dev/null || echo 0)"
+[ "$code" -eq 0 ] && printf 'job %s at Mon Jan  1 00:00:00 2035\n' "$n" >&2
+exit "$code"

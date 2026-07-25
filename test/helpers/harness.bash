@@ -1,0 +1,238 @@
+# shellcheck shell=bash
+# The injected environment behind the process seam.
+#
+# A test drives the real `loop.sh` / `human-loop.sh` as processes inside a
+# throwaway project, and then asserts on the tracker. Everything the pack
+# reaches for from the outside world is injected here:
+#
+#   tracker    a `local` tracker in a tmpdir, seeded from test/fixtures/tickets
+#   LLM        a fake `claude` on PATH, scriptable per test, recording argv+stdin
+#   budget     a fake `curl` serving a scripted /api/oauth/usage payload
+#   scheduler  a fake `at` recording what a successor would have been
+#   gate       `stub-cmd` behind TEST_CMD / TYPECHECK_CMD, exit code per test
+#   node       `node`/`npm`/`npx` shadowed by hard failures (bash-only fallback)
+#
+# Public API
+#   harness_setup [feature]        create the project, pack, shims, git repo
+#   harness_teardown               remove it (RALPH_KEEP_TMP=1 keeps it)
+#   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
+#   set_config KEY VALUE           override a config key in ralph.config.sh
+#   run_loop [args ...]            run the real loop.sh through `run`
+#   ticket_file NN-slug            path of a ticket in the tracker
+#   ticket_status NN-slug          its Status: value
+#   script_claude                  read a script on stdin, use it as fake claude
+#   claude_call_count              how many times claude was spawned
+#   claude_call_argv N             argv of the Nth spawn
+#   claude_call_stdin N            stdin (the prompt) of the Nth spawn
+#   stub_exit NAME CODE            exit code for `stub-cmd NAME`
+#   stub_call_count NAME           how many times it ran
+#   usage_respond JSON             body served for /api/oauth/usage
+#   usage_exit CODE                curl exit code
+#   at_exit CODE                   `at` exit code
+#   at_calls                       recorded `at` invocations
+#
+# Kept bash 3.2 compatible, like the pack itself.
+
+RALPH_HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_PACK_ROOT="$(cd "$RALPH_HARNESS_DIR/../.." && pwd)"
+RALPH_FIXTURES="$RALPH_PACK_ROOT/test/fixtures"
+
+harness_setup() {
+  RALPH_TEST_FEATURE="${1:-demo}"
+  RALPH_TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ralph-test.XXXXXX")"
+  PROJECT_DIR="$RALPH_TEST_DIR/project"
+  PACK_DIR="$PROJECT_DIR/.claude"
+  SHIM_BIN="$RALPH_TEST_DIR/bin"
+  SHIM_STATE="$RALPH_TEST_DIR/shim-state"
+  FEATURE_DIR="$PROJECT_DIR/.scratch/$RALPH_TEST_FEATURE"
+  TRACKER_DIR="$FEATURE_DIR/issues"
+  RALPH_CONFIG_FILE="$PACK_DIR/ralph.config.sh"
+
+  mkdir -p "$PACK_DIR/lib" "$SHIM_BIN" "$SHIM_STATE" "$TRACKER_DIR" \
+    "$RALPH_TEST_DIR/home" "$RALPH_TEST_DIR/git-template"
+
+  harness__install_pack
+  harness__install_shims
+
+  cp "$RALPH_FIXTURES/CONTEXT.md" "$PROJECT_DIR/CONTEXT.md"
+  cp "$RALPH_FIXTURES/spec.md" "$FEATURE_DIR/spec.md"
+
+  # Committed last: a run starts from a clean tree, which is what the pre-spawn
+  # HEAD snapshot and the scope-guard diff both assume.
+  harness__init_git
+
+  cd "$PROJECT_DIR" || return 1
+}
+
+harness_teardown() {
+  cd "$RALPH_PACK_ROOT" || true
+  if [ "${RALPH_KEEP_TMP:-0}" = 1 ]; then
+    printf 'harness: kept %s\n' "$RALPH_TEST_DIR" >&2
+    return 0
+  fi
+  [ -n "${RALPH_TEST_DIR:-}" ] && rm -rf "$RALPH_TEST_DIR"
+  return 0
+}
+
+# ── pack ─────────────────────────────────────────────────────────────────────
+
+harness__install_pack() {
+  local f
+  cp "$RALPH_PACK_ROOT/.claude/loop.sh" "$PACK_DIR/loop.sh"
+  cp "$RALPH_PACK_ROOT/.claude/ralph.config.sh.example" "$PACK_DIR/"
+  [ -f "$RALPH_PACK_ROOT/.claude/settings.json" ] &&
+    cp "$RALPH_PACK_ROOT/.claude/settings.json" "$PACK_DIR/"
+  [ -f "$RALPH_PACK_ROOT/.claude/human-loop.sh" ] &&
+    cp "$RALPH_PACK_ROOT/.claude/human-loop.sh" "$PACK_DIR/"
+  for f in "$RALPH_PACK_ROOT"/.claude/lib/*.sh; do
+    [ -e "$f" ] || continue
+    cp "$f" "$PACK_DIR/lib/"
+  done
+  chmod +x "$PACK_DIR"/*.sh
+
+  # The config a project would actually run, plus the injections every test
+  # needs. Starting from the shipped example also proves the example is sound.
+  cp "$PACK_DIR/ralph.config.sh.example" "$RALPH_CONFIG_FILE"
+  set_config FEATURE "$RALPH_TEST_FEATURE"
+  set_config TEST_CMD "stub-cmd tests"
+  set_config TYPECHECK_CMD "stub-cmd typecheck"
+  set_config MODEL "test-model"
+}
+
+# Overrides are committed too: otherwise a rollback (`git reset --hard`) would
+# silently undo what the test asked for.
+set_config() {
+  printf '%s=%s\n' "$1" "$(harness__quote "$2")" >>"$RALPH_CONFIG_FILE"
+  harness__commit "test: set $1"
+}
+
+harness__commit() {
+  [ -d "$PROJECT_DIR/.git" ] || return 0
+  git -C "$PROJECT_DIR" add -A
+  git -C "$PROJECT_DIR" diff --cached --quiet && return 0
+  git -C "$PROJECT_DIR" commit -q -m "$1"
+}
+
+harness__quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# ── shims ────────────────────────────────────────────────────────────────────
+
+harness__install_shims() {
+  local shim
+  for shim in "$RALPH_HARNESS_DIR"/shims/*; do
+    cp "$shim" "$SHIM_BIN/"
+  done
+  chmod +x "$SHIM_BIN"/*
+
+  # A pack that needs node has broken its bash-only promise; make that loud
+  # instead of silently depending on whatever the machine has installed.
+  local tool
+  for tool in node npm npx; do
+    cat >"$SHIM_BIN/$tool" <<'NONODE'
+#!/usr/bin/env bash
+printf "ralph tests: '%s' must not be required (bash-only fallback)\n" "$(basename "$0")" >&2
+exit 99
+NONODE
+    chmod +x "$SHIM_BIN/$tool"
+  done
+
+  export RALPH_SHIM_STATE="$SHIM_STATE"
+  export PATH="$SHIM_BIN:$PATH"
+  export HOME="$RALPH_TEST_DIR/home"
+}
+
+# ── git ──────────────────────────────────────────────────────────────────────
+
+harness__init_git() {
+  export GIT_CONFIG_NOSYSTEM=1
+  git -c init.defaultBranch=main init -q \
+    --template="$RALPH_TEST_DIR/git-template" "$PROJECT_DIR"
+  git -C "$PROJECT_DIR" config user.name "ralph test"
+  git -C "$PROJECT_DIR" config user.email "ralph@test.invalid"
+  git -C "$PROJECT_DIR" config commit.gpgsign false
+  git -C "$PROJECT_DIR" add -A
+  git -C "$PROJECT_DIR" commit -q -m "fixture: initial project"
+}
+
+# ── tracker ──────────────────────────────────────────────────────────────────
+
+use_tickets() {
+  local t
+  if [ "$#" -eq 0 ]; then
+    cp "$RALPH_FIXTURES"/tickets/*.md "$TRACKER_DIR/"
+  else
+    for t in "$@"; do
+      cp "$RALPH_FIXTURES/tickets/${t%.md}.md" "$TRACKER_DIR/"
+    done
+  fi
+  harness__commit "test: seed tracker"
+}
+
+ticket_file() {
+  printf '%s/%s.md' "$TRACKER_DIR" "${1%.md}"
+}
+
+ticket_status() {
+  sed -n 's/^\*\*Status:\*\*[[:space:]]*//p' "$(ticket_file "$1")" | head -1
+}
+
+# ── driving the pack ─────────────────────────────────────────────────────────
+
+run_loop() {
+  run bash "$PACK_DIR/loop.sh" "$@"
+}
+
+# ── scripting the shims ──────────────────────────────────────────────────────
+
+# Replace the fake claude's behaviour. Reads a bash script on stdin; it is run
+# with the real argv and the real prompt on stdin.
+script_claude() {
+  cat >"$SHIM_STATE/claude.script"
+  chmod +x "$SHIM_STATE/claude.script"
+}
+
+claude_call_count() {
+  cat "$SHIM_STATE/claude.count" 2>/dev/null || echo 0
+}
+
+claude_call_argv() {
+  cat "$SHIM_STATE/claude.calls/${1:-1}.argv" 2>/dev/null
+}
+
+claude_call_stdin() {
+  cat "$SHIM_STATE/claude.calls/${1:-1}.stdin" 2>/dev/null
+}
+
+stub_exit() {
+  printf '%s\n' "$2" >"$SHIM_STATE/stub-$1.exit"
+}
+
+stub_call_count() {
+  if [ -f "$SHIM_STATE/stub-$1.calls" ]; then
+    awk 'END { print NR }' "$SHIM_STATE/stub-$1.calls"
+  else
+    echo 0
+  fi
+}
+
+usage_respond() {
+  printf '%s' "$1" >"$SHIM_STATE/curl.body"
+}
+
+usage_exit() {
+  printf '%s\n' "$1" >"$SHIM_STATE/curl.exit"
+}
+
+curl_calls() {
+  cat "$SHIM_STATE/curl.calls" 2>/dev/null
+}
+
+at_exit() {
+  printf '%s\n' "$1" >"$SHIM_STATE/at.exit"
+}
+
+at_calls() {
+  cat "$SHIM_STATE/at.calls" 2>/dev/null
+}

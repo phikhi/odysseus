@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Controllable stand-in for a project command — TEST_CMD, TYPECHECK_CMD,
+# RUN_CMD, VISUAL_CMD.
+#
+# Usage in a config: TEST_CMD="stub-cmd tests"
+# A test then drives it with `stub_exit tests 1` and reads `stub_call_count`.
+set -uo pipefail
+
+state="${RALPH_SHIM_STATE:?stub-cmd: RALPH_SHIM_STATE is not set}"
+name="${1:?stub-cmd: needs a name as first argument}"
+shift
+
+{
+  printf '%s' "$name"
+  for arg in "$@"; do printf ' %s' "$arg"; done
+  printf '\n'
+} >>"$state/stub-$name.calls"
+
+[ -f "$state/stub-$name.out" ] && cat "$state/stub-$name.out"
+
+exit "$(cat "$state/stub-$name.exit" 2>/dev/null || echo 0)"
