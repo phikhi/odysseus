@@ -186,9 +186,10 @@ loop_main() {
 
     loop_log "iteration $iteration: $ticket"
     outfile="$(ralph_feature_dir)/.session.$$.jsonl"
-    # Taken before the spawn: it is what the scope-guard diffs against, and it
-    # is what a rollback will reset to.
-    base="$(gate_snapshot)"
+    # Taken before the spawn: the state of the tree this session inherited, and
+    # what the scope-guard measures it against. Not a commit — the rollback's
+    # own `HEAD` snapshot is a different concern, and arrives with it.
+    base="$(gate_tree_snapshot)" || base=""
     rc=0
     loop_spawn_session "$ticket" "$outfile" || rc=$?
 

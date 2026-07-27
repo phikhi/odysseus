@@ -16,14 +16,14 @@
 ## Comments
 
 - **Write-surface élargie de quatre fichiers**, tous imposés par le câblage :
-  - `.claude/loop.sh` — le gate stub d'[03] y est défini *après* le sourcing des libs, donc une `lib/gate.sh` ne pouvait pas le remplacer par simple redéfinition. Le stub est supprimé, la boucle appelle `gate_run` ; elle prend aussi le snapshot `HEAD` pré-spawn dont le scope-guard a besoin (et dont [07] héritera pour le rollback).
+  - `.claude/loop.sh` — le gate stub d'[03] y est défini *après* le sourcing des libs, donc une `lib/gate.sh` ne pouvait pas le remplacer par simple redéfinition. Le stub est supprimé, la boucle appelle `gate_run` ; elle prend aussi le snapshot d'arbre pré-spawn dont le scope-guard a besoin — pas un `HEAD`, voir le dernier point.
   - `.claude/lib/tracker.sh` + `.claude/lib/tracker-local.sh` — nouvelle opération d'adaptateur `tracker_ids` (8ᵉ). Distinguer un débordement neutre d'un drift exige de savoir **qui d'autre** déclare le chemin ; un glob sur `.scratch/<feature>/issues/` aurait recâblé le backend local dans le gate, ce que l'architecture interdit explicitement. Les backends distants [18] devront la fournir.
   - `.claude/ralph.config.sh.example` — documentation de `TYPECHECK_CMD=none`.
   - `test/loop-happy-path.bats` — quatre fakes `claude` écrivaient leur marqueur (`session-cwd`, `status-during-session`, `call-seq`, `session-started`) dans le dépôt-fixture. Le scope-guard les rendait rouges à juste titre. Les marqueurs vivent maintenant hors du dépôt, dans `$RALPH_SHIM_STATE` — ce qu'ils auraient dû faire dès le départ : ce sont des instruments de test, pas du travail de session.
 
 - **`git diff --name-only` seul ne suffit pas, et l'AC le demandait littéralement.** Deux trous, deux tests, deux mutations :
-  1. **Les fichiers non suivis n'apparaissent pas dans un diff.** Or la write-surface d'un ticket neuf est faite précisément de fichiers qui n'existent pas encore : sur les fixtures, un guard sans `git ls-files --others --exclude-standard` ne voit jamais rien et passe vert quoi qu'écrive la session.
-  2. **Une session qui commit son propre débordement échappe au diff du worktree.** La spec prévoit que la session commit ([06]) ; la référence est donc le `HEAD` pré-spawn, pas l'index. Mutation vérifiée : en diffant le worktree, le test « overflow committé » passe au vert.
+  1. **Les fichiers non suivis n'apparaissent pas dans un diff.** Or la write-surface d'un ticket neuf est faite précisément de fichiers qui n'existent pas encore : sur les fixtures, un guard qui ne regarde que les fichiers suivis ne voit jamais rien et passe vert quoi qu'écrive la session.
+  2. **Une session qui commit son propre débordement échappe au diff du worktree.** La spec prévoit que la session commit ([06]) : la référence ne peut donc pas être l'état de l'index. Mutation vérifiée : en diffant le worktree, le test « overflow committé » passe au vert. Ce que la référence doit être exactement a demandé une seconde passe — dernier point.
 
 - **Le bookkeeping de la boucle est exclu du diff.** Claim, `run.log` et flux de session vivent tous dans `.scratch/<feature>/` et sont écrits par la boucle, pas par la session. Sans le filtre, le tout premier gate de tout run est rouge — mutation vérifiée sur le happy-path.
 
@@ -44,6 +44,14 @@
 
 - **Le classement du drift est en O(fichiers hors surface × tickets)**, chaque lecture de champ coûtant un `sed`. Uniquement sur le chemin rouge, donc acceptable ; à revoir si un backend distant fait de `tracker_ids` un appel réseau.
 
-- **Coût sur la suite** : 84 → 106 tests, 52 s → 79 s sur la même machine (~0,62 → ~0,75 s par test). Le gate ajoute trois process et quatre appels git par itération, plus un test de rendez-vous qui poll. Suite verte sous microbats, sous bats-core et sous le bash 3.2 de macOS.
+- **Coût sur la suite** : 84 → 109 tests, 52 s → 87 s sur la même machine (~0,62 → ~0,80 s par test). Le gate ajoute trois process et cinq appels git par itération, plus un test de rendez-vous qui poll. Suite verte sous microbats, sous bats-core et sous le bash 3.2 de macOS.
 
-- **15 mutations vérifiées rouges** (branches séquentielles, verdict manquant compté vert, agrégation partielle, chacune des trois portes du préflight, `none` non honoré, non-suivis ignorés, diff sans base, bookkeeping non filtré, pas de classification, surface non déclarée permissive, verdict du gate ignoré par le marquage, outcome non distingué, gate non appelé).
+- **Bug attrapé juste après le merge : la référence du scope-guard ne pouvait pas être `HEAD`.** La question « y a-t-il un risque pour la suite ? » a suffi à le faire tomber. Rien ne commite le travail d'une itération verte : les fichiers de l'itération 1 sont donc encore dans l'arbre quand la session 2 démarre. Comparée à `HEAD`, l'itération 2 héritait du travail de la première **comme de son propre débordement**, et le recevait classé **drift contractuel** — le verdict le plus dur, celui que [07] escaladera sans retry. Tout run produisant des fichiers s'arrêtait donc après une seule itération utile. Même bug pour un run lancé sur un dépôt déjà sale : le premier gate était rouge.
+
+  La référence est maintenant un **objet tree de l'arbre de travail** (`git add -A` dans un index jetable + `git write-tree`), pris avant le spawn et après la session, comparés par `git diff-tree -r`. Il dit ce qu'il y avait quand *cette* session a commencé — la vraie question — au lieu de ce que le dernier commit contenait. Bénéfices en prime : les non-suivis sont couverts par construction (plus besoin d'un `ls-files` séparé), un dépôt sans commit initial ne casse plus rien, et le travail en cours d'un humain n'est plus imputé au ticket. Une baseline manquante rend le gate **rouge** au lieu de le laisser passer en silence — sinon la cécité serait un faux vert permanent.
+
+  Le snapshot `HEAD` du rollback reste un besoin distinct ([07]) : un tree n'est pas un commit. Et le constat sous-jacent devient une contrainte pour [07] : **un gate vert doit rendre le travail durable** (commit), sans quoi le `git reset --hard` d'un échec ultérieur détruira tout ce que le run a produit avant.
+
+  Coût assumé : deux `git add -A` par itération (un walk `stat` de l'arbre, comme `git status`) et quelques objets *loose* non référencés dans le dépôt cible, que le `gc --auto` de git finit par élaguer.
+
+- **21 mutations vérifiées rouges** (branches séquentielles, verdict manquant compté vert, baseline ramenée à HEAD sur les deux faces de l'accumulation, guard aveugle qui passe, snapshot post-session absent, diff-tree non récursif, snapshot limité aux fichiers suivis, agrégation partielle, chacune des trois portes du préflight, `none` non honoré, non-suivis ignorés, diff sans base, bookkeeping non filtré, pas de classification, surface non déclarée permissive, verdict du gate ignoré par le marquage, outcome non distingué, gate non appelé).
