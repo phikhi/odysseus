@@ -9,6 +9,7 @@
 # without the last one silently winning.
 #
 #   tracker_frontier                  eligible ticket ids, min-NN first, one per line
+#   tracker_ids                       every ticket id, whatever its state, min-NN first
 #   tracker_read_ticket ID            the ticket on stdout
 #   tracker_claim ID [OWNER]          take the ticket; non-zero if it was lost
 #   tracker_unclaim ID                give it back to the frontier
@@ -35,6 +36,7 @@ tracker__dispatch() {
 }
 
 tracker_frontier() { tracker__dispatch frontier "$@"; }
+tracker_ids() { tracker__dispatch ids "$@"; }
 tracker_read_ticket() { tracker__dispatch read_ticket "$@"; }
 tracker_claim() { tracker__dispatch claim "$@"; }
 tracker_unclaim() { tracker__dispatch unclaim "$@"; }

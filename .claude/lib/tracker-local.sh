@@ -134,6 +134,20 @@ tracker_local_frontier() {
   done
 }
 
+# Every ticket, whatever its state. The scope-guard needs it: to tell a stray
+# write from a scoping conflict it has to know who else declared the path, and
+# a resolved or escalated ticket owns its write-surface just as much.
+tracker_local_ids() {
+  local dir file id
+  dir="$(tracker_local__issues_dir)"
+  [ -d "$dir" ] || return 0
+  for file in "$dir"/*.md; do
+    [ -e "$file" ] || continue
+    id="$(basename "$file")"
+    printf '%s\n' "${id%.md}"
+  done
+}
+
 # Unblocked means every ticket listed in `Blocked by:` is resolved. An id that
 # points at nothing counts as blocking: an unknown dependency is never safe to
 # assume met.
