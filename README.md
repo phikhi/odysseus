@@ -2,7 +2,7 @@
 
 Un pack déposable dans n'importe quel projet, **100 % bash + markdown**, qui fait broyer la phase de **delivery sans humain** (AFK) : vous validez des tickets le soir, la boucle les implémente pendant la nuit, et ne vous réveille que pour ce qui relève de votre jugement.
 
-> ⚠️ **En construction.** 4 tickets sur 20 sont livrés. La boucle tourne de bout en bout, mais il manque encore le gate qualité et le rollback — voir [État](#état). Ne le lâchez pas encore sur un dépôt qui compte.
+> ⚠️ **En construction.** 5 tickets sur 20 sont livrés. La boucle tourne de bout en bout et le gate objectif décide vraiment, mais il manque encore les lentilles de revue et le rollback — voir [État](#état). Ne le lâchez pas encore sur un dépôt qui compte.
 
 ## Le problème
 
@@ -38,10 +38,10 @@ Le vocabulaire complet est dans [`CONTEXT.md`](CONTEXT.md).
 
 | | |
 |---|---|
-| **Ça marche** | verrou de run · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) |
-| **Ça manque** | gate QA réel (les checks sont stubbés verts) · rollback (une itération qui dérape laisse le dépôt sale) · budget d'usage · escalades typées · boucle humaine · installeur |
+| **Ça marche** | verrou de run · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) · gate objectif en parallèle (tests, typecheck, scope-guard) |
+| **Ça manque** | lentilles de revue (Standards/Spec/Sécurité…) · rollback (une itération qui dérape laisse le dépôt sale) · budget d'usage · escalades typées · boucle humaine · installeur |
 
-Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone.
+Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone · [05](.scratch/ralph-pack/issues/05-gate-qa-objectif.md) gate QA objectif.
 
 Le reste est dans [`.scratch/ralph-pack/issues/`](.scratch/ralph-pack/issues/), chaque ticket portant ses critères d'acceptation et, une fois résolu, les décisions et les pièges rencontrés.
 
@@ -52,7 +52,7 @@ Il n'y a pas encore d'installeur (c'est le ticket 19). Aujourd'hui, dans un dép
 ```bash
 cp -R /chemin/vers/odysseus/.claude .            # déposer le pack
 cp .claude/ralph.config.sh.example .claude/ralph.config.sh
-$EDITOR .claude/ralph.config.sh                  # au minimum : FEATURE, MODEL
+$EDITOR .claude/ralph.config.sh                  # FEATURE, MODEL, TEST_CMD, TYPECHECK_CMD
 
 mkdir -p .scratch/<feature>/issues               # écrire un ticket ready-for-agent
 bash .claude/loop.sh
@@ -74,7 +74,9 @@ Un ticket est un fichier markdown auto-suffisant — aucun contexte n'étant hé
 - [ ] Un critère d'acceptation vérifiable par machine.
 ```
 
-Codes de sortie de `loop.sh` : `0` frontière vide · `1` un autre run tient le verrou · `2` config absente · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile).
+`TEST_CMD` et `TYPECHECK_CMD` ne sont pas optionnelles : la boucle refuse de démarrer tant qu'elles sont vides, parce qu'un gate qui ne vérifie rien est vert pour la mauvaise raison. Un projet réellement sans typecheck le déclare par `TYPECHECK_CMD=none`. À chaque itération, la boucle lance en parallèle les tests, le typecheck et le **scope-guard** — qui compare ce que la session a écrit (commité ou non) à la write-surface déclarée du ticket. *resolved* n'est prononcé que si toutes les branches déclenchées sont vertes.
+
+Codes de sortie de `loop.sh` : `0` frontière vide · `1` un autre run tient le verrou · `2` refus de démarrer (config absente, ou config qui viderait le gate de son sens) · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile).
 
 ## Tests
 

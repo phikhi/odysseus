@@ -100,15 +100,18 @@ teardown() {
 @test "the session runs at the project root, whatever the caller's cwd" {
   use_tickets 01-alpha
 
+  # Markers land outside the repository on purpose: a fake that scribbles in
+  # the project would be caught by the scope-guard, and this test is about the
+  # working directory, not about the gate.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
-pwd >session-cwd
+pwd >"$RALPH_SHIM_STATE/session-cwd"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
   run bash -c "cd / && bash '$PACK_DIR/loop.sh'"
   assert_success
-  assert_equal "$(cat "$PROJECT_DIR/session-cwd")" "$PROJECT_DIR"
+  assert_equal "$(cat "$SHIM_STATE/session-cwd")" "$PROJECT_DIR"
 }
 
 # ── who marks, and when ──────────────────────────────────────────────────────
@@ -119,14 +122,14 @@ FAKE
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 sed -n 's/^\*\*Status:\*\* //p' .scratch/demo/issues/01-alpha.md |
-  head -1 >status-during-session
+  head -1 >"$RALPH_SHIM_STATE/status-during-session"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
   run_loop
   assert_success
 
-  assert_equal "$(cat "$PROJECT_DIR/status-during-session")" "claimed"
+  assert_equal "$(cat "$SHIM_STATE/status-during-session")" "claimed"
   assert_ticket_status 01-alpha resolved
 }
 
@@ -188,9 +191,9 @@ FAKE
   # fail, fail, succeed, then fail forever.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
-n="$(cat call-seq 2>/dev/null || echo 0)"
+n="$(cat "$RALPH_SHIM_STATE/call-seq" 2>/dev/null || echo 0)"
 n=$((n + 1))
-echo "$n" >call-seq
+echo "$n" >"$RALPH_SHIM_STATE/call-seq"
 case "$n" in
   3) echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}' ;;
   *) exit 1 ;;
@@ -214,7 +217,7 @@ FAKE
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
-: >"$(pwd)/session-started"
+: >"$RALPH_SHIM_STATE/session-started"
 sleep 1
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
@@ -222,7 +225,7 @@ FAKE
   bash "$PACK_DIR/loop.sh" >"$RALPH_TEST_DIR/loop.out" 2>&1 &
   PACK_BG_PID=$!
 
-  wait_for_file "$PROJECT_DIR/session-started" || fail "the loop never spawned a session"
+  wait_for_file "$SHIM_STATE/session-started" || fail "the loop never spawned a session"
   kill -TERM "$PACK_BG_PID"
 
   rc=0

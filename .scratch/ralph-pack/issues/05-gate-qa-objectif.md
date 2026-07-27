@@ -6,9 +6,44 @@
 
 **Write-surface:** `.claude/lib/gate.sh`, `test/gate.bats`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Le gate lance `TEST_CMD`, `TYPECHECK_CMD` et le scope-guard en parallèle ; un exit non-zéro de n'importe lequel rend le gate rouge.
-- [ ] Le scope-guard échoue si `git diff --name-only` sort de la **write-surface déclarée** du ticket ; un débordement dans un fichier neutre est distingué d'un débordement dans un autre ticket.
-- [ ] *resolved* n'est prononcé que si **toutes** les branches déclenchées sont vertes ; un fake `claude` qui casse les tests ne produit jamais `resolved`.
-- [ ] Anti-faux-vert : une commande objective absente ou silencieuse ne compte pas comme verte (confirmation forcée).
+- [x] Le gate lance `TEST_CMD`, `TYPECHECK_CMD` et le scope-guard en parallèle ; un exit non-zéro de n'importe lequel rend le gate rouge.
+- [x] Le scope-guard échoue si `git diff --name-only` sort de la **write-surface déclarée** du ticket ; un débordement dans un fichier neutre est distingué d'un débordement dans un autre ticket.
+- [x] *resolved* n'est prononcé que si **toutes** les branches déclenchées sont vertes ; un fake `claude` qui casse les tests ne produit jamais `resolved`.
+- [x] Anti-faux-vert : une commande objective absente ou silencieuse ne compte pas comme verte (confirmation forcée).
+
+## Comments
+
+- **Write-surface élargie de quatre fichiers**, tous imposés par le câblage :
+  - `.claude/loop.sh` — le gate stub d'[03] y est défini *après* le sourcing des libs, donc une `lib/gate.sh` ne pouvait pas le remplacer par simple redéfinition. Le stub est supprimé, la boucle appelle `gate_run` ; elle prend aussi le snapshot `HEAD` pré-spawn dont le scope-guard a besoin (et dont [07] héritera pour le rollback).
+  - `.claude/lib/tracker.sh` + `.claude/lib/tracker-local.sh` — nouvelle opération d'adaptateur `tracker_ids` (8ᵉ). Distinguer un débordement neutre d'un drift exige de savoir **qui d'autre** déclare le chemin ; un glob sur `.scratch/<feature>/issues/` aurait recâblé le backend local dans le gate, ce que l'architecture interdit explicitement. Les backends distants [18] devront la fournir.
+  - `.claude/ralph.config.sh.example` — documentation de `TYPECHECK_CMD=none`.
+  - `test/loop-happy-path.bats` — quatre fakes `claude` écrivaient leur marqueur (`session-cwd`, `status-during-session`, `call-seq`, `session-started`) dans le dépôt-fixture. Le scope-guard les rendait rouges à juste titre. Les marqueurs vivent maintenant hors du dépôt, dans `$RALPH_SHIM_STATE` — ce qu'ils auraient dû faire dès le départ : ce sont des instruments de test, pas du travail de session.
+
+- **`git diff --name-only` seul ne suffit pas, et l'AC le demandait littéralement.** Deux trous, deux tests, deux mutations :
+  1. **Les fichiers non suivis n'apparaissent pas dans un diff.** Or la write-surface d'un ticket neuf est faite précisément de fichiers qui n'existent pas encore : sur les fixtures, un guard sans `git ls-files --others --exclude-standard` ne voit jamais rien et passe vert quoi qu'écrive la session.
+  2. **Une session qui commit son propre débordement échappe au diff du worktree.** La spec prévoit que la session commit ([06]) ; la référence est donc le `HEAD` pré-spawn, pas l'index. Mutation vérifiée : en diffant le worktree, le test « overflow committé » passe au vert.
+
+- **Le bookkeeping de la boucle est exclu du diff.** Claim, `run.log` et flux de session vivent tous dans `.scratch/<feature>/` et sont écrits par la boucle, pas par la session. Sans le filtre, le tout premier gate de tout run est rouge — mutation vérifiée sur le happy-path.
+
+- **Anti-faux-vert : trois portes, pas une.**
+  1. Préflight qui **refuse de démarrer** (exit 2, avant le verrou) si `TEST_CMD` est vide, si `TYPECHECK_CMD` est vide, ou si le projet n'est pas un dépôt git — un scope-guard aveugle est un faux vert permanent.
+  2. `TYPECHECK_CMD=none` est la seule façon de déclarer qu'un projet n'a pas de typecheck. Vide et `none` disaient la même chose dans l'exemple de config ; ce sont deux états différents (personne n'a rempli / quelqu'un a décidé) et un seul autorise le run. Une branche `none` n'est pas déclenchée, donc pas comptée verte non plus.
+  3. **Une branche qui ne rend aucun verdict compte rouge.** Testé en tuant le process de branche (`TEST_CMD='kill -KILL $PPID'`) : aucun code de retour n'est écrit. Un gate qui n'agrège que les branches ayant répondu appellerait ça vert.
+
+  Ce qui reste hors de portée : `TEST_CMD="true"` — une commande qui réussit sans rien exécuter. Aucun code de retour ne la distingue d'une suite verte ; c'est la confirmation forcée de l'installeur [19] qui doit l'attraper.
+
+- **Le parallélisme est testé par rendez-vous, pas au chronomètre.** Chaque branche ne sort verte que si elle voit l'autre déjà démarrée ; en séquence, la première attend un marqueur qui ne peut pas encore exister et échoue. Déterministe, aucune mesure de temps, et la mutation (retirer le `&`) rougit.
+
+- **La classification interne/contractuelle ne vivait d'abord que dans une variable que rien n'observait.** Un test au seam process ne pouvait pas la voir, donc elle n'était pas couverte. La boucle la logge maintenant (`scope overflow on 01-alpha: internal|contract`) et les deux tests l'assertent. Ce que la classe déclenche — retry pour un fichier neutre, escalade sans retry pour un drift — appartient à [07], qui lit `RALPH_GATE_SCOPE_CLASS`.
+
+- **Nouvel outcome de journal `gate-red`**, distinct de `failed` (session crashée) et `over-soft-limit`. Le gate expose aussi `RALPH_GATE_VERDICTS` (`tests=green typecheck=red scope=green`) et `RALPH_GATE_FAILED`, que le reçu d'audit [10] consommera.
+
+- **Pas de timeout de branche.** Une `TEST_CMD` qui pend fait pendre le run — le filet smart-zone ne couvre que la session, pas le gate. À traiter avec les échecs typés [07].
+
+- **Le classement du drift est en O(fichiers hors surface × tickets)**, chaque lecture de champ coûtant un `sed`. Uniquement sur le chemin rouge, donc acceptable ; à revoir si un backend distant fait de `tracker_ids` un appel réseau.
+
+- **Coût sur la suite** : 84 → 106 tests, 52 s → 79 s sur la même machine (~0,62 → ~0,75 s par test). Le gate ajoute trois process et quatre appels git par itération, plus un test de rendez-vous qui poll. Suite verte sous microbats, sous bats-core et sous le bash 3.2 de macOS.
+
+- **15 mutations vérifiées rouges** (branches séquentielles, verdict manquant compté vert, agrégation partielle, chacune des trois portes du préflight, `none` non honoré, non-suivis ignorés, diff sans base, bookkeeping non filtré, pas de classification, surface non déclarée permissive, verdict du gate ignoré par le marquage, outcome non distingué, gate non appelé).

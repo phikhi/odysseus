@@ -9,7 +9,7 @@
 # Exit codes
 #   0  the frontier is empty: nothing left to grind
 #   1  could not start — another run holds the lock
-#   2  no config
+#   2  cannot run: no config, or a config that would make the gate meaningless
 #   4  stopped by a guard: stop requested, iteration cap, or sterile run
 #
 # Kept bash 3.2 compatible: the pack must run on a stock macOS shell.
@@ -127,16 +127,6 @@ loop_result_field() {
     sed -n "s/.*\"$key\":\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p"
 }
 
-# ── the gate ─────────────────────────────────────────────────────────────────
-
-# Stubbed green. The real gate — tests, typecheck, scope-guard, language check,
-# review lenses — arrives with the QA gate ticket. What matters here is that
-# the call site exists and that marking happens on its verdict, not on the
-# session's own say-so.
-loop_gate() {
-  return 0
-}
-
 # ── the run journal ──────────────────────────────────────────────────────────
 
 # Append-only, one line per iteration, never read back to decide anything. The
@@ -153,6 +143,10 @@ loop_journal_append() {
 loop_main() {
   cd "$(ralph_project_root)"
 
+  # Before the lock, and before a single session is spawned: a gate that cannot
+  # prove anything would turn the whole run into a stream of false greens.
+  gate_preflight || exit 2
+
   run_lock_acquire || exit 1
   # Replaces the lock's own signal traps: stopping is a decision the loop
   # makes between iterations, not an immediate teardown.
@@ -160,7 +154,7 @@ loop_main() {
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
-  local iteration=0 sterile=0 ticket outfile rc turns cost tokens outcome
+  local iteration=0 sterile=0 ticket outfile base rc turns cost tokens outcome
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -192,6 +186,9 @@ loop_main() {
 
     loop_log "iteration $iteration: $ticket"
     outfile="$(ralph_feature_dir)/.session.$$.jsonl"
+    # Taken before the spawn: it is what the scope-guard diffs against, and it
+    # is what a rollback will reset to.
+    base="$(gate_snapshot)"
     rc=0
     loop_spawn_session "$ticket" "$outfile" || rc=$?
 
@@ -199,21 +196,36 @@ loop_main() {
     cost="$(loop_result_field "$outfile" total_cost_usd)"
     tokens="$(monitor_peak_tokens "$outfile")"
 
-    if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ] && loop_gate "$ticket"; then
-      tracker_mark_resolved "$ticket"
-      outcome=resolved
-      sterile=0
-    else
-      # Typed failures — budget pause, too-big re-slice, retry-then-escalate —
-      # arrive with the failure-handling ticket. For now the ticket simply goes
-      # back to the frontier and the sterile detector keeps the run bounded.
-      tracker_unclaim "$ticket"
-      if [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
-        outcome=over-soft-limit
-        loop_log "session crossed the ${SOFT_LIMIT_TOKENS}-token soft limit (peak $tokens) — terminated"
+    outcome=""
+    if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ]; then
+      if gate_run "$ticket" "$base"; then
+        tracker_mark_resolved "$ticket"
+        outcome=resolved
+        sterile=0
       else
-        outcome=failed
+        outcome=gate-red
+        # Which kind of overflow it was decides what happens next: a stray
+        # write into a neutral file is a too-narrow declaration and can be
+        # retried, an overflow into another ticket's surface is a scoping
+        # conflict only the discovery can settle. The failure policy consumes
+        # this; the run says it out loud in the meantime.
+        if [ -n "${RALPH_GATE_SCOPE_CLASS:-}" ]; then
+          loop_log "scope overflow on $ticket: $RALPH_GATE_SCOPE_CLASS"
+        fi
       fi
+    elif [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
+      outcome=over-soft-limit
+      loop_log "session crossed the ${SOFT_LIMIT_TOKENS}-token soft limit (peak $tokens) — terminated"
+    else
+      outcome=failed
+    fi
+
+    if [ "$outcome" != resolved ]; then
+      # Typed failures — budget pause, too-big re-slice, retry-then-escalate,
+      # rollback, escalation on scope drift — arrive with the failure-handling
+      # ticket. For now the ticket goes back to the frontier and the sterile
+      # detector keeps the run bounded.
+      tracker_unclaim "$ticket"
       sterile=$((sterile + 1))
     fi
 

@@ -22,10 +22,13 @@ MODEL="${MODEL:-sonnet}"
 
 # ── Objective checks — FORCED CONFIRMATION ───────────────────────────────────
 
-# Full test suite. Must exit non-zero on failure.
+# Full test suite. Must exit non-zero on failure. The loop refuses to start
+# without it: a gate with no test suite is green for the wrong reason.
 TEST_CMD="${TEST_CMD:-}"
 
-# Type/static check. Leave empty only if the project genuinely has none.
+# Type/static check. Set it to `none` — explicitly — if the project genuinely
+# has none. Empty is not the same statement: one is a decision, the other is a
+# config nobody filled in, and only the decision lets the loop start.
 TYPECHECK_CMD="${TYPECHECK_CMD:-}"
 
 # ── Smart-zone net ───────────────────────────────────────────────────────────
