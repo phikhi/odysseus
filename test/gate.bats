@@ -350,3 +350,61 @@ FAKE
   pack_run 'gate_in_surface "src/alpha.txt" "" && echo in || echo out'
   assert_equal "$output" "out"
 }
+
+# ── one iteration is judged on its own writes ────────────────────────────────
+
+@test "an iteration is not charged with what the previous one left in the tree" {
+  use_tickets 01-alpha 02-beta
+  set_config STERILE_K 1
+
+  # Nothing commits a green iteration's work today, so the first ticket's file
+  # is still lying there when the second session starts. Judged against HEAD,
+  # the second iteration inherits it as its own overflow — and gets it called
+  # drift into the very ticket that produced it.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); echo "$n" >"$RALPH_SHIM_STATE/seq"
+mkdir -p src
+case "$n" in
+  1) printf 'alpha\n' >src/alpha.txt ;;
+  2) printf 'beta\n' >src/beta.txt ;;
+esac
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  refute_output_contains "scope=red"
+
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+}
+
+@test "a tree that was already dirty when the run started is not the ticket's doing" {
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  # Someone's work in progress, uncommitted, nothing to do with this ticket.
+  mkdir -p "$PROJECT_DIR/src"
+  printf 'mine\n' >"$PROJECT_DIR/src/wip.txt"
+  printf 'edited\n' >>"$PROJECT_DIR/CONTEXT.md"
+
+  script_session_writing src/alpha.txt
+
+  run_loop
+  assert_success
+  refute_output_contains "src/wip.txt"
+  refute_output_contains "CONTEXT.md"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a scope-guard that cannot read the tree refuses to pass the ticket" {
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  # No baseline, no verdict. Silence here would be a permanent false green.
+  pack_run 'gate__scope_guard 01-alpha "" /dev/null'
+  assert_failure
+  assert_output_contains "could not read the working tree"
+}

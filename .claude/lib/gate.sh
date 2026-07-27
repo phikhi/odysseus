@@ -55,25 +55,35 @@ gate_preflight() {
 
 # ── the diff an iteration is judged on ───────────────────────────────────────
 
-# The commit the iteration starts from. Everything the session leaves behind is
-# measured against it — including what it committed itself, which a plain
-# working-tree diff would not see at all.
-gate_snapshot() {
-  git rev-parse HEAD 2>/dev/null || true
+# Everything in the working tree right now, as a git tree object: tracked or
+# not, committed or not, ignored files aside. Built in a throwaway index, so
+# the real one is untouched.
+#
+# The commit at HEAD would be the obvious baseline and it is the wrong one. A
+# green iteration is not committed by anything today, so its files are still
+# lying in the tree when the next session starts: judged against HEAD, the
+# second iteration of a run inherits the first one's work as its own overflow —
+# and, worse, gets it classified as drift into the ticket that produced it. The
+# same goes for a run started on a tree that was already dirty. A tree object
+# says what was there when this session began, which is the actual question.
+gate_tree_snapshot() {
+  local index tree
+  index="$(mktemp "${TMPDIR:-/tmp}/ralph-index.XXXXXX")" || return 1
+  rm -f "$index"
+  GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1
+  tree="$(GIT_INDEX_FILE="$index" git write-tree 2>/dev/null)" || tree=""
+  rm -f "$index"
+  [ -n "$tree" ] || return 1
+  printf '%s\n' "$tree"
 }
 
+# What this session changed, and only this session. A baseline that is missing
+# is never read as "nothing changed": a guard that cannot see must not pass.
 gate__changed_files() {
-  local base="$1"
-  {
-    if [ -n "$base" ]; then
-      git diff --name-only "$base" -- 2>/dev/null
-    else
-      git diff --name-only -- 2>/dev/null
-    fi
-    # Tracked changes only, above. A brand-new file is the common way to leave
-    # the write-surface, so untracked paths count too.
-    git ls-files --others --exclude-standard --full-name 2>/dev/null
-  } | LC_ALL=C sort -u | gate__drop_bookkeeping
+  local base="$1" now
+  now="$(gate_tree_snapshot)" || now=""
+  [ -n "$base" ] && [ -n "$now" ] || return 1
+  git diff-tree -r --name-only "$base" "$now" 2>/dev/null | gate__drop_bookkeeping
 }
 
 # The loop's own writes are not the session's doing: claiming a ticket rewrites
@@ -138,7 +148,12 @@ gate__surface_owner() {
 # surface can never be assumed to contain anything.
 gate__scope_guard() {
   local ticket="$1" base="$2" classfile="$3"
-  local surface file owner class='' rc=0
+  local surface changed file owner class='' rc=0
+
+  if ! changed="$(gate__changed_files "$base")"; then
+    printf 'the scope-guard could not read the working tree — refusing to pass it\n'
+    return 1
+  fi
 
   surface="$(gate_write_surface "$ticket")"
 
@@ -157,7 +172,7 @@ gate__scope_guard() {
       printf 'wrote %s, outside the declared write-surface\n' "$file"
     fi
   done <<SCOPE
-$(gate__changed_files "$base")
+$changed
 SCOPE
 
   if [ -n "$class" ]; then
