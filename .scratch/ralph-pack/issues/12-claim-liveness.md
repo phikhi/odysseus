@@ -43,3 +43,17 @@
 
 - **Correctif minimal livré le 28/07/2026 (hors ticket, consigné ici) : la boucle constate la perte de son verrou et s'arrête.** `run_lock_is_ours` (state.sh) répond « le verrou enregistré est-il toujours là *et* toujours le mien », et `loop.sh` la consulte en tête de chaque itération, avec les autres gardes — `exit 4`, message explicite. Le faux vert silencieux devient un arrêt lisible. **Ce que ça ne fait pas** : ça ne ferme pas la fenêtre. Entre la suppression du verrou par une session et le contrôle de l'itération suivante, un second run peut démarrer et faire une itération complète. Ce qui rend cette fenêtre non destructrice est le **compare-and-swap** ajouté au même moment sur le commit durable (`git update-ref HEAD <new> <old>`, voir [07]) : deux runs ne peuvent plus s'écraser, même en se chevauchant.
 - **Ce qui reste entier pour ce ticket** : où vit le verrou (le sortir de la zone que les sessions atteignent le rendrait invisible à l'humain qui veut savoir si un run tourne — c'est un arbitrage, pas une évidence), `CLAIM_TTL`, le fail-open, et la course à la reprise de garde périmée décrite plus haut. Le correctif livré ne préempte aucun de ces choix : il transforme un silence en bruit, rien de plus.
+
+- **Sondé par la passe transversale du 28/07/2026 : un run tué laisse un ticket claimed pour toujours, et le run suivant rapporte `exit 0`.** Scénario : `SIGKILL` sur un run pendant une session (le crash, pas l'arrêt gracieux, déjà couvert). Puis le run suivant, celui qu'un opérateur ou un cron lance :
+
+  ```
+  après le kill : 01-alpha = claimed, owner=pid:79495 (mort), lock encore là
+  le run suivant : ralph: taking over a stale run lock (pid 79495)
+                   iteration 1: 02-beta -> resolved
+                   frontier empty after 1 iterations              exit 0
+  01-alpha: claimed        src/alpha.txt: MISSING
+  ```
+
+  **L'asymétrie est la trouvaille** : le *verrou de run* périmé est repris (`state_guard_take` teste `kill -0` sur le pid), le *claim* périmé ne l'est pas — alors que les deux passent par la même primitive `state_guard`. Un ticket sort donc de la frontière définitivement, et `exit 0` signifie « ce run a broyé tout ce qu'il pouvait », ce qui est littéralement vrai et complètement trompeur. Personne ne le voit sans lire le tracker à la main.
+
+  **Correctif minimal séparable de la politique de liveness** (au cas où ce ticket attend) : au moment où la frontière est vide, la boucle distingue « rien à broyer » de « rien d'éligible, mais N tickets sont `claimed` par des processus morts » — même patron que le verrou perdu, on rend le silence bruyant sans décider de la récupération. La récupération elle-même (`CLAIM_TTL`, fail-open, mono-machine) reste le cœur de ce ticket.
