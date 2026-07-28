@@ -474,7 +474,16 @@ failures_make_durable() {
     commit="$(git commit-tree "$newtree" \
       -m "$ticket: iteration delivered (gate green)" 2>/dev/null)" || commit=""
   fi
-  if [ -z "$commit" ] || ! git update-ref -m "ralph: $ticket" HEAD "$commit" 2>/dev/null; then
+  # The old value is passed, so this is a compare-and-swap rather than a write:
+  # git refuses the move if HEAD is no longer where it was read. Without it, two
+  # runs on one repository silently overwrite each other's green iterations — and
+  # a second run is one `rm -rf` on the run lock away, since the lock lives in the
+  # tracker. An empty `$head` means "must not exist yet", which is the right
+  # statement for a repository with no commit. Reported as any refused commit is:
+  # the work is in the tree, and this run is not the one that should decide what
+  # to do about a HEAD it does not recognise.
+  if [ -z "$commit" ] ||
+    ! git update-ref -m "ralph: $ticket" HEAD "$commit" "$head" 2>/dev/null; then
     failures__log "$ticket: could not commit the iteration — it is not durable"
     return 1
   fi

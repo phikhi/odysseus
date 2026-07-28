@@ -6,7 +6,7 @@ Le **pack** (`.claude/**`, `test/**` : code, commentaires, noms de tests, messag
 
 ## Definition of done d'un ticket
 
-Un ticket n'est pas livré parce que la suite est verte. Treize tests de ce dépôt sont passés au vert alors que la propriété qu'ils prétendaient couvrir avait été supprimée — les deux derniers dans le canari lui-même, deux `refute_output_contains` qui visaient la sortie du `run` précédent. Avant d'annoncer vert :
+Un ticket n'est pas livré parce que la suite est verte. Seize tests de ce dépôt sont passés au vert alors que la propriété qu'ils prétendaient couvrir avait été supprimée — dont deux dans le canari lui-même, et trois que le gate de mutation *cachait* parce que sa propre édition cassait le fichier au lieu d'en retirer la garantie. **Le gate qui vérifie les tests peut mentir aussi** : un `ok` obtenu sur un script cassé ne prouve rien. Avant d'annoncer vert :
 
 1. **Muter chaque garantie livrée.** Ajouter une entrée dans `test/mutate.sh` (garantie → édition qui la supprime → test qui doit rougir) et lancer `bash test/mutate.sh`. `VACUOUS` = le test est un mensonge, le réécrire. `DRIFTED` = la ligne porteuse a bougé, revérifier que la garantie est encore portée. Une garantie qu'aucun test ne remarque n'est pas couverte — c'est la trouvaille, pas un détail.
 2. **Ne jamais asserter un succès seul.** `assert_success` sur un run ne prouve rien : asserter ce qui a changé (tickets résolus, fichiers écrits, lignes de journal). Deux bugs ont vécu derrière un `exit 0`.

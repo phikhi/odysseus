@@ -966,6 +966,80 @@ FAKE
   assert_equal "$output" "2"
 }
 
+# ── two runs on one repository ───────────────────────────────────────────────
+
+@test "a run that lost its lock stops instead of grinding beside another one" {
+  # Probed before it was written, and it was alive: a session that deletes the run
+  # lock left the run going with exit 0, every ticket resolved, and not a word
+  # said. From that point a second `loop.sh` starts — the lock directory is simply
+  # gone — and two runs grind one repository, rolling back and committing over
+  # each other. The lock lives in the tracker, the one part of the loop's state a
+  # session can reach, so nothing else was ever going to notice.
+  use_tickets 01-alpha 02-beta
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+rm -rf .scratch/demo/.run.lock
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "the run lock is gone or not ours any more after 1 iterations"
+
+  # The first iteration is not thrown away — it was gated and committed while the
+  # run still held the lock. What stops is everything after it.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta ready-for-agent
+  assert_equal "$(claude_call_count)" "1"
+}
+
+@test "a durable commit never overwrites a HEAD it did not read" {
+  # The window the lock check cannot cover: between reading HEAD and moving it,
+  # another run can commit. Without the old value passed to `update-ref` the move
+  # is a plain write, and one run's green iteration vanishes from the history
+  # while both report `resolved`. Driven with a git that commits underneath us at
+  # exactly that moment — the one way to stand in the window on purpose.
+  use_tickets 01-alpha
+
+  cat >"$SHIM_BIN/git" <<'GITSHIM'
+#!/usr/bin/env bash
+# Transparent, except once: on the commit-tree that precedes the durable commit,
+# a concurrent run gets its commit in first.
+real() { PATH="${PATH#"$RALPH_SHIM_BIN":}" command git "$@"; }
+if [ "$1" = commit-tree ] && [ -f "$RALPH_SHIM_STATE/race-armed" ]; then
+  rm -f "$RALPH_SHIM_STATE/race-armed"
+  printf 'the other run was here\n' >other-run.txt
+  real add -A -- other-run.txt >/dev/null 2>&1
+  real -c user.name=other -c user.email=other@test.invalid \
+    commit -q -m "another run committed here" >/dev/null 2>&1
+fi
+exec_real() { real "$@"; }
+exec_real "$@"
+GITSHIM
+  chmod +x "$SHIM_BIN/git"
+  export RALPH_SHIM_BIN="$SHIM_BIN"
+
+  script_session_writing src/alpha.txt
+  : >"$SHIM_STATE/race-armed"
+
+  run_loop
+  assert_success
+
+  # The iteration says it could not be made durable, rather than saying nothing.
+  assert_output_contains "could not commit the iteration — it is not durable"
+
+  # And the other run's commit is still the tip: it was not overwritten.
+  run git -C "$PROJECT_DIR" log --format='%s' -1
+  assert_output_contains "another run committed here"
+}
+
 # ── when git itself says no ──────────────────────────────────────────────────
 
 @test "a commit git refuses is a warning, not the end of the run" {

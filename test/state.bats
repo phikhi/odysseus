@@ -159,3 +159,24 @@ teardown() {
 
   assert_file_contains "$PROJECT_DIR/artifact.txt" "v1"
 }
+
+# ── the lock a session can delete ────────────────────────────────────────────
+
+@test "run_lock_is_ours tells a lock we hold from one we lost" {
+  pack_run '
+    printf "before=%s\n" "$(run_lock_is_ours && echo yes || echo no)"
+    run_lock_acquire
+    printf "held=%s\n" "$(run_lock_is_ours && echo yes || echo no)"
+    rm -rf "$(ralph_run_lock_path)"
+    printf "deleted=%s\n" "$(run_lock_is_ours && echo yes || echo no)"
+    mkdir -p "$(ralph_run_lock_path)"
+    printf "99999" >"$(ralph_run_lock_path)/pid"
+    printf "stolen=%s\n" "$(run_lock_is_ours && echo yes || echo no)"'
+  assert_success
+  # Nothing recorded is not a lock that was lost: the libs are drivable outside
+  # a run, and asking there must not read as a failure.
+  assert_output_contains "before=yes"
+  assert_output_contains "held=yes"
+  assert_output_contains "deleted=no"
+  assert_output_contains "stolen=no"
+}

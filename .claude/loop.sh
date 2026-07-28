@@ -10,7 +10,8 @@
 #   0  the frontier was drained: this run ground everything it could
 #   1  could not start — another run holds the lock
 #   2  cannot run: no config, or a config that would make the gate meaningless
-#   4  stopped by a guard: stop requested, iteration cap, or sterile run
+#   4  stopped by a guard: stop requested, iteration cap, sterile run, or a run
+#      lock this run no longer holds
 #   5  nothing to grind: the frontier was already empty when the run started
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
@@ -184,6 +185,17 @@ loop_main() {
     fi
     if [ "$sterile" -ge "$STERILE_K" ]; then
       loop_log "sterile run: $sterile iterations resolved nothing — stopping"
+      exit 4
+    fi
+    # The lock is taken once, at the start, and it lives in the tracker — the one
+    # part of the loop's state a session can reach. Losing it is not a nuisance: a
+    # second run starts alongside this one, and two runs grinding one repository
+    # roll back and commit over each other. Stopping loudly is the only honest
+    # answer; carrying on would report a night of work another run may have
+    # overwritten. The compare-and-swap on the durable commit is what makes that
+    # overwrite impossible in the window this check cannot cover.
+    if ! run_lock_is_ours; then
+      loop_log "the run lock is gone or not ours any more after $iteration iterations — stopping rather than grinding beside another run"
       exit 4
     fi
 

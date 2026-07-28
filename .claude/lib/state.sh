@@ -121,3 +121,19 @@ run_lock_release() {
 run_lock_held_by() {
   state_guard_holder "$(ralph_run_lock_path)"
 }
+
+# Whether this process still holds the lock it took.
+#
+# Worth asking more than once, because the lock is the one piece of the loop's
+# state a session can reach: it lives under `.scratch/<feature>/`, which the
+# scope-guard drops as bookkeeping and the rollback leaves alone. A session that
+# deletes it — a stray `rm -rf`, a zealous clean-up — costs nothing visible, and
+# then a second run starts alongside this one.
+#
+# No lock recorded means there is nothing to hold, not a lock that was lost: the
+# libs are drivable outside a run, and that case is not a failure.
+run_lock_is_ours() {
+  local lock="${RALPH_RUN_LOCK:-}"
+  [ -n "$lock" ] || return 0
+  [ "$(state_guard_holder "$lock" 2>/dev/null || echo '')" = "$$" ]
+}

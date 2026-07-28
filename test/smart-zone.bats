@@ -143,17 +143,20 @@ FAKE
 }
 
 @test "the threshold is the configured one, not a hard-coded 150K" {
-  set_config SOFT_LIMIT_TOKENS 20000
-  script_sized_session 9000
+  # Above 150K on purpose, and that is the whole point of the test. An earlier
+  # version used 20000 against a 9015-token session: 9015 is under 20000 *and*
+  # under 150000, so replacing the config read with a hard-coded 150000 changed
+  # nothing and the test stayed green. A threshold test has to sit on the side of
+  # the line the other tests cannot reach.
+  set_config SOFT_LIMIT_TOKENS 300000
+  script_sized_session 200000
 
-  # 9015 crosses a 5000 limit but not a 20000 one: the very same session that
-  # was terminated above must now run to completion.
   run_loop
   assert_success
   refute_output_contains "soft limit"
 
   assert_ticket_status 01-alpha resolved
-  assert_file_contains "$FEATURE_DIR/run.log" "tokens=9015"
+  assert_file_contains "$FEATURE_DIR/run.log" "tokens=200015"
 }
 
 # ── the happy path is untouched ──────────────────────────────────────────────
