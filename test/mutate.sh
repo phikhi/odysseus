@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+# Break one guarantee at a time, and check that the test claiming to cover it
+# turns red.
+#
+# A green suite proves nothing on its own. On this pack, ten tests have passed
+# while the property they claimed to cover was deleted — a test that raced a
+# few microseconds of a truncation window, a test that asserted a log line the
+# loop prints anyway, a test that read an environment variable coming from the
+# developer's shell rather than from the code, a test that renamed a file in a
+# way that changed the answer for the wrong reason. Every one of them was a
+# false green in a pack whose entire job is to refuse false greens.
+#
+# So the mutations are not a habit, they are an artefact. Each entry below names
+# a guarantee, the edit that removes it, and the test that must fail once it is
+# gone. Three outcomes:
+#
+#   ok        the mutation applied and the test went red — the test is real
+#   VACUOUS   the mutation applied and the test stayed green — the test is a lie
+#   DRIFTED   the mutation no longer matches the code — the entry needs updating
+#
+# DRIFTED is not a false alarm to be silenced: it means the line that carried a
+# guarantee moved or disappeared, and nobody re-checked that the guarantee is
+# still carried by something.
+#
+# Usage
+#   bash test/mutate.sh                 every mutation
+#   bash test/mutate.sh -f scope        only those whose label matches
+#   bash test/mutate.sh -l              list them without running anything
+#
+# Adding one, whenever a ticket delivers a guarantee: pick the single line that
+# carries it, write the edit that removes it, name the test that must notice.
+# If no test notices, the guarantee is not covered — that is the finding.
+#
+# Runs the real files in place and restores them from a backup, including on
+# interrupt. Sequential on purpose: the mutations touch the same files.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
+
+BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ralph-mutate.XXXXXX")"
+FILTER=""
+LIST_ONLY=0
+TOTAL=0
+BAD=0
+
+mutate__restore_all() {
+  local saved base
+  for saved in "$BACKUP_DIR"/*.bak; do
+    [ -e "$saved" ] || continue
+    base="$(basename "$saved" .bak)"
+    cp "$saved" "$(cat "$BACKUP_DIR/$base.path")"
+  done
+}
+
+mutate__cleanup() {
+  mutate__restore_all
+  rm -rf "$BACKUP_DIR"
+}
+trap 'mutate__cleanup' EXIT
+trap 'mutate__cleanup; exit 130' INT TERM
+
+# mutation <label> <file> <perl-expression> <test-file> <test-filter>
+mutation() {
+  local label="$1" file="$2" expr="$3" testfile="$4" filter="$5"
+  local key out
+
+  case "$label" in
+    *"$FILTER"*) ;;
+    *) return 0 ;;
+  esac
+
+  if [ "$LIST_ONLY" = 1 ]; then
+    printf '%-46s %s\n' "$label" "$file"
+    return 0
+  fi
+
+  TOTAL=$((TOTAL + 1))
+  key="$(printf '%s' "$file" | tr '/' '_')"
+  cp "$file" "$BACKUP_DIR/$key.bak"
+  printf '%s' "$file" >"$BACKUP_DIR/$key.path"
+
+  perl -0pi -e "$expr" "$file"
+  if diff -q "$BACKUP_DIR/$key.bak" "$file" >/dev/null; then
+    printf 'DRIFTED  %s\n         the edit no longer matches %s\n' "$label" "$file"
+    BAD=$((BAD + 1))
+    return 0
+  fi
+
+  out="$(bash test/run.sh "$testfile" -f "$filter" 2>&1)"
+  cp "$BACKUP_DIR/$key.bak" "$file"
+
+  if printf '%s' "$out" | grep -qE '(^| )0 failures'; then
+    printf 'VACUOUS  %s\n         %s -f "%s" stayed green without it\n' \
+      "$label" "$testfile" "$filter"
+    BAD=$((BAD + 1))
+    return 0
+  fi
+  if printf '%s' "$out" | grep -qE '^0 tests|(^| )0 tests,'; then
+    printf 'DRIFTED  %s\n         no test matches -f "%s" in %s\n' "$label" "$filter" "$testfile"
+    BAD=$((BAD + 1))
+    return 0
+  fi
+  printf 'ok       %s\n' "$label"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -f | --filter)
+      shift
+      FILTER="${1:-}"
+      ;;
+    -l | --list) LIST_ONLY=1 ;;
+    -h | --help)
+      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      printf 'mutate.sh: unknown option %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+LOOP=".claude/loop.sh"
+GATE=".claude/lib/gate.sh"
+MONITOR=".claude/lib/monitor.sh"
+TRACKER=".claude/lib/tracker-local.sh"
+STATE=".claude/lib/state.sh"
+HARNESS="test/helpers/harness.bash"
+
+# ── [01] foundation & harness ────────────────────────────────────────────────
+
+mutation "01 template key ignores file names" "$HARNESS" \
+  's/    printf .%s\\n. "\$files"\n//' \
+  test/smoke.bats "keyed by names"
+
+mutation "01 config keys leak in from the shell" "$HARNESS" \
+  's/^harness__clear_env\(\) \{/harness__clear_env() { return 0;/m' \
+  test/smoke.bats "hermetic"
+
+# ── [02] tracker adapter & state model ───────────────────────────────────────
+
+mutation "02 field values keep their trailing blanks" "$TRACKER" \
+  's/sub\(\/\[\[:space:\]\]\+\$\/, ""\); //' \
+  test/tracker-local.bats "CRLF line endings"
+
+mutation "02 a trailing space is not trimmed either" "$TRACKER" \
+  's/sub\(\/\[\[:space:\]\]\+\$\/, ""\); //' \
+  test/tracker-local.bats "trailing space"
+
+mutation "02 an ambiguous ticket id is guessed" "$TRACKER" \
+  's/  if \[ "\$matches" -gt 1 \]; then/  if false; then/' \
+  test/tracker-local.bats "matching two tickets"
+
+mutation "02 an unambiguous id is refused too" "$TRACKER" \
+  's/  if \[ "\$matches" -gt 1 \]; then/  if [ "$matches" -ge 1 ]; then/' \
+  test/tracker-local.bats "exactly one ticket"
+
+mutation "02 a missing issues directory is silent" "$TRACKER" \
+  's/    printf .tracker: no issues directory[^\n]*\n//' \
+  test/loop-happy-path.bats "no issues"
+
+mutation "02 a blocker that points at nothing is ignored" "$TRACKER" \
+  's/(depfile="[^\n]*)\|\| return 1/$1|| continue/' \
+  test/tracker-local.bats "pointing at nothing"
+
+mutation "02 only the first blocker has to be resolved" "$TRACKER" \
+  's/    \[ "\$\(tracker_local__field_of_file "\$depfile" Status\)" = "resolved" \] \|\| return 1/    [ "$(tracker_local__field_of_file "$depfile" Status)" = "resolved" ] || return 0/' \
+  test/tracker-local.bats "not just the first"
+
+mutation "02 claiming is not a test-and-set" "$TRACKER" \
+  's/  state_guard_take "\$guard" "claim guard" \|\| return 1/  :/' \
+  test/tracker-local.bats "being taken by a live picker"
+
+mutation "02 marking rewrites the ticket in place" "$TRACKER" \
+  's/mv -f "\$work" "\$file"/cat "\$work" >"\$file"; rm -f "\$work"/' \
+  test/tracker-local.bats "publishes by rename"
+
+mutation "02 an atomic write is not atomic" "$STATE" \
+  's/mv -f "\$tmp" "\$dest"/cat "\$tmp" >"\$dest"; rm -f "\$tmp"/' \
+  test/state.bats "publish in one step"
+
+mutation "02 a live lock holder is stolen from" "$STATE" \
+  's/  if \[ -n "\$owner" \] && kill -0 "\$owner" 2>\/dev\/null; then/  if false; then/' \
+  test/state.bats "not stolen"
+
+mutation "02 the lock is never released" "$STATE" \
+  's/^run_lock_release\(\) \{/run_lock_release() { return 0;/m' \
+  test/state.bats "released when the run exits"
+
+# ── [03] the loop ────────────────────────────────────────────────────────────
+
+mutation "03 an empty frontier at the start looks like work done" "$LOOP" \
+  's/      if \[ "\$iteration" -eq 0 \]; then/      if false; then/' \
+  test/loop-happy-path.bats "empty from the start"
+
+mutation "03 a drained frontier looks like nothing to do" "$LOOP" \
+  's/      if \[ "\$iteration" -eq 0 \]; then/      if true; then/' \
+  test/loop-happy-path.bats "this run drained"
+
+mutation "03 FEATURE is not checked before starting" "$LOOP" \
+  's/  if \[ -z "\$\{FEATURE:-\}" \]; then/  if false; then/' \
+  test/loop-happy-path.bats "empty FEATURE"
+
+mutation "03 a tracker that does not exist is not checked" "$LOOP" \
+  's/    if \[ ! -d "\$dir" \]; then/    if false; then/' \
+  test/loop-happy-path.bats "does not exist"
+
+mutation "03 the session decides whether it succeeded" "$LOOP" \
+  's/    if \[ "\$rc" -eq 0 \] && \[ "\$\{RALPH_SOFT_LIMIT_HIT:-0\}" = 0 \]; then/    if true; then/' \
+  test/loop-happy-path.bats "a session that fails resolves nothing"
+
+mutation "03 the sterile counter never resets" "$LOOP" \
+  's/        sterile=0\n      else/        :\n      else/' \
+  test/loop-happy-path.bats "sterile counts consecutive"
+
+mutation "03 the iteration cap does not stop the run" "$LOOP" \
+  's/    if \[ "\$iteration" -ge "\$ITER_CAP" \]; then/    if false; then/' \
+  test/loop-happy-path.bats "iteration cap"
+
+mutation "03 a stop request tears the iteration down" "$LOOP" \
+  's/  trap .loop_request_stop. TERM INT\n//' \
+  test/loop-happy-path.bats "graceful kill"
+
+mutation "03 the ticket is not given back after a failure" "$LOOP" \
+  's/      tracker_unclaim "\$ticket"\n//' \
+  test/loop-happy-path.bats "a session that fails resolves nothing"
+
+mutation "03 sessions are resumed instead of fresh" "$LOOP" \
+  's/claude -p /claude -p --continue /' \
+  test/loop-happy-path.bats "no --continue"
+
+# ── [04] the smart-zone net ──────────────────────────────────────────────────
+
+mutation "04 auto-compact is not turned off for the session" "$LOOP" \
+  's/DISABLE_AUTO_COMPACT=1 claude/claude/' \
+  test/smart-zone.bats "auto-compact is off"
+
+mutation "04 crossing the soft limit does not kill the session" "$MONITOR" \
+  's/        kill -TERM "\$pid" 2>\/dev\/null\n//' \
+  test/smart-zone.bats "is terminated"
+
+mutation "04 a session that survives its SIGTERM counts as resolved" "$LOOP" \
+  's/ && \[ "\$\{RALPH_SOFT_LIMIT_HIT:-0\}" = 0 \]//' \
+  test/smart-zone.bats "survives its SIGTERM"
+
+mutation "04 cached tokens do not count toward the window" "$MONITOR" \
+  's/  for key in input_tokens cache_creation_input_tokens cache_read_input_tokens output_tokens; do/  for key in input_tokens output_tokens; do/' \
+  test/smart-zone.bats "counts cached tokens"
+
+mutation "04 a key matches a longer key" "$MONITOR" \
+  's/\{line##\*\\"\$2\\":\}/{line##*\$2\\":}/' \
+  test/smart-zone.bats "counts cached tokens"
+
+mutation "04 a partial stream line is dropped" "$MONITOR" \
+  's/\{ partial="\$partial\$line"; false; \}/{ partial=""; false; }/' \
+  test/smart-zone.bats "split across two writes"
+
+mutation "04 the threshold is hard-coded" "$LOOP" \
+  's/  monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/  monitor_watch "$outfile" "$pid" 150000/' \
+  test/smart-zone.bats "not a hard-coded"
+
+# ── [05] the objective gate ──────────────────────────────────────────────────
+
+mutation "05 the gate branches run in sequence" "$GATE" \
+  's/\(gate__branch "\$dir" "\$name" "\$\@"\) &/($1)/' \
+  test/gate.bats "concurrently"
+
+mutation "05 a branch with no verdict counts green" "$GATE" \
+  's/if \[ "\$brc" = 0 \]; then/if [ "$brc" = 0 ] || [ -z "$brc" ]; then/' \
+  test/gate.bats "no verdict"
+
+mutation "05 only the tests branch is aggregated" "$GATE" \
+  's/  for name in \$names; do/  for name in tests; do/' \
+  test/gate.bats "type check resolves nothing"
+
+mutation "05 an empty TEST_CMD is accepted" "$GATE" \
+  's/    printf .ralph: TEST_CMD is empty[^\n]*\n    rc=1/    :/' \
+  test/gate.bats "empty TEST_CMD"
+
+mutation "05 an empty TYPECHECK_CMD is accepted" "$GATE" \
+  's/    printf .ralph: TYPECHECK_CMD is empty[^\n]*\n    rc=1/    :/' \
+  test/gate.bats "empty TYPECHECK_CMD"
+
+mutation "05 a project outside git is accepted" "$GATE" \
+  's/  if ! git rev-parse --git-dir/  if false \&\& ! git rev-parse --git-dir/' \
+  test/gate.bats "no git repository"
+
+mutation "05 'none' is treated as a command to run" "$GATE" \
+  's/ && \[ "\$TYPECHECK_CMD" != none \]//' \
+  test/gate.bats "genuinely has no type check"
+
+mutation "05 the loop's own writes trip the scope-guard" "$GATE" \
+  's/ \| gate__drop_bookkeeping//' \
+  test/gate.bats "stays inside its write-surface"
+
+mutation "05 drift is not told apart from a stray write" "$GATE" \
+  's/^gate__surface_owner\(\) \{/gate__surface_owner() { return 1;/m' \
+  test/gate.bats "named as drift"
+
+mutation "05 an undeclared write-surface allows everything" "$GATE" \
+  's/^gate_write_surface\(\) \{/gate_write_surface() { printf "*\\\\n"; return 0;/m' \
+  test/gate.bats "no write-surface may not write"
+
+mutation "05 the scope-guard baseline is the last commit" "$LOOP" \
+  's/    base="\$\(gate_tree_snapshot\)" \|\| base=""/    base="$(git rev-parse HEAD)"/' \
+  test/gate.bats "previous one left in the tree"
+
+mutation "05 a tree dirty before the run is charged to the ticket" "$LOOP" \
+  's/    base="\$\(gate_tree_snapshot\)" \|\| base=""/    base="$(git rev-parse HEAD)"/' \
+  test/gate.bats "already dirty when the run started"
+
+mutation "05 a blind scope-guard passes the ticket" "$GATE" \
+  's/  \[ -n "\$base" \] && \[ -n "\$now" \] \|\| return 1/  [ -n "$now" ] || return 0/' \
+  test/gate.bats "cannot read the tree"
+
+mutation "05 the tree is not re-read after the session" "$GATE" \
+  's/  now="\$\(gate_tree_snapshot\)" \|\| now=""/  now="$base"/' \
+  test/gate.bats "new file outside"
+
+mutation "05 the snapshot ignores untracked files" "$GATE" \
+  's/  GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1/  GIT_INDEX_FILE="$index" git read-tree HEAD >\/dev\/null 2>\&1; GIT_INDEX_FILE="$index" git add -u >\/dev\/null 2>\&1/' \
+  test/gate.bats "new file outside"
+
+mutation "05 the tree diff is not recursive" "$GATE" \
+  's/git diff-tree -r --name-only/git diff-tree --name-only/' \
+  test/gate.bats "new file outside"
+
+mutation "05 the gate verdict does not decide the marking" "$LOOP" \
+  's/      if gate_run "\$ticket" "\$base"; then/      if gate_run "$ticket" "$base" || true; then/' \
+  test/gate.bats "red test suite resolves nothing"
+
+mutation "05 a red gate is journalled as a plain failure" "$LOOP" \
+  's/        outcome=gate-red/        outcome=failed/' \
+  test/gate.bats "journalled as such"
+
+mutation "05 the scope class is never said out loud" "$LOOP" \
+  's/          loop_log "scope overflow on \$ticket: \$RALPH_GATE_SCOPE_CLASS"\n//' \
+  test/gate.bats "named as drift"
+
+# ── the canary ───────────────────────────────────────────────────────────────
+
+mutation "canary a hostile world still has to come out green" "$GATE" \
+  's/^gate_write_surface\(\) \{/gate_write_surface() { printf "nothing\\\\n"; return 0;/m' \
+  test/canary.bats "all resolved"
+
+if [ "$LIST_ONLY" = 1 ]; then
+  exit 0
+fi
+
+printf '\n%s mutations, %s not ok\n' "$TOTAL" "$BAD"
+[ "$BAD" -eq 0 ]

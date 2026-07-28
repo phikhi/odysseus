@@ -76,16 +76,30 @@ LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
 }
 
 @test "the environment is hermetic: an exported config key does not leak in" {
-  # Every key is written KEY="${KEY:-default}", so a developer with MODEL or
-  # DISABLE_AUTO_COMPACT exported would otherwise be testing their shell.
+  # Every key is written KEY="${KEY:-default}", so an exported value wins over
+  # the file — and a developer with STERILE_K or SOFT_LIMIT_TOKENS in their
+  # shell would silently be testing their shell instead of the pack.
+  #
+  # The keys probed here are the ones no test overwrites afterwards. MODEL and
+  # DISABLE_AUTO_COMPACT cannot leak whatever the harness does — the config
+  # assigns one unconditionally and the loop sets the other on the spawn — so
+  # asserting on those two alone proved nothing.
   harness_teardown
   export MODEL=leaked-model
   export DISABLE_AUTO_COMPACT=leaked-value
+  export ITER_CAP=1
+  export SOFT_LIMIT_TOKENS=1
   harness_setup
-  use_tickets 01-alpha
+  use_tickets 01-alpha 02-beta
 
   run_loop
   assert_success
+
+  # A leaked ITER_CAP=1 would stop the run after one iteration; a leaked
+  # SOFT_LIMIT_TOKENS=1 would terminate every session on its first event.
+  assert_output_contains "frontier empty after 2 iterations"
+  refute_output_contains "soft limit"
+  assert_ticket_status 02-beta resolved
 
   run claude_call_argv 1
   refute_output_contains "leaked-model"

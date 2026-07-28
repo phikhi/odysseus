@@ -128,10 +128,22 @@ teardown() {
 }
 
 @test "atomic writes publish in one step and leave no temp behind" {
-  pack_run 'printf "%s\n" "published" | state_atomic_write "$(ralph_project_root)/artifact.txt"'
+  pack_run 'printf "%s\n" "v1" | state_atomic_write "$(ralph_project_root)/artifact.txt"'
   assert_success
+  assert_file_contains "$PROJECT_DIR/artifact.txt" "v1"
+  before="$(ls -i "$PROJECT_DIR/artifact.txt" | awk '{print $1}')"
 
-  assert_file_contains "$PROJECT_DIR/artifact.txt" "published"
+  pack_run 'printf "%s\n" "v2" | state_atomic_write "$(ralph_project_root)/artifact.txt"'
+  assert_success
+  assert_file_contains "$PROJECT_DIR/artifact.txt" "v2"
+
+  # The inode is the whole assertion. Rewriting in place keeps it, and keeping
+  # it is exactly what lets a reader catch the file half-written; publishing by
+  # rename replaces it, so a reader sees v1 or v2 and never anything else.
+  # Asserting only "the content is there, no temp left" says nothing: a plain
+  # truncate-and-write satisfies both.
+  after="$(ls -i "$PROJECT_DIR/artifact.txt" | awk '{print $1}')"
+  [ "$before" != "$after" ] || fail "published in place, inode unchanged ($after)"
 
   run bash -c "ls '$PROJECT_DIR' | grep 'artifact.txt.tmp' || true"
   assert_equal "$output" ""

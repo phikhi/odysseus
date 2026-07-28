@@ -87,9 +87,16 @@ bash test/run.sh                       # toute la suite
 bash test/run.sh test/smoke.bats       # un fichier
 bash test/run.sh -f "frontier"         # par motif
 bash test/run.sh --bats                # via bats-core, s'il est installé
+
+bash test/mutate.sh                    # le gate de mutation (~2 min)
+bash test/mutate.sh -l                 # lister les garanties couvertes
 ```
 
 Aucune dépendance : le runner (`test/helpers/microbats.bash`) interprète la syntaxe bats en bash pur, et les mêmes fichiers restent lisibles par bats-core. La suite est vérifiée sans node ni homebrew sur le `PATH`.
+
+`test/mutate.sh` est le gate qui compte : il supprime une garantie à la fois et vérifie que le test censé la couvrir rougit. Onze tests de ce dépôt sont passés au vert alors que la propriété qu'ils prétendaient couvrir avait été supprimée — un test qui courait après une fenêtre de quelques microsecondes, un test qui assertait un message que la boucle imprime de toute façon, un test qui lisait le shell du développeur plutôt que le code. Un `VACUOUS` est un faux vert dans un pack dont le métier est de refuser les faux verts.
+
+`test/canary.bats` est l'autre : un run de trois itérations contre le monde tel qu'il est — sessions qui écrivent vraiment leur write-surface, une qui commit tout, une dont le flux arrive coupé au milieu d'une ligne, par-dessus un tracker en CRLF, déjà sale et portant le claim de quelqu'un d'autre. Presque tous les défauts livrés jusqu'ici vivaient dans l'écart entre un fake trop coopératif et une vraie session.
 
 Les tests pilotent les **vrais scripts comme des process**, dans un environnement entièrement injecté — tracker jetable en tmpdir, `claude`/`curl`/`at` remplacés par des shims scriptables, commandes de test stubbées — et n'observent que l'état du tracker et les fichiers produits. Le flux du faux `claude` est calqué sur une capture réelle : le filet smart-zone et le budget lisent ce flux, un flux inventé les ferait concevoir contre une fiction.
 

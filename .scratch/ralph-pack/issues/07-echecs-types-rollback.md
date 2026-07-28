@@ -21,3 +21,10 @@
 - Le scope-guard, lui, ne dépend plus de ce commit : il compare deux snapshots d'arbre pris autour de la session ([05] a dû le corriger après coup, voir ses commentaires). Mais il reste un `git rev-parse HEAD` pré-spawn à prendre **ici**, pour le rollback — un objet tree n'est pas un commit et ne se `reset --hard` pas.
 - **Ce que [05] laisse à câbler ici** : `RALPH_GATE_SCOPE_CLASS` vaut `internal` (write-surface trop étroite → retry-N) ou `contract` (débordement dans la write-surface d'un autre ticket → escalade directe `ready-for-human`, sans consommer de retry, conformément à la décision de discovery [19]). La boucle logge la classe aujourd'hui ; personne n'agit dessus.
 - **Trou connu à couvrir** : aucune branche du gate n'a de timeout. Une `TEST_CMD` qui pend fait pendre le run indéfiniment — le filet smart-zone ne surveille que la session. Un échec par timeout est un échec typé de plus.
+- [ ] Le débordement d'une tentative ratée n'est plus absous à la tentative suivante (test `skip` du canari levé).
+
+- **Faille vivante trouvée par le canari hostile, à refermer ici.** Sans rollback, une session peut **battre le scope-guard en échouant une fois**. Reproduit : une session qui écrit `src/rogue.txt` hors de sa write-surface est rouge à l'itération 1 ; le fichier reste dans l'arbre ; à l'itération 2 sur le même ticket, il fait partie de la référence pré-spawn, donc n'est plus imputé — et si la session refait exactement la même chose, le diff est vide et le gate passe **vert**. Ticket `resolved`, fichier fautif toujours là, `exit 0`.
+
+  Non corrigeable depuis le gate : tout ce qui marcherait (mémoriser les débordements entre tentatives, refuser la remise en frontière) duplique la politique d'échec de ce ticket. La cause est qu'aucun mécanisme ne remet l'arbre en état après un gate rouge.
+
+  Le test existe déjà, marqué `skip` dans `test/canary.bats` (« an overflow is not absolved by having already failed once ») : **le lever est un critère d'acceptation de ce ticket**.

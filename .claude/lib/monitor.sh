@@ -27,13 +27,19 @@
 # of times, against the very session and test suite they are competing with.
 
 # Sets MONITOR_INT to the integer value of a flat JSON key, or to nothing if the
-# key is absent. Anchored on `{` or `,` so a key never matches a longer one —
-# "input_tokens" must not match "cache_read_input_tokens".
+# key is absent. The opening quote is what makes a key never match a longer one:
+# "input_tokens" must not be found inside "cache_read_input_tokens", and there
+# the preceding character is an underscore rather than a quote.
+#
+# The match is the *last* occurrence, so a key quoted inside a tool result
+# cannot shadow the real field — and being inside a string, its quotes are
+# escaped anyway, which is why anchoring on `{` or `,` as well was unreachable
+# defense: no test could distinguish it, so it is gone.
 #
 # Parameter expansion, not sed: this runs once per key per stream line.
 monitor__int() {
   local line="$1" rest
-  rest="${line##*[,{]\"$2\":}"
+  rest="${line##*\"$2\":}"
   if [ "$rest" = "$line" ]; then
     MONITOR_INT=""
     return 0
