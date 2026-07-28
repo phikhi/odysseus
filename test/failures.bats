@@ -574,6 +574,100 @@ FAKE
   assert_equal "$output" "1"
 }
 
+# ── a session that writes the tracker itself ─────────────────────────────────
+#
+# The one write nothing else catches: the scope-guard drops `.scratch/<feature>/`
+# as the loop's own bookkeeping and the rollback leaves it alone, so a ticket a
+# session writes by hand used to survive and join the frontier — with whatever
+# write-surface it had granted itself.
+
+@test "a delivery session does not get to put its own tickets on the frontier" {
+  use_tickets 01-alpha
+  set_config STERILE_K 2
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src .scratch/demo/issues
+printf 'written\n' >src/alpha.txt
+cat >.scratch/demo/issues/50-self-served.md <<'TICKET'
+# 50 — Self served
+
+**Blocked by:** None
+
+**Write-surface:** `src/anything.txt`
+
+**Status:** ready-for-agent
+
+- [ ] whatever this session felt like doing next
+TICKET
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_output_contains "the session wrote the tracker itself — quarantined 50-self-served"
+
+  # Its own work still stands or falls on the gate — this is a separate matter.
+  assert_ticket_status 01-alpha resolved
+
+  # The ticket it granted itself waits for a human, and was never ground.
+  assert_ticket_status 50-self-served ready-for-human
+  assert_equal "$(ticket_field 50-self-served Escalation)" "decision"
+  refute_file_exists "$PROJECT_DIR/src/anything.txt"
+  assert_equal "$(claude_call_count)" "1"
+
+  # And the ticket that let it happen says so.
+  assert_file_contains "$(ticket_file 01-alpha)" "wrote these tickets into the tracker itself"
+}
+
+@test "a planning session that writes tickets has its whole plan refused" {
+  use_tickets 07-overlaps-alpha
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 2
+
+  # A plan that is perfectly sound, alongside a ticket it published on its own.
+  # Sound or not, the output of a session that wrote the tracker is not read.
+  script_too_big_then <<'FAKE'
+mkdir -p .scratch/demo/issues
+cat >.scratch/demo/issues/50-self-served.md <<'TICKET'
+# 50 — Self served
+
+**Blocked by:** None
+
+**Write-surface:** `src/anything.txt`
+
+**Status:** ready-for-agent
+
+- [ ] whatever this session felt like doing next
+TICKET
+plan="$(printf '%s' "$prompt" | sed -n 's/^Write the plan to \([^,]*\),.*/\1/p' | head -1)"
+cat >"$plan" <<'PLAN'
+--- ticket: alpha-half | The alpha half ---
+**Write-surface:** `src/alpha.txt`
+
+- [ ] the alpha half exists
+--- ticket: eta-half | The eta half ---
+**Write-surface:** `src/eta.txt`
+
+- [ ] the eta half exists
+PLAN
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.01}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_output_contains "the session wrote the tracker itself"
+
+  assert_ticket_status 50-self-served ready-for-human
+  assert_ticket_status 07-overlaps-alpha ready-for-human
+  assert_equal "$(ticket_field 07-overlaps-alpha Escalation)" "too-big"
+
+  # The plan was not read: no half was created, however sound it looked.
+  refute_file_exists "$(ticket_file 08-alpha-half)"
+  run bash -c "ls '$TRACKER_DIR' | awk 'END { print NR }'"
+  assert_equal "$output" "2"
+}
+
 # ── when git itself says no ──────────────────────────────────────────────────
 
 @test "a commit git refuses is a warning, not the end of the run" {

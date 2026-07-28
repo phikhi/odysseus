@@ -111,6 +111,56 @@ failures_handle() {
   return 0
 }
 
+# ── tickets a session granted itself ─────────────────────────────────────────
+#
+# Both prompts forbid a session from writing the tracker, and until now that was
+# the whole of the enforcement. Nothing else could see it: the scope-guard drops
+# `.scratch/<feature>/` as the loop's own bookkeeping, and the rollback leaves it
+# alone on purpose — so a ticket a session wrote by hand survived the iteration
+# and joined the frontier, carrying whatever write-surface it had granted itself.
+# A run would then grind work nobody asked for, inside a surface nobody checked.
+#
+# The tracker is a set of ids, so the check is a set difference around the spawn.
+
+# The ids the tracker holds right now, space-delimited and space-fenced so that a
+# `case` can ask whether one is in it.
+failures_tracker_snapshot() {
+  printf ' %s' "$(tracker_ids | tr '\n' ' ')"
+}
+
+# Ids that were not there before. Not "tickets the loop created": the loop's own
+# creations happen after this check, on purpose.
+failures__strays() {
+  local seen="$1 " id
+  for id in $(tracker_ids); do
+    case "$seen" in
+      *" $id "*) continue ;;
+    esac
+    printf '%s\n' "$id"
+  done
+  return 0
+}
+
+# Anything the session added to the tracker goes to the human sink rather than to
+# the frontier: it has been through none of the checks a ticket owes the loop —
+# no write-surface validated, no acceptance criteria, no discovery. Returns
+# non-zero when there was something to quarantine, so a caller that was reading
+# the session's output can stop reading it.
+failures_quarantine_strays() {
+  local ticket="$1" seen="$2" strays stray
+  strays="$(failures__strays "$seen")"
+  [ -n "$strays" ] || return 0
+
+  for stray in $strays; do
+    tracker_mark_escalated "$stray" decision || true
+  done
+  printf 'The %s session wrote these tickets into the tracker itself: %s. Nothing validated their write-surface or their acceptance criteria, so they are waiting for a human instead of sitting on the frontier.\n' \
+    "$ticket" "$(printf '%s' "$strays" | tr '\n' ' ' | sed 's/ *$//; s/ /, /g')" |
+    tracker_append_note "$ticket" || true
+  failures__log "$ticket: the session wrote the tracker itself — quarantined $(printf '%s' "$strays" | tr '\n' ' ' | sed 's/ *$//')"
+  return 1
+}
+
 # ── rollback ─────────────────────────────────────────────────────────────────
 
 # Put the repository back where the session found it, and no further.
@@ -327,7 +377,7 @@ failures_make_durable() {
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head prev_soft rc=0
+  local plan out base head seen prev_soft rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -338,6 +388,7 @@ failures_reslice() {
 
   base="$(gate_tree_snapshot)" || base=""
   head="$(git rev-parse HEAD 2>/dev/null)" || head=""
+  seen="$(failures_tracker_snapshot)"
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
 
   failures__reslice_prompt "$ticket" "$plan" >"$plan.prompt"
@@ -351,6 +402,14 @@ failures_reslice() {
   # A planning session has no write-surface, so nothing it left in the
   # repository is wanted — including the plan, if it ignored the instructions.
   failures_rollback "$head" "$base" '' >/dev/null 2>&1 || true
+
+  # And the plan is refused whole if it created tickets instead of returning one.
+  # A session that writes the tracker has stepped past the only check that cannot
+  # be redone afterwards, so the rest of what it produced is not worth reading.
+  if ! failures_quarantine_strays "$ticket" "$seen"; then
+    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    return 1
+  fi
 
   if [ "$rc" != 0 ] || [ ! -s "$plan" ]; then
     failures__log "$ticket: no re-slice plan came back"
