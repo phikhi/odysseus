@@ -431,8 +431,12 @@ mutation "07 the durable commit takes the whole tree, not what the gate approved
   test/failures.bats "nothing else is"
 
 mutation "07 the durable commit does not move the branch" "$FAILURES" \
-  's/ \|\| ! git update-ref -m "ralph: \$ticket" HEAD "\$commit" 2>\/dev\/null//' \
+  's/ \|\|\n    ! git update-ref -m "ralph: \$ticket" HEAD "\$commit" "\$head" 2>\/dev\/null//' \
   test/failures.bats "nothing else is"
+
+mutation "07 the durable commit is a write, not a compare-and-swap" "$FAILURES" \
+  's/HEAD "\$commit" "\$head" 2>\/dev\/null/HEAD "\$commit" 2>\/dev\/null/' \
+  test/failures.bats "never overwrites a HEAD"
 
 mutation "07 a session's own tickets reach the frontier" "$LOOP" \
   's/    failures_quarantine_strays "\$ticket" "\$seen" \|\| true\n//' \
@@ -519,6 +523,16 @@ mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" 
 mutation "21 a session's own commit survives its green gate" "$FAILURES" \
   's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "$ticket: the session committed/' \
   test/failures.bats "green gate either"
+
+# ── [12] the run lock a session can delete ───────────────────────────────────
+
+mutation "12 a run lock this run no longer holds goes unnoticed" "$LOOP" \
+  's/    if ! run_lock_is_ours; then\n      loop_log "the run lock is gone or not ours any more after \$iteration iterations — stopping rather than grinding beside another run"\n      exit 4\n    fi\n//' \
+  test/failures.bats "lost its lock"
+
+mutation "12 a lock that was deleted still counts as ours" "$STATE" \
+  's/^run_lock_is_ours\(\) \{/run_lock_is_ours() { return 0;/m' \
+  test/state.bats "tells a lock we hold"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
