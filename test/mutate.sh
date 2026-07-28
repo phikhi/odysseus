@@ -2,19 +2,25 @@
 # Break one guarantee at a time, and check that the test claiming to cover it
 # turns red.
 #
-# A green suite proves nothing on its own. On this pack, thirteen tests have
-# passed while the property they claimed to cover was deleted — a test that raced
-# a few microseconds of a truncation window, a test that asserted a log line the
-# loop prints anyway, a test that read an environment variable coming from the
-# developer's shell rather than from the code, a test that renamed a file in a
-# way that changed the answer for the wrong reason, and two refutations in the
-# canary that were reading the output of the previous `run` rather than the
-# loop's. Every one of them was a false green in a pack whose entire job is to
+# A green suite proves nothing on its own. On this pack, sixteen tests have passed
+# while the property they claimed to cover was deleted — a test that raced a few
+# microseconds of a truncation window, a test that asserted a log line the loop
+# prints anyway, a test that read an environment variable coming from the
+# developer's shell rather than from the code, a test that renamed a file in a way
+# that changed the answer for the wrong reason, two refutations in the canary that
+# were reading the output of the previous `run`, and a threshold test comparing
+# against a value on the same side of the line as the constant it was meant to
+# rule out. Every one of them was a false green in a pack whose entire job is to
 # refuse false greens.
 #
-# That last pair is worth knowing before writing an assertion here: every `run`
-# overwrites $output, so a negative assertion aimed at the wrong one can never
-# fail. Keep the output you mean to assert on in a variable of its own.
+# Two of those are worth knowing before writing anything here:
+#
+#   - every `run` overwrites $output, so a negative assertion aimed at the wrong
+#     one can never fail. Keep the output you mean to assert on in a variable.
+#   - this file lied too. Twelve entries carried an unescaped `$var` in their
+#     replacement half, which perl interpolates to nothing: they broke the file
+#     instead of removing the guarantee, reported `ok`, and hid three vacuous
+#     tests underneath. A gate that checks tests is a test. Hence BROKEN below.
 #
 # So the mutations are not a habit, they are an artefact. Each entry below names
 # a guarantee, the edit that removes it, and the test that must fail once it is
@@ -23,6 +29,10 @@
 #   ok        the mutation applied and the test went red — the test is real
 #   VACUOUS   the mutation applied and the test stayed green — the test is a lie
 #   DRIFTED   the mutation no longer matches the code — the entry needs updating
+#   BROKEN    the mutation is not a mutation: it does not compile, or it left a
+#             file that no longer parses. An `ok` earned that way proves the suite
+#             notices a broken script, not that it covers anything. Escape every
+#             `$` in both halves of the expression — `\$idx`, never `$idx`.
 #
 # DRIFTED is not a false alarm to be silenced: it means the line that carried a
 # guarantee moved or disappeared, and nobody re-checked that the guarantee is
@@ -86,12 +96,41 @@ mutation() {
   cp "$file" "$BACKUP_DIR/$key.bak"
   printf '%s' "$file" >"$BACKUP_DIR/$key.path"
 
-  perl -0pi -e "$expr" "$file"
+  # -Mstrict is load-bearing, not tidiness. A `$var` left unescaped in the
+  # replacement half is a perl variable, and perl interpolates it to nothing —
+  # silently. The mutation then *breaks* the script instead of removing the
+  # guarantee, every test rushes red, and the entry reads `ok` while proving only
+  # that the suite notices a broken file. One of these shipped and was caught by
+  # the one case where a blanked variable happened to be harmless. Under strict,
+  # perl refuses to compile and writes nothing.
+  if ! perl -Mstrict -0pi -e "$expr" "$file" 2>"$BACKUP_DIR/$key.perl"; then
+    printf 'BROKEN   %s\n         the edit is not a valid mutation: %s\n' \
+      "$label" "$(head -1 "$BACKUP_DIR/$key.perl")"
+    BAD=$((BAD + 1))
+    cp "$BACKUP_DIR/$key.bak" "$file"
+    return 0
+  fi
   if diff -q "$BACKUP_DIR/$key.bak" "$file" >/dev/null; then
     printf 'DRIFTED  %s\n         the edit no longer matches %s\n' "$label" "$file"
     BAD=$((BAD + 1))
     return 0
   fi
+
+  # And what strict cannot see: perl's special variables ($(, $1, $&) are legal
+  # under strict and interpolate to nonsense. A mutation is supposed to remove a
+  # guarantee, never to produce a file that no longer parses — that would make any
+  # test go red for the wrong reason.
+  case "$file" in
+    *.sh | *.bash)
+      if ! bash -n "$file" 2>"$BACKUP_DIR/$key.syntax"; then
+        printf 'BROKEN   %s\n         the mutated %s no longer parses: %s\n' \
+          "$label" "$file" "$(head -1 "$BACKUP_DIR/$key.syntax")"
+        BAD=$((BAD + 1))
+        cp "$BACKUP_DIR/$key.bak" "$file"
+        return 0
+      fi
+      ;;
+  esac
 
   out="$(bash test/run.sh "$testfile" -f "$filter" 2>&1)"
   cp "$BACKUP_DIR/$key.bak" "$file"
@@ -163,7 +202,7 @@ mutation "02 an ambiguous ticket id is guessed" "$TRACKER" \
   test/tracker-local.bats "matching two tickets"
 
 mutation "02 an unambiguous id is refused too" "$TRACKER" \
-  's/  if \[ "\$matches" -gt 1 \]; then/  if [ "$matches" -ge 1 ]; then/' \
+  's/  if \[ "\$matches" -gt 1 \]; then/  if [ "\$matches" -ge 1 ]; then/' \
   test/tracker-local.bats "exactly one ticket"
 
 mutation "02 a missing issues directory is silent" "$TRACKER" \
@@ -175,7 +214,7 @@ mutation "02 a blocker that points at nothing is ignored" "$TRACKER" \
   test/tracker-local.bats "pointing at nothing"
 
 mutation "02 only the first blocker has to be resolved" "$TRACKER" \
-  's/    \[ "\$\(tracker_local__field_of_file "\$depfile" Status\)" = "resolved" \] \|\| return 1/    [ "$(tracker_local__field_of_file "$depfile" Status)" = "resolved" ] || return 0/' \
+  's/    \[ "\$\(tracker_local__field_of_file "\$depfile" Status\)" = "resolved" \] \|\| return 1/    [ "\$(tracker_local__field_of_file "\$depfile" Status)" = "resolved" ] || return 0/' \
   test/tracker-local.bats "not just the first"
 
 mutation "02 claiming is not a test-and-set" "$TRACKER" \
@@ -267,17 +306,17 @@ mutation "04 a partial stream line is dropped" "$MONITOR" \
   test/smart-zone.bats "split across two writes"
 
 mutation "04 the threshold is hard-coded" "$SESSION" \
-  's/  monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/  monitor_watch "$outfile" "$pid" 150000/' \
+  's/  monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/  monitor_watch "\$outfile" "\$pid" 150000/' \
   test/smart-zone.bats "not a hard-coded"
 
 # ── [05] the objective gate ──────────────────────────────────────────────────
 
 mutation "05 the gate branches run in sequence" "$GATE" \
-  's/\(gate__branch "\$dir" "\$name" "\$\@"\) &/($1)/' \
+  's/  \(gate__branch "\$dir" "\$name" "\$\@"\) &/  (gate__branch "\$dir" "\$name" "\$\@") \& wait \$!/' \
   test/gate.bats "concurrently"
 
 mutation "05 a branch with no verdict counts green" "$GATE" \
-  's/if \[ "\$brc" = 0 \]; then/if [ "$brc" = 0 ] || [ -z "$brc" ]; then/' \
+  's/if \[ "\$brc" = 0 \]; then/if [ "\$brc" = 0 ] || [ -z "\$brc" ]; then/' \
   test/gate.bats "no verdict"
 
 mutation "05 only the tests branch is aggregated" "$GATE" \
@@ -320,8 +359,14 @@ mutation "05 a tree dirty before the run is charged to the ticket" "$LOOP" \
   's/    base="\$\(gate_tree_snapshot\)" \|\| base=""/    base="$(git rev-parse HEAD)"/' \
   test/gate.bats "already dirty when the run started"
 
+# Aimed at the function and not at its guard line, deliberately. Blanking the
+# `[ -n "$base" ] && [ -n "$now" ] || return 1` line leaves the test green,
+# because the guarantee is carried twice: that line, and `pipefail` plus a git
+# that refuses an empty tree argument. No mutation can isolate the line while the
+# second mechanism stands, so the entry names the guarantee — a scope-guard that
+# cannot see must not pass — rather than the line.
 mutation "05 a blind scope-guard passes the ticket" "$GATE" \
-  's/  \[ -n "\$base" \] && \[ -n "\$now" \] \|\| return 1/  [ -n "$now" ] || return 0/' \
+  's/^gate_changed_files\(\) \{/gate_changed_files() { return 0;/m' \
   test/gate.bats "cannot read the tree"
 
 mutation "05 the tree is not re-read after the session" "$GATE" \
@@ -329,7 +374,7 @@ mutation "05 the tree is not re-read after the session" "$GATE" \
   test/gate.bats "new file outside"
 
 mutation "05 the snapshot ignores untracked files" "$GATE" \
-  's/  GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1/  GIT_INDEX_FILE="$index" git read-tree HEAD >\/dev\/null 2>\&1; GIT_INDEX_FILE="$index" git add -u >\/dev\/null 2>\&1/' \
+  's/  GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1/  GIT_INDEX_FILE="\$index" git read-tree HEAD >\/dev\/null 2>\&1; GIT_INDEX_FILE="\$index" git add -u >\/dev\/null 2>\&1/' \
   test/gate.bats "new file outside"
 
 mutation "05 the tree diff is not recursive" "$GATE" \
@@ -337,7 +382,7 @@ mutation "05 the tree diff is not recursive" "$GATE" \
   test/gate.bats "new file outside"
 
 mutation "05 the gate verdict does not decide the marking" "$LOOP" \
-  's/      if gate_run "\$ticket" "\$base" && /      if { gate_run "$ticket" "$base" || true; } \&\& /' \
+  's/      if gate_run "\$ticket" "\$base" && /      if { gate_run "\$ticket" "\$base" || true; } \&\& /' \
   test/gate.bats "red test suite resolves nothing"
 
 mutation "05 a red gate is journalled as a plain failure" "$LOOP" \
@@ -345,7 +390,7 @@ mutation "05 a red gate is journalled as a plain failure" "$LOOP" \
   test/gate.bats "journalled as such"
 
 mutation "05 the scope class is never said out loud" "$LOOP" \
-  's/          loop_log "scope overflow on \$ticket: \$RALPH_GATE_SCOPE_CLASS"\n//' \
+  's/          loop_log "scope overflow on \$ticket: \$RALPH_GATE_SCOPE_CLASS"/          :/' \
   test/gate.bats "named as drift"
 
 # ── [07] typed failures, rollback, durable green ─────────────────────────────
@@ -485,7 +530,7 @@ mutation "21 an edit to a ticket is not put back" "$FAILURES" \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 the write-surface is read after the session, not at spawn" "$LOOP" \
-  's/    issues="\$\(failures_tracker_tree\)" \|\| issues=""\n    rc=0\n    loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?/    rc=0\n    loop_spawn_session "$ticket" "$outfile" || rc=$?\n    issues="$(failures_tracker_tree)" || issues=""/' \
+  's/    issues="\$\(failures_tracker_tree\)" \|\| issues=""\n    rc=0\n    loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?/    rc=0\n    loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n    issues="\$(failures_tracker_tree)" || issues=""/' \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 an edited tracker still buys a green iteration" "$LOOP" \
@@ -505,7 +550,7 @@ mutation "21 a ticket the session deleted counts as one it created" "$FAILURES" 
   test/failures.bats "deletes the whole tracker"
 
 mutation "21 the tracker snapshot obeys the project's ignore rules" "$GATE" \
-  's/    GIT_INDEX_FILE="\$index" git add -A --force -- "\$@" >\/dev\/null 2>&1/    GIT_INDEX_FILE="$index" git add -A -- "$@" >\/dev\/null 2>\&1/' \
+  's/    GIT_INDEX_FILE="\$index" git add -A --force -- "\$@" >\/dev\/null 2>&1/    GIT_INDEX_FILE="\$index" git add -A -- "\$@" >\/dev\/null 2>\&1/' \
   test/failures.bats "scratch out of git"
 
 mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
@@ -521,7 +566,7 @@ mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" 
   test/failures.bats "edits the tracker has its whole plan"
 
 mutation "21 a session's own commit survives its green gate" "$FAILURES" \
-  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "$ticket: the session committed/' \
+  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "\$ticket: the session committed/' \
   test/failures.bats "green gate either"
 
 # ── [12] the run lock a session can delete ───────────────────────────────────

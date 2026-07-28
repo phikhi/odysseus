@@ -58,6 +58,14 @@ RENDEZVOUS
   run_loop
   assert_success
   assert_ticket_status 01-alpha resolved
+
+  # One session, so the rendezvous was really met the first time. Without this the
+  # test was vacuous, and the retry policy is what made it so: the markers live in
+  # the shim state for the whole run, so a sequential first attempt fails, and the
+  # second attempt finds both markers already lying there and passes without the
+  # two branches ever having run together. A guarantee undone by a later ticket,
+  # in a test nobody had reason to re-read.
+  assert_equal "$(claude_call_count)" "1"
 }
 
 @test "a red branch does not short-circuit the others" {
