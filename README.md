@@ -40,6 +40,7 @@ Le vocabulaire complet est dans [`CONTEXT.md`](CONTEXT.md).
 |---|---|
 | **Ça marche** | verrou de run · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) · gate objectif en parallèle (tests, typecheck, scope-guard) avec délai par branche · échecs typés (re-slice, retry-N, escalade avec raison) · rollback précis et commit sur vert |
 | **Ça manque** | lentilles de revue (Standards/Spec/Sécurité…) · budget d'usage · boucle humaine · reçu d'audit · concurrence · installeur |
+| **Faille connue** | une session peut réécrire son propre ticket, donc élargir sa write-surface, et le scope-guard la lit après coup : faux vert reproduit, ouvert en [21](.scratch/ralph-pack/issues/21-tracker-inviolable.md) avec son test `skip` dans le canari |
 
 Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone · [05](.scratch/ralph-pack/issues/05-gate-qa-objectif.md) gate QA objectif · [07](.scratch/ralph-pack/issues/07-echecs-types-rollback.md) échecs typés et rollback.
 
@@ -50,7 +51,15 @@ Le reste est dans [`.scratch/ralph-pack/issues/`](.scratch/ralph-pack/issues/), 
 Il n'y a pas encore d'installeur (c'est le ticket 19). Aujourd'hui, dans un dépôt git de test :
 
 ```bash
-cp -R /chemin/vers/odysseus/.claude .            # déposer le pack
+# Déposer le pack — les scripts et les libs, rien d'autre. `cp -R .claude`
+# embarquerait aussi .claude/skills/, dont les 22 entrées sont des liens vers
+# .agents/ et arrivent cassées chez l'hôte.
+mkdir -p .claude/lib
+cp -R /chemin/vers/odysseus/.claude/loop.sh .claude/
+cp -R /chemin/vers/odysseus/.claude/settings.json .claude/
+cp -R /chemin/vers/odysseus/.claude/ralph.config.sh.example .claude/
+cp -R /chemin/vers/odysseus/.claude/lib/*.sh .claude/lib/
+
 cp .claude/ralph.config.sh.example .claude/ralph.config.sh
 $EDITOR .claude/ralph.config.sh                  # FEATURE, MODEL, TEST_CMD, TYPECHECK_CMD
 

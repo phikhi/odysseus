@@ -427,6 +427,18 @@ mutation "07 the durable commit does not move the branch" "$FAILURES" \
   's/ \|\| ! git update-ref -m "ralph: \$ticket" HEAD "\$commit" 2>\/dev\/null//' \
   test/failures.bats "nothing else is"
 
+mutation "07 a session's own tickets reach the frontier" "$LOOP" \
+  's/    failures_quarantine_strays "\$ticket" "\$seen" \|\| true\n//' \
+  test/failures.bats "own tickets"
+
+mutation "07 a quarantined ticket is only logged, not taken off the frontier" "$FAILURES" \
+  's/    tracker_mark_escalated "\$stray" decision \|\| true\n/    :\n/' \
+  test/failures.bats "own tickets"
+
+mutation "07 a plan is read even from a session that wrote the tracker" "$FAILURES" \
+  's/  if ! failures_quarantine_strays "\$ticket" "\$seen"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  test/failures.bats "whole plan refused"
+
 mutation "07 a git that refuses the commit takes the run down" "$LOOP" \
   's/"\$\{RALPH_GATE_TREE:-\}" \|\| true/"\${RALPH_GATE_TREE:-}"/' \
   test/failures.bats "commit git refuses"

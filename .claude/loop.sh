@@ -199,7 +199,7 @@ loop_main() {
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
-  local iteration=0 sterile=0 ticket outfile base pre tree rc turns cost tokens outcome
+  local iteration=0 sterile=0 ticket outfile base pre seen tree rc turns cost tokens outcome
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -241,12 +241,21 @@ loop_main() {
     # not a commit, and a session that commits its work moves the branch.
     base="$(gate_tree_snapshot)" || base=""
     pre="$(git rev-parse HEAD 2>/dev/null)" || pre=""
+    # The frontier as it stands before the session. Neither the scope-guard nor
+    # the rollback can see the tracker — both hold it as the loop's own state —
+    # so a ticket a session writes by hand is the one write nothing else catches.
+    seen="$(failures_tracker_snapshot)"
     rc=0
     loop_spawn_session "$ticket" "$outfile" || rc=$?
 
     turns="$(loop_result_field "$outfile" num_turns)"
     cost="$(loop_result_field "$outfile" total_cost_usd)"
     tokens="$(monitor_peak_tokens "$outfile")"
+
+    # Tickets the session gave itself never reach the frontier. Separate from the
+    # gate's verdict on purpose: the gate judges the code, and this judges an
+    # entry in the loop's own state that no check downstream would question.
+    failures_quarantine_strays "$ticket" "$seen" || true
 
     outcome=""
     tree=""
