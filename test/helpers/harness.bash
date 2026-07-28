@@ -141,13 +141,16 @@ harness__template() {
   printf '%s\n' "$root"
 }
 
+# Names as well as contents: hashing only the bytes made the key blind to a
+# rename, so moving a lib reused the cached template and quietly tested the
+# previous layout.
 harness__pack_fingerprint() {
   (
     cd "$RALPH_PACK_ROOT" || return 1
-    find .claude test/fixtures -type f ! -name 'settings.local.json' |
-      LC_ALL=C sort |
-      tr '\n' '\0' |
-      xargs -0 cat
+    local files
+    files="$(find .claude test/fixtures -type f ! -name 'settings.local.json' | LC_ALL=C sort)"
+    printf '%s\n' "$files"
+    printf '%s' "$files" | tr '\n' '\0' | xargs -0 cat
   ) | cksum | awk '{print $1}'
 }
 
@@ -288,9 +291,12 @@ ticket_status() {
 }
 
 # Read a ticket field without going through the pack: an assertion that used
-# the pack's own reader could not catch the pack writing nonsense.
+# the pack's own reader could not catch the pack writing nonsense. Line endings
+# are normalised here too — otherwise a CRLF fixture fails the assertion for
+# reasons that have nothing to do with what is being asserted.
 ticket_field() {
-  sed -n "s/^\*\*$2:\*\*[[:space:]]*//p" "$(ticket_file "$1")" | awk 'NR == 1 { print }'
+  sed -n "s/^\*\*$2:\*\*[[:space:]]*//p" "$(ticket_file "$1")" |
+    awk 'NR == 1 { sub(/[[:space:]]+$/, ""); print }'
 }
 
 ticket_has_field() {

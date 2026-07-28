@@ -76,7 +76,9 @@ Un ticket est un fichier markdown auto-suffisant — aucun contexte n'étant hé
 
 `TEST_CMD` et `TYPECHECK_CMD` ne sont pas optionnelles : la boucle refuse de démarrer tant qu'elles sont vides, parce qu'un gate qui ne vérifie rien est vert pour la mauvaise raison. Un projet réellement sans typecheck le déclare par `TYPECHECK_CMD=none`. À chaque itération, la boucle lance en parallèle les tests, le typecheck et le **scope-guard** — qui compare ce que la session a écrit (commité ou non) à la write-surface déclarée du ticket. *resolved* n'est prononcé que si toutes les branches déclenchées sont vertes.
 
-Codes de sortie de `loop.sh` : `0` frontière vide · `1` un autre run tient le verrou · `2` refus de démarrer (config absente, ou config qui viderait le gate de son sens) · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile).
+Codes de sortie de `loop.sh` : `0` la frontière a été drainée par ce run · `1` un autre run tient le verrou · `2` refus de démarrer (config absente, `FEATURE` vide ou pointant sur rien, config qui viderait le gate de son sens) · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile) · `5` rien à broyer, la frontière était déjà vide au démarrage.
+
+`0` et `5` sont distincts à dessein : un run qui n'a rien broyé — mauvais `FEATURE`, tickets encore en triage, tracker que le pack n'arrive pas à lire — ne doit jamais ressembler à une nuit de travail terminée.
 
 ## Tests
 

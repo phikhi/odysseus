@@ -21,8 +21,13 @@ tracker_local__issues_dir() {
 }
 
 # Accepts `01`, `01-alpha` or `01-alpha.md`.
+#
+# A bare number that matches more than one ticket is refused rather than
+# resolved to whichever file sorts first: dependencies are written as bare
+# numbers (`Blocked by: 01`), so a silent pick would block — or unblock — the
+# wrong ticket, and nothing downstream would ever notice.
 tracker_local__path() {
-  local id="${1%.md}" dir file
+  local id="${1%.md}" dir file hit='' matches=0
   dir="$(tracker_local__issues_dir)"
   if [ -f "$dir/$id.md" ]; then
     printf '%s\n' "$dir/$id.md"
@@ -30,15 +35,25 @@ tracker_local__path() {
   fi
   for file in "$dir/$id"-*.md; do
     [ -e "$file" ] || continue
-    printf '%s\n' "$file"
-    return 0
+    hit="$file"
+    matches=$((matches + 1))
   done
-  return 1
+  if [ "$matches" -gt 1 ]; then
+    printf 'tracker: "%s" matches %s tickets — an ambiguous id is never safe to resolve\n' \
+      "$id" "$matches" >&2
+    return 1
+  fi
+  [ "$matches" = 1 ] || return 1
+  printf '%s\n' "$hit"
 }
 
+# Trailing blanks are trimmed, and [[:space:]] covers the carriage return a
+# CRLF file leaves behind. Without that trim, a tracker checked out on Windows —
+# or a status line with one stray space after it — matches nothing, drops out of
+# the frontier, and the run reports success having done nothing at all.
 tracker_local__field_of_file() {
   sed -n "s/^\*\*$2:\*\*[[:space:]]*//p; s/^$2:[[:space:]]*//p" "$1" |
-    awk 'NR == 1 { print }'
+    awk 'NR == 1 { sub(/[[:space:]]+$/, ""); print }'
 }
 
 tracker_local__has_field() {
@@ -123,7 +138,12 @@ tracker_local__drop_field() {
 tracker_local_frontier() {
   local dir file id
   dir="$(tracker_local__issues_dir)"
-  [ -d "$dir" ] || return 0
+  if [ ! -d "$dir" ]; then
+    # Says so instead of reporting an empty frontier: "no tickets" and "no
+    # tracker" look identical from the loop, and only one of them is good news.
+    printf 'tracker: no issues directory at %s\n' "$dir" >&2
+    return 0
+  fi
   # The glob is lexical, and ids start with NN, so this is min-NN order.
   for file in "$dir"/*.md; do
     [ -e "$file" ] || continue

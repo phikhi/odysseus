@@ -13,3 +13,7 @@
 - [ ] Sans scheduler disponible, la boucle sort proprement en `pause-hebdo` (repli humain).
 - [ ] Anti-double-run : le successeur est singleton et protégé par le verrou de run ; deux successeurs ne se chevauchent jamais.
 - [ ] Un fake `at` reçoit exactement une programmation, avec la bonne échéance (vérifié via le seam).
+
+## Comments
+
+- **Contrainte posée par la revue de [01]–[04] : les codes de sortie de `loop.sh` ont changé.** `0` signifie désormais « ce run a drainé la frontière » et **`5` « la frontière était déjà vide au démarrage »** (mauvais `FEATURE`, tout en triage, tracker illisible). Un successeur one-shot qui se réveille doit traiter `5` comme « plus rien à faire », pas comme un échec — et surtout ne pas se re-programmer en boucle dessus. `2` couvre maintenant aussi une config qui viderait le gate de son sens (`TEST_CMD`/`TYPECHECK_CMD` vides), ce qui est un cas où re-programmer un successeur ne servirait à rien : il refusera pareil.
