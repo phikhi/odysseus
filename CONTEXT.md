@@ -159,8 +159,12 @@ L'ensemble déclaré des fichiers qu'un ticket va créer ou modifier (globs), pr
 _À éviter_ : périmètre, scope (ambigu), fichiers touchés.
 
 **Scope-guard**:
-Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry.
+Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry. Juge contre la surface du **spawn**, restaurée par la protection du tracker avant qu'il ne lise le ticket — sinon il lirait un contrat que la session vient d'écrire.
 _À éviter_ : lint, garde-fou, sandbox (réservé à l'exécution).
+
+**Protection du tracker**:
+La restauration des tickets qu'une session a édités, depuis un objet tree de `issues/` pris au spawn, faite **avant** que le gate ne lise quoi que ce soit du tracker. Une itération qui a édité un ticket ne peut pas être verte (outcome `tracker-write`). Un ticket qu'une session a *créé* n'est pas restauré : il part en quarantaine, parce qu'une création ne se décrée pas et qu'un humain doit trancher.
+_À éviter_ : rollback du tracker (le rollback l'exclut, à dessein), verrou.
 
 **Rollback d'itération**:
 La remise du dépôt dans l'état où la session l'a trouvé, après tout échec. Aussi large que le diff de la session et pas plus : ses ajouts sont supprimés, ses modifications et suppressions restaurées depuis le snapshot pré-session, son commit éventuel défait (`HEAD` remis au commit pré-spawn). **N'est pas** un `git reset --hard` + `git clean` : le travail non commité que le run n'a pas produit ne lui appartient pas. Le tracker en est exclu — c'est la seule autorité d'état.
