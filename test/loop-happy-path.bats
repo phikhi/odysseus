@@ -114,7 +114,12 @@ teardown() {
   assert_output_contains "CONTEXT.md"
   assert_output_contains "docs/adr/"
   assert_output_contains "LEARNINGS.md"
-  assert_output_contains "The loop marks it, after the gate."
+  assert_output_contains "The loop marks them, after the gate."
+
+  # And the rules say which of them are checked rather than merely asked. A
+  # session that believes it can edit the tracker spends a whole iteration
+  # finding out otherwise; saying so up front is worth a line of prompt.
+  assert_output_contains "Both are checked, not just asked"
 }
 
 @test "every session is fresh: no --continue, no --resume" {

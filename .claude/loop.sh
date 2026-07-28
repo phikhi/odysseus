@@ -87,7 +87,10 @@ Read what you need. Nothing was inherited from a previous session.
 
 - Stay inside the ticket's declared write-surface.
 - Durable prose (docs, comments, commits) is written in ${LANG_ARTIFACT:-en}.
-- Do not change the ticket's status. The loop marks it, after the gate.
+- Do not change the ticket's status, and do not edit any ticket at all.
+  The loop marks them, after the gate. Both are checked, not just asked: the
+  tickets are snapshotted before this session starts, any edit is restored from
+  that snapshot, and an iteration that edited one cannot be green.
 - Never stage or commit the tracker (\`.scratch/\`). It is the loop's own state,
   and a commit taken mid-iteration freezes it in a state that was never true.
 - Finish the task in this session; there is no follow-up conversation.
@@ -167,7 +170,8 @@ loop_main() {
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
-  local iteration=0 sterile=0 ticket outfile base pre seen tree rc turns cost tokens outcome
+  local iteration=0 sterile=0 ticket outfile base pre seen issues tree rc
+  local turns cost tokens outcome tracker_written
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -209,16 +213,27 @@ loop_main() {
     # not a commit, and a session that commits its work moves the branch.
     base="$(gate_tree_snapshot)" || base=""
     pre="$(git rev-parse HEAD 2>/dev/null)" || pre=""
-    # The frontier as it stands before the session. Neither the scope-guard nor
-    # the rollback can see the tracker — both hold it as the loop's own state —
-    # so a ticket a session writes by hand is the one write nothing else catches.
+    # The tracker as it stands before the session. Neither the scope-guard nor
+    # the rollback can see it — both hold it as the loop's own state — so what a
+    # session writes there is the one write nothing else would catch. Two shapes,
+    # two snapshots: an id that appears is a ticket the session granted itself,
+    # and a ticket file that moves is a session editing the very contract it is
+    # about to be judged on.
     seen="$(failures_tracker_snapshot)"
+    issues="$(failures_tracker_tree)" || issues=""
     rc=0
     loop_spawn_session "$ticket" "$outfile" || rc=$?
 
     turns="$(loop_result_field "$outfile" num_turns)"
     cost="$(loop_result_field "$outfile" total_cost_usd)"
     tokens="$(monitor_peak_tokens "$outfile")"
+
+    # Before the gate reads a single field out of the tracker: the write-surface
+    # it is about to judge against is a line in a file the session could just have
+    # rewritten to `*`. Putting the tickets back first is what makes the guard
+    # measure the contract as it stood when the session was spawned.
+    tracker_written=0
+    failures_protect_tracker "$ticket" "$issues" || tracker_written=1
 
     # Tickets the session gave itself never reach the frontier. Separate from the
     # gate's verdict on purpose: the gate judges the code, and this judges an
@@ -228,7 +243,11 @@ loop_main() {
     outcome=""
     tree=""
     if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ]; then
-      if gate_run "$ticket" "$base"; then
+      # An edited tracker takes the green away whatever the branches said. The
+      # restore is what let the scope-guard read the right contract at all, so a
+      # session that edited it has to pay for the attempt — otherwise it retries
+      # from a contract it partly wrote, which is the hole being closed.
+      if gate_run "$ticket" "$base" && [ "$tracker_written" = 0 ]; then
         # Durable before the next iteration starts: everything the gate just
         # approved gets committed, so the pre-session commit a later iteration
         # rolls back to is really the state before that iteration.
@@ -237,12 +256,13 @@ loop_main() {
         # is in the tree either way, and the precise rollback does not touch what
         # it did not put there. Stopping the run here would trade a warning for a
         # night of no work at all.
-        failures_make_durable "$ticket" "$base" "${RALPH_GATE_TREE:-}" || true
+        failures_make_durable "$ticket" "$pre" "$base" "${RALPH_GATE_TREE:-}" || true
         tracker_mark_resolved "$ticket"
         outcome=resolved
         sterile=0
       else
         outcome=gate-red
+        [ "$tracker_written" = 0 ] || outcome=tracker-write
         tree="${RALPH_GATE_TREE:-}"
         # Which kind of overflow it was decides what happens next: a stray
         # write into a neutral file is a too-narrow declaration and can be

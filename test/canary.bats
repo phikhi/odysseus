@@ -95,9 +95,16 @@ seed_hostile_world() {
   seed_hostile_world
   script_honest_session
 
+  before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
   run_loop
   assert_success
   assert_output_contains "frontier empty after 3 iterations"
+
+  # Kept, because every `run` below overwrites $output. Two assertions here used
+  # to read `grep -c`'s own output — "3" never contains "scope=red", so they could
+  # not fail. A vacuous refutation in the file whose job is to catch false greens.
+  loop_output="$output"
 
   # Every ticket the run could grind, ground — including the CRLF one, and
   # including the one that only became eligible when 01 resolved.
@@ -116,11 +123,25 @@ seed_hostile_world() {
 
   # Three green gates, no scope-guard casualty.
   run bash -c "grep -c 'scope=green' <<'OUT'
-$output
+$loop_output
 OUT"
   assert_equal "$output" "3"
+
+  output="$loop_output"
   refute_output_contains "scope=red"
   refute_output_contains "gate-red"
+  refute_output_contains "edited the tracker"
+
+  # Iteration 2's session commits everything it can see. What the run added to
+  # the project's history is its own commits and nothing else: not the session's
+  # commit, and not one byte of the loop's state — the ticket frozen mid-claim at
+  # `claimed`, the journal, a session stream of any size.
+  run git -C "$PROJECT_DIR" log --format='%s' "$before..HEAD"
+  assert_output_contains "02-beta: iteration delivered (gate green)"
+  refute_output_contains "session: work on iteration 2"
+
+  run git -C "$PROJECT_DIR" log --format='%s' --name-only "$before..HEAD" -- .scratch
+  assert_equal "$output" ""
 }
 
 @test "the canary: an overflow is not absolved by having already failed once" {
@@ -164,19 +185,21 @@ OUT"
 }
 
 @test "the canary: a session cannot widen its own write-surface" {
-  # A known hole, kept visible rather than forgotten. The scope-guard reads the
-  # write-surface off the disk at gate time — after the session — and three
-  # mechanisms agree to hide what a session writes inside the tracker: the guard
-  # drops `.scratch/<feature>/` as the loop's own bookkeeping ([05], rightly: the
-  # claim and the journal live there), the rollback leaves the same prefix alone
-  # ([07], rightly: otherwise the retry counter resets every attempt), and the
-  # quarantine compares ids, so it sees a ticket created and not one edited.
+  # The hole this test was written for. The scope-guard reads the write-surface
+  # off the disk at gate time — after the session — and three mechanisms agreed
+  # to hide what a session writes inside the tracker: the guard drops
+  # `.scratch/<feature>/` as the loop's own bookkeeping ([05], rightly: the claim
+  # and the journal live there), the rollback leaves the same prefix alone ([07],
+  # rightly: otherwise the retry counter resets every attempt), and the
+  # quarantine compares ids, so it saw a ticket created and not one edited.
   #
   # Reproduced, in this exact scenario: `scope=green`, ticket `resolved`, exit 0,
   # rogue file still in the tree and CONTEXT.md edited. A false green with a
-  # mechanism. Un-skipping this test is [21]'s acceptance criterion.
-  skip "closed by [21] tracker-inviolable: nothing guards the tracker from a session"
-
+  # mechanism, not a coincidence.
+  #
+  # What closes it is a tree object of `issues/` taken at spawn time: the edit is
+  # restored from it before the gate reads a single field, so the guard measures
+  # the contract the discovery wrote and not the one the session gave itself.
   use_tickets 01-alpha
   set_config STERILE_K 1
 
@@ -235,7 +258,13 @@ FAKE
   [ ! -d "$(run_lock_dir)" ] || fail "the lock survived the run"
 
   # And it did not tidy up after anyone else: the work in progress that was
-  # already in the tree is still exactly as it was.
+  # already in the tree is still exactly as it was — still uncommitted, too.
+  # Iteration 2's session swept both into a commit of its own; undoing that is
+  # part of leaving nothing behind, since a commit is harder to undo than a file.
   assert_file_contains "$PROJECT_DIR/wip.txt" "someone else was here"
   assert_file_contains "$PROJECT_DIR/CONTEXT.md" "an edit nobody committed"
+
+  run git -C "$PROJECT_DIR" status --porcelain -- wip.txt CONTEXT.md
+  assert_output_contains "?? wip.txt"
+  assert_output_contains "CONTEXT.md"
 }

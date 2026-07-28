@@ -2,13 +2,19 @@
 # Break one guarantee at a time, and check that the test claiming to cover it
 # turns red.
 #
-# A green suite proves nothing on its own. On this pack, ten tests have passed
-# while the property they claimed to cover was deleted — a test that raced a
-# few microseconds of a truncation window, a test that asserted a log line the
+# A green suite proves nothing on its own. On this pack, thirteen tests have
+# passed while the property they claimed to cover was deleted — a test that raced
+# a few microseconds of a truncation window, a test that asserted a log line the
 # loop prints anyway, a test that read an environment variable coming from the
 # developer's shell rather than from the code, a test that renamed a file in a
-# way that changed the answer for the wrong reason. Every one of them was a
-# false green in a pack whose entire job is to refuse false greens.
+# way that changed the answer for the wrong reason, and two refutations in the
+# canary that were reading the output of the previous `run` rather than the
+# loop's. Every one of them was a false green in a pack whose entire job is to
+# refuse false greens.
+#
+# That last pair is worth knowing before writing an assertion here: every `run`
+# overwrites $output, so a negative assertion aimed at the wrong one can never
+# fail. Keep the output you mean to assert on in a variable of its own.
 #
 # So the mutations are not a habit, they are an artefact. Each entry below names
 # a guarantee, the edit that removes it, and the test that must fail once it is
@@ -331,7 +337,7 @@ mutation "05 the tree diff is not recursive" "$GATE" \
   test/gate.bats "new file outside"
 
 mutation "05 the gate verdict does not decide the marking" "$LOOP" \
-  's/      if gate_run "\$ticket" "\$base"; then/      if gate_run "$ticket" "$base" || true; then/' \
+  's/      if gate_run "\$ticket" "\$base" && /      if { gate_run "$ticket" "$base" || true; } \&\& /' \
   test/gate.bats "red test suite resolves nothing"
 
 mutation "05 a red gate is journalled as a plain failure" "$LOOP" \
@@ -417,7 +423,7 @@ mutation "07 the parent of a re-slice goes straight back to the frontier" "$FAIL
   test/failures.bats "is cut up"
 
 mutation "07 a green iteration is not made durable" "$LOOP" \
-  's/        failures_make_durable "\$ticket" "\$base" "\$\{RALPH_GATE_TREE:-\}" \|\| true\n//' \
+  's/        failures_make_durable "\$ticket" "\$pre" "\$base" "\$\{RALPH_GATE_TREE:-\}" \|\| true\n//' \
   test/failures.bats "never takes away what an earlier gate"
 
 mutation "07 the durable commit takes the whole tree, not what the gate approved" "$FAILURES" \
@@ -459,6 +465,60 @@ mutation "07 the deadline is hard-coded" "$GATE" \
 mutation "07 a timed-out branch is not reported as one" "$GATE" \
   's/    elif \[ -f "\$dir\/timed-out" \]; then\n      gate__log "\$name red \(timed out after \$\{GATE_TIMEOUT\}s\)"\n//' \
   test/failures.bats "hangs is red"
+
+# ── [21] the tracker a session must not write ────────────────────────────────
+
+mutation "21 nothing guards the tracker from a session" "$FAILURES" \
+  's/^failures_protect_tracker\(\) \{/failures_protect_tracker() { return 0;/m' \
+  test/canary.bats "widen its own write-surface"
+
+mutation "21 the tracker is only watched through its ids" "$LOOP" \
+  's/    failures_protect_tracker "\$ticket" "\$issues" \|\| tracker_written=1\n//' \
+  test/failures.bats "not given"
+
+mutation "21 an edit to a ticket is not put back" "$FAILURES" \
+  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__log "\$ticket: could not restore \$path"/        :/' \
+  test/canary.bats "widen its own write-surface"
+
+mutation "21 the write-surface is read after the session, not at spawn" "$LOOP" \
+  's/    issues="\$\(failures_tracker_tree\)" \|\| issues=""\n    rc=0\n    loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?/    rc=0\n    loop_spawn_session "$ticket" "$outfile" || rc=$?\n    issues="$(failures_tracker_tree)" || issues=""/' \
+  test/canary.bats "widen its own write-surface"
+
+mutation "21 an edited tracker still buys a green iteration" "$LOOP" \
+  's/ && \[ "\$tracker_written" = 0 \]//' \
+  test/failures.bats "pays for the edit"
+
+mutation "21 an edited tracker is journalled as a plain red gate" "$LOOP" \
+  's/        \[ "\$tracker_written" = 0 \] \|\| outcome=tracker-write\n//' \
+  test/failures.bats "pays for the edit"
+
+mutation "21 a ticket the session created is restored away, not quarantined" "$FAILURES" \
+  's/      A\)\n        # Left where it is/      A-never)\n        # Left where it is/' \
+  test/failures.bats "quietly restored away"
+
+mutation "21 a ticket the session deleted counts as one it created" "$FAILURES" \
+  's/      A\)\n        # Left where it is/      A | D)\n        # Left where it is/' \
+  test/failures.bats "deletes the whole tracker"
+
+mutation "21 the tracker snapshot obeys the project's ignore rules" "$GATE" \
+  's/    GIT_INDEX_FILE="\$index" git add -A --force -- "\$@" >\/dev\/null 2>&1/    GIT_INDEX_FILE="$index" git add -A -- "$@" >\/dev\/null 2>\&1/' \
+  test/failures.bats "scratch out of git"
+
+mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
+  's/    failures__log "\$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"\n    return 1/    return 0/' \
+  test/failures.bats "vouch for"
+
+mutation "21 the tracker the session staged stays staged" "$FAILURES" \
+  's/  git reset -q -- "\$dir" 2>\/dev\/null \|\| true\n//' \
+  test/failures.bats "stay staged"
+
+mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" \
+  's/  if ! failures_protect_tracker "\$ticket" "\$issues"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  test/failures.bats "edits the tracker has its whole plan"
+
+mutation "21 a session's own commit survives its green gate" "$FAILURES" \
+  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "$ticket: the session committed/' \
+  test/failures.bats "green gate either"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

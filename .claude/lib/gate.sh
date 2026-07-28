@@ -68,11 +68,23 @@ gate_preflight() {
 # and, worse, gets it classified as drift into the ticket that produced it. The
 # same goes for a run started on a tree that was already dirty. A tree object
 # says what was there when this session began, which is the actual question.
+#
+# Given paths, only those are snapshotted, and they are taken by force —
+# ignore rules included. A caller that names a path is watching it deliberately,
+# and a target project that gitignores `.scratch/` must not thereby switch the
+# tracker's own guard off. Nothing is forced without paths: the whole-tree
+# snapshot is what the scope-guard and the rollback act on, and pulling a
+# project's ignored build output into that would make every iteration look like
+# an overflow.
 gate_tree_snapshot() {
   local index tree
   index="$(mktemp "${TMPDIR:-/tmp}/ralph-index.XXXXXX")" || return 1
   rm -f "$index"
-  GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1
+  if [ "$#" -gt 0 ]; then
+    GIT_INDEX_FILE="$index" git add -A --force -- "$@" >/dev/null 2>&1
+  else
+    GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1
+  fi
   tree="$(GIT_INDEX_FILE="$index" git write-tree 2>/dev/null)" || tree=""
   rm -f "$index"
   [ -n "$tree" ] || return 1

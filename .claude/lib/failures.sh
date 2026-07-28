@@ -14,6 +14,11 @@
 #              fresh sessions, then the human sink with `Failures:` to show it.
 #   crash      the session died. Same policy as a red gate.
 #
+# A session that wrote the tracker is reported apart (`tracker-write`) and
+# handled as a red gate: it is the same kind of failure — something in the
+# repository is not what the loop asked for — and a fresh session can still
+# deliver the ticket.
+#
 # The budget pause is the fifth kind and it is not here yet: a non-zero exit has
 # to be tested "budget?" before it counts as a failure at all, which is the
 # budget ticket's classifier. It plugs into failures_classify.
@@ -38,7 +43,7 @@ failures_classify() {
     over-soft-limit)
       printf 'too-big\n'
       ;;
-    gate-red)
+    gate-red | tracker-write)
       if [ "$scope_class" = contract ]; then
         printf 'contract\n'
       else
@@ -111,16 +116,29 @@ failures_handle() {
   return 0
 }
 
-# ── tickets a session granted itself ─────────────────────────────────────────
+# ── the tracker a session must not write ─────────────────────────────────────
 #
-# Both prompts forbid a session from writing the tracker, and until now that was
+# Both prompts forbid a session from writing the tracker, and for a while that was
 # the whole of the enforcement. Nothing else could see it: the scope-guard drops
 # `.scratch/<feature>/` as the loop's own bookkeeping, and the rollback leaves it
-# alone on purpose — so a ticket a session wrote by hand survived the iteration
-# and joined the frontier, carrying whatever write-surface it had granted itself.
-# A run would then grind work nobody asked for, inside a surface nobody checked.
+# alone on purpose. Two shapes of write came out of that, and they need different
+# answers:
 #
-# The tracker is a set of ids, so the check is a set difference around the spawn.
+#   a ticket created   it joined the frontier carrying whatever write-surface the
+#                      session had granted itself, and a run would then grind
+#                      work nobody asked for inside a surface nobody checked.
+#                      Quarantined — a created ticket cannot be un-created, and
+#                      only a human may decide it was legitimate.
+#   a ticket edited    the scope-guard reads the write-surface off the disk at
+#                      gate time, which is *after* the session. Rewrite that one
+#                      line to `*` and every write passes. Restored from the
+#                      pre-session snapshot, before the gate reads anything.
+#
+# So: two snapshots around the spawn, a set of ids for the first and a tree
+# object of the tickets for the second. The window is clean either way — between
+# the snapshots and the session returning, the loop writes nothing under
+# `issues/`: the claim came before, and the marking, the retry counter and the
+# journal all come after.
 
 # The ids the tracker holds right now, space-delimited and space-fenced so that a
 # `case` can ask whether one is in it.
@@ -158,6 +176,92 @@ failures_quarantine_strays() {
     "$ticket" "$(printf '%s' "$strays" | tr '\n' ' ' | sed 's/ *$//; s/ /, /g')" |
     tracker_append_note "$ticket" || true
   failures__log "$ticket: the session wrote the tracker itself — quarantined $(printf '%s' "$strays" | tr '\n' ' ' | sed 's/ *$//')"
+  return 1
+}
+
+# Where the tickets live, relative to the repository root. Same assumption
+# gate_is_bookkeeping makes: the project root is the repository root, and a pack
+# installed below it is out of scope for now.
+failures__issues_path() {
+  printf '.scratch/%s/issues\n' "${FEATURE:?ralph: FEATURE is not set}"
+}
+
+# The tickets as a git tree object. Taken twice, around the spawn: two identical
+# hashes is the whole of the normal case, and it costs one plumbing call.
+failures_tracker_tree() {
+  gate_tree_snapshot "$(failures__issues_path)"
+}
+
+# Undo what the session wrote inside the tracker, and say that it did.
+#
+# Called before the gate, and that ordering is the guarantee: the write-surface
+# the scope-guard is about to judge against is a field in a file the session
+# could have just rewritten, so restoring first is what makes the guard measure
+# the contract as it stood at spawn time. Restoring the whole directory rather
+# than the one ticket also covers the variant where a session marks somebody
+# *else*'s ticket resolved, which would take it out of the frontier for good.
+#
+# Non-zero means the session edited the tracker, or that nothing can vouch that
+# it did not. The loop reads that as an outcome of its own: a restored edit still
+# costs the attempt, because a session left free to try again would be starting
+# from a contract it partly authored. A guard that cannot see does not pass.
+failures_protect_tracker() {
+  local ticket="$1" before="$2"
+  local dir after idx status path restored=0
+
+  if [ -z "$before" ]; then
+    failures__log "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
+    return 1
+  fi
+  after="$(failures_tracker_tree)" || after=""
+  if [ -z "$after" ]; then
+    failures__log "$ticket: cannot read the tracker — refusing to pass it"
+    return 1
+  fi
+  [ "$after" != "$before" ] || return 0
+
+  dir="$(failures__issues_path)"
+  idx="$(mktemp "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")" || return 1
+  rm -f "$idx"
+  if ! GIT_INDEX_FILE="$idx" git read-tree "$before" 2>/dev/null; then
+    rm -f "$idx"
+    failures__log "$ticket: cannot read the pre-session tracker — nothing was restored"
+    return 1
+  fi
+
+  # The pathspec is redundant with a snapshot already scoped to the tickets, and
+  # it stays: this loop overwrites files, so it may never be one bad snapshot
+  # away from restoring something outside the tracker.
+  while IFS="$(printf '\t')" read -r status path; do
+    [ -n "$path" ] || continue
+    case "$status" in
+      A)
+        # Left where it is: a created ticket belongs to the quarantine, which
+        # hands it to a human. Deleting it here would destroy the only copy of
+        # what it asked for.
+        ;;
+      *)
+        GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null ||
+          failures__log "$ticket: could not restore $path"
+        restored=$((restored + 1))
+        ;;
+    esac
+  done <<TRACKER
+$(git diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)
+TRACKER
+
+  rm -f "$idx"
+  # Staged is not work in progress either, and the tracker has no business in the
+  # target project's index. Scoped to the tickets, so nothing staged elsewhere
+  # moves; a human who had staged a tracker edit before the run loses that much.
+  git reset -q -- "$dir" 2>/dev/null || true
+
+  # Additions only: that is the quarantine's business and not a failure of its own.
+  [ "$restored" -gt 0 ] || return 0
+
+  printf 'The %s session edited the tracker itself (%s ticket file(s)). The edits were restored from the snapshot taken when the session started, and the iteration was not allowed to be green: the write-surface a session grants itself is exactly what the scope-guard would otherwise read back from it.\n' \
+    "$ticket" "$restored" | tracker_append_note "$ticket" || true
+  failures__log "$ticket: the session edited the tracker — restored $restored ticket file(s), the iteration cannot be green"
   return 1
 }
 
@@ -309,8 +413,14 @@ failures_preserve_attempt() {
 # history at all. Plumbing rather than `git commit`, so the target project's
 # hooks, signing config and commit template have no say in the loop's own
 # bookkeeping — and so a path the session deleted is recorded as deleted.
+#
+# A session that committed its own work is undone first, on this path exactly as
+# on the failing one. Left alone, its commit is the target project's history
+# saying something that was never true: `git add -A` takes the tracker mid-claim
+# with it, along with the run journal and a session stream that can run to tens
+# of megabytes.
 failures_make_durable() {
-  local ticket="$1" base="$2" tree="${3:-}"
+  local ticket="$1" pre="$2" base="$3" tree="${4:-}"
   local changed idx head newtree commit
 
   if [ -z "$base" ]; then
@@ -322,7 +432,20 @@ failures_make_durable() {
     return 0
   fi
 
+  # Mixed, not soft: the index has to start from the pre-spawn commit too, or what
+  # the session staged would still be sitting there waiting for the next commit.
+  # Same assumed loss as the rollback — an index a human had prepared on one of
+  # these paths goes, the content of their working tree does not.
   head="$(git rev-parse HEAD 2>/dev/null)" || head=""
+  if [ -n "$pre" ] && [ -n "$head" ] && [ "$head" != "$pre" ]; then
+    if git reset -q --mixed "$pre" 2>/dev/null; then
+      failures__log "$ticket: the session committed its own work — rebuilding it from what the gate approved"
+      head="$pre"
+    else
+      failures__log "$ticket: could not move HEAD back to $pre — the session's own commit stands"
+    fi
+  fi
+
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-durable.XXXXXX")" || return 1
   rm -f "$idx"
   if [ -n "$head" ]; then
@@ -337,7 +460,9 @@ failures_make_durable() {
     failures__log "$ticket: could not stage the iteration — it is not committed"
     return 1
   fi
-  # A session that committed its own work leaves nothing to add.
+  # Nothing to record: everything the gate approved is already in HEAD. Reached
+  # when a session committed its work and HEAD could not be moved back, and when
+  # the paths it touched came back to the contents they already had.
   if [ -n "$head" ] && [ "$newtree" = "$(git rev-parse "$head^{tree}" 2>/dev/null)" ]; then
     return 0
   fi
@@ -377,7 +502,7 @@ failures_make_durable() {
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head seen prev_soft rc=0
+  local plan out base head seen issues prev_soft rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -389,6 +514,7 @@ failures_reslice() {
   base="$(gate_tree_snapshot)" || base=""
   head="$(git rev-parse HEAD 2>/dev/null)" || head=""
   seen="$(failures_tracker_snapshot)"
+  issues="$(failures_tracker_tree)" || issues=""
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
 
   failures__reslice_prompt "$ticket" "$plan" >"$plan.prompt"
@@ -403,9 +529,14 @@ failures_reslice() {
   # repository is wanted — including the plan, if it ignored the instructions.
   failures_rollback "$head" "$base" '' >/dev/null 2>&1 || true
 
-  # And the plan is refused whole if it created tickets instead of returning one.
-  # A session that writes the tracker has stepped past the only check that cannot
-  # be redone afterwards, so the rest of what it produced is not worth reading.
+  # And the plan is refused whole if it wrote the tracker instead of returning
+  # one. A session that writes the tracker has stepped past the only check that
+  # cannot be redone afterwards, so the rest of what it produced is not worth
+  # reading — whether it edited a ticket or created one.
+  if ! failures_protect_tracker "$ticket" "$issues"; then
+    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    return 1
+  fi
   if ! failures_quarantine_strays "$ticket" "$seen"; then
     rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
     return 1

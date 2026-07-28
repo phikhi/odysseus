@@ -390,6 +390,47 @@ FAKE
   refute_file_exists "$PROJECT_DIR/src/rogue.txt"
 }
 
+@test "a commit the session made does not survive its own green gate either" {
+  # The asymmetry that was left: on a red gate the rollback moves HEAD back, on a
+  # green one nothing did. So a session that ran `git add -A && git commit` — the
+  # ordinary reflex of an agent told to finish its work — put the loop's own state
+  # into the target project's history: the ticket frozen mid-claim at `claimed`, a
+  # state that was never true, next to the run journal and a session stream that
+  # can run to tens of megabytes.
+  use_tickets 01-alpha
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+git add -A >/dev/null 2>&1
+git commit -q -m "session: committed everything I could see" >/dev/null 2>&1
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  # Where the project's history stood before the run: the tracker is committed by
+  # the harness, like a real project would, so only what the run added is at issue.
+  before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  # The work is durable, and it is the loop's commit that carries it.
+  run git_subjects
+  assert_output_contains "01-alpha: iteration delivered (gate green)"
+  refute_output_contains "session: committed everything"
+
+  # And nothing of the loop's own state went with it, ever — not on this commit
+  # and not anywhere in the history the run produced.
+  run git -C "$PROJECT_DIR" show --stat --format= HEAD
+  assert_output_contains "src/alpha.txt"
+  refute_output_contains ".scratch/"
+
+  run git -C "$PROJECT_DIR" log --format='%s' --name-only "$before..HEAD" -- .scratch
+  assert_equal "$output" ""
+}
+
 # ── a slice too big for one session ──────────────────────────────────────────
 
 # The ticket used here declares two files, so a split can hand one to each of
@@ -577,9 +618,266 @@ FAKE
 # ── a session that writes the tracker itself ─────────────────────────────────
 #
 # The one write nothing else catches: the scope-guard drops `.scratch/<feature>/`
-# as the loop's own bookkeeping and the rollback leaves it alone, so a ticket a
-# session writes by hand used to survive and join the frontier — with whatever
-# write-surface it had granted itself.
+# as the loop's own bookkeeping and the rollback leaves it alone, so what a
+# session writes there used to survive the iteration. Two shapes, two answers —
+# a ticket it created is quarantined for a human, a ticket it edited is restored
+# from the snapshot taken at spawn time, before the gate reads a single field.
+
+@test "an edited ticket is put back, and the iteration pays for the edit" {
+  # The canary drives the exploit — a surface widened to `*` — and a red
+  # scope-guard is enough to make it fail there. This one takes the exploit away:
+  # the session writes nothing but the file its ticket declared, so every gate
+  # branch is green and the edited tracker is the only thing wrong with it.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+printf '\n- [ ] and one criterion the discovery never wrote\n' \
+  >>.scratch/demo/issues/01-alpha.md
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "the session edited the tracker — restored 1 ticket file(s)"
+
+  # Green branches, and no green iteration.
+  assert_output_contains "tests=green typecheck=green scope=green"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  refute_file_contains "$(ticket_file 01-alpha)" "the discovery never wrote"
+
+  # Reported as itself rather than folded into a red gate: the branches were all
+  # green, and a receipt that said `gate-red` would send a human looking at tests.
+  assert_file_contains "$FEATURE_DIR/run.log" "tracker-write"
+  run bash -c "grep -c resolved '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+
+  # And the work goes back with the attempt, like any other failed iteration.
+  refute_file_exists "$PROJECT_DIR/src/alpha.txt"
+  assert_file_contains "$(ticket_file 01-alpha)" "edited the tracker itself"
+}
+
+@test "a session cannot resolve a ticket it was not given" {
+  # The same hole seen from the other side, and the more expensive one: marking
+  # somebody else's ticket resolved takes it out of the frontier for good, and the
+  # run reports a night in which it was simply never picked up.
+  use_tickets 01-alpha 02-beta
+
+  # Only the first session cheats; the retry and the iteration after it are
+  # honest. So the run has to reach 02 on its own, which it can only do if 02 is
+  # still on the frontier after somebody else marked it resolved.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); printf '%s\n' "$n" >"$RALPH_SHIM_STATE/seq"
+
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+
+if [ "$n" = 1 ]; then
+  perl -pi -e 's/^\*\*Status:\*\* .*/**Status:** resolved/' \
+    .scratch/demo/issues/02-beta.md
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # 02 was really ground: the run spawned a session for it rather than walking
+  # past a ticket already marked done and calling the frontier drained.
+  assert_ticket_status 02-beta resolved
+  assert_file_contains "$PROJECT_DIR/src/beta.txt" "written"
+  assert_equal "$(claude_call_count)" "3"
+  run bash -c "grep -c 'tracker-write' '$FEATURE_DIR/run.log'"
+  assert_equal "$output" "1"
+}
+
+@test "a ticket the session created is quarantined, not quietly restored away" {
+  # Restoring the directory wholesale would delete it — and with it the only copy
+  # of what it asked for. The two checks have to agree: edits go back, additions
+  # go to a human.
+  use_tickets 01-alpha
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src .scratch/demo/issues
+printf 'written\n' >src/alpha.txt
+cat >.scratch/demo/issues/50-self-served.md <<'TICKET'
+# 50 — Self served
+
+**Blocked by:** None
+
+**Write-surface:** `src/anything.txt`
+
+**Status:** ready-for-agent
+
+- [ ] whatever this session felt like doing next
+TICKET
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  assert_file_exists "$(ticket_file 50-self-served)"
+  assert_ticket_status 50-self-served ready-for-human
+  # An addition alone is not a failure of its own: [07] settled that the work can
+  # be good while the entry it smuggled in is neutralised.
+  assert_ticket_status 01-alpha resolved
+  refute_output_contains "the session edited the tracker"
+}
+
+@test "a session that deletes the whole tracker gets it back" {
+  # The hostile end of the same mechanism, and the one that would end a run: the
+  # tracker is the only authority on state, so a `rm -rf` in the wrong place is
+  # not one lost ticket but every ticket, including the claim of the iteration
+  # running. The snapshot has to be able to rebuild the directory itself, not just
+  # overwrite files inside one.
+  use_tickets 01-alpha 02-beta 03-blocked
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+rm -rf .scratch/demo/issues
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "the session edited the tracker — restored 3 ticket file(s)"
+
+  # Every ticket is back, with the state it had at spawn time — and the run went
+  # on to mark and journal against it rather than dying on a missing file.
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_ticket_status 02-beta ready-for-agent
+  assert_ticket_status 03-blocked ready-for-agent
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  assert_file_contains "$FEATURE_DIR/run.log" "tracker-write"
+}
+
+@test "a project that keeps its scratch out of git is guarded all the same" {
+  # The probe that decided the snapshot is taken by force. Plenty of real projects
+  # gitignore their scratch directory — and [19] provisions exactly that for the
+  # journal and the session streams. An ignore rule the target project happens to
+  # write must not be able to switch the tracker's own guard off, which is what an
+  # ordinary `git add -A` would have done: both snapshots empty, no delta ever,
+  # and the exploit back with no trace of the guard having declined.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  printf '.scratch/\n' >>"$PROJECT_DIR/.gitignore"
+  harness__commit "test: a project that keeps its scratch out of git"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+printf 'written\n' >src/rogue.txt
+perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
+  .scratch/demo/issues/01-alpha.md
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "the session edited the tracker"
+  assert_output_contains "scope=red"
+  assert_equal "$(ticket_field 01-alpha Write-surface)" '`src/alpha.txt`'
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/src/rogue.txt"
+}
+
+@test "a tracker nothing can vouch for does not pass" {
+  use_tickets 01-alpha
+
+  # The same rule the scope-guard follows: a guard that cannot see must not pass.
+  # Reached when git refuses to write a tree object — the run is in trouble either
+  # way, and the one thing it must not do is call the iteration clean.
+  pack_run 'rc=0; failures_protect_tracker 01-alpha "" || rc=$?; printf "rc=%s\n" "$rc"'
+  assert_success
+  assert_output_contains "rc=1"
+  assert_output_contains "cannot be vouched for"
+}
+
+@test "a tracker the session staged does not stay staged" {
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
+  .scratch/demo/issues/01-alpha.md
+git add -A >/dev/null 2>&1
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  # Putting the file back is not enough if the index still holds the session's
+  # version: it would leave with whatever a human commits next. The rollback
+  # cannot do it — it unstages only the paths it restored, and the tracker is
+  # deliberately outside its reach.
+  run git -C "$PROJECT_DIR" diff --cached --name-only
+  refute_output_contains "issues/01-alpha.md"
+
+  # Scoped to the tickets, and the rest of `.scratch/` is not this ticket's to
+  # keep: what an unfiltered `git add` stages there — the lock, the prompt, a
+  # session stream of any size — is [19]'s `.gitignore` to provision. Pinned so
+  # that the day it is provisioned, this line says what changed.
+  assert_output_contains ".session."
+}
+
+@test "a planning session that edits the tracker has its whole plan refused" {
+  use_tickets 07-overlaps-alpha
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 2
+
+  # A sound plan, from a session that widened the parent's write-surface on its
+  # way past. Widening it is what a plan may not do — so a plan validated against
+  # a surface the planner just wrote is validated against nothing.
+  script_too_big_then <<'FAKE'
+perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
+  .scratch/demo/issues/07-overlaps-alpha.md
+plan="$(printf '%s' "$prompt" | sed -n 's/^Write the plan to \([^,]*\),.*/\1/p' | head -1)"
+cat >"$plan" <<'PLAN'
+--- ticket: everything | Everything, now that it is allowed ---
+**Write-surface:** `src/alpha.txt`
+
+- [ ] the alpha half exists
+--- ticket: and-more | And the rest of the repository ---
+**Write-surface:** `docs/`
+
+- [ ] the rest exists
+PLAN
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.01}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_output_contains "the session edited the tracker"
+
+  assert_ticket_status 07-overlaps-alpha ready-for-human
+  assert_equal "$(ticket_field 07-overlaps-alpha Escalation)" "too-big"
+  assert_equal "$(ticket_field 07-overlaps-alpha Write-surface)" '`src/alpha.txt`, `src/eta.txt`'
+
+  # Nothing was created out of the plan, sound as each half looked.
+  run bash -c "ls '$TRACKER_DIR' | awk 'END { print NR }'"
+  assert_equal "$output" "1"
+}
 
 @test "a delivery session does not get to put its own tickets on the frontier" {
   use_tickets 01-alpha

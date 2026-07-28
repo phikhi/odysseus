@@ -74,6 +74,18 @@ $(cat "$file")"
   fi
 }
 
+# A missing file is not the absence of the needle: it is a test asserting on
+# something that is not there, which would pass for the wrong reason.
+refute_file_contains() {
+  local file="$1" needle="$2"
+  assert_file_exists "$file"
+  if grep -qF -- "$needle" "$file"; then
+    fail "expected $file NOT to contain: $needle
+--- file ---
+$(cat "$file")"
+  fi
+}
+
 # The tracker is the observation point of the process seam, so ticket state
 # gets a first-class assertion.
 assert_ticket_status() {
