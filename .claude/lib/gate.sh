@@ -86,7 +86,11 @@ gate_tree_snapshot() {
 #
 # A baseline that is missing is never read as "nothing changed": a guard that
 # cannot see must not pass.
-gate__changed_files() {
+#
+# Public, and named so: the failure policy commits through it and the review
+# lenses will read the diff through it. It was `gate__changed_files` until the
+# second caller appeared, which made a private name a lie.
+gate_changed_files() {
   local base="$1" now="${2:-}"
   [ -n "$now" ] || now="$(gate_tree_snapshot)" || now=""
   [ -n "$base" ] && [ -n "$now" ] || return 1
@@ -171,7 +175,7 @@ gate__scope_guard() {
     printf '%s\n' "$now" >"$treefile"
   fi
 
-  if ! changed="$(gate__changed_files "$base" "$now")"; then
+  if ! changed="$(gate_changed_files "$base" "$now")"; then
     printf 'the scope-guard could not read the working tree — refusing to pass it\n'
     return 1
   fi
