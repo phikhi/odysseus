@@ -30,3 +30,7 @@
 - **Autres champs utiles observés sur la ligne `result`** (pour [07] et [19], non exhaustif) : `stop_reason`, `terminal_reason`, `api_error_status`, `permission_denials`, `modelUsage`, `usage`.
 
 - **Ordre de grandeur du coût**, mesuré avec `haiku` : 0,035 $ pour un ticket trivial en 5 tours, 0,016 $ pour un aller-retour d'un tour. Le plancher par itération n'est donc pas négligeable — utile pour calibrer les seuils.
+
+- **Contrainte posée par [07] : où le classifieur s'insère, et ce qu'il ne doit pas déclencher.** La politique d'échec est dans `.claude/lib/failures.sh`. `failures_classify OUTCOME [SCOPE_CLASS]` rend aujourd'hui `too-big` (limite molle franchie), `contract`, `gate-red` ou `crash` — le cas par défaut (`crash`) est exactement celui que le classifieur budget doit intercepter en premier, avec une classe `budget`. Ce qu'une pause budget ne doit **pas** faire, et que fait tout le reste de `failures_handle` : incrémenter `Failures:`, rollbacker l'arbre, escalader. Un exit non-zéro dû au quota n'est pas une tentative ratée du ticket.
+- Le signal in-band est déjà lisible sans requête : la boucle capture le flux complet dans `.scratch/<feature>/.session.$$.jsonl`, que `loop_result_field` lit déjà par `grep`+`sed`. Le `rate_limit_event` y est.
+- Attention : `loop_spawn` (extrait de `loop_spawn_session` par [07]) est aussi utilisé par les sessions de **re-slice**. Un gate de spawn proactif posé dans la boucle ne les couvre pas ; à décider si une session de planification doit être gatée par le budget elle aussi.

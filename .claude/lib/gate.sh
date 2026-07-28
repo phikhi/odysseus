@@ -21,6 +21,8 @@
 #   RALPH_GATE_VERDICTS     e.g. "tests=green typecheck=red scope=green"
 #   RALPH_GATE_FAILED       the red branch names
 #   RALPH_GATE_SCOPE_CLASS  internal | contract, when the scope-guard is red
+#   RALPH_GATE_TREE         the tree the scope-guard judged, so the rollback and
+#                           the durable commit act on exactly what it approved
 
 gate__log() {
   printf 'ralph: gate: %s\n' "$*"
@@ -77,11 +79,16 @@ gate_tree_snapshot() {
   printf '%s\n' "$tree"
 }
 
-# What this session changed, and only this session. A baseline that is missing
-# is never read as "nothing changed": a guard that cannot see must not pass.
+# What this session changed, and only this session. The second argument is the
+# post-session tree when the caller already has one — the failure policy and the
+# durable commit both act on the very tree the scope-guard judged, rather than
+# re-reading a tree the test suite may have touched since.
+#
+# A baseline that is missing is never read as "nothing changed": a guard that
+# cannot see must not pass.
 gate__changed_files() {
-  local base="$1" now
-  now="$(gate_tree_snapshot)" || now=""
+  local base="$1" now="${2:-}"
+  [ -n "$now" ] || now="$(gate_tree_snapshot)" || now=""
   [ -n "$base" ] && [ -n "$now" ] || return 1
   git diff-tree -r --name-only "$base" "$now" 2>/dev/null | gate__drop_bookkeeping
 }
@@ -90,14 +97,22 @@ gate__changed_files() {
 # it, and the journal, the run lock and the session stream all live in the
 # feature directory. Paths are repo-root relative, which is the project root —
 # a pack installed below the repo root is out of scope for now.
+#
+# One definition, two readers: the scope-guard filters a list, the rollback asks
+# path by path. A second copy of the rule would drift from this one and let the
+# rollback rewrite the tracker — the only authority on state this system has.
+gate_is_bookkeeping() {
+  case "$1" in
+    ".scratch/${FEATURE}/"*) return 0 ;;
+  esac
+  return 1
+}
+
 gate__drop_bookkeeping() {
-  local prefix file
-  prefix=".scratch/${FEATURE}/"
+  local file
   while IFS= read -r file; do
-    case "$file" in
-      '') continue ;;
-      "$prefix"*) continue ;;
-    esac
+    [ -n "$file" ] || continue
+    if gate_is_bookkeeping "$file"; then continue; fi
     printf '%s\n' "$file"
   done
   return 0
@@ -141,16 +156,22 @@ gate__surface_owner() {
   return 1
 }
 
-# Runs as a gate branch: findings on stdout, the classification in a sidecar
-# file because a branch runs in its own process and cannot set a variable here.
+# Runs as a gate branch: findings on stdout, the classification and the tree it
+# judged in sidecar files because a branch runs in its own process and cannot
+# set a variable here.
 #
 # A ticket with no declared write-surface is the fail-safe case: an unknown
 # surface can never be assumed to contain anything.
 gate__scope_guard() {
-  local ticket="$1" base="$2" classfile="$3"
-  local surface changed file owner class='' rc=0
+  local ticket="$1" base="$2" classfile="$3" treefile="${4:-}"
+  local now surface changed file owner class='' rc=0
 
-  if ! changed="$(gate__changed_files "$base")"; then
+  now="$(gate_tree_snapshot)" || now=""
+  if [ -n "$treefile" ] && [ -n "$now" ]; then
+    printf '%s\n' "$now" >"$treefile"
+  fi
+
+  if ! changed="$(gate__changed_files "$base" "$now")"; then
     printf 'the scope-guard could not read the working tree — refusing to pass it\n'
     return 1
   fi
@@ -199,6 +220,43 @@ gate__start() {
   (gate__branch "$dir" "$name" "$@") &
 }
 
+# Every descendant, deepest first, then the process itself. Killing the branch
+# alone would leave the command it started — a hung test suite holding a port or
+# a database — running for the rest of the night, and `kill -- -PID` needs a
+# process group this shell never made. `ps` is POSIX; the pack still needs
+# nothing installed.
+gate__kill_tree() {
+  local pid="$1" child
+  for child in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$pid" '$2 == p { print $1 }'); do
+    gate__kill_tree "$child"
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  return 0
+}
+
+# The deadline. `wait` cannot take a timeout in bash 3.2, so the deadline is a
+# process of its own: it sleeps in one-second steps — so that killing it leaves
+# at most a one-second orphan behind — and then takes the branches down.
+#
+# A killed branch writes no exit code, and a branch with no verdict already
+# counts red. The timeout needs no verdict of its own: it only has to stop a
+# `TEST_CMD` that hangs from hanging the whole run, which the smart-zone net
+# cannot do because it watches the session and not the gate.
+gate__watchdog() {
+  local limit="$1" marker="$2"
+  shift 2
+  local waited=0 pid
+  while [ "$waited" -lt "$limit" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  : >"$marker"
+  for pid in "$@"; do
+    gate__kill_tree "$pid"
+  done
+  return 0
+}
+
 # Up to 20 lines of what a red branch had to say. Enough to see which test
 # broke in the journal; the full picture belongs to the audit receipt.
 gate__report() {
@@ -211,12 +269,13 @@ gate__report() {
 # green, and that is the only thing that resolves a ticket.
 gate_run() {
   local ticket="$1" base="${2:-}"
-  local dir names='' pids='' name rc=0 brc
+  local dir names='' pids='' name rc=0 brc watchdog=''
 
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
   RALPH_GATE_VERDICTS=""
   RALPH_GATE_FAILED=""
   RALPH_GATE_SCOPE_CLASS=""
+  RALPH_GATE_TREE=""
 
   gate__start "$dir" tests bash -c "$TEST_CMD"
   names="$names tests"
@@ -230,13 +289,29 @@ gate_run() {
     pids="$pids $!"
   fi
 
-  gate__start "$dir" scope gate__scope_guard "$ticket" "$base" "$dir/scope.class"
+  gate__start "$dir" scope \
+    gate__scope_guard "$ticket" "$base" "$dir/scope.class" "$dir/scope.tree"
   names="$names scope"
   pids="$pids $!"
+
+  # An unset, zero or non-numeric GATE_TIMEOUT means no deadline. That is the
+  # status quo and not a false green: a hung branch never comes back green.
+  case "${GATE_TIMEOUT:-0}" in
+    '' | 0 | *[!0-9]*) ;;
+    *)
+      gate__watchdog "$GATE_TIMEOUT" "$dir/timed-out" $pids &
+      watchdog=$!
+      ;;
+  esac
 
   for brc in $pids; do
     wait "$brc" 2>/dev/null || true
   done
+
+  if [ -n "$watchdog" ]; then
+    kill -TERM "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+  fi
 
   for name in $names; do
     brc=""
@@ -250,6 +325,8 @@ gate_run() {
     rc=1
     if [ -n "$brc" ]; then
       gate__log "$name red (exit $brc)"
+    elif [ -f "$dir/timed-out" ]; then
+      gate__log "$name red (timed out after ${GATE_TIMEOUT}s)"
     else
       gate__log "$name red (no verdict)"
     fi
@@ -258,6 +335,9 @@ gate_run() {
 
   if [ -f "$dir/scope.class" ]; then
     RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"
+  fi
+  if [ -f "$dir/scope.tree" ]; then
+    RALPH_GATE_TREE="$(cat "$dir/scope.tree")"
   fi
   RALPH_GATE_VERDICTS="${RALPH_GATE_VERDICTS# }"
   RALPH_GATE_FAILED="${RALPH_GATE_FAILED# }"

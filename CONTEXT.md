@@ -162,6 +162,14 @@ _À éviter_ : périmètre, scope (ambigu), fichiers touchés.
 Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry.
 _À éviter_ : lint, garde-fou, sandbox (réservé à l'exécution).
 
+**Rollback d'itération**:
+La remise du dépôt dans l'état où la session l'a trouvé, après tout échec. Aussi large que le diff de la session et pas plus : ses ajouts sont supprimés, ses modifications et suppressions restaurées depuis le snapshot pré-session, son commit éventuel défait (`HEAD` remis au commit pré-spawn). **N'est pas** un `git reset --hard` + `git clean` : le travail non commité que le run n'a pas produit ne lui appartient pas. Le tracker en est exclu — c'est la seule autorité d'état.
+_À éviter_ : reset, nettoyage, revert (réservé à un commit inverse).
+
+**Travail durable**:
+Ce qu'une itération verte a produit, **commité** par la boucle avant l'itération suivante, en ne contenant que les chemins approuvés par le scope-guard. C'est ce qui rend le commit pré-spawn utilisable comme point de rollback : sans lui, un échec ultérieur emporterait tout ce que le run a déjà gaté vert.
+_À éviter_ : sauvegarde, snapshot (réservé aux objets tree du scope-guard).
+
 **Claim**:
 La prise atomique d'un ticket (`Status: claimed` + propriétaire + horodatage) avant spawn, qui le retire de la frontière pour les pickers concurrents. Un claim dont le propriétaire est mort est réclamé (balayage des zombies ; politique de liveness = verrou de session).
 _À éviter_ : lock (réservé aux verrous), réservation, assignation.

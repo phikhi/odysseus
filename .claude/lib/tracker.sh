@@ -16,6 +16,7 @@
 #   tracker_mark_resolved ID          the gate came back green
 #   tracker_mark_escalated ID REASON  hand it to the human sink, with a reason
 #   tracker_mark_ready ID             re-inject (re-slice, human fix, wiring)
+#   tracker_block_on ID DEPS          hold it until those tickets are resolved
 #   tracker_bump_failures ID          count one failure; new count on stdout
 #   tracker_open_ticket SLUG TITLE    create a ticket from stdin; id on stdout
 #   tracker_append_note ID            append a comment from stdin
@@ -43,6 +44,7 @@ tracker_unclaim() { tracker__dispatch unclaim "$@"; }
 tracker_mark_resolved() { tracker__dispatch mark_resolved "$@"; }
 tracker_mark_escalated() { tracker__dispatch mark_escalated "$@"; }
 tracker_mark_ready() { tracker__dispatch mark_ready "$@"; }
+tracker_block_on() { tracker__dispatch block_on "$@"; }
 tracker_bump_failures() { tracker__dispatch bump_failures "$@"; }
 tracker_open_ticket() { tracker__dispatch open_ticket "$@"; }
 tracker_append_note() { tracker__dispatch append_note "$@"; }

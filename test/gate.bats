@@ -293,7 +293,9 @@ FAKE
   assert_output_contains "scope overflow on 01-alpha: contract"
   refute_output_contains "outside the declared write-surface"
 
-  assert_ticket_status 01-alpha ready-for-agent
+  # And it does not go back to the frontier: retrying a scoping conflict cannot
+  # settle it, so the failure policy sends it straight to the human sink.
+  assert_ticket_status 01-alpha ready-for-human
   assert_ticket_status 02-beta ready-for-agent
 }
 

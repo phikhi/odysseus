@@ -225,6 +225,34 @@ tracker_local_mark_ready() {
   tracker_local__set_fields "$1" Status ready-for-agent Claimed --drop Escalation --drop
 }
 
+# Hold a ticket until other tickets are resolved. Used by the re-slice: the
+# ticket that was too big waits for the smaller ones it was cut into, and comes
+# back to the frontier once they are all resolved — its own green gate is what
+# closes it, never the split itself.
+#
+# Blockers already on the ticket are kept. They were resolved when it entered
+# the frontier, so dropping them would change nothing for the loop and lose the
+# reason a human wrote them down.
+tracker_local_block_on() {
+  local id="$1" deps="${2:-}" current dep merged=''
+  current="$(tracker_local_field "$id" 'Blocked by')" || current=''
+  for dep in $(printf '%s %s' "$current" "$deps" | tr ',' ' '); do
+    # "None", prose and punctuation are not dependencies.
+    case "$dep" in
+      [0-9]*) ;;
+      *) continue ;;
+    esac
+    case " $merged " in
+      *" $dep "*) continue ;;
+    esac
+    merged="$merged $dep"
+  done
+  merged="${merged# }"
+  [ -n "$merged" ] || merged=None
+  tracker_local__set_fields "$id" "Blocked by" \
+    "$(printf '%s' "$merged" | tr ' ' ',' | sed 's/,/, /g')"
+}
+
 tracker_local_bump_failures() {
   local id="$1" current next
   current="$(tracker_local_field "$id" Failures)"

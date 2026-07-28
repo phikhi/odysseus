@@ -2,7 +2,7 @@
 
 Un pack déposable dans n'importe quel projet, **100 % bash + markdown**, qui fait broyer la phase de **delivery sans humain** (AFK) : vous validez des tickets le soir, la boucle les implémente pendant la nuit, et ne vous réveille que pour ce qui relève de votre jugement.
 
-> ⚠️ **En construction.** 5 tickets sur 20 sont livrés. La boucle tourne de bout en bout et le gate objectif décide vraiment, mais il manque encore les lentilles de revue et le rollback — voir [État](#état). Ne le lâchez pas encore sur un dépôt qui compte.
+> ⚠️ **En construction.** 6 tickets sur 20 sont livrés. La boucle tourne de bout en bout, le gate objectif décide vraiment et un échec ne laisse plus le dépôt sale, mais il manque encore les lentilles de revue, le budget d'usage et la boucle humaine — voir [État](#état). Ne le lâchez pas encore sur un dépôt qui compte.
 
 ## Le problème
 
@@ -38,10 +38,10 @@ Le vocabulaire complet est dans [`CONTEXT.md`](CONTEXT.md).
 
 | | |
 |---|---|
-| **Ça marche** | verrou de run · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) · gate objectif en parallèle (tests, typecheck, scope-guard) |
-| **Ça manque** | lentilles de revue (Standards/Spec/Sécurité…) · rollback (une itération qui dérape laisse le dépôt sale) · budget d'usage · escalades typées · boucle humaine · installeur |
+| **Ça marche** | verrou de run · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) · gate objectif en parallèle (tests, typecheck, scope-guard) avec délai par branche · échecs typés (re-slice, retry-N, escalade avec raison) · rollback précis et commit sur vert |
+| **Ça manque** | lentilles de revue (Standards/Spec/Sécurité…) · budget d'usage · boucle humaine · reçu d'audit · concurrence · installeur |
 
-Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone · [05](.scratch/ralph-pack/issues/05-gate-qa-objectif.md) gate QA objectif.
+Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone · [05](.scratch/ralph-pack/issues/05-gate-qa-objectif.md) gate QA objectif · [07](.scratch/ralph-pack/issues/07-echecs-types-rollback.md) échecs typés et rollback.
 
 Le reste est dans [`.scratch/ralph-pack/issues/`](.scratch/ralph-pack/issues/), chaque ticket portant ses critères d'acceptation et, une fois résolu, les décisions et les pièges rencontrés.
 
@@ -74,7 +74,13 @@ Un ticket est un fichier markdown auto-suffisant — aucun contexte n'étant hé
 - [ ] Un critère d'acceptation vérifiable par machine.
 ```
 
-`TEST_CMD` et `TYPECHECK_CMD` ne sont pas optionnelles : la boucle refuse de démarrer tant qu'elles sont vides, parce qu'un gate qui ne vérifie rien est vert pour la mauvaise raison. Un projet réellement sans typecheck le déclare par `TYPECHECK_CMD=none`. À chaque itération, la boucle lance en parallèle les tests, le typecheck et le **scope-guard** — qui compare ce que la session a écrit (commité ou non) à la write-surface déclarée du ticket. *resolved* n'est prononcé que si toutes les branches déclenchées sont vertes.
+`TEST_CMD` et `TYPECHECK_CMD` ne sont pas optionnelles : la boucle refuse de démarrer tant qu'elles sont vides, parce qu'un gate qui ne vérifie rien est vert pour la mauvaise raison. Un projet réellement sans typecheck le déclare par `TYPECHECK_CMD=none`. À chaque itération, la boucle lance en parallèle les tests, le typecheck et le **scope-guard** — qui compare ce que la session a écrit (commité ou non) à la write-surface déclarée du ticket. *resolved* n'est prononcé que si toutes les branches déclenchées sont vertes ; une branche qui pend au-delà de `GATE_TIMEOUT` est tuée et compte rouge.
+
+### Ce que fait la boucle quand ça échoue
+
+Un échec n'est pas une seule chose. Une session coupée pour cause de contexte est une **tranche trop grosse** : une session de planification la redécoupe en tickets plus petits, la boucle vérifie que le découpage ne perd aucun critère d'acceptation ni n'élargit la write-surface, et les met en frontière. Un débordement dans la write-surface d'un **autre ticket** est un arbitrage de découpage : escalade directe, sans consommer de retry. Un gate rouge ou une session morte achète jusqu'à `RETRY_N` sessions fraîches, puis part vers `ready-for-human` avec un compteur `Failures:` et une raison `Escalation:`.
+
+Dans tous les cas le dépôt revient où la session l'a trouvé — les fichiers qu'elle a ajoutés sont supprimés, ceux qu'elle a modifiés ou supprimés sont restaurés, un commit qu'elle aurait fait est défait. Le rollback est **exactement aussi large que le diff de la session** : ni `git reset --hard`, ni `git clean -fd`, pour ne pas emporter le travail non commité de quelqu'un d'autre. Avant une escalade, la tentative est conservée sur une branche `failed/<ticket>`. Et chaque itération verte est **commitée** avant la suivante : sans ça, un rollback ultérieur détruirait le travail déjà gaté.
 
 Codes de sortie de `loop.sh` : `0` la frontière a été drainée par ce run · `1` un autre run tient le verrou · `2` refus de démarrer (config absente, `FEATURE` vide ou pointant sur rien, config qui viderait le gate de son sens) · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile) · `5` rien à broyer, la frontière était déjà vide au démarrage.
 
@@ -88,7 +94,8 @@ bash test/run.sh test/smoke.bats       # un fichier
 bash test/run.sh -f "frontier"         # par motif
 bash test/run.sh --bats                # via bats-core, s'il est installé
 
-bash test/mutate.sh                    # le gate de mutation (~2 min)
+bash test/mutate.sh                    # le gate de mutation (~20 min)
+bash test/mutate.sh -f "07 "           # les garanties d'un ticket
 bash test/mutate.sh -l                 # lister les garanties couvertes
 ```
 
@@ -96,7 +103,7 @@ Aucune dépendance : le runner (`test/helpers/microbats.bash`) interprète la sy
 
 `test/mutate.sh` est le gate qui compte : il supprime une garantie à la fois et vérifie que le test censé la couvrir rougit. Onze tests de ce dépôt sont passés au vert alors que la propriété qu'ils prétendaient couvrir avait été supprimée — un test qui courait après une fenêtre de quelques microsecondes, un test qui assertait un message que la boucle imprime de toute façon, un test qui lisait le shell du développeur plutôt que le code. Un `VACUOUS` est un faux vert dans un pack dont le métier est de refuser les faux verts.
 
-`test/canary.bats` est l'autre : un run de trois itérations contre le monde tel qu'il est — sessions qui écrivent vraiment leur write-surface, une qui commit tout, une dont le flux arrive coupé au milieu d'une ligne, par-dessus un tracker en CRLF, déjà sale et portant le claim de quelqu'un d'autre. Presque tous les défauts livrés jusqu'ici vivaient dans l'écart entre un fake trop coopératif et une vraie session.
+`test/canary.bats` est l'autre : un run contre le monde tel qu'il est — sessions qui écrivent vraiment leur write-surface, une qui commit tout, une dont le flux arrive coupé au milieu d'une ligne, par-dessus un tracker en CRLF, déjà sale et portant le claim de quelqu'un d'autre. Presque tous les défauts livrés jusqu'ici vivaient dans l'écart entre un fake trop coopératif et une vraie session.
 
 Les tests pilotent les **vrais scripts comme des process**, dans un environnement entièrement injecté — tracker jetable en tmpdir, `claude`/`curl`/`at` remplacés par des shims scriptables, commandes de test stubbées — et n'observent que l'état du tracker et les fichiers produits. Le flux du faux `claude` est calqué sur une capture réelle : le filet smart-zone et le budget lisent ce flux, un flux inventé les ferait concevoir contre une fiction.
 
@@ -113,6 +120,8 @@ Les tests pilotent les **vrais scripts comme des process**, dans un environnemen
     select.sh              scan de frontière
     state.sh               écriture atomique, verrou de run, guards
     monitor.sh             filet smart-zone
+    gate.sh                gate objectif (tests, typecheck, scope-guard)
+    failures.sh            échecs typés, rollback, commit sur vert
 test/                      harnais, fixtures et suites
 docs/agents/               conventions de tracker et de triage
 .scratch/<feature>/        le tracker : spec + issues/NN-*.md
