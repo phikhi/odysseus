@@ -112,6 +112,8 @@ Aucune dépendance : le runner (`test/helpers/microbats.bash`) interprète la sy
 
 `test/mutate.sh` est le gate qui compte : il supprime une garantie à la fois et vérifie que le test censé la couvrir rougit. Onze tests de ce dépôt sont passés au vert alors que la propriété qu'ils prétendaient couvrir avait été supprimée — un test qui courait après une fenêtre de quelques microsecondes, un test qui assertait un message que la boucle imprime de toute façon, un test qui lisait le shell du développeur plutôt que le code. Un `VACUOUS` est un faux vert dans un pack dont le métier est de refuser les faux verts.
 
+`test/layering.bats` garde la pile : `loop.sh` au-dessus, `lib/*.sh` en dessous, chaque module propriétaire de ses internes `<module>__`. Un lib qui appelle l'interne d'un voisin ou qui remonte dans la boucle rougit — et le fichier plante lui-même une violation pour vérifier que la règle a des dents, parce qu'un contrôle qui ne matche rien ressemble à un pack propre.
+
 `test/canary.bats` est l'autre : un run contre le monde tel qu'il est — sessions qui écrivent vraiment leur write-surface, une qui commit tout, une dont le flux arrive coupé au milieu d'une ligne, par-dessus un tracker en CRLF, déjà sale et portant le claim de quelqu'un d'autre. Presque tous les défauts livrés jusqu'ici vivaient dans l'écart entre un fake trop coopératif et une vraie session.
 
 Les tests pilotent les **vrais scripts comme des process**, dans un environnement entièrement injecté — tracker jetable en tmpdir, `claude`/`curl`/`at` remplacés par des shims scriptables, commandes de test stubbées — et n'observent que l'état du tracker et les fichiers produits. Le flux du faux `claude` est calqué sur une capture réelle : le filet smart-zone et le budget lisent ce flux, un flux inventé les ferait concevoir contre une fiction.
@@ -128,6 +130,7 @@ Les tests pilotent les **vrais scripts comme des process**, dans un environnemen
     tracker-local.sh       backend local (markdown)
     select.sh              scan de frontière
     state.sh               écriture atomique, verrou de run, guards
+    session.sh             le spawn : le seul endroit qui lance `claude`
     monitor.sh             filet smart-zone
     gate.sh                gate objectif (tests, typecheck, scope-guard)
     failures.sh            échecs typés, rollback, commit sur vert

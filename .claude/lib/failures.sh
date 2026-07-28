@@ -317,7 +317,7 @@ failures_make_durable() {
     failures__log "$ticket: no pre-session snapshot — nothing made durable"
     return 1
   fi
-  changed="$(gate__changed_files "$base" "$tree")" || changed=""
+  changed="$(gate_changed_files "$base" "$tree")" || changed=""
   if [ -z "$changed" ]; then
     return 0
   fi
@@ -392,7 +392,7 @@ failures_reslice() {
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
 
   failures__reslice_prompt "$ticket" "$plan" >"$plan.prompt"
-  loop_spawn "$plan.prompt" "$out" || rc=$?
+  session_spawn "$plan.prompt" "$out" || rc=$?
   if [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
     rc=1
     failures__log "$ticket: the re-slice session crossed the soft limit too"

@@ -126,6 +126,7 @@ done
 LOOP=".claude/loop.sh"
 GATE=".claude/lib/gate.sh"
 MONITOR=".claude/lib/monitor.sh"
+SESSION=".claude/lib/session.sh"
 TRACKER=".claude/lib/tracker-local.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
@@ -229,13 +230,13 @@ mutation "03 the ticket is not given back after a failure" "$FAILURES" \
   's/    tracker_unclaim "\$ticket"\n//' \
   test/loop-happy-path.bats "a session that fails resolves nothing"
 
-mutation "03 sessions are resumed instead of fresh" "$LOOP" \
+mutation "03 sessions are resumed instead of fresh" "$SESSION" \
   's/claude -p /claude -p --continue /' \
   test/loop-happy-path.bats "no --continue"
 
 # ── [04] the smart-zone net ──────────────────────────────────────────────────
 
-mutation "04 auto-compact is not turned off for the session" "$LOOP" \
+mutation "04 auto-compact is not turned off for the session" "$SESSION" \
   's/DISABLE_AUTO_COMPACT=1 claude/claude/' \
   test/smart-zone.bats "auto-compact is off"
 
@@ -259,7 +260,7 @@ mutation "04 a partial stream line is dropped" "$MONITOR" \
   's/\{ partial="\$partial\$line"; false; \}/{ partial=""; false; }/' \
   test/smart-zone.bats "split across two writes"
 
-mutation "04 the threshold is hard-coded" "$LOOP" \
+mutation "04 the threshold is hard-coded" "$SESSION" \
   's/  monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/  monitor_watch "$outfile" "$pid" 150000/' \
   test/smart-zone.bats "not a hard-coded"
 

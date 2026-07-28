@@ -94,45 +94,13 @@ Read what you need. Nothing was inherited from a previous session.
 PROMPT
 }
 
-# A fresh session: never --continue, never --resume. Those are exactly the
-# flags that would replay history and drag the context toward the dumb zone.
-#
-# DISABLE_AUTO_COMPACT is set here as well as in settings.json: compaction is
-# the mechanism that produces a dumb-zone session, and the guarantee must not
-# depend on a settings file the target project could overwrite.
-#
-# The session runs in the background so the smart-zone net can watch its stream
-# and stop it while it is still running. Sets RALPH_SOFT_LIMIT_HIT when it does.
-#
-# One prompt, one stream, from a file rather than a pipe: a pipeline would run
-# this in a subshell and RALPH_SOFT_LIMIT_HIT would die with it. Every session
-# the pack spawns goes through here, delivery and re-slice alike — a planning
-# session that inherited a conversation would defeat the whole point.
-loop_spawn() {
-  local promptfile="$1" outfile="$2" pid rc=0
-  RALPH_SOFT_LIMIT_HIT=0
-
-  # Created before the spawn: the monitor follows the stream through an open
-  # descriptor, and a descriptor cannot be opened on a file that is not there.
-  : >"$outfile"
-
-  DISABLE_AUTO_COMPACT=1 claude -p \
-    --model "$MODEL" \
-    --output-format stream-json \
-    --verbose \
-    --dangerously-skip-permissions \
-    <"$promptfile" >"$outfile" &
-  pid=$!
-
-  monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS" || RALPH_SOFT_LIMIT_HIT=1
-  wait "$pid" || rc=$?
-  return "$rc"
-}
-
+# One iteration's session: the ticket prompt on a file, then the spawn every
+# caller shares (see lib/session.sh — the failure policy re-slices through the
+# same one, so neither can quietly become the less fresh of the two).
 loop_spawn_session() {
   local ticket="$1" outfile="$2" promptfile="$2.prompt" rc=0
   loop_session_prompt "$ticket" >"$promptfile"
-  loop_spawn "$promptfile" "$outfile" || rc=$?
+  session_spawn "$promptfile" "$outfile" || rc=$?
   rm -f "$promptfile"
   return "$rc"
 }
