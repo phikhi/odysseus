@@ -60,6 +60,11 @@ STERILE_K="${STERILE_K:-3}"
 # Fresh retries of a failed ticket before it is escalated to ready-for-human.
 RETRY_N="${RETRY_N:-2}"
 
+# Seconds a single gate branch may run before it is killed and counted red.
+# The smart-zone net watches the session, not the gate: without this, a TEST_CMD
+# that hangs hangs the whole run. 0 disables it.
+GATE_TIMEOUT="${GATE_TIMEOUT:-1800}"
+
 # Pause for a human checkpoint every N resolved tickets (0 = never).
 HUMAN_CHECKPOINT_EVERY="${HUMAN_CHECKPOINT_EVERY:-0}"
 

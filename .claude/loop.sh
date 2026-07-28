@@ -103,25 +103,37 @@ PROMPT
 #
 # The session runs in the background so the smart-zone net can watch its stream
 # and stop it while it is still running. Sets RALPH_SOFT_LIMIT_HIT when it does.
-loop_spawn_session() {
-  local ticket="$1" outfile="$2" pid rc=0
+#
+# One prompt, one stream, from a file rather than a pipe: a pipeline would run
+# this in a subshell and RALPH_SOFT_LIMIT_HIT would die with it. Every session
+# the pack spawns goes through here, delivery and re-slice alike — a planning
+# session that inherited a conversation would defeat the whole point.
+loop_spawn() {
+  local promptfile="$1" outfile="$2" pid rc=0
   RALPH_SOFT_LIMIT_HIT=0
 
   # Created before the spawn: the monitor follows the stream through an open
   # descriptor, and a descriptor cannot be opened on a file that is not there.
   : >"$outfile"
 
-  loop_session_prompt "$ticket" |
-    DISABLE_AUTO_COMPACT=1 claude -p \
-      --model "$MODEL" \
-      --output-format stream-json \
-      --verbose \
-      --dangerously-skip-permissions \
-      >"$outfile" &
+  DISABLE_AUTO_COMPACT=1 claude -p \
+    --model "$MODEL" \
+    --output-format stream-json \
+    --verbose \
+    --dangerously-skip-permissions \
+    <"$promptfile" >"$outfile" &
   pid=$!
 
   monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS" || RALPH_SOFT_LIMIT_HIT=1
   wait "$pid" || rc=$?
+  return "$rc"
+}
+
+loop_spawn_session() {
+  local ticket="$1" outfile="$2" promptfile="$2.prompt" rc=0
+  loop_session_prompt "$ticket" >"$promptfile"
+  loop_spawn "$promptfile" "$outfile" || rc=$?
+  rm -f "$promptfile"
   return "$rc"
 }
 
@@ -187,7 +199,7 @@ loop_main() {
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
-  local iteration=0 sterile=0 ticket outfile base rc turns cost tokens outcome
+  local iteration=0 sterile=0 ticket outfile base pre tree rc turns cost tokens outcome
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -223,10 +235,12 @@ loop_main() {
 
     loop_log "iteration $iteration: $ticket"
     outfile="$(ralph_feature_dir)/.session.$$.jsonl"
-    # Taken before the spawn: the state of the tree this session inherited, and
-    # what the scope-guard measures it against. Not a commit — the rollback's
-    # own `HEAD` snapshot is a different concern, and arrives with it.
+    # Both taken before the spawn, and they are not the same snapshot. The tree
+    # is the state this session inherited, and what the scope-guard measures it
+    # against. The commit is where the rollback puts HEAD back: a tree object is
+    # not a commit, and a session that commits its work moves the branch.
     base="$(gate_tree_snapshot)" || base=""
+    pre="$(git rev-parse HEAD 2>/dev/null)" || pre=""
     rc=0
     loop_spawn_session "$ticket" "$outfile" || rc=$?
 
@@ -235,13 +249,24 @@ loop_main() {
     tokens="$(monitor_peak_tokens "$outfile")"
 
     outcome=""
+    tree=""
     if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ]; then
       if gate_run "$ticket" "$base"; then
+        # Durable before the next iteration starts: everything the gate just
+        # approved gets committed, so the pre-session commit a later iteration
+        # rolls back to is really the state before that iteration.
+        #
+        # A git that refuses the commit says so and the run carries on: the work
+        # is in the tree either way, and the precise rollback does not touch what
+        # it did not put there. Stopping the run here would trade a warning for a
+        # night of no work at all.
+        failures_make_durable "$ticket" "$base" "${RALPH_GATE_TREE:-}" || true
         tracker_mark_resolved "$ticket"
         outcome=resolved
         sterile=0
       else
         outcome=gate-red
+        tree="${RALPH_GATE_TREE:-}"
         # Which kind of overflow it was decides what happens next: a stray
         # write into a neutral file is a too-narrow declaration and can be
         # retried, an overflow into another ticket's surface is a scoping
@@ -259,11 +284,12 @@ loop_main() {
     fi
 
     if [ "$outcome" != resolved ]; then
-      # Typed failures — budget pause, too-big re-slice, retry-then-escalate,
-      # rollback, escalation on scope drift — arrive with the failure-handling
-      # ticket. For now the ticket goes back to the frontier and the sterile
-      # detector keeps the run bounded.
-      tracker_unclaim "$ticket"
+      # Typed failures: the tree goes back to where the session found it, and
+      # what happens to the ticket depends on what kind of failure this was —
+      # re-slice, fresh retry, or straight to the human sink. The budget pause
+      # is the one type still missing, and it belongs to the budget ticket:
+      # a non-zero exit has to be tested "budget?" before it counts as failure.
+      failures_handle "$ticket" "$outcome" "$pre" "$base" "$tree"
       sterile=$((sterile + 1))
     fi
 

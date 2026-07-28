@@ -12,3 +12,9 @@
 - [ ] En backend `local`, le reçu est un fichier sous `receipts/` ; l'interface permet à un backend distant de rendre le reçu comme PR.
 - [ ] Le journal de run est append-only, une ligne par itération (tâche, is_error, coût, tours, utilisation) et **n'est jamais relu** pour choisir/marquer.
 - [ ] Les 4 couches (journal / reçu / playthrough / LEARNINGS) sont des artefacts distincts, sans mélange.
+
+## Comments
+
+- **Contrainte posée par [07] : le diff à référencer existe maintenant, et il en existe deux.** Une itération verte est **commitée** par la boucle (`<ticket>: iteration delivered (gate green)`, en plomberie `commit-tree`+`update-ref`, ne contenant que les chemins approuvés par le scope-guard), et le gate publie `RALPH_GATE_TREE`, l'objet tree qu'il a jugé. Le reçu peut donc référencer un vrai commit — ou un `git diff-tree $base $RALPH_GATE_TREE` — au lieu d'inliner. Pour une escalade, la tentative ratée est lisible sur la branche `failed/<ticket>` (tracker retiré de l'arbre) : c'est la preuve à référencer de ce côté-là.
+- **Ce que [07] n'a pas mis dans le journal, à trancher ici.** `run.log` garde exactement son vocabulaire d'outcome (`resolved` / `gate-red` / `over-soft-limit` / `failed`) : l'**action** prise par la politique d'échec (retry N/N, escalade et sa raison, re-slice et les enfants créés) n'est dite que sur stdout. Un lecteur du seul journal ne peut donc pas distinguer un gate rouge retryé d'un gate rouge escaladé. Le format n'a pas été élargi pour ne pas préempter ce ticket ; si le journal doit porter l'action, c'est ici — les tests d'[05] et [07] assertent le vocabulaire actuel, pas l'absence d'un champ de plus.
+- Les sessions de re-slice de [07] **n'écrivent pas de ligne de journal** : ce ne sont pas des itérations. Leur coût (`total_cost_usd`, tokens) n'est donc compté nulle part — à décider ici si les quatre couches doivent le voir.

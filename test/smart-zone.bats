@@ -86,6 +86,10 @@ FAKE
 }
 
 @test "a session that survives its SIGTERM still does not count as resolved" {
+  # A slice too big for one session is what the failure policy makes of it, so
+  # the ticket ends up in the human sink here rather than back on the frontier:
+  # the fake re-slice session runs out of context too, and a split nobody can
+  # produce is the one case that needs a human.
   set_config SOFT_LIMIT_TOKENS 5000
   set_config STERILE_K 1
 
@@ -107,11 +111,13 @@ FAKE
   assert_failure 4
   assert_output_contains "crossed the 5000-token soft limit"
 
-  assert_ticket_status 01-alpha ready-for-agent
+  assert_ticket_status 01-alpha ready-for-human
   assert_file_contains "$FEATURE_DIR/run.log" "over-soft-limit"
+  run bash -c "grep -c resolved '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
 }
 
-@test "a terminated session resolves nothing and hands the ticket back" {
+@test "a terminated session resolves nothing and the ticket stops being claimed" {
   set_config SOFT_LIMIT_TOKENS 5000
   set_config STERILE_K 1
   script_runaway_session 9000
@@ -119,7 +125,7 @@ FAKE
   run_loop
   assert_failure 4
 
-  assert_ticket_status 01-alpha ready-for-agent
+  assert_ticket_status 01-alpha ready-for-human
   run ticket_has_field 01-alpha Claimed
   assert_failure
 }

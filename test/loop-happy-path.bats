@@ -221,7 +221,8 @@ FAKE
   assert_output_contains "sterile run: 3 iterations resolved nothing"
 
   assert_equal "$(claude_call_count)" "3"
-  assert_ticket_status 01-alpha ready-for-agent
+  # Three attempts on the same ticket: two fresh retries, then the human sink.
+  assert_ticket_status 01-alpha ready-for-human
 }
 
 @test "sterile counts consecutive barren iterations — a success resets it" {
@@ -248,7 +249,7 @@ FAKE
   # cumulative — but not consecutive — barren iteration landed.
   assert_equal "$(claude_call_count)" "6"
   assert_ticket_status 01-alpha resolved
-  assert_ticket_status 02-beta ready-for-agent
+  assert_ticket_status 02-beta ready-for-human
 }
 
 @test "a graceful kill finishes the iteration, then stops and frees the lock" {

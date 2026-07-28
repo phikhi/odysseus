@@ -124,17 +124,14 @@ OUT"
 }
 
 @test "the canary: an overflow is not absolved by having already failed once" {
-  # A known hole, kept visible rather than forgotten. Nothing puts the tree back
-  # after a red gate, so a second attempt on the same ticket starts from a
-  # baseline that already contains the overflow: commit the very same violation
-  # twice and the scope-guard sees no change at all, and says green.
+  # The hole this test was written for: with nothing putting the tree back after
+  # a red gate, a second attempt on the same ticket started from a baseline that
+  # already contained the overflow. Write the very same violation twice and the
+  # scope-guard saw no change at all, and said green — ticket resolved, rogue
+  # file still there, exit 0. A session could beat the guard by failing once.
   #
-  # It cannot be closed here. The cause is the missing rollback, and every
-  # patch that would work from the gate's side duplicates the failure policy of
-  # [07] — retries, `Failures:`, `failed/<ticket>` branches. Un-skipping this
-  # test is [07]'s acceptance criterion.
-  skip "closed by [07] echecs-types-rollback: nothing restores the tree yet"
-
+  # What closes it is the rollback: every attempt is judged against the same
+  # baseline, because every failed attempt is undone before the next one starts.
   use_tickets 01-alpha
   set_config STERILE_K 3
 
@@ -148,7 +145,22 @@ FAKE
 
   run_loop
   assert_failure 4
-  assert_ticket_status 01-alpha ready-for-agent
+
+  # Three attempts, three red scope-guards. Not two reds and a green.
+  run bash -c "grep -c 'scope=red' <<'OUT'
+$output
+OUT"
+  assert_equal "$output" "3"
+
+  # Two fresh retries, then the human sink — and never a resolution.
+  assert_ticket_status 01-alpha ready-for-human
+  assert_equal "$(ticket_field 01-alpha Failures)" "3"
+  run bash -c "grep -c resolved '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+
+  # The tree the next run inherits carries nothing of the three attempts.
+  refute_file_exists "$PROJECT_DIR/src/rogue.txt"
+  refute_file_exists "$PROJECT_DIR/src/alpha.txt"
 }
 
 @test "the canary: the journal tells the truth about the run" {

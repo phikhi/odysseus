@@ -128,6 +128,7 @@ GATE=".claude/lib/gate.sh"
 MONITOR=".claude/lib/monitor.sh"
 TRACKER=".claude/lib/tracker-local.sh"
 STATE=".claude/lib/state.sh"
+FAILURES=".claude/lib/failures.sh"
 HARNESS="test/helpers/harness.bash"
 
 # ── [01] foundation & harness ────────────────────────────────────────────────
@@ -224,8 +225,8 @@ mutation "03 a stop request tears the iteration down" "$LOOP" \
   's/  trap .loop_request_stop. TERM INT\n//' \
   test/loop-happy-path.bats "graceful kill"
 
-mutation "03 the ticket is not given back after a failure" "$LOOP" \
-  's/      tracker_unclaim "\$ticket"\n//' \
+mutation "03 the ticket is not given back after a failure" "$FAILURES" \
+  's/    tracker_unclaim "\$ticket"\n//' \
   test/loop-happy-path.bats "a session that fails resolves nothing"
 
 mutation "03 sessions are resumed instead of fresh" "$LOOP" \
@@ -317,7 +318,7 @@ mutation "05 a blind scope-guard passes the ticket" "$GATE" \
   test/gate.bats "cannot read the tree"
 
 mutation "05 the tree is not re-read after the session" "$GATE" \
-  's/  now="\$\(gate_tree_snapshot\)" \|\| now=""/  now="$base"/' \
+  's/  now="\$\(gate_tree_snapshot\)" \|\| now=""/  now="\$base"/' \
   test/gate.bats "new file outside"
 
 mutation "05 the snapshot ignores untracked files" "$GATE" \
@@ -339,6 +340,112 @@ mutation "05 a red gate is journalled as a plain failure" "$LOOP" \
 mutation "05 the scope class is never said out loud" "$LOOP" \
   's/          loop_log "scope overflow on \$ticket: \$RALPH_GATE_SCOPE_CLASS"\n//' \
   test/gate.bats "named as drift"
+
+# ── [07] typed failures, rollback, durable green ─────────────────────────────
+
+mutation "07 nothing puts the tree back after a red gate" "$FAILURES" \
+  's/  failures_rollback "\$pre" "\$base" "\$tree" \|\| true\n//' \
+  test/canary.bats "absolved"
+
+# Not at the process seam: the loop's post-session snapshot is taken before the
+# retry counter is written, so the tracker is identical on both sides of the
+# rollback's diff and no full-loop test can see the exclusion work. The test that
+# holds it drives the rollback directly, with the counter written in between.
+mutation "07 the rollback rewrites the loop's own bookkeeping" "$FAILURES" \
+  's/    if gate_is_bookkeeping "\$path"; then continue; fi\n//' \
+  test/failures.bats "never restores the tracker"
+
+mutation "07 a file the session added is not removed" "$FAILURES" \
+  's/        rm -f "\$path"\n/        :\n/' \
+  test/failures.bats "stray write is undone"
+
+mutation "07 a file the session deleted is not restored" "$FAILURES" \
+  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__log "could not restore \$path"/        :/' \
+  test/failures.bats "session deleted comes back"
+
+mutation "07 what the session staged stays staged" "$FAILURES" \
+  's/    git reset -q -- \$paths 2>\/dev\/null \|\| true/    :/' \
+  test/failures.bats "stray write is undone"
+
+mutation "07 the commit a session made is left in the history" "$FAILURES" \
+  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if false; then/' \
+  test/failures.bats "commit the session made"
+
+mutation "07 the rollback is a blanket reset --hard" "$FAILURES" \
+  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if git reset -q --hard "\$pre" 2>\/dev\/null \&\& git clean -qfd; then/' \
+  test/failures.bats "commit the session made"
+
+mutation "07 a failure is not counted, so nothing is ever escalated" "$FAILURES" \
+  's/      if \[ -z "\$count" \] \|\| \[ "\$count" -gt "\$\{RETRY_N:-2\}" \]; then/      if false; then/' \
+  test/failures.bats "buys fresh retries"
+
+mutation "07 the retry budget is hard-coded" "$FAILURES" \
+  's/\[ "\$count" -gt "\$\{RETRY_N:-2\}" \]/[ "\$count" -gt 2 ]/' \
+  test/failures.bats "retry budget is the configured one"
+
+mutation "07 a contractual overflow is retried like any other failure" "$FAILURES" \
+  's/      reason=decision\n//' \
+  test/failures.bats "without spending a retry"
+
+mutation "07 the attempt is not kept before the rollback undoes it" "$FAILURES" \
+  's/  if \[ -n "\$reason" \]; then\n    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi\n//' \
+  test/failures.bats "keeps the attempt"
+
+mutation "07 the failed branch carries the loop's own bookkeeping" "$FAILURES" \
+  's/  GIT_INDEX_FILE="\$idx" git rm -r -f -q --cached --ignore-unmatch -- \\\n    "\.scratch\/\$\{FEATURE\}" >\/dev\/null 2>&1 \|\| true\n//' \
+  test/failures.bats "keeps the attempt"
+
+mutation "07 a slice too big is retried instead of re-sliced" "$FAILURES" \
+  's/  if \[ "\$class" = too-big \]; then/  if false; then/' \
+  test/failures.bats "is cut up"
+
+mutation "07 a re-slice nobody could produce is retried forever" "$FAILURES" \
+  's/    reason=too-big\n//' \
+  test/failures.bats "nobody can split"
+
+mutation "07 a plan that widens the write-surface is accepted" "$FAILURES" \
+  's/^failures__plan_is_sound\(\) \{/failures__plan_is_sound() { return 0;/m' \
+  test/failures.bats "widens the write-surface"
+
+mutation "07 a plan of one ticket counts as a split" "$FAILURES" \
+  's/  if \[ "\$\{total:-0\}" -lt 2 \]; then/  if [ "\${total:-0}" -lt 1 ]; then/' \
+  test/failures.bats "splits nothing"
+
+mutation "07 the parent of a re-slice goes straight back to the frontier" "$FAILURES" \
+  's/  tracker_block_on "\$ticket" "\$children" \|\| true\n//' \
+  test/failures.bats "is cut up"
+
+mutation "07 a green iteration is not made durable" "$LOOP" \
+  's/        failures_make_durable "\$ticket" "\$base" "\$\{RALPH_GATE_TREE:-\}" \|\| true\n//' \
+  test/failures.bats "never takes away what an earlier gate"
+
+mutation "07 the durable commit takes the whole tree, not what the gate approved" "$FAILURES" \
+  's/  GIT_INDEX_FILE="\$idx" git add -A -- \$changed >\/dev\/null 2>&1 \|\| true/  GIT_INDEX_FILE="\$idx" git add -A >\/dev\/null 2>\&1 || true/' \
+  test/failures.bats "nothing else is"
+
+mutation "07 the durable commit does not move the branch" "$FAILURES" \
+  's/ \|\| ! git update-ref -m "ralph: \$ticket" HEAD "\$commit" 2>\/dev\/null//' \
+  test/failures.bats "nothing else is"
+
+mutation "07 a git that refuses the commit takes the run down" "$LOOP" \
+  's/"\$\{RALPH_GATE_TREE:-\}" \|\| true/"\${RALPH_GATE_TREE:-}"/' \
+  test/failures.bats "commit git refuses"
+
+mutation "07 a git that refuses the branch takes the run down" "$FAILURES" \
+  's/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree"\n  fi/' \
+  test/failures.bats "branch git cannot name"
+
+mutation "07 a gate branch that hangs is left to hang" "$GATE" \
+  's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
+  test/failures.bats "hangs is red"
+
+mutation "07 the deadline is hard-coded" "$GATE" \
+  's/      gate__watchdog "\$GATE_TIMEOUT"/      gate__watchdog 1800/' \
+  test/failures.bats "hangs is red"
+
+mutation "07 a timed-out branch is not reported as one" "$GATE" \
+  's/    elif \[ -f "\$dir\/timed-out" \]; then\n      gate__log "\$name red \(timed out after \$\{GATE_TIMEOUT\}s\)"\n//' \
+  test/failures.bats "hangs is red"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
