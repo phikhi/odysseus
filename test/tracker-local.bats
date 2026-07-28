@@ -376,3 +376,59 @@ TICKET
   pack_run "export RALPH_PROJECT_ROOT='$RALPH_TEST_DIR/clone'; tracker_field 02-beta Claimed"
   assert_output_contains "owner=pid:7"
 }
+
+# ── what the tracker must survive being written by ───────────────────────────
+
+@test "a ticket written with CRLF line endings is still on the frontier" {
+  # A tracker checked out on Windows, or written by an editor that ends lines
+  # the DOS way. The carriage return used to ride along in every field value,
+  # so no status ever compared equal and the whole tracker went invisible —
+  # a run that grinds nothing and calls it success.
+  perl -pi -e 's/\n/\r\n/' "$(ticket_file 01-alpha)"
+
+  pack_run 'tracker_frontier'
+  assert_success
+  assert_output_contains "01-alpha"
+
+  pack_run 'tracker_field 01-alpha Status'
+  assert_equal "$output" "ready-for-agent"
+}
+
+@test "a trailing space after a field value changes nothing" {
+  perl -pi -e 's/\*\*Status:\*\* ready-for-agent$/**Status:** ready-for-agent  /' \
+    "$(ticket_file 02-beta)"
+
+  pack_run 'tracker_frontier'
+  assert_output_contains "02-beta"
+}
+
+@test "a CRLF blocker line still blocks, and still unblocks" {
+  perl -pi -e 's/\n/\r\n/' "$(ticket_file 03-blocked)"
+
+  pack_run 'tracker_frontier'
+  refute_output_contains "03-blocked"
+
+  pack_run 'tracker_mark_resolved 01-alpha'
+  pack_run 'tracker_frontier'
+  assert_output_contains "03-blocked"
+}
+
+@test "a bare number matching two tickets is refused, not guessed" {
+  # Dependencies are written as bare numbers, so resolving `01` to whichever
+  # file sorts first would block — or unblock — the wrong ticket in silence.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+
+  pack_run 'tracker_field 01 Status'
+  assert_failure
+  assert_output_contains "ambiguous"
+
+  # And a ticket depending on that number stays out of the frontier.
+  pack_run 'tracker_frontier'
+  refute_output_contains "03-blocked"
+}
+
+@test "an id that matches exactly one ticket still resolves by number alone" {
+  pack_run 'tracker_field 02 Status'
+  assert_success
+  assert_equal "$output" "ready-for-agent"
+}

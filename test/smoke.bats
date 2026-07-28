@@ -15,22 +15,23 @@ teardown() {
   harness_teardown
 }
 
-@test "loop.sh boots in the injected environment and exits clean" {
+@test "loop.sh boots in the injected environment and says what it found" {
   run_loop
-  assert_success
+  # Exit 5: booted fine, but this tracker holds nothing to grind.
+  assert_failure 5
   assert_output_contains "run start (feature=demo backend=local"
-  assert_output_contains "frontier empty"
+  assert_output_contains "nothing to grind"
 }
 
 @test "loop.sh sources every lib, and an empty lib/ is not an error" {
   run_loop
-  assert_success
+  assert_failure 5
 
   cat >"$PACK_DIR/lib/zz-probe.sh" <<'PROBE'
 : >"$RALPH_DIR/../lib-was-sourced"
 PROBE
   run_loop
-  assert_success
+  assert_failure 5
   assert_file_exists "$PROJECT_DIR/lib-was-sourced"
 }
 
@@ -290,4 +291,18 @@ FAKE
 
   run claude_call_argv 1
   assert_output_contains "zzz-probe"
+}
+
+@test "the project template is keyed by names as well as contents" {
+  # Hashing only the bytes made the key blind to a rename: moving a lib reused
+  # the cached template and quietly tested the previous layout.
+  # The new name has to keep its place in the sort, or the contents would be
+  # concatenated in a different order and the key would change for the wrong
+  # reason — which is exactly how this test first passed against the bug.
+  before="$(harness__pack_fingerprint)"
+  mv "$RALPH_PACK_ROOT/.claude/lib/select.sh" "$RALPH_PACK_ROOT/.claude/lib/selection.sh"
+  after="$(harness__pack_fingerprint)"
+  mv "$RALPH_PACK_ROOT/.claude/lib/selection.sh" "$RALPH_PACK_ROOT/.claude/lib/select.sh"
+
+  [ "$before" != "$after" ] || fail "the fingerprint did not change: $before"
 }

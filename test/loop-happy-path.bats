@@ -54,11 +54,50 @@ teardown() {
   assert_ticket_status 09-escalated ready-for-human
 }
 
-@test "an empty frontier is a clean exit, not an error" {
+@test "a frontier that was empty from the start is not reported as work done" {
+  # Exit 5, not 0. A run that ground nothing — wrong FEATURE, everything still
+  # in triage, a tracker the pack cannot read — must not come back looking
+  # like a night of finished work.
+  run_loop
+  assert_failure 5
+  assert_output_contains "nothing to grind"
+  assert_equal "$(claude_call_count)" "0"
+}
+
+@test "a frontier this run drained is a clean exit" {
+  use_tickets 01-alpha
+
   run_loop
   assert_success
-  assert_output_contains "frontier empty after 0 iterations"
+  assert_output_contains "frontier empty after 1 iterations"
+  assert_ticket_status 01-alpha resolved
+}
+
+# ── refusing to start ────────────────────────────────────────────────────────
+
+@test "an empty FEATURE stops the run before it touches anything" {
+  # The shipped example leaves FEATURE empty, so this is every first run. It
+  # used to derive a lock path of "/.run.lock" — a mkdir attempt at the root of
+  # the filesystem — and exit 1, which means "another run holds the lock".
+  set_config FEATURE ""
+
+  run_loop
+  assert_failure 2
+  assert_output_contains "FEATURE is empty"
+  refute_output_contains "/.run.lock"
   assert_equal "$(claude_call_count)" "0"
+}
+
+@test "a FEATURE naming a tracker that does not exist stops the run too" {
+  set_config FEATURE ghost
+
+  run_loop
+  assert_failure 2
+  assert_output_contains "no tracker at"
+
+  # And nothing was created on the way: a typo must not leave a directory
+  # behind that makes the next run look plausible.
+  [ ! -d "$PROJECT_DIR/.scratch/ghost" ] || fail "the run created .scratch/ghost"
 }
 
 # ── the session ──────────────────────────────────────────────────────────────
@@ -322,4 +361,12 @@ FAKE
 
   run bash -c "ls -a '$FEATURE_DIR' | grep '\.session\.' || true"
   assert_equal "$output" ""
+}
+
+@test "a tracker directory with no issues/ says so instead of looking drained" {
+  rm -rf "$TRACKER_DIR"
+
+  run_loop
+  assert_failure 5
+  assert_output_contains "no issues directory"
 }

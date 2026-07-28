@@ -34,3 +34,14 @@
 - **Ce qui manque encore et arrive en [07]** : le rollback. L'AC parle de « rollback + suite » ; aujourd'hui l'itération rend simplement le ticket à la frontière, sans nettoyer ce que la session a écrit. Le re-slice autonome d'une slice trop grosse est également [07].
 
 - **Le journal porte maintenant le pic de contexte** (`tokens=`), ce qui donne de quoi calibrer le découpage sur des runs réels.
+
+- **Revue après [05] — le monitor coûtait plus cher que la session qu'il surveillait.** Deux coûts, mesurés sur un flux réaliste de 20 Mo (2076 lignes, 1038 événements `usage`) :
+
+  1. **Chaque tick relisait tout le flux depuis le début.** La reprise se faisait par nombre de lignes consommées (`tail -n +N`), or `tail` doit rescanner le fichier pour retrouver la ligne N. Mesuré : **0,045 s par tick à 1 Mo, 0,112 s à 5 Mo, 0,358 s à 20 Mo** — alors que la boucle tique toutes les 0,1 s. Le coût total était donc quadratique en la taille du flux, payé des milliers de fois, en concurrence avec la session et avec la suite de tests du projet cible.
+  2. **Quatre `sed` par événement.** L'extraction des quatre compteurs forkait un process chacun : une passe complète sur ces 20 Mo prenait **21 s de CPU**.
+
+  Corrigé sans changer l'architecture (poll + SIGTERM) : le flux est tenu ouvert sur un descripteur et lu en avant — chaque tick ne coûte que ce que la session vient d'écrire — et l'extraction se fait en pure expansion de paramètres, sans aucun sous-process. Mesuré après : **1000 ticks sans nouvelle donnée = 29,6 ms au total** (0,03 ms le tick, contre 358 ms), et la passe complète sur 20 Mo tombe de 21 s à 3,9 s.
+
+  Ce que le descripteur ouvert introduit en échange : un tick peut tomber **au milieu d'une ligne**. La ligne partielle est gardée pour le tick suivant et recollée ; sans ça, une moitié d'événement `usage` est analysée comme un événement entier et le seuil peut être manqué. Test de non-régression dédié (le fake écrit un événement en deux `printf` séparés par un `sleep`), mutation vérifiée : en jetant la partielle, la session runaway survit.
+
+  Corollaire dans `loop.sh` : le fichier de flux est créé (`: >`) avant le spawn, parce qu'on ne peut pas ouvrir un descripteur sur un fichier qui n'existe pas encore.

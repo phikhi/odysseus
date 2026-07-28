@@ -7,10 +7,15 @@
 # time, so a crashed run and a cold start behave identically.
 #
 # Exit codes
-#   0  the frontier is empty: nothing left to grind
+#   0  the frontier was drained: this run ground everything it could
 #   1  could not start — another run holds the lock
 #   2  cannot run: no config, or a config that would make the gate meaningless
 #   4  stopped by a guard: stop requested, iteration cap, or sterile run
+#   5  nothing to grind: the frontier was already empty when the run started
+#
+# 0 and 5 are deliberately different. An AFK run that ground nothing because
+# FEATURE points at the wrong tracker, or because every ticket is still in
+# triage, must never be reported the same way as a night of finished work.
 #
 # Kept bash 3.2 compatible: the pack must run on a stock macOS shell.
 set -euo pipefail
@@ -83,6 +88,8 @@ Read what you need. Nothing was inherited from a previous session.
 - Stay inside the ticket's declared write-surface.
 - Durable prose (docs, comments, commits) is written in ${LANG_ARTIFACT:-en}.
 - Do not change the ticket's status. The loop marks it, after the gate.
+- Never stage or commit the tracker (\`.scratch/\`). It is the loop's own state,
+  and a commit taken mid-iteration freezes it in a state that was never true.
 - Finish the task in this session; there is no follow-up conversation.
 PROMPT
 }
@@ -99,6 +106,10 @@ PROMPT
 loop_spawn_session() {
   local ticket="$1" outfile="$2" pid rc=0
   RALPH_SOFT_LIMIT_HIT=0
+
+  # Created before the spawn: the monitor follows the stream through an open
+  # descriptor, and a descriptor cannot be opened on a file that is not there.
+  : >"$outfile"
 
   loop_session_prompt "$ticket" |
     DISABLE_AUTO_COMPACT=1 claude -p \
@@ -140,12 +151,34 @@ loop_journal_append() {
 
 # ── the loop ─────────────────────────────────────────────────────────────────
 
+# Refuses to start rather than run on a configuration that cannot produce work.
+# Everything here is checked before the lock is taken and before a single
+# session is spawned: a gate that cannot prove anything turns the whole run into
+# a stream of false greens, and a tracker that does not exist turns it into a
+# night of silence reported as success.
+loop_preflight() {
+  local rc=0 dir
+
+  if [ -z "${FEATURE:-}" ]; then
+    printf 'ralph: FEATURE is empty — the run has no tracker to grind (see %s)\n' \
+      "$RALPH_CONFIG" >&2
+    rc=1
+  else
+    dir="$(ralph_feature_dir)"
+    if [ ! -d "$dir" ]; then
+      printf 'ralph: no tracker at %s — check FEATURE, or create the directory\n' "$dir" >&2
+      rc=1
+    fi
+  fi
+
+  gate_preflight || rc=1
+  return "$rc"
+}
+
 loop_main() {
   cd "$(ralph_project_root)"
 
-  # Before the lock, and before a single session is spawned: a gate that cannot
-  # prove anything would turn the whole run into a stream of false greens.
-  gate_preflight || exit 2
+  loop_preflight || exit 2
 
   run_lock_acquire || exit 1
   # Replaces the lock's own signal traps: stopping is a decision the loop
@@ -172,6 +205,10 @@ loop_main() {
 
     ticket="$(select_next_ticket)"
     if [ -z "$ticket" ]; then
+      if [ "$iteration" -eq 0 ]; then
+        loop_log "nothing to grind: the frontier was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
+        exit 5
+      fi
       loop_log "frontier empty after $iteration iterations"
       exit 0
     fi

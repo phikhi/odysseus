@@ -31,3 +31,7 @@
 - **Langue** : le contenu du pack (code, commentaires, fixtures, messages) est en anglais, conformément au blueprint §13 qui exclut « le pack » du périmètre `LANG_ARTIFACT` — le pack se dépose dans des projets de n'importe quelle langue. Les artefacts de ce dépôt (spec, tickets, ADR) restent en français.
 
 - **Formats provisoires à confirmer en [02]** : la ligne `**Claimed:** owner=… at=…` des fixtures et la sortie stream-json par défaut du shim `claude` sont des paris raisonnables, pas des contrats. Le ticket 02 fixe le format d'état, le 03 le parsing de la session.
+
+- **Revue après [05] — l'empreinte du harnais était aveugle aux renommages.** `harness__pack_fingerprint` ne hachait que le *contenu* des fichiers du pack : renommer une lib laissait la clé identique, le template de projet mis en cache était réutilisé, et la suite testait l'ancienne disposition en se déclarant verte. Vérifié avant correction (`before=2522127144 after=2522127144`), corrigé en hachant aussi la liste triée des noms.
+
+  Le test de non-régression a d'abord été **vacuous lui-même** : il renommait `select.sh` en `zz-renamed.sh`, ce qui déplace le fichier dans l'ordre de tri, donc change l'ordre de concaténation, donc change l'empreinte — pour la mauvaise raison. Il fallait un renommage qui *préserve* l'ordre (`select.sh` → `selection.sh`) pour que la mutation rougisse. Deuxième fois que ce piège se présente sur ce dépôt : un test qui passe ne dit rien tant qu'on n'a pas vu la mutation le faire rougir.

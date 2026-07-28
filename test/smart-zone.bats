@@ -195,3 +195,33 @@ FAKE
   assert_success
   assert_equal "$output" "[end]"
 }
+
+# ── reading a stream that is still being written ─────────────────────────────
+
+@test "a usage event split across two writes is counted whole, once" {
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 1
+
+  # The monitor reads the stream forward through an open descriptor, so a tick
+  # can land in the middle of a line. Half an event says 5 tokens; the whole one
+  # says 9015 and crosses the limit. Nothing may act on the half.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read'
+sleep 0.4
+printf '_input_tokens":9000,"output_tokens":5}}},"session_id":"s"}\n'
+i=0
+while [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":9,"total_cost_usd":0.5}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "crossed the 5000-token soft limit"
+  assert_output_contains "peak 9015"
+
+  # The runaway ends at num_turns=9 if it was never stopped.
+  run bash -c "grep -c 'turns=9' '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+}
