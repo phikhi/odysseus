@@ -286,6 +286,90 @@ FAKE
   [ ! -d "$(run_lock_dir)" ] || fail "the lock survived the stop"
 }
 
+@test "a graceful kill during the gate waits for the branches it started" {
+  use_tickets 01-alpha 02-beta
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  # A test suite slow enough for the stop to land while it is still running: the
+  # test above sends its signal during the session, which is the one window where
+  # the promise held. The leading sleep is load-bearing too — the marker must not
+  # appear before the loop is actually blocked in `wait`, because a signal arriving
+  # between two commands runs its trap there and never interrupts the collection at
+  # all, and the test would pass against the broken code.
+  set_config TEST_CMD 'sleep 0.3
+: >"$RALPH_SHIM_STATE/gate-running"
+sleep 3
+: >"$RALPH_SHIM_STATE/gate-finished"'
+
+  bash "$PACK_DIR/loop.sh" >"$RALPH_TEST_DIR/loop.out" 2>&1 &
+  PACK_BG_PID=$!
+
+  wait_for_file "$SHIM_STATE/gate-running" 200 ||
+    fail "the gate never started its test branch"
+  kill -TERM "$PACK_BG_PID"
+
+  rc=0
+  wait "$PACK_BG_PID" || rc=$?
+  PACK_BG_PID=""
+
+  assert_equal "$rc" "4"
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "stop requested"
+
+  # The verdict is the one the branches produced, not the absence of one that
+  # `wait` returned too early to see.
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "tests=green"
+  refute_file_contains "$RALPH_TEST_DIR/loop.out" "no verdict"
+
+  # No branch outlives the run: the suite had written its last marker before the
+  # loop returned, so nothing could still be writing into the gate's directory
+  # when it was removed.
+  assert_file_exists "$SHIM_STATE/gate-finished"
+
+  # And the iteration really finished. The ticket is marked on the verdict its own
+  # suite gave, the session's work is still in the tree instead of having been
+  # rolled back while that suite was running, and the stop cost it no retry.
+  assert_ticket_status 01-alpha resolved
+  assert_file_exists "$PROJECT_DIR/src/alpha.txt"
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+  assert_ticket_status 02-beta ready-for-agent
+}
+
+@test "a graceful kill during the gate is still bounded by the deadline" {
+  use_tickets 01-alpha
+  set_config GATE_TIMEOUT 1
+  set_config TEST_CMD 'sleep 0.3
+: >"$RALPH_SHIM_STATE/gate-running"
+sleep 30'
+
+  bash "$PACK_DIR/loop.sh" >"$RALPH_TEST_DIR/loop.out" 2>&1 &
+  PACK_BG_PID=$!
+
+  wait_for_file "$SHIM_STATE/gate-running" 200 ||
+    fail "the gate never started its test branch"
+  kill -TERM "$PACK_BG_PID"
+
+  rc=0
+  wait "$PACK_BG_PID" || rc=$?
+  PACK_BG_PID=""
+
+  # Waiting for the branches is not waiting for ever, and the stop gets no
+  # deadline of its own: how long an iteration may take is already GATE_TIMEOUT's
+  # question, and a second answer that only applies when a human pressed Ctrl-C
+  # would be a different gate. What the stop no longer is, on the other hand, is an
+  # escape hatch out of a hung branch — with no deadline configured, a hung gate
+  # hangs the run whether or not a stop was requested, exactly as it did before.
+  assert_equal "$rc" "4"
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "tests red (timed out after 1s)"
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "stop requested"
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
 # ── the run lock ─────────────────────────────────────────────────────────────
 
 @test "the loop refuses to start while another run holds the lock" {
