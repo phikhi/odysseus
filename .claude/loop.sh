@@ -110,19 +110,6 @@ loop_spawn_session() {
   return "$rc"
 }
 
-# Pull one field out of the final `result` event. Deliberately not jq: the pack
-# promises to run with nothing installed, and these fields are flat scalars.
-#
-# A session that dies without emitting anything — crash, OOM, kill — is a
-# normal outcome here, so a missing result is empty, never an error.
-loop_result_field() {
-  local file="$1" key="$2" line
-  line="$(grep '"type":"result"' "$file" 2>/dev/null | tail -1)" || line=""
-  [ -n "$line" ] || return 0
-  printf '%s' "$line" |
-    sed -n "s/.*\"$key\":\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p"
-}
-
 # ── the run journal ──────────────────────────────────────────────────────────
 
 # Append-only, one line per iteration, never read back to decide anything. The
@@ -252,8 +239,8 @@ loop_main() {
     rc=0
     loop_spawn_session "$ticket" "$outfile" || rc=$?
 
-    turns="$(loop_result_field "$outfile" num_turns)"
-    cost="$(loop_result_field "$outfile" total_cost_usd)"
+    turns="$(session_result_field "$outfile" num_turns)"
+    cost="$(session_result_field "$outfile" total_cost_usd)"
     tokens="$(monitor_peak_tokens "$outfile")"
 
     # Before the gate reads a single field out of the tracker: the write-surface

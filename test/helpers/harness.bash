@@ -393,7 +393,8 @@ claude_call_env() {
   cat "$SHIM_STATE/claude.calls/${1:-1}.env" 2>/dev/null
 }
 
-# Drive the in-band budget signal the real binary emits right after init.
+# Drive the in-band budget signal the real binary emits early in the stream —
+# third event in the capture, after init and a first thinking estimate.
 # Takes the JSON body of rate_limit_info.
 claude_rate_limit() {
   printf '%s' "$1" >"$SHIM_STATE/claude.rate_limit"
