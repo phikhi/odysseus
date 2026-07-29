@@ -44,8 +44,11 @@ state_atomic_write() {
 # directory holding its owner's pid.
 #
 # A holder that dies without releasing is recovered rather than left to wedge
-# an AFK run forever. Liveness is pid-based and therefore single-machine; the
-# TTL backstop belongs to the claim-liveness ticket.
+# an AFK run forever. Liveness is pid-based and therefore single-machine, and it
+# is deliberately the shorter of the two policies in the pack: a guard is held
+# for the length of one read-modify-write or one run, so a pid is enough. What a
+# claim needs on top — a TTL backstop against a recycled pid, because a claim
+# outlives the process that took it — lives in lib/claim.sh.
 #
 # The optional note is whatever the caller wants a refused rival to be told —
 # a pid alone says which process, never which run. It is written just after the
@@ -54,7 +57,7 @@ state_atomic_write() {
 # pid and no note, so every reader treats a missing note as unknown.
 
 state_guard_take() {
-  local guard="$1" label="${2:-guard}" note="${3:-}" owner
+  local guard="$1" label="${2:-guard}" note="${3:-}" owner moved
   mkdir -p "$(dirname "$guard")"
 
   if mkdir "$guard" 2>/dev/null; then
@@ -67,8 +70,26 @@ state_guard_take() {
     return 1
   fi
 
-  printf 'ralph: taking over a stale %s (pid %s)\n' "$label" "${owner:-unknown}" >&2
-  rm -rf "$guard"
+  # Taking over a dead owner's guard displaces it by rename, not by `rm -rf`.
+  # A rename is exclusive — the directory moves once and the loser gets ENOENT —
+  # so two runs that both found the same dead owner cannot both clear the way and
+  # then create their own guard over the other's. Whoever loses the rename falls
+  # through to the same mkdir below, which is what settles it. Nothing wedges if
+  # the winner dies in between: the guard is simply gone and the next caller
+  # creates it.
+  #
+  # What this does *not* close, so that nobody reads more into it: a run still
+  # deciding "the owner is dead" while another run finishes its takeover will
+  # displace a guard that is now live, rename or not, because neither step checks
+  # that the guard is still the one it inspected. The filesystem has no
+  # compare-and-swap to express that in bash. What covers it is downstream — the
+  # run and tree locks are re-checked for ownership on every iteration
+  # (`*_is_ours`), and a claim is a test-and-set on the ticket's own status.
+  moved="$guard.stale.$$"
+  if mv "$guard" "$moved" 2>/dev/null; then
+    rm -rf "$moved"
+    printf 'ralph: taking over a stale %s (pid %s)\n' "$label" "${owner:-unknown}" >&2
+  fi
   mkdir "$guard" 2>/dev/null || return 1
   state__guard_stamp "$guard" "$note"
   return 0

@@ -182,6 +182,7 @@ GATE=".claude/lib/gate.sh"
 MONITOR=".claude/lib/monitor.sh"
 SESSION=".claude/lib/session.sh"
 TRACKER=".claude/lib/tracker-local.sh"
+CLAIM=".claude/lib/claim.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
 HARNESS="test/helpers/harness.bash"
@@ -580,6 +581,68 @@ mutation "21 a session's own commit survives its green gate" "$FAILURES" \
   's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "\$ticket: the session committed/' \
   test/failures.bats "green gate either"
 
+# ── [12] claim liveness ──────────────────────────────────────────────────────
+
+mutation "12 a claim outliving its owner is never reclaimed" "$CLAIM" \
+  's/^claim_reclaim_stale\(\) \{/claim_reclaim_stale() { return 0;/m' \
+  test/claim.bats "comes back to the frontier and is ground"
+
+# Emptied rather than deleted. Removing the line would leave the `if` below
+# reading a declared-but-unset local, which `set -u` turns into a dead loop — red
+# for the wrong reason, and neither `bash -n` nor this file's own guards can see
+# the difference. The point is a run that never sweeps, not a run that crashes.
+mutation "12 the loop never sweeps the claims it inherited" "$LOOP" \
+  's/    reclaimed="\$\(claim_reclaim_stale\)"/    reclaimed=""/' \
+  test/claim.bats "does not report an empty frontier"
+
+mutation "12 a dead owner still answers for its claim" "$CLAIM" \
+  's/      kill -0 "\$\{owner#pid:\}" 2>\/dev\/null \|\| return 1/      :/' \
+  test/claim.bats "whose owner is gone is reclaimable"
+
+mutation "12 nothing backstops a recycled pid" "$CLAIM" \
+  's/    \*\) \[ "\$age" -le "\$CLAIM_TTL" \] \|\| return 1 ;;/    *) ;;/' \
+  test/claim.bats "the TTL comes from the config"
+
+# The lesson from [04]'s vacuous threshold test: a test that only asserts the
+# claim is reclaimed cannot tell a configured TTL from a hard-coded one, so the
+# entry has to be able to plant the constant.
+mutation "12 the claim TTL is a constant, not the configured one" "$CLAIM" \
+  's/\[ "\$age" -le "\$CLAIM_TTL" \]/[ "\$age" -le 5400 ]/' \
+  test/claim.bats "the TTL comes from the config"
+
+mutation "12 an unreadable claim counts as held" "$CLAIM" \
+  's/  age="\$\(claim_age_seconds "\$record"\)" \|\| return 1/  age="\$(claim_age_seconds "\$record")" || age=0/' \
+  test/claim.bats "uncertain counts as reclaimable"
+
+mutation "12 a claim stamped in the future holds for ever" "$CLAIM" \
+  's/  \[ "\$age" -ge 0 \] \|\| return 1\n//' \
+  test/claim.bats "uncertain counts as reclaimable"
+
+mutation "12 an owner this pack cannot ping is reclaimed on sight" "$CLAIM" \
+  's/    \*\) pingable=1 ;;/    *) return 1 ;;/' \
+  test/claim.bats "cannot ping waits out the TTL"
+
+# A one-day shift: the conversion is arithmetic, so the way to remove its
+# guarantee is to make it wrong rather than to delete it.
+mutation "12 the epoch conversion is off by a day" "$CLAIM" \
+  's/days=\$\(\(era \* 146097 \+ doe - 719468\)\)/days=\$((era * 146097 + doe - 719469))/' \
+  test/claim.bats "without asking date to parse anything"
+
+mutation "12 a reclaim costs nothing and never runs out" "$FAILURES" \
+  's/^failures_after_dead_owner\(\) \{/failures_after_dead_owner() { tracker_unclaim "\$1"; printf "retry\\n"; return 0;/m' \
+  test/claim.bats "runs out of them goes to the human sink"
+
+mutation "12 a ticket that changed hands is missing from the journal" "$LOOP" \
+  's/        loop_journal_append "\$rid" "reclaimed-\$rdisposition" 0 0 0\n//' \
+  test/claim.bats "in the run journal"
+
+# The suite's own witness for the other half. The fixture used to stand for
+# "someone else's claim" while naming a pid that had never existed, so three
+# tests asserting the loop left it alone were asserting that nothing looked.
+mutation "12 the fixture's live claim is dead again" "$HARNESS" \
+  's/^harness__stamp_live_claims\(\) \{/harness__stamp_live_claims() { return 0;/m' \
+  test/claim.bats "left alone by the sweep"
+
 # ── [12] the run lock a session can delete ───────────────────────────────────
 
 mutation "12 a run lock this run no longer holds goes unnoticed" "$LOOP" \
@@ -620,8 +683,12 @@ mutation "22 only the last lock taken is released" "$STATE" \
   's/^state_locks_release\(\) \{\n  run_lock_release\n  tree_lock_release/state_locks_release() {\n  run_lock_release/m' \
   test/state.bats "both locks come off together"
 
+# Drifted when [12] made the takeover displace the dead guard by rename instead
+# of `rm -rf`. Same guarantee, one line earlier: cutting the takeover off before
+# it starts. It is carried by three guards now — the run lock, the tree lock and
+# a claim's test-and-set — so this one entry breaks more than the tree lock's test.
 mutation "22 a run killed without releasing wedges the tree for good" "$STATE" \
-  's/^  rm -rf "\$guard"\n  mkdir "\$guard" 2>\/dev\/null \|\| return 1/  return 1/m' \
+  's/^  moved="\$guard\.stale\.\$\$"/  return 1/m' \
   test/state.bats "working-tree lock whose holder died"
 
 mutation "22 a tree lock this run no longer holds goes unnoticed" "$LOOP" \

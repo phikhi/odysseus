@@ -179,7 +179,7 @@ Ce qu'une itération verte a produit, **commité** par la boucle avant l'itérat
 _À éviter_ : sauvegarde, snapshot (réservé aux objets tree du scope-guard).
 
 **Claim**:
-La prise atomique d'un ticket (`Status: claimed` + propriétaire + horodatage) avant spawn, qui le retire de la frontière pour les pickers concurrents. Un claim dont le propriétaire est mort est réclamé (balayage des zombies ; politique de liveness = verrou de session).
+La prise atomique d'un ticket (`Status: claimed` + propriétaire + horodatage) avant spawn, qui le retire de la frontière pour les pickers concurrents. Un claim dont le propriétaire est mort est **réclamé au balayage**, en tête de chaque itération, avant la lecture de la frontière — sans quoi un run tué emporte son ticket hors de la frontière pour toujours.
 _À éviter_ : lock (réservé aux verrous), réservation, assignation.
 
 **Worktree d'itération**:
@@ -191,8 +191,8 @@ Le repli, **un à la fois**, des worktrees gatés sur la branche principale par 
 _À éviter_ : merge, rebase, fusion.
 
 **Liveness du claim**:
-La politique qui décide qu'un claim est mort (donc balayable) : **pid vivant** en primaire (le propriétaire est une itération courte-durée), **TTL** en backstop (anti pid-recycling), **fail-open** (incertain → balayable, jamais de deadlock). Pas de verrou séparé ni de heartbeat.
-_À éviter_ : verrou de session (pas d'artefact séparé), mutex, flock.
+La politique qui décide qu'un claim est mort (donc balayable) : **pid vivant** en primaire (le propriétaire est une itération courte-durée), **TTL** en backstop (anti pid-recycling), **fail-open** (incertain → balayable, jamais de deadlock). Pas de verrou séparé ni de heartbeat : la politique se lit sur le champ `Claimed:` du ticket, seul état durable du claim. Un claim réclamé est **compté comme un crash** — c'en est un, que personne n'était vivant pour classer — donc il consomme un retry et finit dans la boucle humaine au plafond.
+_À éviter_ : verrou de session (pas d'artefact séparé), mutex, flock, zombie.
 
 ### Le backend de tracker
 

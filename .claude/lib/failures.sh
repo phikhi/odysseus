@@ -116,6 +116,43 @@ failures_handle() {
   return 0
 }
 
+# A ticket whose claim outlived its owner, and what the tracker owes it.
+#
+# A stale claim is a crash nobody was alive to classify: the run that would have
+# called failures_handle is the run that died. So it gets the tracker half of the
+# crash policy — count the attempt, hand it back for a fresh session, escalate at
+# the ceiling — and not the git half. There is nothing to roll back to: the
+# pre-spawn snapshots were shell variables in a process that no longer exists,
+# and whatever that session left in the working tree is still there. See [12] for
+# what that means for the next run.
+#
+# Counting it is the point, and it is a trade. A hard kill of a run (SIGKILL,
+# power cut, OOM) burns a retry on the ticket that was in flight, and after
+# RETRY_N of those a human is asked about a ticket that may be perfectly fine.
+# The alternative is worse and this pack has met it: a ticket whose session
+# reliably kills the run gets reclaimed, re-ground and killed again every night,
+# for ever, with nothing anywhere saying so. A graceful stop (TERM/INT) does not
+# come through here at all — the loop finishes its iteration and marks the ticket.
+#
+# The disposition goes to stdout — `retry` or `escalated` — and nothing else
+# does. This is the one decision here that does not announce itself: its caller
+# has to journal the reclaim anyway, and failures__log writes to stdout, so a
+# line printed here would come back inside the disposition.
+failures_after_dead_owner() {
+  local ticket="$1" count=""
+
+  count="$(tracker_bump_failures "$ticket")" || count=""
+  if [ -z "$count" ] || [ "$count" -gt "${RETRY_N:-2}" ]; then
+    tracker_mark_escalated "$ticket" failed-impl
+    printf 'escalated\n'
+    return 0
+  fi
+
+  tracker_unclaim "$ticket"
+  printf 'retry\n'
+  return 0
+}
+
 # ── the tracker a session must not write ─────────────────────────────────────
 #
 # Both prompts forbid a session from writing the tracker, and for a while that was
@@ -137,8 +174,8 @@ failures_handle() {
 # So: two snapshots around the spawn, a set of ids for the first and a tree
 # object of the tickets for the second. The window is clean either way — between
 # the snapshots and the session returning, the loop writes nothing under
-# `issues/`: the claim came before, and the marking, the retry counter and the
-# journal all come after.
+# `issues/`: the liveness sweep and the claim came before, and the marking, the
+# retry counter and the journal all come after.
 
 # The ids the tracker holds right now, space-delimited and space-fenced so that a
 # `case` can ask whether one is in it.
