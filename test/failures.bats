@@ -114,6 +114,42 @@ HEAD
   assert_equal "$(ticket_field 01-alpha Failures)" "1"
 }
 
+@test "a green delivery clears the retry counter" {
+  # `Failures:` is a budget, not a history, and nothing used to clear it: probed on
+  # 29/07/2026, a ticket delivered green twice was escalated `failed-impl` on its
+  # third visit to the frontier, on a counter that had never been reset. Red once,
+  # then green, and the counter is gone — a ticket that comes back to the frontier
+  # after a delivery comes back for a new reason, with its whole budget.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 5
+  stub_exit tests 1
+
+  # The first session leaves the test command failing and the second one repairs
+  # it, so the ticket is really retried rather than delivered on the first attempt.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); printf '%s\n' "$n" >"$RALPH_SHIM_STATE/seq"
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+[ "$n" -ge 2 ] && printf '0\n' >"$RALPH_SHIM_STATE/stub-tests.exit"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # The retry really happened, so the counter really was at 1 in between: without
+  # this line the assertion below would hold on a ticket that never failed at all.
+  assert_output_contains "01-alpha: gate-red -> fresh retry (1 of 2)"
+  assert_equal "$(claude_call_count)" "2"
+  assert_ticket_status 01-alpha resolved
+
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+}
+
 @test "a dead session is retried too, and journalled apart from a red gate" {
   use_tickets 01-alpha
   set_config RETRY_N 1
