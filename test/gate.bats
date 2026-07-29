@@ -424,6 +424,183 @@ FAKE
   assert_output_contains "could not read the working tree"
 }
 
+# ── the zone git does not show ───────────────────────────────────────────────
+#
+# Every check here is built on a git tree object, so every check is blind to what
+# the *target project* chose to gitignore — and the fixture project deliberately
+# has no `.gitignore` at all, which is why nothing in this file noticed for
+# twenty-two tickets. Each test below writes the ignore rule it means.
+
+# What a real project does to the pack's own directory, and to a build cache.
+ignore_paths() {
+  local pattern
+  for pattern in "$@"; do
+    printf '%s\n' "$pattern" >>"$PROJECT_DIR/.gitignore"
+  done
+  harness__commit "test: the project ignores $*"
+}
+
+@test "an ignored file under a guarded path is caught and undone all the same" {
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  ignore_paths '.claude/cache/'
+  script_session_writing src/alpha.txt .claude/cache/rogue
+
+  run_loop
+  assert_failure 4
+
+  # Without the forced add, `git add -A` skips it: both snapshots agree, the
+  # scope-guard reports nothing, the ticket resolves and the file stays.
+  assert_output_contains ".claude/cache/rogue"
+  assert_output_contains "outside the declared write-surface"
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/.claude/cache/rogue"
+  # And what it was allowed to write is undone as before, ignored or not.
+  refute_file_exists "$PROJECT_DIR/src/alpha.txt"
+
+  # The only ignored path this project has is a guarded one, so both reports have
+  # nothing to say. A guarded path listed as unjudged would be a lie in the other
+  # direction — the gate judged it, and that is why the ticket went red.
+  refute_output_contains "nothing in this gate judged"
+  refute_output_contains "could not undo"
+}
+
+@test "the guarded paths are the configured ones, not a constant" {
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config GUARDED_PATHS "vendor"
+  ignore_paths 'vendor/'
+  script_session_writing vendor/rogue
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "vendor/rogue"
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/vendor/rogue"
+}
+
+@test "an ignored file outside the guarded paths is not judged, and the gate says so" {
+  use_tickets 01-alpha
+  ignore_paths 'cache/'
+  script_session_writing src/alpha.txt cache/payload
+
+  run_loop
+  assert_success
+
+  # The declared limit, pinned in both directions. The pack cannot see this file:
+  # the iteration is green and the file survives. What it must not do is stay
+  # quiet about the zone it did not look at.
+  assert_ticket_status 01-alpha resolved
+  assert_output_contains "nothing in this gate judged"
+  assert_output_contains "cache/"
+  assert_file_exists "$PROJECT_DIR/cache/payload"
+}
+
+@test "the loop's own bookkeeping is not named as an unjudged ignored path" {
+  # The three entries [19] provisions in every target project. They are ignored
+  # *and* written during the very window being watched — the journal, the lock and
+  # the session stream — so a check that reddened or reported every ignored path
+  # would report the loop's own writes on every iteration of every project.
+  use_tickets 01-alpha 02-beta
+  ignore_paths '.scratch/*/run.log' '.scratch/*/.run.lock/' \
+    '.scratch/*/.session.*.jsonl' 'cache/'
+  script_session_writing src/alpha.txt cache/payload
+
+  run_loop
+  assert_success
+
+  # The second iteration, so that run.log already exists while the gate runs.
+  local named
+  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
+  [ -n "$named" ] || fail "the gate never named the zone it did not judge"
+  case "$named" in
+    *cache/*) ;;
+    *) fail "the session's ignored write is missing from: $named" ;;
+  esac
+  case "$named" in
+    *run.log* | *.session.* | *.run.lock*)
+      fail "the loop's own bookkeeping was reported as unjudged: $named"
+      ;;
+  esac
+}
+
+@test "a session cannot configure the harness that judges the next one" {
+  # The armed case. `.claude/settings.local.json` is ignored by convention in
+  # every Claude Code project, so nothing in this pack could see it, and a hook in
+  # it takes effect on the next spawn — a session configuring the harness that
+  # judges its successors. Declared by the ticket here, which is the half a forced
+  # snapshot alone does not close: the seal is what refuses it anyway.
+  use_tickets 01-alpha
+  ignore_paths '.claude/settings.local.json'
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `.claude/settings.local.json`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that declares the harness's own settings"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); echo "$n" >"$RALPH_SHIM_STATE/seq"
+if [ -e .claude/settings.local.json ]; then
+  printf '%s\n' "$n" >>"$RALPH_SHIM_STATE/inherited"
+fi
+mkdir -p src && printf 'written\n' >src/alpha.txt
+if [ "$n" = 1 ]; then
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write"}]}}\n' >.claude/settings.local.json
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # First attempt red on the sealed write, second one delivers: the ticket is not
+  # lost, and the second session never saw the file.
+  assert_output_contains "configures the harness itself"
+  assert_equal "$(claude_call_count)" "2"
+  assert_ticket_status 01-alpha resolved
+  refute_file_exists "$PROJECT_DIR/.claude/settings.local.json"
+  refute_file_exists "$SHIM_STATE/inherited"
+}
+
+@test "a ticket green on what an earlier session left in the ignored zone is named" {
+  # Question 4 in its purest form, and the reason this zone is a ticket of its
+  # own: the defect is false in neither iteration taken alone. A suite that reads
+  # an ignored file — an `.env`, a fixture cache, a test database, node_modules —
+  # is any real suite.
+  use_tickets 01-alpha 02-beta
+  ignore_paths 'cache/'
+  set_config TEST_CMD 'test -e cache/unlock'
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); echo "$n" >"$RALPH_SHIM_STATE/seq"
+mkdir -p src
+case "$n" in
+  1) mkdir -p cache && printf 'unlocked\n' >cache/unlock
+     printf 'alpha\n' >src/alpha.txt ;;
+  2) printf 'beta\n' >src/beta.txt ;;
+esac
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # Both green, the second one only because of the first one's write, and the pack
+  # cannot tell. What it can do is say, on the iteration that benefited, that a
+  # zone went unjudged — the line a human reads before believing the second one.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  local named
+  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
+  case "$named" in
+    *cache/*) ;;
+    *) fail "the inherited ignored file is not named on the second iteration: $named" ;;
+  esac
+}
+
 # ── collecting the branches ──────────────────────────────────────────────────
 
 @test "collecting a branch the deadline killed ends instead of spinning" {

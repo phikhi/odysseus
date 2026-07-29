@@ -338,6 +338,64 @@ FAKE
   assert_equal "$output" "stray=no failures=1"
 }
 
+@test "the rollback names the ignored paths it could not undo" {
+  # "The tree is back where the session found it" was true except for a set of
+  # paths nobody enumerated — everything this project's `.gitignore` covers. The
+  # rollback cannot reach them: it diffs git trees, and they are not in either
+  # one. So it says so, and this test holds both halves — the claim, and the fact
+  # that the file really is still lying there.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  printf 'cache/\n' >>"$PROJECT_DIR/.gitignore"
+  harness__commit "test: the project ignores a build cache"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src cache
+printf 'written\n' >src/alpha.txt
+printf 'written\n' >src/rogue.txt
+printf 'payload\n' >cache/payload
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "this rollback could not undo"
+  assert_output_contains "cache/"
+  assert_file_exists "$PROJECT_DIR/cache/payload"
+  # What it could see is undone, as before.
+  refute_file_exists "$PROJECT_DIR/src/rogue.txt"
+  refute_file_exists "$PROJECT_DIR/src/alpha.txt"
+}
+
+@test "a rollback with nothing to undo names the zone all the same" {
+  # The probe that opened [24], second of three: a session whose only write is an
+  # ignored file. The rollback finds nothing in its diff — the honest reading of
+  # which is not silence, because the file is still there. A report tied to
+  # "something was undone" would say nothing in exactly the case where the tree is
+  # *not* back where the session found it.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  stub_exit tests 1
+  printf 'cache/\n' >>"$PROJECT_DIR/.gitignore"
+  harness__commit "test: the project ignores a build cache"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p cache && printf 'payload\n' >cache/payload
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  refute_output_contains "rolled back"
+  assert_output_contains "this rollback could not undo"
+  assert_output_contains "cache/"
+  assert_file_exists "$PROJECT_DIR/cache/payload"
+}
+
 # ── the attempt is kept ──────────────────────────────────────────────────────
 
 @test "before the escalation, a branch keeps the attempt the human will read" {

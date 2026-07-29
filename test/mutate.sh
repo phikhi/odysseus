@@ -826,6 +826,54 @@ mutation "26 the escalated ticket does not say no verdict was involved" "$FAILUR
   's/ran out on a reclaim, not on a verdict/ran out/' \
   test/claim.bats "runs out of them goes to the human sink"
 
+# ── [24] the zone git does not show ──────────────────────────────────────────
+
+mutation "24 the snapshot obeys the ignore rules on a guarded path" "$GATE" \
+  's/      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path" >\/dev\/null 2>&1 \|\| true/      :/' \
+  test/gate.bats "guarded path is caught"
+
+mutation "24 the guarded paths are a constant, not the configured ones" "$GATE" \
+  's/\$\{GUARDED_PATHS-\.claude\}/.claude/' \
+  test/gate.bats "configured ones"
+
+mutation "24 the harness's own configuration is not sealed" "$GATE" \
+  's/^gate_is_sealed\(\) \{/gate_is_sealed() { return 1;/m' \
+  test/gate.bats "configure the harness"
+
+# The other half of the seal, and the one a reader is likelier to undo by
+# accident: asking the write-surface first turns the seal into an ordinary check a
+# ticket can declare its way past, which is exactly the armed case.
+mutation "24 a write-surface may declare the sealed configuration after all" "$GATE" \
+  's/    if gate_is_sealed "\$file"; then/    if gate_is_sealed "\$file" \&\& ! gate_in_surface "\$file" "\$surface"; then/' \
+  test/gate.bats "configure the harness"
+
+mutation "24 the zone nothing judged is never named" "$GATE" \
+  's/^gate__report_unguarded\(\) \{/gate__report_unguarded() { return 0;/m' \
+  test/gate.bats "not judged, and the gate says so"
+
+mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
+  's/    if gate_is_bookkeeping "\$file"; then continue; fi\n    if gate_in_surface/    if gate_in_surface/' \
+  test/gate.bats "own bookkeeping"
+
+# The lie in the other direction: naming a path the gate *did* judge. Held by the
+# two refutations in the same test, which is the shape this suite has got wrong
+# before — so the guarded case had to be a project whose only ignored path is a
+# guarded one, or the refutation would pass on the strength of another path.
+mutation "24 a guarded path is reported as unjudged too" "$GATE" \
+  's/    if gate_in_surface "\$\{file%\/\}" "\$guarded"; then continue; fi\n//' \
+  test/gate.bats "guarded path is caught"
+
+mutation "24 the rollback says nothing about what it left behind" "$FAILURES" \
+  's/^failures__report_unrolled\(\) \{/failures__report_unrolled() { return 0;/m' \
+  test/failures.bats "could not undo"
+
+# Tied to having undone something, which silences it in the one case where the
+# tree is genuinely not back where the session found it: a session whose only
+# write was an ignored file.
+mutation "24 the rollback only reports when it undid something" "$FAILURES" \
+  's/\n  failures__report_unrolled\n/\n  if [ -n "\$paths" ]; then failures__report_unrolled; fi\n/' \
+  test/failures.bats "nothing to undo"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -163,15 +163,27 @@ L'ensemble déclaré des fichiers qu'un ticket va créer ou modifier (globs), pr
 _À éviter_ : périmètre, scope (ambigu), fichiers touchés.
 
 **Scope-guard**:
-Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry. Juge contre la surface du **spawn**, restaurée par la protection du tracker avant qu'il ne lise le ticket — sinon il lirait un contrat que la session vient d'écrire.
+Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry. Juge contre la surface du **spawn**, restaurée par la protection du tracker avant qu'il ne lise le ticket — sinon il lirait un contrat que la session vient d'écrire. Voit ce que git voit, plus les **chemins gardés** ; la **configuration scellée** est refusée avant même qu'il consulte la surface.
 _À éviter_ : lint, garde-fou, sandbox (réservé à l'exécution).
+
+**Chemins gardés**:
+Les chemins que le snapshot d'arbre prend **par force**, règles d'ignore du projet cible incluses (`GUARDED_PATHS`, défaut `.claude`). Sans eux, ce que `.gitignore` couvre est hors du scope-guard *et* hors du rollback : une session écrit hors surface, garde son écriture après un gate rouge, et laisse un fichier qui change le verdict des tickets suivants. La liste est nommée et pas universelle : forcer l'arbre entier ferait entrer le build output du projet dans le tree jugé, donc déborder à chaque itération.
+_À éviter_ : whitelist, chemins protégés (réservé au tracker), exceptions.
+
+**Zone ignorée non gardée**:
+Ce que le `.gitignore` du projet couvre en dehors des chemins gardés : jugé par rien, défait par rien, **nommé à chaque itération et à chaque rollback** (combien de chemins, et les dix premiers). Le seul mode de panne qui y vit est une suite de tests qui lit un fichier ignoré : un ticket peut passer au vert grâce à ce qu'une session antérieure y a laissé.
+_À éviter_ : zone morte (c'était le nom du défaut, pas de l'état déclaré), angle mort.
+
+**Configuration scellée**:
+Les fichiers qu'**aucune write-surface ne peut couvrir** : `.claude/settings.local.json`, `.claude/settings.json`, `.claude/ralph.config.sh`. Ce qu'un `claude` frais lit au démarrage (hooks, permissions, env — effet dès le spawn suivant) et ce que le run suivant source (`TEST_CMD`). Toujours dans le snapshot, quoi que dise `GUARDED_PATHS`. Le *code* du pack n'en fait pas partie : un run a sourcé ses libs avant sa première session, et un ticket qui réécrit le gate est un ticket légitime.
+_À éviter_ : fichiers interdits, read-only, verrou.
 
 **Protection du tracker**:
 La restauration des tickets qu'une session a édités, depuis un objet tree de `issues/` pris au spawn, faite **avant** que le gate ne lise quoi que ce soit du tracker. Une itération qui a édité un ticket ne peut pas être verte (outcome `tracker-write`). Un ticket qu'une session a *créé* n'est pas restauré : il part en quarantaine, parce qu'une création ne se décrée pas et qu'un humain doit trancher.
 _À éviter_ : rollback du tracker (le rollback l'exclut, à dessein), verrou.
 
 **Rollback d'itération**:
-La remise du dépôt dans l'état où la session l'a trouvé, après tout échec. Aussi large que le diff de la session et pas plus : ses ajouts sont supprimés, ses modifications et suppressions restaurées depuis le snapshot pré-session, son commit éventuel défait (`HEAD` remis au commit pré-spawn). **N'est pas** un `git reset --hard` + `git clean` : le travail non commité que le run n'a pas produit ne lui appartient pas. Le tracker en est exclu — c'est la seule autorité d'état.
+La remise du dépôt dans l'état où la session l'a trouvé, après tout échec. Aussi large que le diff de la session et pas plus : ses ajouts sont supprimés, ses modifications et suppressions restaurées depuis le snapshot pré-session, son commit éventuel défait (`HEAD` remis au commit pré-spawn). **N'est pas** un `git reset --hard` + `git clean` : le travail non commité que le run n'a pas produit ne lui appartient pas. Le tracker en est exclu — c'est la seule autorité d'état. Deux exceptions énumérées et non déduites : le tracker, et la **zone ignorée non gardée**, que le rollback nomme au lieu de la taire.
 _À éviter_ : reset, nettoyage, revert (réservé à un commit inverse).
 
 **Travail durable**:
