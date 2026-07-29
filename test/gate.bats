@@ -13,6 +13,11 @@ setup() {
 }
 
 teardown() {
+  # A collection that never returns is one of the failures this file covers, so a
+  # test here can leave a spinning process behind. Killed before the tmpdir goes.
+  if [ -n "${PACK_BG_PID:-}" ]; then
+    kill -KILL "$PACK_BG_PID" 2>/dev/null || true
+  fi
   harness_teardown
 }
 
@@ -417,4 +422,26 @@ FAKE
   pack_run 'gate__scope_guard 01-alpha "" /dev/null'
   assert_failure
   assert_output_contains "could not read the working tree"
+}
+
+# ── collecting the branches ──────────────────────────────────────────────────
+
+@test "collecting a branch the deadline killed ends instead of spinning" {
+  # The collection re-waits for as long as `wait` answers over 128, because that
+  # is what a trapped signal looks like — see gate__collect. A branch the watchdog
+  # killed answers over 128 as well, and on bash 3.2 it keeps answering 143 on
+  # every later wait instead of "not a child of this shell": probed. The liveness
+  # check is therefore the only thing that ends the loop, and taking it out hangs
+  # the gate rather than failing an assertion — so the deadline for this one lives
+  # in the test, which is what lets its mutation be run at all.
+  pack_run_bg '
+    sleep 30 &
+    victim=$!
+    kill -TERM "$victim"
+    gate__collect "$victim"
+    : >"$RALPH_SHIM_STATE/collected"
+  '
+
+  wait_for_file "$SHIM_STATE/collected" 100 ||
+    fail "gate__collect never came back on a branch that had been killed"
 }

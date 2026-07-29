@@ -38,6 +38,12 @@
 # guarantee moved or disappeared, and nobody re-checked that the guarantee is
 # still carried by something.
 #
+# One shape of guarantee cannot be mutated the way the others can: a termination
+# condition. Take it out and the loop it bounded spins instead of failing, so the
+# mutated run never comes back, and this script sits blocked with a planted defect
+# in the working tree. The test covering such a line has to carry its own deadline
+# rather than assert on a run that would never return — see the [25] entries.
+#
 # Usage
 #   bash test/mutate.sh                 every mutation
 #   bash test/mutate.sh -f scope        only those whose label matches
@@ -755,6 +761,28 @@ mutation "20 a red contract does not say which side to repair" "$CONTRACT" \
 mutation "20 an unguarded real spawn is not noticed" "$CONTRACT" \
   's/^contract_unguarded_real_spawns\(\) \{/contract_unguarded_real_spawns() { return 0;/m' \
   test/contract-claude.bats "unguarded real spawn is caught"
+
+# ── [25] the graceful stop, during the gate ──────────────────────────────────
+
+mutation "25 a stop request abandons the branch it interrupted" "$GATE" \
+  's/    \[ "\$rc" -gt 128 \] \|\| return 0/    return 0/' \
+  test/loop-happy-path.bats "during the gate waits"
+
+mutation "25 the branches are collected with a bare wait again" "$GATE" \
+  's/    gate__collect "\$brc"/    wait "\$brc" 2>\/dev\/null || true/' \
+  test/loop-happy-path.bats "during the gate waits"
+
+# The one guarantee here whose absence is a hang and not a red: without the
+# liveness check the collection spins for ever on a branch the deadline killed.
+# Runnable only because the test that covers it brings its own deadline instead of
+# asserting on a run that would never come back.
+mutation "25 a branch the deadline killed is waited for for ever" "$GATE" \
+  's/    kill -0 "\$pid" 2>\/dev\/null \|\| return 0\n//' \
+  test/gate.bats "spinning"
+
+mutation "25 a stopped run has no deadline left on a hung branch" "$GATE" \
+  's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
+  test/loop-happy-path.bats "bounded by the deadline"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
