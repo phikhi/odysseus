@@ -13,7 +13,8 @@
 #   tracker_read_ticket ID            the ticket on stdout
 #   tracker_claim ID [OWNER]          take the ticket; non-zero if it was lost
 #   tracker_unclaim ID                give it back to the frontier
-#   tracker_mark_resolved ID          the gate came back green
+#   tracker_mark_resolved ID          the gate came back green; clears the claim
+#                                     and the retry counter
 #   tracker_mark_escalated ID REASON  hand it to the human sink, with a reason
 #   tracker_mark_ready ID             re-inject (re-slice, human fix, wiring)
 #   tracker_block_on ID DEPS          hold it until those tickets are resolved
@@ -53,6 +54,16 @@ tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.
 #
+# Two fields carry an obligation the dispatcher cannot enforce, so they are written
+# down here rather than left to whichever backend was read last.
+#
+# `Failures:` is a budget, not a history: `mark_resolved` clears it. A backend that
+# keeps it re-creates [26]'s defect — a counter cumulative over the ticket's whole
+# life, escalating `failed-impl` a ticket that was delivered green twice. Where it
+# is *not* cleared is a decision each re-injection path owes its own ticket:
+# `mark_ready` keeps it today, so a re-injected ticket is escalated on its first
+# attempt (owned by [16] for the human sink, [11] for the wiring loop).
+#
 # One field's *shape* is part of this interface rather than a detail of the
 # backend that writes it: `Claimed` reads `owner=<who> at=<iso8601>`, because the
 # liveness policy (lib/claim.sh) is backend-agnostic and single-machine — it has
@@ -60,5 +71,7 @@ tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
 # claim as an assignee and keeps liveness in a local sidecar (spec §152); it
 # still has to render those two facts here. An owner not shaped `pid:<n>` is
 # judged by CLAIM_TTL alone, so a backend that renders one is saying "do not ping
-# this, wait it out".
+# this, wait it out" — and, since [26], "and do not charge the ticket a retry for
+# having waited". The two go together: an owner the pack never pinged is not
+# evidence that an attempt failed.
 tracker_field() { tracker__dispatch field "$@"; }

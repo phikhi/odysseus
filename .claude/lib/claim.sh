@@ -40,6 +40,12 @@
 # tracker.sh. An owner this pack cannot ping (anything not shaped `pid:<n>`) is
 # judged by the TTL alone rather than reclaimed on sight: stealing a ticket a
 # human is assigned to would be worse than waiting out the backstop.
+#
+# The TTL does eventually steal it, and that is deliberate — fail-open, above. What
+# [26] changed is the *price*: an owner this pack never pinged does not pay the
+# ticket's retry budget for having been waited out. Which owner is which is one
+# question with one answer, `claim_owner_kind`, because two callers ask it for
+# different reasons.
 
 # One field out of a claim record, without word splitting or globbing a value
 # the tracker holds. Non-zero when the record does not carry it at all, which the
@@ -53,6 +59,33 @@ claim__field() {
 
 claim_owner() {
   claim__field "$1" owner
+}
+
+# Which kind of owner a claim record names, in the only three categories this pack
+# has an answer for. One function rather than a shape test at each call site: the
+# liveness policy below and the retry policy in failures.sh both hinge on "is this
+# one of our own runs", and a second writing of `pid:<n>` is the [25] defect again
+# — one primitive, two copies, one of them eventually wrong.
+#
+#   run         `pid:<n>`: a run of this pack, on this machine. Pingable.
+#   foreign     an owner this pack did not write — a remote backend's assignee, a
+#               human, another tool. Not pingable, judged by the TTL alone.
+#   unreadable  no owner at all, or one shaped like ours that is not a pid. Nothing
+#               can be proven about it in either direction.
+#
+# Always answers, so a caller can `case` on it without a guard.
+claim_owner_kind() {
+  local owner
+  owner="$(claim_owner "$1")" || {
+    printf 'unreadable\n'
+    return 0
+  }
+  case "$owner" in
+    '' | pid: | pid:*[!0-9]*) printf 'unreadable\n' ;;
+    pid:*) printf 'run\n' ;;
+    *) printf 'foreign\n' ;;
+  esac
+  return 0
 }
 
 # ISO 8601 UTC to seconds since the epoch, in arithmetic only.
@@ -111,7 +144,7 @@ claim_age_seconds() {
 # rather than silently clamped: a project that wants the pid check alone is
 # allowed to say so.
 claim_is_held() {
-  local record="$1" owner age pingable=0
+  local record="$1" owner age
 
   [ -n "$record" ] || return 1
 
@@ -128,17 +161,16 @@ claim_is_held() {
   owner="$(claim_owner "$record")" || return 1
   [ -n "$owner" ] || return 1
 
-  case "$owner" in
-    pid:*[!0-9]* | pid:) return 1 ;;
-    pid:*)
+  case "$(claim_owner_kind "$record")" in
+    run)
       kill -0 "${owner#pid:}" 2>/dev/null || return 1
       return 0
       ;;
-    *) pingable=1 ;;
+    unreadable) return 1 ;;
   esac
 
   # Not ours to ping, and the TTL above says it is still young enough.
-  [ "$pingable" = 1 ]
+  return 0
 }
 
 # Every claimed ticket whose claim nobody can prove alive, back on the frontier.
@@ -148,6 +180,12 @@ claim_is_held() {
 # <disposition>` line per ticket it touched — the caller journals them, because
 # writing the run journal is the loop's job and a lib that reached up into it
 # would turn the stack into a mesh.
+#
+# What the retry policy is told is the *kind* of owner, never the record's shape:
+# who may be charged for a reclaim is failures.sh's decision, and which owners this
+# pack can ping is this module's. The record itself goes with it because the note
+# left on the ticket is the last place that claim is written down — `tracker_unclaim`
+# and `tracker_mark_escalated` both drop the field.
 claim_reclaim_stale() {
   local id status record disposition
 
@@ -157,7 +195,8 @@ claim_reclaim_stale() {
     record="$(tracker_field "$id" Claimed)" || record=""
     claim_is_held "$record" && continue
 
-    disposition="$(failures_after_dead_owner "$id")" || disposition=unknown
+    disposition="$(failures_after_dead_owner \
+      "$id" "$(claim_owner_kind "$record")" "$record")" || disposition=unknown
     printf '%s %s\n' "$id" "$disposition"
   done
   return 0

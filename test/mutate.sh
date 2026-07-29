@@ -624,8 +624,12 @@ mutation "12 a claim stamped in the future holds for ever" "$CLAIM" \
   's/  \[ "\$age" -ge 0 \] \|\| return 1\n//' \
   test/claim.bats "uncertain counts as reclaimable"
 
+# Drifted when [26] moved the shape of an owner into claim_owner_kind, so that the
+# liveness sweep and the retry policy could not draw the line in two places. Same
+# guarantee, one indirection further: an owner read as unreadable is reclaimed on
+# sight instead of being waited out.
 mutation "12 an owner this pack cannot ping is reclaimed on sight" "$CLAIM" \
-  's/    \*\) pingable=1 ;;/    *) return 1 ;;/' \
+  's/    \*\) printf .foreign\\n. ;;/    *) printf "unreadable\\n" ;;/' \
   test/claim.bats "cannot ping waits out the TTL"
 
 # A one-day shift: the conversion is arithmetic, so the way to remove its
@@ -783,6 +787,44 @@ mutation "25 a branch the deadline killed is waited for for ever" "$GATE" \
 mutation "25 a stopped run has no deadline left on a hung branch" "$GATE" \
   's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
   test/loop-happy-path.bats "bounded by the deadline"
+
+# ── [26] what the retry counter counts, and what clears it ───────────────────
+
+mutation "26 a resolution leaves the retry counter standing" "$TRACKER" \
+  's/ Status resolved Claimed --drop Failures --drop/ Status resolved Claimed --drop/' \
+  test/failures.bats "clears the retry counter"
+
+mutation "26 every reclaim is charged, whoever held the claim" "$FAILURES" \
+  's/  if \[ "\$kind" != run \]; then/  if false; then/' \
+  test/claim.bats "never pinged costs the ticket nothing"
+
+# The other half of the same guarantee, one module lower: if the pack cannot tell
+# its own runs from an owner it never pinged, the policy above has nothing to act
+# on. Planted as "everything is one of our runs", which is the direction that costs
+# a human their retry budget. Aimed at the reproduction of the original probe, which
+# nothing else can redden: the defect it came from needed both halves, so removing
+# either one closes the scenario the other opened — what the journal says about each
+# night is what carries it.
+mutation "26 the pack reads every owner as one of its own runs" "$CLAIM" \
+  's/^claim_owner_kind\(\) \{/claim_owner_kind() { printf "run\\n"; return 0;/m' \
+  test/claim.bats "three claims taken back"
+
+mutation "26 a reclaim at the ceiling escalates as a failed implementation" "$FAILURES" \
+  's/    tracker_mark_escalated "\$ticket" decision/    tracker_mark_escalated "\$ticket" failed-impl/' \
+  test/claim.bats "runs out of them goes to the human sink"
+
+# The two notes are guarantees of their own: the ticket is the only place the person
+# who lost the claim, or the person draining the human sink, will look. Both notes
+# are prose, so the way to remove what they promise is to take the promise out of
+# the sentence — the assertion reading it has to be reading the ticket and not the
+# run's stdout, which is a mistake this suite has made before.
+mutation "26 the ticket never says the claim was taken and not billed" "$FAILURES" \
+  's/No retry was charged for it/The retry was charged/' \
+  test/claim.bats "never pinged costs the ticket nothing"
+
+mutation "26 the escalated ticket does not say no verdict was involved" "$FAILURES" \
+  's/ran out on a reclaim, not on a verdict/ran out/' \
+  test/claim.bats "runs out of them goes to the human sink"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

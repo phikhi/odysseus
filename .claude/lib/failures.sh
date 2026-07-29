@@ -116,34 +116,67 @@ failures_handle() {
   return 0
 }
 
-# A ticket whose claim outlived its owner, and what the tracker owes it.
+# A ticket whose claim nobody can prove alive, and what the tracker owes it.
 #
-# A stale claim is a crash nobody was alive to classify: the run that would have
-# called failures_handle is the run that died. So it gets the tracker half of the
-# crash policy — count the attempt, hand it back for a fresh session, escalate at
-# the ceiling — and not the git half. There is nothing to roll back to: the
-# pre-spawn snapshots were shell variables in a process that no longer exists,
-# and whatever that session left in the working tree is still there. See [12] for
-# what that means for the next run.
+# Called with the ticket, the kind of owner the claim named (`claim_owner_kind`,
+# lib/claim.sh) and the record itself, for the note. It gets the tracker half of
+# the crash policy and not the git half: there is nothing to roll back to — the
+# pre-spawn snapshots were shell variables in a process that no longer exists, and
+# whatever that session left in the working tree is still there. See [12] for what
+# that means for the next run.
 #
-# Counting it is the point, and it is a trade. A hard kill of a run (SIGKILL,
-# power cut, OOM) burns a retry on the ticket that was in flight, and after
-# RETRY_N of those a human is asked about a ticket that may be perfectly fine.
-# The alternative is worse and this pack has met it: a ticket whose session
-# reliably kills the run gets reclaimed, re-ground and killed again every night,
-# for ever, with nothing anywhere saying so. A graceful stop (TERM/INT) does not
-# come through here at all — the loop finishes its iteration and marks the ticket.
+# Whether it costs a retry depends on who held the claim, and only on that:
 #
-# The disposition goes to stdout — `retry` or `escalated` — and nothing else
-# does. This is the one decision here that does not announce itself: its caller
-# has to journal the reclaim anyway, and failures__log writes to stdout, so a
-# line printed here would come back inside the disposition.
+#   run       a run of this pack whose pid is gone (or whose claim outlived the
+#             TTL, a recycled pid). A crash nobody was alive to classify: the run
+#             that would have called failures_handle is the run that died. Counted
+#             — and that is a trade. A hard kill (SIGKILL, power cut, OOM) burns a
+#             retry on a ticket that may be perfectly fine, but the alternative is
+#             worse and this pack has met it: a ticket whose session reliably kills
+#             the run gets reclaimed, re-ground and killed again every night, for
+#             ever, with nothing anywhere saying so.
+#   anything  an owner this pack decided not to ping — an assignee, a human, another
+#   else      tool — or a record it cannot read at all. Not counted. `claim.sh`
+#             writes that stealing a human's ticket would be worse than waiting out
+#             the backstop, and then the backstop falls and the ticket is taken
+#             anyway: fail-open is deliberate, but billing an implementation failure
+#             for it is not. Probed on 29/07/2026 with `owner=alice`: three runs,
+#             three green deliveries, `Failures: 3`, escalated `failed-impl` on the
+#             third. Nothing had ever been judged.
+#
+# It is also why the ceiling here does not escalate as `failed-impl`: nothing in
+# this function has judged an attempt, and a human sent to read a `failed/<ticket>`
+# branch that was never written has been misrouted. `decision` is the honest
+# routing — somebody has to decide whether the ticket kills its run or the host was
+# the problem — and the note says which. Counting is the bound, not the diagnosis.
+#
+# A graceful stop (TERM/INT) does not come through here at all: the loop finishes
+# its iteration and marks the ticket ([25]).
+#
+# The disposition goes to stdout — `retry`, `returned` or `escalated` — and nothing
+# else does. This is the one decision here that does not announce itself: its
+# caller has to journal the reclaim anyway, and failures__log writes to stdout, so
+# a line printed here would come back inside the disposition.
 failures_after_dead_owner() {
-  local ticket="$1" count=""
+  local ticket="$1" kind="${2:-foreign}" record="${3:-}" count=""
+
+  # Defaults to the free path when the caller says nothing: a forgetful caller then
+  # under-bounds the re-grinding of a toxic ticket, which is visible in the tracker,
+  # rather than charging retries to owners it never pinged, which is not.
+  if [ "$kind" != run ]; then
+    tracker_unclaim "$ticket"
+    printf 'The claim on this ticket was not taken by a run of this pack (%s), so nothing here could ping it. It outlived CLAIM_TTL, and this pack fails open on a claim it cannot prove alive: the ticket went back to the frontier, and the loop may be grinding it now. No retry was charged for it — no session was ever judged on this ticket, and a claim that was waited out is not a failed attempt.\n' \
+      "${record:-no readable claim record}" | tracker_append_note "$ticket" || true
+    printf 'returned\n'
+    return 0
+  fi
 
   count="$(tracker_bump_failures "$ticket")" || count=""
   if [ -z "$count" ] || [ "$count" -gt "${RETRY_N:-2}" ]; then
-    tracker_mark_escalated "$ticket" failed-impl
+    tracker_mark_escalated "$ticket" decision
+    printf 'The retry budget of this ticket (%s of %s) ran out on a reclaim, not on a verdict: the run holding it (%s) died before anything judged its session, so there is no `failed/%s` branch to read and no red gate to look at. Earlier attempts may have been judged — `Failures:` counts both causes and `run.log` tells them apart, a `reclaimed-*` line against a gate outcome. Somebody has to decide whether this ticket kills the run that takes it or the host was the problem.\n' \
+      "${count:-unknown}" "${RETRY_N:-2}" "${record:-no readable claim record}" "$ticket" |
+      tracker_append_note "$ticket" || true
     printf 'escalated\n'
     return 0
   fi

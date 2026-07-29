@@ -191,7 +191,7 @@ Le repli, **un à la fois**, des worktrees gatés sur la branche principale par 
 _À éviter_ : merge, rebase, fusion.
 
 **Liveness du claim**:
-La politique qui décide qu'un claim est mort (donc balayable) : **pid vivant** en primaire (le propriétaire est une itération courte-durée), **TTL** en backstop (anti pid-recycling), **fail-open** (incertain → balayable, jamais de deadlock). Pas de verrou séparé ni de heartbeat : la politique se lit sur le champ `Claimed:` du ticket, seul état durable du claim. Un claim réclamé est **compté comme un crash** — c'en est un, que personne n'était vivant pour classer — donc il consomme un retry et finit dans la boucle humaine au plafond.
+La politique qui décide qu'un claim est mort (donc balayable) : **pid vivant** en primaire (le propriétaire est une itération courte-durée), **TTL** en backstop (anti pid-recycling), **fail-open** (incertain → balayable, jamais de deadlock). Pas de verrou séparé ni de heartbeat : la politique se lit sur le champ `Claimed:` du ticket, seul état durable du claim. Le claim réclamé d'**un run du pack** (`owner=pid:<n>`) est **compté comme un crash** — c'en est un, que personne n'était vivant pour classer — donc il consomme un retry et finit dans la boucle humaine au plafond, avec la raison `decision` : rien n'a été jugé, il n'y a pas de branche `failed/<ticket>` à lire ([26]). Le claim d'un **owner que le pack ne pingue pas** est volé au même titre quand le backstop tombe, mais **ne consomme rien** : un claim qu'on a seulement attendu n'est pas une tentative ratée.
 _À éviter_ : verrou de session (pas d'artefact séparé), mutex, flock, zombie.
 
 ### Le backend de tracker

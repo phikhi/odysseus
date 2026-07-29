@@ -203,6 +203,24 @@ TICKET
   assert_output_contains "09-escalated"
 }
 
+@test "mark_resolved clears the claim and the retry counter" {
+  # The counter is a budget, not a history ([26]): a ticket that returns to the
+  # frontier after a delivery returns for a new reason, with its whole budget.
+  # Asserted at the adapter level as well as end to end, because it is an
+  # obligation of the interface — a backend that keeps the field re-creates the
+  # defect, and [18] is going to write one.
+  pack_run 'tracker_claim 01-alpha pid:1
+    tracker_bump_failures 01-alpha
+    tracker_mark_resolved 01-alpha'
+  assert_success
+
+  assert_ticket_status 01-alpha resolved
+  run ticket_has_field 01-alpha Claimed
+  assert_failure
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+}
+
 @test "bump_failures counts from zero and from an existing count" {
   pack_run 'tracker_bump_failures 01-alpha'
   assert_success

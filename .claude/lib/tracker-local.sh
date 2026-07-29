@@ -13,7 +13,8 @@
 #   Blocked by:     None, or ticket numbers — unblocked means all resolved
 #   Claimed:        owner=<who> at=<iso8601>
 #   Escalation:     why it went to the human sink
-#   Failures:       how many fresh retries it has burned
+#   Failures:       how many fresh retries it has burned, since it was last
+#                   delivered — a resolution clears it
 #   Write-surface:  what it is allowed to touch
 
 tracker_local__issues_dir() {
@@ -212,8 +213,14 @@ tracker_local_unclaim() {
   tracker_local__set_fields "$1" Status ready-for-agent Claimed --drop
 }
 
+# The retry counter goes with the claim, and that is the whole of [26]'s AFK half:
+# left in place it was cumulative over the ticket's entire life, across deliveries,
+# so a ticket delivered green twice was escalated `failed-impl` on its third visit
+# to the frontier. `resolved` is the only safe place to clear it — a green ticket is
+# off the frontier, and if it comes back it comes back for a new reason. Clearing it
+# on `unclaim`, between two retries, is what RETRY_N exists to prevent.
 tracker_local_mark_resolved() {
-  tracker_local__set_fields "$1" Status resolved Claimed --drop
+  tracker_local__set_fields "$1" Status resolved Claimed --drop Failures --drop
 }
 
 tracker_local_mark_escalated() {
