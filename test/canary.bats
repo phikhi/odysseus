@@ -95,7 +95,26 @@ seed_hostile_world() {
   perl -pi -e 's/\n/\r\n/' "$(ticket_file 02-beta)" "$(ticket_file 04-claimed)"
   harness__commit "test: a tracker written the DOS way"
 
-  mkdir -p "$PROJECT_DIR/src"
+  # A real project has a `.gitignore`, and this one had none for twenty-two
+  # tickets — which is exactly how the dead zone of [24] stayed invisible in the
+  # file whose job is to drive the world as it is. Every check in the pack is
+  # built on a git tree object, so an ignore rule the project happens to write is
+  # what decides how far any of them can see.
+  #
+  # The three entries [19] will provision are deliberately *not* here: the
+  # assertion that the run undoes a session commit carrying the session stream
+  # depends on that stream being visible to the session's own `git add -A`, and
+  # changing that is [19]'s job, with its own assertions.
+  #
+  # Committed before the working tree is dirtied, and that order is load-bearing:
+  # `harness__commit` is a `git add -A`, so seeding the ignore rule afterwards
+  # would commit the very work in progress this function exists to leave
+  # uncommitted. The canary caught that, which is the whole point of it.
+  printf '.cache/\n' >>"$PROJECT_DIR/.gitignore"
+  harness__commit "test: a project that keeps its build cache out of git"
+
+  mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/.cache"
+  printf 'built before the run\n' >"$PROJECT_DIR/.cache/build"
   printf 'someone else was here\n' >"$PROJECT_DIR/wip.txt"
   printf '\nan edit nobody committed\n' >>"$PROJECT_DIR/CONTEXT.md"
 }
@@ -145,6 +164,15 @@ OUT"
   refute_output_contains "scope=red"
   refute_output_contains "gate-red"
   refute_output_contains "edited the tracker"
+
+  # And on each of the three iterations, the run said out loud that this project
+  # has a zone no check of the pack looked at. Three greens on a project with a
+  # `.gitignore` are three greens with an asterisk, and the asterisk has to be
+  # printed rather than remembered ([24]).
+  run bash -c "grep -c 'nothing in this gate judged' <<'OUT'
+$loop_output
+OUT"
+  assert_equal "$output" "3"
 
   # Iteration 2's session commits everything it can see. What the run added to
   # the project's history is its own commits and nothing else: not the session's
@@ -283,6 +311,15 @@ FAKE
   # part of leaving nothing behind, since a commit is harder to undo than a file.
   assert_file_contains "$PROJECT_DIR/wip.txt" "someone else was here"
   assert_file_contains "$PROJECT_DIR/CONTEXT.md" "an edit nobody committed"
+
+  # Including the build cache the project keeps out of git: three green
+  # iterations, and not one of them staged it, committed it or swept it. The
+  # rollback's side of the same promise is asserted where a rollback actually runs
+  # (`the rollback names the ignored paths it could not undo`, test/failures.bats);
+  # what this line watches is that nothing on the *green* path ever starts
+  # tidying the ignored zone — a `git clean` added anywhere in the loop would take
+  # a project's `node_modules` down with it ([24]).
+  assert_file_contains "$PROJECT_DIR/.cache/build" "built before the run"
 
   run git -C "$PROJECT_DIR" status --porcelain -- wip.txt CONTEXT.md
   assert_output_contains "?? wip.txt"

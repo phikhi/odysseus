@@ -58,11 +58,104 @@ gate_preflight() {
   return "$rc"
 }
 
+# ── the zone git does not show ───────────────────────────────────────────────
+#
+# Every check in this pack is built on a git tree object, so every check inherits
+# git's own blind spot: what the *target project's* `.gitignore` covers is not in
+# the tree, and a control that delegates its visibility to a file the project
+# writes has to say how far it sees. Probed on 29/07/2026, three times over: a
+# session wrote an ignored file off its write-surface and the verdict was
+# `scope=green`; a red gate rolled the tree back and left the ignored file
+# standing; and a ticket went green because of an ignored file the *previous*
+# ticket's session had left behind, which no review of either ticket alone could
+# have caught ([24]).
+
+# The pack's own configuration: what a fresh `claude` process reads when it
+# starts, and what the next run sources. No write-surface may cover these, and
+# the snapshot takes them by force whatever GUARDED_PATHS says — emptying a
+# config key must not be a way to unseal the harness.
+#
+# `.claude/settings.local.json` is the armed case and the reason this list
+# exists: it is ignored by convention in every Claude Code project, so nothing in
+# this pack could see it, and hooks, permissions and env in it take effect on the
+# very next spawn. A session that wrote it would be configuring the harness that
+# judges its successors. `ralph.config.sh` carries TEST_CMD, so a session that
+# set it to `true` would make every later gate green while proving nothing.
+#
+# The pack's *code* is deliberately not sealed. A run has sourced its libs before
+# the first session starts, so editing them cannot change the judgement of the
+# run in progress; and a ticket that rewrites `gate.sh` is exactly what this
+# repository does with itself. What a fresh `claude` reads is the different
+# question, because it lands on the next spawn and nothing looks at it.
+gate_sealed_paths() {
+  printf '%s\n' '.claude/settings.local.json .claude/settings.json .claude/ralph.config.sh'
+}
+
+# Matched the same way a write-surface is, so a sealed directory would cover what
+# is under it. See gate_in_surface, below.
+gate_is_sealed() {
+  gate_in_surface "$1" "$(gate_sealed_paths)"
+}
+
+# The paths the whole-tree snapshot takes by force. `.claude` by default — the
+# pack itself, and the settings a session reads. GUARDED_PATHS is the project's
+# to widen or narrow: a project whose own tooling writes under a guarded path
+# while a session runs would otherwise watch every iteration go red on it. The
+# sealed configuration is added whatever the key says.
+gate_guarded_paths() {
+  printf '%s %s\n' "${GUARDED_PATHS-.claude}" "$(gate_sealed_paths)"
+}
+
+# The ignored paths nothing in this pack looks at, enumerated rather than
+# alluded to. "The tree is back where the session found it, except for a set of
+# paths nobody lists" is the half-truth [24] was opened for.
+#
+# Directories are collapsed, so a project's `node_modules/` is one line and not a
+# hundred thousand. Two exclusions, and both are load-bearing: the guarded paths,
+# because the snapshot takes those by force and they *are* judged; and the
+# feature's own bookkeeping, because [19] gitignores the run journal, the run
+# lock and the session stream, all of which are written *during* the window being
+# watched. Without the second one, every iteration of every project would report
+# its own journal as an unjudged write — which is the same reason the scope-guard
+# drops it (gate_is_bookkeeping, one definition, now three readers).
+gate_unguarded_ignored() {
+  local listing guarded file
+  listing="$(git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
+    listing=""
+  guarded="$(gate_guarded_paths)"
+
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if gate_is_bookkeeping "$file"; then continue; fi
+    if gate_in_surface "${file%/}" "$guarded"; then continue; fi
+    printf '%s\n' "$file"
+  done <<IGNORED
+$listing
+IGNORED
+  return 0
+}
+
+# The same zone as one line: how many paths, and the first ten of them. Non-zero
+# when there is nothing to say, so a caller can ask and stay silent.
+#
+# Two readers have different things to say about one zone — the gate did not judge
+# it, the rollback could not undo it — so the counting and the truncation live
+# here instead of twice. Ten names and no more; the count says how many were left
+# out.
+gate_ignored_zone() {
+  local left count
+  left="$(gate_unguarded_ignored)" || left=""
+  [ -n "$left" ] || return 1
+  count="$(printf '%s\n' "$left" | awk 'END { print NR }')"
+  printf '%s ignored path(s): %s\n' \
+    "$count" "$(printf '%s\n' "$left" | head -10 | tr '\n' ' ' | sed 's/ *$//')"
+}
+
 # ── the diff an iteration is judged on ───────────────────────────────────────
 
 # Everything in the working tree right now, as a git tree object: tracked or
-# not, committed or not, ignored files aside. Built in a throwaway index, so
-# the real one is untouched.
+# not, committed or not, the guarded paths included whether the project ignores
+# them or not. Built in a throwaway index, so the real one is untouched.
 #
 # The commit at HEAD would be the obvious baseline and it is the wrong one. A
 # green iteration is not committed by anything today, so its files are still
@@ -75,18 +168,31 @@ gate_preflight() {
 # Given paths, only those are snapshotted, and they are taken by force —
 # ignore rules included. A caller that names a path is watching it deliberately,
 # and a target project that gitignores `.scratch/` must not thereby switch the
-# tracker's own guard off. Nothing is forced without paths: the whole-tree
-# snapshot is what the scope-guard and the rollback act on, and pulling a
-# project's ignored build output into that would make every iteration look like
-# an overflow.
+# tracker's own guard off.
+#
+# Without paths, the whole tree, and there the project's ignore rules are obeyed
+# with one named exception. `git add -A --force` on everything is not the fix and
+# never will be: a project's build output would land in the tree the scope-guard
+# judges and the rollback acts on, so every iteration would look like an overflow
+# and every rollback would delete a cache the run has no business touching. So
+# the guarded paths are forced on top of an ordinary `git add -A` — a named list,
+# which only sees what somebody thought to name. What is left is enumerated
+# instead of judged: see gate_unguarded_ignored.
 gate_tree_snapshot() {
-  local index tree
+  local index tree path
   index="$(mktemp "${TMPDIR:-/tmp}/ralph-index.XXXXXX")" || return 1
   rm -f "$index"
   if [ "$#" -gt 0 ]; then
     GIT_INDEX_FILE="$index" git add -A --force -- "$@" >/dev/null 2>&1
   else
     GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1
+    # One `git add` per guarded path rather than one for all of them: a pathspec
+    # that matches nothing makes git refuse the whole call, and a project is free
+    # to name a path it does not have yet. A refused pathspec leaves the snapshot
+    # exactly as the plain `git add -A` left it, which is the status quo.
+    for path in $(gate_guarded_paths); do
+      GIT_INDEX_FILE="$index" git add -A --force -- "$path" >/dev/null 2>&1 || true
+    done
   fi
   tree="$(GIT_INDEX_FILE="$index" git write-tree 2>/dev/null)" || tree=""
   rm -f "$index"
@@ -199,6 +305,17 @@ gate__scope_guard() {
 
   while IFS= read -r file; do
     [ -n "$file" ] || continue
+    # Asked before the surface is consulted, and that ordering is the whole of
+    # the guarantee: a ticket that declared the harness's own configuration would
+    # otherwise buy a session the right to configure the sessions after it. Red,
+    # and retryable — a fresh session starts from a tree the rollback has already
+    # cleaned, so there is nothing here a retry cannot settle.
+    if gate_is_sealed "$file"; then
+      rc=1
+      if [ -z "$class" ]; then class=internal; fi
+      printf 'wrote %s, which configures the harness itself — no write-surface may cover it\n' "$file"
+      continue
+    fi
     if gate_in_surface "$file" "$surface"; then
       continue
     fi
@@ -320,6 +437,25 @@ gate__watchdog() {
   return 0
 }
 
+# The zone this gate did not look at, named on every iteration rather than left
+# to a document nobody reads at three in the morning. It is not a verdict and
+# must not become one: the paths listed here are the project's own ignored files,
+# and turning them red would mean refusing every project that has a build.
+#
+# What it buys is the one failure a per-ticket review cannot see. A file dropped
+# in this zone survives the rollback and every later iteration, so a `TEST_CMD`
+# that reads it — an `.env`, a fixture cache, a test database, `node_modules` —
+# can be turned green by what an earlier session left behind. Probed: two
+# tickets, the second green thanks to the first one's write, both marked
+# resolved. Naming the zone is what makes that visible in the morning.
+gate__report_unguarded() {
+  local ticket="$1" zone
+  if zone="$(gate_ignored_zone)"; then
+    gate__log "$ticket: nothing in this gate judged $zone"
+  fi
+  return 0
+}
+
 # Up to 20 lines of what a red branch had to say. Enough to see which test
 # broke in the journal; the full picture belongs to the audit receipt.
 gate__report() {
@@ -406,6 +542,7 @@ gate_run() {
   RALPH_GATE_FAILED="${RALPH_GATE_FAILED# }"
 
   gate__log "$ticket: $RALPH_GATE_VERDICTS"
+  gate__report_unguarded "$ticket"
   rm -rf "$dir"
   return "$rc"
 }

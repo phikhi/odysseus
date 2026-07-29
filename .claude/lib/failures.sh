@@ -351,6 +351,12 @@ TRACKER
 # live there, and restoring them would rewrite the only authority on state this
 # system has — including, on a session that committed mid-claim, back to a state
 # that was never true.
+#
+# And it says what it did not put back. The diff it acts on is a diff of git
+# trees, so the paths a project's `.gitignore` covers are outside it — the guarded
+# ones aside, which the snapshot takes by force. Announcing "rolled back N paths"
+# while an unenumerated set of paths is exempt is the half-truth [24] was opened
+# for, so the zone is named here every time it is not empty.
 failures_rollback() {
   local pre="$1" base="$2" tree="${3:-}"
   local head idx status path paths='' undone=0
@@ -411,6 +417,23 @@ ROLLBACK
     # shellcheck disable=SC2086
     git reset -q -- $paths 2>/dev/null || true
     failures__log "rolled back $undone path(s) the session touched"
+  fi
+
+  # Unconditionally, and not only when something was rolled back: a rollback that
+  # found nothing to undo is exactly the case where "the tree is back where the
+  # session found it" reads as a complete statement.
+  failures__report_unrolled
+  return 0
+}
+
+# The ignored paths this rollback structurally cannot reach, named rather than
+# alluded to. One reader of gate_ignored_zone among two: the gate says it judged
+# none of them, this says it undid none of them, and both are true of the same
+# list.
+failures__report_unrolled() {
+  local zone
+  if zone="$(gate_ignored_zone)"; then
+    failures__log "this rollback could not undo $zone"
   fi
   return 0
 }

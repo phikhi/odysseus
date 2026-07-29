@@ -31,6 +31,38 @@ TEST_CMD="${TEST_CMD:-}"
 # config nobody filled in, and only the decision lets the loop start.
 TYPECHECK_CMD="${TYPECHECK_CMD:-}"
 
+# ── The zone git does not show ───────────────────────────────────────────────
+
+# Paths the tree snapshot takes by force, this project's ignore rules included.
+#
+# What `.gitignore` covers is otherwise outside the scope-guard *and* outside the
+# rollback: a session can write there off its declared write-surface, keep the
+# write through a red gate, and leave behind a file that turns the next ticket
+# green. Anything named here is snapshotted anyway, so the guard sees it and the
+# rollback undoes it.
+#
+# Forcing the *whole* tree in is not the fix and never will be: this project's
+# build output would land in the tree the scope-guard judges, every iteration
+# would look like an overflow, and every rollback would delete a cache the run has
+# no business touching. So this is a named list, and it only ever sees what
+# somebody thought to name. What is left is enumerated instead of judged — the run
+# prints `N ignored path(s)` per iteration and per rollback, which is what makes a
+# ticket that went green on an earlier session's leftovers visible in the morning.
+#
+# `.claude` by default: the pack itself, and the settings a fresh session reads.
+# Narrow it if this project's own tooling writes under a guarded path *while a
+# session runs*, or every iteration goes red on it — and read what that costs in
+# docs/frontiere-de-confiance.md first. Written with `-` and not `:-` on purpose:
+# an empty value means "nothing extra", and has to survive being exported.
+#
+# Not negotiable, whatever this key says: `.claude/settings.local.json`,
+# `.claude/settings.json` and `.claude/ralph.config.sh` are always snapshotted,
+# and no ticket's write-surface may cover them. They are what a fresh `claude`
+# reads at startup and what the next run sources — a session that wrote one of
+# them would be configuring the harness that judges its successors, and one of
+# them holds TEST_CMD.
+GUARDED_PATHS="${GUARDED_PATHS-.claude}"
+
 # ── Smart-zone net ───────────────────────────────────────────────────────────
 
 # Soft context ceiling: a session crossing it gets a graceful SIGTERM, well
