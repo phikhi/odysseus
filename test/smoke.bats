@@ -193,7 +193,10 @@ LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
   assert_output_contains '"type":"assistant"'
   assert_output_contains '"type":"result"'
 
-  # init echoes back the model actually requested, as the real one does.
+  # init echoes back the model argument. The real one reports the model it
+  # resolved instead — `--model haiku` comes back as claude-haiku-4-5-20251001 —
+  # so this is one place the fake is deliberately not faithful. Nothing in the
+  # pack reads the field; the contract only asks that it be there.
   assert_output_contains '"model":"probe-model"'
 
   # Keys on the final result that the loop reads today, or will.

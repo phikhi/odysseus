@@ -8,6 +8,16 @@
 #   test/run.sh test/smoke.bats     one file
 #   test/run.sh -f "config"         only tests whose name matches
 #   test/run.sh --bats              via bats-core
+#
+# The suite is hermetic: no network, no quota, a fake `claude` on PATH. One file
+# asks for more than that. test/contract-claude.bats checks the pack's
+# assumptions about Claude Code's interface against the real binary, and skips
+# that half — loudly — unless it is asked for:
+#
+#   RALPH_REAL_CLAUDE=1 test/run.sh test/contract-claude.bats
+#
+# That spawns real sessions: network, quota, a few cents of it. RALPH_REAL_MODEL
+# picks the model (haiku by default).
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,7 +33,7 @@ while [ "$#" -gt 0 ]; do
       filter="${1:-}"
       ;;
     -h | --help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     -*)

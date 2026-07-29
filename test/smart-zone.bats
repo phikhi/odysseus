@@ -177,7 +177,11 @@ FAKE
   run_loop
   assert_success
 
-  # The default fake stream reports 1000 + 200 for its assistant event.
+  # The default fake stream reports 1000 + 200 on each assistant event, and the
+  # same figures again on the result. Until [20] the assistant events carried no
+  # usage at all and this 1200 came from the result alone — a peak the monitor
+  # could only ever read once the session was already over, which is not where
+  # the real signal comes from.
   assert_file_contains "$FEATURE_DIR/run.log" "tokens=1200"
 }
 

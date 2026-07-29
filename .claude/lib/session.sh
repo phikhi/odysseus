@@ -39,3 +39,24 @@ session_spawn() {
   wait "$pid" || rc=$?
   return "$rc"
 }
+
+# Pull one field out of the final `result` event. Deliberately not jq: the pack
+# promises to run with nothing installed, and these fields are flat scalars.
+#
+# A session that dies without emitting anything — crash, OOM, kill — is a
+# normal outcome here, so a missing result is empty, never an error.
+#
+# It lives here rather than in the loop because the shape of a session's stream
+# belongs to whoever spawns the session, and because a reader buried in a script
+# that runs the loop on source is unreachable from anywhere else. The contract
+# test ([20]) has to point the pack's own extractor at the real binary's output;
+# an extractor nothing but `loop_main` can call cannot be checked against
+# reality, and then "the pack can read this format" is an assumption rather than
+# an assertion.
+session_result_field() {
+  local file="$1" key="$2" line
+  line="$(grep '"type":"result"' "$file" 2>/dev/null | tail -1)" || line=""
+  [ -n "$line" ] || return 0
+  printf '%s' "$line" |
+    sed -n "s/.*\"$key\":\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p"
+}

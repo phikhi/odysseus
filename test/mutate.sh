@@ -47,8 +47,14 @@
 # carries it, write the edit that removes it, name the test that must notice.
 # If no test notices, the guarantee is not covered — that is the finding.
 #
-# Runs the real files in place and restores them from a backup, including on
-# interrupt. Sequential on purpose: the mutations touch the same files.
+# Runs the real files in place and restores them from a backup, on INT and TERM
+# included — but a trap only runs between commands, and this script spends most
+# of its time blocked inside `bash test/run.sh`. A TERM arriving there is handled
+# minutes later, and a KILL never is: the working tree is then left holding a
+# planted defect, in a file nobody edited. Check `git status` after interrupting
+# this, and never edit a file while it is running.
+#
+# Sequential on purpose: the mutations touch the same files.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -120,8 +126,11 @@ mutation() {
   # under strict and interpolate to nonsense. A mutation is supposed to remove a
   # guarantee, never to produce a file that no longer parses — that would make any
   # test go red for the wrong reason.
+  # The shims have no extension and are bash all the same. A mutation that broke
+  # one would turn every test in the file red and read as `ok` — the exact shape
+  # of the twelve entries that lied.
   case "$file" in
-    *.sh | *.bash)
+    *.sh | *.bash | test/helpers/shims/*)
       if ! bash -n "$file" 2>"$BACKUP_DIR/$key.syntax"; then
         printf 'BROKEN   %s\n         the mutated %s no longer parses: %s\n' \
           "$label" "$file" "$(head -1 "$BACKUP_DIR/$key.syntax")"
@@ -157,7 +166,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     -l | --list) LIST_ONLY=1 ;;
     -h | --help)
-      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,57p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -176,6 +185,8 @@ TRACKER=".claude/lib/tracker-local.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
 HARNESS="test/helpers/harness.bash"
+SHIM="test/helpers/shims/claude"
+CONTRACT="test/helpers/claude-contract.bash"
 
 # ── [01] foundation & harness ────────────────────────────────────────────────
 
@@ -627,6 +638,56 @@ mutation "22 a tree lock that was deleted still counts as ours" "$STATE" \
 mutation "22 the tree lock stands in for the feature lock" "$LOOP" \
   's/  run_lock_acquire \|\| exit 1\n//' \
   test/loop-happy-path.bats "refuses to start while another run holds the lock"
+
+# ── [20] the contract against the real binary ────────────────────────────────
+#
+# Two directions to keep alive, and they need different mutations. The fake
+# drifting from the real format is caught by breaking the shim; the contract
+# going blind is caught by breaking a check and watching the teeth test notice.
+# A contract nobody mutates is a list of assertions that all pass.
+
+mutation "20 the fake's assistant events carry no usage" "$SHIM" \
+  's/"usage":\{"input_tokens":1000,"cache_creation_input_tokens"/"no_usage":{"input_tokens":1000,"cache_creation_input_tokens"/g' \
+  test/contract-claude.bats "honours the contract"
+
+mutation "20 the fake answers without reading the prompt it was given" "$SHIM" \
+  's/^\[ -n "\$answer" \] \|\| answer=done/answer=done/m' \
+  test/contract-claude.bats "honours the contract"
+
+mutation "20 the fake hard-codes the permission bypass" "$SHIM" \
+  's/^permission_mode="default"/permission_mode="bypassPermissions"/m' \
+  test/contract-claude.bats "earns its bypass"
+
+# The whole point of deriving permissionMode from argv rather than hard-coding
+# it: the pack dropping the flag has to turn the contract red, on the fake, in
+# the hermetic suite.
+mutation "20 the pack stops bypassing permissions" "$SESSION" \
+  's/    --dangerously-skip-permissions \\\n//' \
+  test/contract-claude.bats "honours the contract"
+
+mutation "20 the contract does not read the result with the pack's extractor" "$SESSION" \
+  's/^session_result_field\(\) \{/session_result_field() { return 0;/m' \
+  test/contract-claude.bats "honours the contract"
+
+mutation "20 the contract ignores usage while the session runs" "$CONTRACT" \
+  's/^contract__check_usage_while_running\(\) \{/contract__check_usage_while_running() { return 0;/m' \
+  test/contract-claude.bats "has teeth"
+
+mutation "20 the contract ignores the in-band budget signal" "$CONTRACT" \
+  's/^contract__check_rate_limit_event\(\) \{/contract__check_rate_limit_event() { return 0;/m' \
+  test/contract-claude.bats "has teeth"
+
+mutation "20 the contract accepts two events on one line" "$CONTRACT" \
+  's/^contract__check_ndjson\(\) \{/contract__check_ndjson() { return 0;/m' \
+  test/contract-claude.bats "sharing one line"
+
+mutation "20 a red contract does not say which side to repair" "$CONTRACT" \
+  's/^contract__verdict\(\) \{/contract__verdict() { return 0;/m' \
+  test/contract-claude.bats "which side to repair"
+
+mutation "20 an unguarded real spawn is not noticed" "$CONTRACT" \
+  's/^contract_unguarded_real_spawns\(\) \{/contract_unguarded_real_spawns() { return 0;/m' \
+  test/contract-claude.bats "unguarded real spawn is caught"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

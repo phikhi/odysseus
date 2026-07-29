@@ -106,6 +106,8 @@ bash test/run.sh --bats                # via bats-core, s'il est installé
 bash test/mutate.sh                    # le gate de mutation (~20 min)
 bash test/mutate.sh -f "07 "           # les garanties d'un ticket
 bash test/mutate.sh -l                 # lister les garanties couvertes
+
+RALPH_REAL_CLAUDE=1 bash test/run.sh test/contract-claude.bats   # réseau + quota
 ```
 
 Aucune dépendance : le runner (`test/helpers/microbats.bash`) interprète la syntaxe bats en bash pur, et les mêmes fichiers restent lisibles par bats-core. La suite est vérifiée sans node ni homebrew sur le `PATH`.
@@ -117,6 +119,8 @@ Le gate lui-même peut mentir, et il l'a fait : douze de ses éditions contenaie
 `test/layering.bats` garde la pile : `loop.sh` au-dessus, `lib/*.sh` en dessous, chaque module propriétaire de ses internes `<module>__`. Un lib qui appelle l'interne d'un voisin ou qui remonte dans la boucle rougit — et le fichier plante lui-même une violation pour vérifier que la règle a des dents, parce qu'un contrôle qui ne matche rien ressemble à un pack propre.
 
 `test/canary.bats` est l'autre : un run contre le monde tel qu'il est — sessions qui écrivent vraiment leur write-surface, une qui commit tout, une dont le flux arrive coupé au milieu d'une ligne, par-dessus un tracker en CRLF, déjà sale et portant le claim de quelqu'un d'autre. Presque tous les défauts livrés jusqu'ici vivaient dans l'écart entre un fake trop coopératif et une vraie session.
+
+`test/contract-claude.bats` est le pont vers le réel. Toute la suite pilote un faux `claude` : vert ne prouve donc que la cohérence du pack avec **nos propres hypothèses** sur l'interface de Claude Code. Ce fichier tient un jeu d'assertions unique — NDJSON une ligne par événement, `system/init` en premier avec `bypassPermissions`, `result` en dernier lisible par l'extracteur du pack lui-même, `usage` sur les événements `assistant` (c'est de là que vient le signal du filet smart-zone, *pendant* la session), `rate_limit_event` pour le budget, et le marqueur du prompt dans la réponse — appliqué au flux du fake à chaque run, et à celui du vrai binaire sous `RALPH_REAL_CLAUDE=1`. Il attrape la dérive dans les deux sens : un shim qui invente, et une release de Claude Code qui déplace le format sous le pack. La moitié réelle skippe bruyamment par défaut, et un test structurel refuse qu'un `contract_spawn_real` non gardé se glisse dans la suite hermétique.
 
 Les tests pilotent les **vrais scripts comme des process**, dans un environnement entièrement injecté — tracker jetable en tmpdir, `claude`/`curl`/`at` remplacés par des shims scriptables, commandes de test stubbées — et n'observent que l'état du tracker et les fichiers produits. Le flux du faux `claude` est calqué sur une capture réelle : le filet smart-zone et le budget lisent ce flux, un flux inventé les ferait concevoir contre une fiction.
 
