@@ -38,11 +38,11 @@ Le vocabulaire complet est dans [`CONTEXT.md`](CONTEXT.md).
 
 | | |
 |---|---|
-| **Ça marche** | verrou de run · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) · gate objectif en parallèle (tests, typecheck, scope-guard) avec délai par branche · échecs typés (re-slice, retry-N, escalade avec raison) · rollback précis et commit sur vert · tracker inviolable (les tickets sont snapshotés au spawn, une édition de session est annulée avant le gate) |
+| **Ça marche** | verrou de run (par tracker) et verrou d'arbre (par arbre de travail) · scan de frontière sans mémoire · claim atomique · session fraîche surveillée · marquage par la boucle après le gate · journal de run · filet smart-zone (auto-compact coupé, SIGTERM au seuil mou) · gate objectif en parallèle (tests, typecheck, scope-guard) avec délai par branche · échecs typés (re-slice, retry-N, escalade avec raison) · rollback précis et commit sur vert · tracker inviolable (les tickets sont snapshotés au spawn, une édition de session est annulée avant le gate) |
 | **Ça manque** | lentilles de revue (Standards/Spec/Sécurité…) · budget d'usage · boucle humaine · reçu d'audit · concurrence · installeur |
-| **Failles connues** | **deux runs sur deux features d'un même dépôt se détruisent mutuellement** — le verrou est par feature, le rollback et le commit sont par dépôt ; reproduit avec deux sessions honnêtes, ouvert en [22](.scratch/ralph-pack/issues/22-un-run-par-arbre.md) · un ticket réclamé par un run tué ne revient jamais, et le run suivant sort en succès ([12](.scratch/ralph-pack/issues/12-claim-liveness.md)) · rien ne garde `run.log` ni les flux de session. Le tableau de [`docs/frontiere-de-confiance.md`](docs/frontiere-de-confiance.md) dit qui devrait garder quoi |
+| **Failles connues** | un ticket réclamé par un run tué ne revient jamais, et le run suivant sort en succès ([12](.scratch/ralph-pack/issues/12-claim-liveness.md)) · rien ne garde `run.log` ni les flux de session. Le tableau de [`docs/frontiere-de-confiance.md`](docs/frontiere-de-confiance.md) dit qui devrait garder quoi |
 
-Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone · [05](.scratch/ralph-pack/issues/05-gate-qa-objectif.md) gate QA objectif · [07](.scratch/ralph-pack/issues/07-echecs-types-rollback.md) échecs typés et rollback · [21](.scratch/ralph-pack/issues/21-tracker-inviolable.md) tracker inviolable.
+Livrés : [01](.scratch/ralph-pack/issues/01-fondation-squelette-harnais.md) fondation et harnais · [02](.scratch/ralph-pack/issues/02-adaptateur-local-modele-etat.md) adaptateur `local` et modèle d'état · [03](.scratch/ralph-pack/issues/03-ralph-loop-tracer-bullet.md) tracer bullet de la boucle · [04](.scratch/ralph-pack/issues/04-filet-smart-zone.md) filet smart-zone · [05](.scratch/ralph-pack/issues/05-gate-qa-objectif.md) gate QA objectif · [07](.scratch/ralph-pack/issues/07-echecs-types-rollback.md) échecs typés et rollback · [21](.scratch/ralph-pack/issues/21-tracker-inviolable.md) tracker inviolable · [22](.scratch/ralph-pack/issues/22-un-run-par-arbre.md) un run par arbre de travail.
 
 Le reste est dans [`.scratch/ralph-pack/issues/`](.scratch/ralph-pack/issues/), chaque ticket portant ses critères d'acceptation et, une fois résolu, les décisions et les pièges rencontrés.
 
@@ -91,7 +91,7 @@ Un échec n'est pas une seule chose. Une session coupée pour cause de contexte 
 
 Dans tous les cas le dépôt revient où la session l'a trouvé — les fichiers qu'elle a ajoutés sont supprimés, ceux qu'elle a modifiés ou supprimés sont restaurés, un commit qu'elle aurait fait est défait. Le rollback est **exactement aussi large que le diff de la session** : ni `git reset --hard`, ni `git clean -fd`, pour ne pas emporter le travail non commité de quelqu'un d'autre. Avant une escalade, la tentative est conservée sur une branche `failed/<ticket>`. Et chaque itération verte est **commitée** avant la suivante : sans ça, un rollback ultérieur détruirait le travail déjà gaté.
 
-Codes de sortie de `loop.sh` : `0` la frontière a été drainée par ce run · `1` un autre run tient le verrou · `2` refus de démarrer (config absente, `FEATURE` vide ou pointant sur rien, config qui viderait le gate de son sens) · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile) · `5` rien à broyer, la frontière était déjà vide au démarrage.
+Codes de sortie de `loop.sh` : `0` la frontière a été drainée par ce run · `1` un autre run tient le tracker de cette feature, ou cet arbre de travail · `2` refus de démarrer (config absente, `FEATURE` vide ou pointant sur rien, config qui viderait le gate de son sens) · `4` arrêt sur une garde (stop demandé, cap d'itérations, run stérile, verrou que ce run ne tient plus) · `5` rien à broyer, la frontière était déjà vide au démarrage.
 
 `0` et `5` sont distincts à dessein : un run qui n'a rien broyé — mauvais `FEATURE`, tickets encore en triage, tracker que le pack n'arrive pas à lire — ne doit jamais ressembler à une nuit de travail terminée.
 
@@ -131,7 +131,7 @@ Les tests pilotent les **vrais scripts comme des process**, dans un environnemen
     tracker.sh             interface d'adaptateur de tracker
     tracker-local.sh       backend local (markdown)
     select.sh              scan de frontière
-    state.sh               écriture atomique, verrou de run, guards
+    state.sh               écriture atomique, verrous de run et d'arbre, guards
     session.sh             le spawn : le seul endroit qui lance `claude`
     monitor.sh             filet smart-zone
     gate.sh                gate objectif (tests, typecheck, scope-guard)

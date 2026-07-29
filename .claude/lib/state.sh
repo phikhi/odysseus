@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Run state: where the project is, what time it is, how a file is published,
-# and the run lock that keeps two runs off one tracker.
+# and the two locks that keep runs from standing on each other — one per tracker,
+# one per working tree. They answer different questions; see each section.
 #
 # Every durable write goes through state_atomic_write. The tracker is the only
 # authority on state, so a half-written ticket is a corrupted database — and a
@@ -45,14 +46,19 @@ state_atomic_write() {
 # A holder that dies without releasing is recovered rather than left to wedge
 # an AFK run forever. Liveness is pid-based and therefore single-machine; the
 # TTL backstop belongs to the claim-liveness ticket.
+#
+# The optional note is whatever the caller wants a refused rival to be told —
+# a pid alone says which process, never which run. It is written just after the
+# mkdir rather than with it, because mkdir is the only atomic test-and-set a
+# pure-bash pack has: a rival that reads the guard inside that window sees the
+# pid and no note, so every reader treats a missing note as unknown.
 
 state_guard_take() {
-  local guard="$1" label="${2:-guard}" owner
+  local guard="$1" label="${2:-guard}" note="${3:-}" owner
   mkdir -p "$(dirname "$guard")"
 
   if mkdir "$guard" 2>/dev/null; then
-    printf '%s\n' "$$" >"$guard/pid"
-    ralph_now >"$guard/since"
+    state__guard_stamp "$guard" "$note"
     return 0
   fi
 
@@ -64,14 +70,31 @@ state_guard_take() {
   printf 'ralph: taking over a stale %s (pid %s)\n' "$label" "${owner:-unknown}" >&2
   rm -rf "$guard"
   mkdir "$guard" 2>/dev/null || return 1
+  state__guard_stamp "$guard" "$note"
+  return 0
+}
+
+# Who holds it, since when, and on whose behalf. One place, because the take and
+# the stale takeover both have to leave exactly the same thing behind.
+state__guard_stamp() {
+  local guard="$1" note="$2"
   printf '%s\n' "$$" >"$guard/pid"
   ralph_now >"$guard/since"
-  return 0
+  if [ -n "$note" ]; then
+    printf '%s\n' "$note" >"$guard/note"
+  fi
 }
 
 state_guard_holder() {
   [ -d "$1" ] || return 1
   cat "$1/pid" 2>/dev/null
+}
+
+# Empty rather than absent when the guard carries no note: a caller formatting a
+# refusal message needs a string, and "unknown" is its business, not ours.
+state_guard_note() {
+  [ -d "$1" ] || return 1
+  cat "$1/note" 2>/dev/null
 }
 
 # Only ever drops a guard this process owns.
@@ -87,6 +110,8 @@ state_guard_release() {
 # ── run lock ─────────────────────────────────────────────────────────────────
 #
 # One lock per feature, covering both loops: you grind or you drain, never both.
+# It guards the *tracker*, and only the tracker. What guards the working tree is
+# the second lock below — a distinction that cost this pack a live fault.
 
 ralph_run_lock_path() {
   printf '%s/.run.lock\n' "$(ralph_feature_dir)"
@@ -103,10 +128,11 @@ run_lock_acquire() {
   fi
 
   RALPH_RUN_LOCK="$lock"
-  # Released on any ordinary exit, including a graceful kill.
-  trap 'run_lock_release' EXIT
-  trap 'run_lock_release; exit 130' INT
-  trap 'run_lock_release; exit 143' TERM
+  # Released on any ordinary exit, including a graceful kill. Both locks come off
+  # through the same handler on purpose — see state_locks_release.
+  trap 'state_locks_release' EXIT
+  trap 'state_locks_release; exit 130' INT
+  trap 'state_locks_release; exit 143' TERM
   return 0
 }
 
@@ -136,4 +162,100 @@ run_lock_is_ours() {
   local lock="${RALPH_RUN_LOCK:-}"
   [ -n "$lock" ] || return 0
   [ "$(state_guard_holder "$lock" 2>/dev/null || echo '')" = "$$" ]
+}
+
+# ── working-tree lock ────────────────────────────────────────────────────────
+#
+# One lock per working tree, on top of the per-feature one, for a different
+# reason. The run lock protects the tracker — one run per frontier, grind or
+# drain. This protects the tree, and nothing else does: the scope-guard's
+# snapshot, the rollback, the commit on green and HEAD are all repository-wide.
+#
+# Two runs on two features of one repository — an arrangement the spec allows and
+# the per-feature lock happily permits — therefore destroy each other, and it
+# takes no concurrency option and no dishonest session to do it. Two honest ones
+# were enough ([22]): each read the other's writes as its own overflow and
+# collected a failure it had not earned, each rolled the other's work back, the
+# rollback's `rmdir -p` pulled a directory out from under a live session that
+# then failed to write with no idea why, and a ticket restored to its pre-claim
+# state broke the claim's mutual exclusion outright.
+#
+# Refusing to start is the answer rather than teaching the gate to tolerate it.
+# Widening what counts as the loop's own bookkeeping to all of `.scratch/` would
+# reopen, in the neighbouring tracker, the hole [21] just closed; and narrowing
+# the rollback to the write-surface is impossible, since undoing writes made
+# *outside* that surface is its entire job. Isolation — a worktree per run — is
+# the real fix and it belongs to [13]. Until then the pack declines what it
+# cannot do safely, exactly as it declines to start on an empty TEST_CMD.
+#
+# It lives in the git directory for two reasons. The run lock sits under
+# `.scratch/<feature>/`, inside the tree a session writes to, and [12] showed a
+# session can delete it; `.git/` is out of reach of a `git add -A`, a `git clean`
+# and an `rm -rf .scratch`. And a linked worktree has its own git directory, so
+# this is already per working tree rather than per repository: the day [13] gives
+# each run its own worktree, several features become possible again with nothing
+# here to change.
+ralph_tree_lock_path() {
+  local root gitdir
+  root="$(ralph_project_root)"
+  gitdir="$(cd "$root" 2>/dev/null && git rev-parse --git-dir 2>/dev/null)" || return 1
+  [ -n "$gitdir" ] || return 1
+  # Relative to the directory we asked from when the run is at the top of a
+  # repository, absolute inside a linked worktree.
+  case "$gitdir" in
+    /*) ;;
+    *) gitdir="$root/$gitdir" ;;
+  esac
+  printf '%s/ralph.tree.lock\n' "$gitdir"
+}
+
+tree_lock_acquire() {
+  local lock owner feature
+  if ! lock="$(ralph_tree_lock_path)"; then
+    printf 'ralph: not a git repository — no way to tell which working tree this run would own\n' >&2
+    return 1
+  fi
+
+  if ! state_guard_take "$lock" "working-tree lock" "${FEATURE:-unknown}"; then
+    owner="$(state_guard_holder "$lock" 2>/dev/null || echo '')"
+    feature="$(state_guard_note "$lock" 2>/dev/null || echo '')"
+    printf 'ralph: another run already holds this working tree (pid %s, feature %s)\n' \
+      "${owner:-unknown}" "${feature:-unknown}" >&2
+    printf 'ralph: refusing to start — the tree snapshot, the rollback, the commit on green and HEAD are repository-wide, so two runs here undo and overwrite each other whatever features they grind\n' >&2
+    return 1
+  fi
+
+  RALPH_TREE_LOCK="$lock"
+  trap 'state_locks_release' EXIT
+  trap 'state_locks_release; exit 130' INT
+  trap 'state_locks_release; exit 143' TERM
+  return 0
+}
+
+tree_lock_release() {
+  local lock="${RALPH_TREE_LOCK:-}"
+  [ -n "$lock" ] || return 0
+  state_guard_release "$lock"
+  RALPH_TREE_LOCK=""
+  return 0
+}
+
+# Same question as run_lock_is_ours, and it has to be asked separately. `.git/`
+# is out of reach of a stray `git clean`, not of a session that deletes the
+# directory outright — and a tree lock that vanished means a second run can start
+# here, which is the whole destruction this lock exists to prevent.
+tree_lock_is_ours() {
+  local lock="${RALPH_TREE_LOCK:-}"
+  [ -n "$lock" ] || return 0
+  [ "$(state_guard_holder "$lock" 2>/dev/null || echo '')" = "$$" ]
+}
+
+# Both locks, one handler, one trap. Bash traps do not stack: two acquires each
+# installing their own EXIT trap would leave whichever ran second holding the
+# only handler, and leak the other lock on exit. Each release is a no-op for a
+# lock this process never took, so the shared handler is safe wherever it fires.
+state_locks_release() {
+  run_lock_release
+  tree_lock_release
+  return 0
 }
