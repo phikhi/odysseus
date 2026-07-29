@@ -85,8 +85,12 @@ WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
 # (database, fixed ports, snapshot files).
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 
-# Backstop, in seconds, after which a claim is considered dead even if the
-# owning pid cannot be checked.
+# Backstop, in seconds, after which a claim counts as dead — including when the
+# owning pid still answers. Pids get recycled, and a recycled one would keep a
+# ticket out of the frontier for ever. Zero or non-numeric disables the backstop
+# and leaves the pid check alone, the same reading GATE_TIMEOUT gives a missing
+# deadline. Keep it comfortably above the longest session this project's tickets
+# produce: it is only ever consulted on a claim nobody is marking.
 CLAIM_TTL="${CLAIM_TTL:-5400}"
 
 # ── Tracker backend ──────────────────────────────────────────────────────────

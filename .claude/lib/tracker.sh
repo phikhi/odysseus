@@ -52,4 +52,13 @@ tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.
+#
+# One field's *shape* is part of this interface rather than a detail of the
+# backend that writes it: `Claimed` reads `owner=<who> at=<iso8601>`, because the
+# liveness policy (lib/claim.sh) is backend-agnostic and single-machine — it has
+# to know who to ping and when the claim was taken. A remote backend stores the
+# claim as an assignee and keeps liveness in a local sidecar (spec §152); it
+# still has to render those two facts here. An owner not shaped `pid:<n>` is
+# judged by CLAIM_TTL alone, so a backend that renders one is saying "do not ping
+# this, wait it out".
 tracker_field() { tracker__dispatch field "$@"; }

@@ -1,7 +1,10 @@
 # 04 — Claimed
 
-**What to build:** Already claimed by another iteration, so it must be out of
-the frontier for a concurrent picker.
+**What to build:** Claimed by an iteration that is still running, so it must be
+out of the frontier for a concurrent picker — and must survive the liveness
+sweep, which reclaims a claim only once its owner is gone. The placeholders are
+substituted at seed time by the harness: a static fixture cannot name a process
+that is really alive.
 
 **Blocked by:** None
 
@@ -9,6 +12,6 @@ the frontier for a concurrent picker.
 
 **Status:** claimed
 
-**Claimed:** owner=pid:999999 at=2026-07-25T08:00:00Z
+**Claimed:** owner=pid:@LIVE_PID@ at=@NOW@
 
 - [ ] `src/delta.txt` exists.

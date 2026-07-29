@@ -166,7 +166,7 @@ loop_main() {
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
   local iteration=0 sterile=0 ticket outfile base pre seen issues tree rc
-  local turns cost tokens outcome tracker_written
+  local turns cost tokens outcome tracker_written reclaimed rid rdisposition
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -200,6 +200,24 @@ loop_main() {
     if ! tree_lock_is_ours; then
       loop_log "the working-tree lock is gone or not ours any more after $iteration iterations — stopping rather than grinding beside another run"
       exit 4
+    fi
+
+    # A claim whose owner is gone is not a ticket somebody is working on. Swept
+    # before the frontier is read, and on every iteration rather than once at
+    # startup, because the frontier is a memoryless scan and this is part of
+    # deriving it. Without it a run killed mid-session took its ticket out of the
+    # frontier for good and the next run reported `exit 0` — "this run ground
+    # everything it could" — which was true and told nobody that a ticket had
+    # quietly left the board. The disposition is journalled: a reclaim that
+    # consumed a retry, or one that ran out of them, has to be visible in the
+    # morning without reading the tracker ticket by ticket.
+    reclaimed="$(claim_reclaim_stale)"
+    if [ -n "$reclaimed" ]; then
+      printf '%s\n' "$reclaimed" | while read -r rid rdisposition; do
+        [ -n "$rid" ] || continue
+        loop_log "reclaimed $rid from an owner that is gone -> $rdisposition"
+        loop_journal_append "$rid" "reclaimed-$rdisposition" 0 0 0
+      done
     fi
 
     ticket="$(select_next_ticket)"

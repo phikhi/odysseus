@@ -9,7 +9,8 @@
 # session. So this file drives the opposite: sessions that actually write their
 # write-surface, one that commits everything it touched, one whose stream
 # arrives in pieces with a line cut in half, over a tracker that is dirty,
-# CRLF-encoded and already carrying someone else's claim.
+# CRLF-encoded and already carrying two claims — one held by a live run, one left
+# behind by a run that was killed.
 #
 # It is a canary, not a unit test: when it goes red, something about the way the
 # pack meets reality just changed. Read it before touching the assertions.
@@ -77,13 +78,21 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"done","num
 FAKE
 }
 
-# The tracker as a real project hands it over: one ticket saved with DOS line
-# endings, one claimed by a process that is not this run, and a working tree
-# that was already dirty when the run started.
+# The tracker as a real project hands it over: tickets saved with DOS line
+# endings, a claim held by a run that is still alive, a claim left behind by a run
+# that was killed, and a working tree that was already dirty when the run started.
+#
+# The two claims are both CRLF-encoded, and that pairing is the point. A liveness
+# check that trips over a stray carriage return in `at=...Z\r` would read every
+# claim as unparseable and reclaim both — including the live one. One ticket has
+# to come back and the other has to be left alone, in the same run, over the same
+# encoding.
 seed_hostile_world() {
   use_tickets 01-alpha 02-beta 03-blocked 04-claimed
 
-  perl -pi -e 's/\n/\r\n/' "$(ticket_file 02-beta)"
+  stamp_claim 02-beta "pid:999999" "2026-07-25T08:00:00Z"
+
+  perl -pi -e 's/\n/\r\n/' "$(ticket_file 02-beta)" "$(ticket_file 04-claimed)"
   harness__commit "test: a tracker written the DOS way"
 
   mkdir -p "$PROJECT_DIR/src"
@@ -112,8 +121,13 @@ seed_hostile_world() {
   assert_ticket_status 02-beta resolved
   assert_ticket_status 03-blocked resolved
 
-  # Nobody else's claim was touched.
+  # The claim of a run that is still alive was not touched; the claim of a run
+  # that was killed came back to the frontier and was ground. Both read off a
+  # CRLF ticket.
   assert_ticket_status 04-claimed claimed
+  output="$loop_output"
+  assert_output_contains "reclaimed 02-beta from an owner that is gone"
+  refute_output_contains "reclaimed 04-claimed"
 
   # The work is really there, all three of it: an iteration must not be charged
   # with what the previous one left in the tree.
@@ -235,11 +249,17 @@ FAKE
   assert_success
 
   journal="$FEATURE_DIR/run.log"
+  # Four lines for three iterations: a ticket that changed hands because its
+  # owner was gone is an event of the run too, and an operator reading this in
+  # the morning has to see it without diffing the tracker.
   run bash -c "awk 'END { print NR }' '$journal'"
-  assert_equal "$output" "3"
+  assert_equal "$output" "4"
 
   run bash -c "grep -c resolved '$journal'"
   assert_equal "$output" "3"
+
+  run bash -c "grep -c 'reclaimed-retry' '$journal'"
+  assert_equal "$output" "1"
 
   # Peak context is the whole window, cache included: 1200 + 18000 + 300.
   assert_file_contains "$journal" "tokens=19500"

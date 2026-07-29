@@ -16,6 +16,7 @@
 #   harness_setup [feature]        create the project, pack, shims, git repo
 #   harness_teardown               remove it (RALPH_KEEP_TMP=1 keeps it)
 #   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
+#   stamp_claim ID [OWNER] [ISO]   claim a ticket behind the pack's back
 #   set_config KEY VALUE           override a config key in ralph.config.sh
 #   run_loop [args ...]            run the real loop.sh through `run`
 #   pack_run CODE                  run pack code as a process, config+libs loaded
@@ -280,7 +281,50 @@ use_tickets() {
       cp "$RALPH_FIXTURES/tickets/${t%.md}.md" "$TRACKER_DIR/"
     done
   fi
+  harness__stamp_live_claims
   harness__commit "test: seed tracker"
+}
+
+# `owner=pid:@LIVE_PID@ at=@NOW@` in a fixture becomes a claim held by a process
+# that really is alive, right now.
+#
+# A static fixture cannot express that, and the difference is the whole of [12]:
+# a claim held by a live run must stay out of the frontier, a claim left behind by
+# a dead one must come back to it. The fixture that used to stand for "someone
+# else's claim" named pid 999999 and a timestamp from the week before — a *dead*
+# owner — so three tests asserting "the loop leaves it alone" were really
+# asserting that nothing ever looked.
+#
+# The pid is this bats process: alive for as long as the test runs, and it
+# belongs to the user running the suite, so `kill -0` answers for it.
+harness__stamp_live_claims() {
+  local f
+  for f in "$TRACKER_DIR"/*.md; do
+    [ -e "$f" ] || continue
+    grep -q '@LIVE_PID@' "$f" || continue
+    perl -pi -e "s/\@LIVE_PID\@/$$/g; s/\@NOW\@/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$f"
+  done
+}
+
+# Put a claim on a ticket without going through the pack, so a test can seed the
+# case it means: a dead owner, a live one, a stamp from another century, no stamp
+# at all. Written the way the tracker writes it — the point is to be
+# indistinguishable from a claim the pack left behind.
+#
+#   stamp_claim 01-alpha 'pid:999999' '2026-07-25T08:00:00Z'
+#   stamp_claim 01-alpha "pid:$$"                              (now)
+#   stamp_claim 01-alpha ''                                    (claimed, no record)
+stamp_claim() {
+  local id="$1" owner="${2:-}" at="${3:-}" file record
+  file="$(ticket_file "$id")"
+  [ -n "$at" ] || at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  perl -pi -e 's/^\*\*Status:\*\*.*$/**Status:** claimed/; s/^\*\*Claimed:\*\*.*\n//' "$file"
+  if [ -n "$owner" ]; then
+    record="owner=$owner at=$at"
+    perl -pi -e "s/^(\\*\\*Status:\\*\\* claimed)\$/\$1\\n\\n**Claimed:** $record/" "$file"
+  fi
+  harness__commit "test: claim $id"
 }
 
 ticket_file() {
