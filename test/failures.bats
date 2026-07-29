@@ -1000,6 +1000,37 @@ FAKE
   assert_equal "$(claude_call_count)" "1"
 }
 
+@test "a run that lost the tree lock stops too, though nothing normal can reach it" {
+  # The tree lock lives in `.git/`, which is why an `rm -rf .scratch` or a
+  # `git clean` cannot touch it. A session that deletes the directory outright
+  # still can — and from that point a second `loop.sh` starts on this tree and the
+  # two undo each other's work. Out of reach of an accident is not out of reach,
+  # so the loop asks the question every iteration, for this lock as for the other.
+  use_tickets 01-alpha 02-beta
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+rm -rf .git/ralph.tree.lock
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "the working-tree lock is gone or not ours any more after 1 iterations"
+
+  # The iteration that ran while the lock was still held is kept, like the run
+  # lock's own case: what stops is everything after it.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta ready-for-agent
+  assert_equal "$(claude_call_count)" "1"
+}
+
 @test "a durable commit never overwrites a HEAD it did not read" {
   # The window the lock check cannot cover: between reading HEAD and moving it,
   # another run can commit. Without the old value passed to `update-ref` the move

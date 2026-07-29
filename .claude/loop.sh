@@ -8,10 +8,11 @@
 #
 # Exit codes
 #   0  the frontier was drained: this run ground everything it could
-#   1  could not start — another run holds the lock
+#   1  could not start — another run holds this feature's tracker, or this
+#      working tree
 #   2  cannot run: no config, or a config that would make the gate meaningless
-#   4  stopped by a guard: stop requested, iteration cap, sterile run, or a run
-#      lock this run no longer holds
+#   4  stopped by a guard: stop requested, iteration cap, sterile run, or a lock
+#      this run no longer holds
 #   5  nothing to grind: the frontier was already empty when the run started
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
@@ -164,9 +165,15 @@ loop_main() {
 
   loop_preflight || exit 2
 
+  # The coarser lock first: this run is refused whatever feature it was pointed
+  # at, because what a second run destroys here is not the tracker but the tree.
+  # Taken after the preflight, which is what guarantees there is a git directory
+  # to put it in.
+  tree_lock_acquire || exit 1
   run_lock_acquire || exit 1
-  # Replaces the lock's own signal traps: stopping is a decision the loop
-  # makes between iterations, not an immediate teardown.
+  # Replaces the locks' own signal traps: stopping is a decision the loop
+  # makes between iterations, not an immediate teardown. The EXIT trap they
+  # installed survives, and it is what releases both.
   trap 'loop_request_stop' TERM INT
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
@@ -196,6 +203,15 @@ loop_main() {
     # overwrite impossible in the window this check cannot cover.
     if ! run_lock_is_ours; then
       loop_log "the run lock is gone or not ours any more after $iteration iterations — stopping rather than grinding beside another run"
+      exit 4
+    fi
+    # And the same question for the tree, asked separately because the answer can
+    # differ. `.git/` is out of reach of a `git add -A`, a `git clean` and an
+    # `rm -rf .scratch` — not of a session that deletes the lock outright. Losing
+    # it means a second run can start on this tree, which is exactly what the
+    # per-feature lock above does not prevent.
+    if ! tree_lock_is_ours; then
+      loop_log "the working-tree lock is gone or not ours any more after $iteration iterations — stopping rather than grinding beside another run"
       exit 4
     fi
 

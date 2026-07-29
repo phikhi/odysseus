@@ -39,8 +39,12 @@ Le fichier append-only, un par feature, qui capte l'observabilité d'un run — 
 _À éviter_ : log, trace, historique, état.
 
 **Verrou de run**:
-Le mécanisme grossier, un par feature, qui garantit qu'une seule ralph loop est active à la fois sur un même tracker. Il empêche le double-run accidentel ; ce n'est pas de la concurrence par-ticket (plusieurs itérations sur un même tracker), laissée hors sujet.
-_À éviter_ : lock, mutex, sémaphore, claim.
+Le mécanisme grossier, un par feature, qui garantit qu'une seule ralph loop est active à la fois sur un même **tracker**. Il empêche le double-run accidentel sur une frontière ; ce n'est pas de la concurrence par-ticket (plusieurs itérations sur un même tracker), laissée hors sujet. Il ne garde que le tracker : ce qui garde l'arbre est le **verrou d'arbre**.
+_À éviter_ : lock, mutex, sémaphore, claim, verrou de dépôt (le verrou d'arbre n'est pas par dépôt).
+
+**Verrou d'arbre**:
+Le second verrou, un par **arbre de travail**, qui garantit qu'une seule ralph loop touche un arbre à la fois — quelles que soient les features visées. Il existe parce que le snapshot du scope-guard, le rollback, le commit sur vert et `HEAD` sont tous à l'échelle du dépôt : deux runs sur deux features d'un même arbre s'imputent mutuellement leurs écritures et se rollbackent l'un l'autre. Il vit dans le répertoire git, hors d'atteinte d'un `git add -A`, d'un `git clean` ou d'un `rm -rf .scratch`. Un worktree lié ayant son propre répertoire git, il est déjà par arbre et non par dépôt : c'est ce qui rendra la concurrence possible quand chaque itération aura son **worktree d'itération**.
+_À éviter_ : verrou de dépôt, verrou global, verrou de run (c'est l'autre, et il garde autre chose).
 
 ### L'unité de travail
 

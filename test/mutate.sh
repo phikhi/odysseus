@@ -579,6 +579,55 @@ mutation "12 a lock that was deleted still counts as ours" "$STATE" \
   's/^run_lock_is_ours\(\) \{/run_lock_is_ours() { return 0;/m' \
   test/state.bats "tells a lock we hold"
 
+# ── [22] one run per working tree ────────────────────────────────────────────
+
+mutation "22 the loop takes no lock on the tree it grinds" "$LOOP" \
+  's/  tree_lock_acquire \|\| exit 1\n//' \
+  test/state.bats "refuses the second run anyway"
+
+mutation "22 the tree lock is per feature after all" "$STATE" \
+  's/printf .%s\/ralph\.tree\.lock\\n. "\$gitdir"/printf "%s\/ralph.tree.\${FEATURE:-}.lock\\n" "\$gitdir"/' \
+  test/state.bats "whatever feature it grinds"
+
+mutation "22 the tree lock is per repository, not per working tree" "$STATE" \
+  's/git rev-parse --git-dir 2>\/dev\/null/git rev-parse --git-common-dir 2>\/dev\/null/' \
+  test/state.bats "per working tree"
+
+mutation "22 the tree lock lives inside the tree it guards" "$STATE" \
+  's/^ralph_tree_lock_path\(\) \{/ralph_tree_lock_path() { printf "%s\/.tree.lock\\n" "\$(ralph_feature_dir)"; return 0;/m' \
+  test/state.bats "out of reach of the tree it guards"
+
+mutation "22 the refusal does not say which run holds the tree" "$STATE" \
+  's/ "working-tree lock" "\$\{FEATURE:-unknown\}"/ "working-tree lock"/' \
+  test/state.bats "whatever feature it grinds"
+
+mutation "22 the refusal never says why it refuses" "$STATE" \
+  's/    printf .ralph: refusing to start[^\n]*\n//' \
+  test/state.bats "whatever feature it grinds"
+
+mutation "22 only the last lock taken is released" "$STATE" \
+  's/^state_locks_release\(\) \{\n  run_lock_release\n  tree_lock_release/state_locks_release() {\n  run_lock_release/m' \
+  test/state.bats "both locks come off together"
+
+mutation "22 a run killed without releasing wedges the tree for good" "$STATE" \
+  's/^  rm -rf "\$guard"\n  mkdir "\$guard" 2>\/dev\/null \|\| return 1/  return 1/m' \
+  test/state.bats "working-tree lock whose holder died"
+
+mutation "22 a tree lock this run no longer holds goes unnoticed" "$LOOP" \
+  's/    if ! tree_lock_is_ours; then\n      loop_log "the working-tree lock is gone or not ours any more after \$iteration iterations — stopping rather than grinding beside another run"\n      exit 4\n    fi\n//' \
+  test/failures.bats "lost the tree lock"
+
+mutation "22 a tree lock that was deleted still counts as ours" "$STATE" \
+  's/^tree_lock_is_ours\(\) \{/tree_lock_is_ours() { return 0;/m' \
+  test/state.bats "tells a tree lock we hold"
+
+# The risk this ticket created: a second, coarser lock taken first can stand in
+# for the per-feature one in almost every test, and then nothing notices if the
+# tracker's own lock stops being taken. Both statements have to keep a test.
+mutation "22 the tree lock stands in for the feature lock" "$LOOP" \
+  's/  run_lock_acquire \|\| exit 1\n//' \
+  test/loop-happy-path.bats "refuses to start while another run holds the lock"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

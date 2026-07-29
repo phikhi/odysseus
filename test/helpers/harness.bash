@@ -26,6 +26,7 @@
 #   ticket_field NN-slug NAME      any field, read without using the pack
 #   ticket_has_field NN-slug NAME  whether the field is present at all
 #   run_lock_dir                   where the run lock lives for this feature
+#   tree_lock_dir                  where the working-tree lock lives
 #   script_claude                  read a script on stdin, use it as fake claude
 #   claude_call_count              how many times claude was spawned
 #   claude_call_argv N             argv of the Nth spawn
@@ -96,7 +97,7 @@ harness__clear_env() {
     unset "$key"
   done
   unset DISABLE_AUTO_COMPACT DISABLE_COMPACT RALPH_CONFIG RALPH_DIR \
-    RALPH_PROJECT_ROOT RALPH_RUN_LOCK RALPH_SOFT_LIMIT_HIT
+    RALPH_PROJECT_ROOT RALPH_RUN_LOCK RALPH_TREE_LOCK RALPH_SOFT_LIMIT_HIT
 }
 
 # ── project template ─────────────────────────────────────────────────────────
@@ -305,6 +306,13 @@ ticket_has_field() {
 
 run_lock_dir() {
   printf '%s/.run.lock' "$FEATURE_DIR"
+}
+
+# Spelled out here rather than asked of the pack: a test that used
+# ralph_tree_lock_path could not catch the pack putting the lock somewhere a
+# session can reach, which is the one thing this lock has to get right.
+tree_lock_dir() {
+  printf '%s/.git/ralph.tree.lock' "$PROJECT_DIR"
 }
 
 # ── driving the pack ─────────────────────────────────────────────────────────
