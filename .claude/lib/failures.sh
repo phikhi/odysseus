@@ -353,10 +353,11 @@ TRACKER
 # that was never true.
 #
 # And it says what it did not put back. The diff it acts on is a diff of git
-# trees, so the paths a project's `.gitignore` covers are outside it — the guarded
-# ones aside, which the snapshot takes by force. Announcing "rolled back N paths"
-# while an unenumerated set of paths is exempt is the half-truth [24] was opened
-# for, so the zone is named here every time it is not empty.
+# trees, so two sets of paths are outside it: what a project's `.gitignore` covers
+# — the guarded ones aside, which the snapshot takes by force — and what the gate's
+# own branches wrote after the tree was taken ([29]). Announcing "rolled back N
+# paths" while an unenumerated set of paths is exempt is the half-truth [24] was
+# opened for, so both zones are named here every time they are not empty.
 failures_rollback() {
   local pre="$1" base="$2" tree="${3:-}"
   local head idx status path paths='' undone=0
@@ -422,19 +423,50 @@ ROLLBACK
   # Unconditionally, and not only when something was rolled back: a rollback that
   # found nothing to undo is exactly the case where "the tree is back where the
   # session found it" reads as a complete statement.
-  failures__report_unrolled
+  failures__report_unrolled "$tree" "$paths"
   return 0
 }
 
-# The ignored paths this rollback structurally cannot reach, named rather than
-# alluded to. One reader of gate_ignored_zone among two: the gate says it judged
-# none of them, this says it undid none of them, and both are true of the same
-# list.
+# The two sets of paths this rollback structurally cannot reach, named rather than
+# alluded to.
+#
+# The ignored zone comes from gate_ignored_zone, which has two readers: the gate
+# says it judged none of them, this says it undid none of them, and both are true
+# of one list. What the gate wrote is the same arrangement one ticket later ([29]),
+# with one difference — it is netted against what this rollback did put back. A
+# path the gate rewrote *and* the session had touched is restored from the
+# pre-session snapshot like any other, so listing it here would be the same
+# half-truth in the other direction.
+#
+# The netting is also why this may be read after the restores rather than before
+# them: putting a path back does make it differ from the judged tree, and that path
+# is in the list of what was undone by construction.
 failures__report_unrolled() {
-  local zone
+  local tree="${1:-}" undone="${2:-}" zone
   if zone="$(gate_ignored_zone)"; then
     failures__log "this rollback could not undo $zone"
   fi
+  if zone="$(gate_zone_line \
+    "$(failures__minus "$(gate_unjudged_changes "$tree")" "$undone")" \
+    'path(s) the gate itself changed after the tree it judged')"; then
+    failures__log "this rollback could not undo $zone"
+  fi
+  return 0
+}
+
+# A list minus a space-delimited set. Same assumption the unstaging above makes:
+# a path with a space in it is not one this loop can carry.
+failures__minus() {
+  local fence=" ${2:-} " item
+  while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    case "$fence" in
+      *" $item "*) continue ;;
+    esac
+    printf '%s\n' "$item"
+  done <<LIST
+${1:-}
+LIST
   return 0
 }
 
