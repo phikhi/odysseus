@@ -151,6 +151,26 @@ PLAYTHROUGH_REINJECT_MAX="${PLAYTHROUGH_REINJECT_MAX:-2}"
 
 # ── Review lenses ────────────────────────────────────────────────────────────
 
+# The judgement tier of the gate: which review lenses may run. Each one is a
+# fresh `claude` reviewing the diff, with a read-only tool set, in a phase of its
+# own after the objective checks. Space-separated; `none` switches the tier off.
+#
+# On by default, and that is a cost: two always-on lenses mean two extra sessions
+# per green iteration, against your subscription. Narrowing it is legitimate — but
+# a gate with no lens is green on the project's own tests and on nothing else, so
+# the run prints `no review lens ran` on every iteration rather than letting that
+# read as a full green.
+#
+# `standards` and `spec` answer every ticket. `fidelity` and `accessibility` need
+# a visible surface (tag `visible`, or a write-surface meeting VISIBLE_PATHS);
+# `security` needs tag `security` or a write-surface meeting SECURITY_PATHS.
+#
+# Adding one of your own: put its name here and define `lenses_want_<name>` and
+# `lenses_rubric_<name>` in `.claude/lib/lenses.sh`. A name with no predicate is
+# refused by the preflight rather than skipped — a typo must not look like a
+# reviewer who passed.
+LENSES="${LENSES:-standards spec fidelity security accessibility}"
+
 # Space-separated globs. A ticket whose write-surface intersects them triggers
 # the Security lens.
 SECURITY_PATHS="${SECURITY_PATHS:-}"
@@ -160,6 +180,19 @@ SECURITY_REFS="${SECURITY_REFS:-}"
 
 # Space-separated design references (mockups, specs) for the Fidelity lens.
 FIDELITY_REFS="${FIDELITY_REFS:-}"
+
+# Space-separated globs. A ticket whose write-surface intersects them counts as
+# having a visible surface, which is what triggers the Fidelity and Accessibility
+# lenses. The tag `visible` on the ticket does the same thing; either is enough,
+# because no project can enumerate every path that renders something and no
+# discovery can foresee every one a ticket will touch.
+VISIBLE_PATHS="${VISIBLE_PATHS:-}"
+
+# Lines of diff a lens is shown before the diff is cut. A lens cannot run git —
+# it has Read, Grep and Glob and nothing else — so the diff arrives in its prompt,
+# and a prompt is not a place for a 200MB one. When the cut happens the lens is
+# told, and so is the run log: a bound nobody mentions reads like full coverage.
+LENS_DIFF_MAX_LINES="${LENS_DIFF_MAX_LINES:-4000}"
 
 # ── Languages ────────────────────────────────────────────────────────────────
 

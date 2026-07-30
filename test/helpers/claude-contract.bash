@@ -23,14 +23,17 @@
 # while the extractor the loop actually uses reads nothing.
 #
 # Public API
-#   contract_spawn_fake OUT PROMPT      stream from the fake on PATH
-#   contract_spawn_real OUT PROMPT      stream from the real binary, real HOME
+#   contract_spawn_fake OUT PROMPT [ARG ...]
+#                                       stream from the fake on PATH
+#   contract_spawn_real OUT PROMPT [ARG ...]
+#                                       stream from the real binary, real HOME
 #   contract_exit_code                  exit status of the last spawn
 #   contract_prompt FILE MARKER         write a prompt asking for MARKER
 #   contract_check STREAM EXIT MARKER [fake|real]
 #                                       every invariant; findings on stdout
 #   contract_real_available             is there a claude binary to test against
 #   contract_unguarded_real_spawns FILE any real spawn that skipped the guard
+#   contract_init_tools STREAM          the tool set init says the session has
 #
 # Kept bash 3.2 compatible, like the pack itself.
 
@@ -69,8 +72,13 @@ contract__workdir() {
 # OUT and PROMPT must be absolute: the spawn happens from the throwaway working
 # directory. PATH and HOME are arguments rather than a prefix on the call,
 # because a prefixed assignment on a shell function is not reliably scoped to it.
+# Anything after the six positional arguments is passed on to session_spawn, and
+# from there to `claude` — which is how the read-only posture a review lens is
+# spawned with ([06]) gets checked against the real binary rather than asserted
+# from argv.
 contract__spawn() {
   local out="$1" prompt="$2" work="$3" model="$4" path="$5" home="$6"
+  shift 6
   CONTRACT_EXIT=0
   (
     cd "$work" || exit 1
@@ -80,16 +88,21 @@ contract__spawn() {
         set -uo pipefail
         . "$1/lib/monitor.sh"
         . "$1/lib/session.sh"
-        session_spawn "$2" "$3"
-      ' _ "$RALPH_PACK_ROOT/.claude" "$prompt" "$out"
+        pack="$1"
+        prompt="$2"
+        out="$3"
+        shift 3
+        session_spawn "$prompt" "$out" "$@"
+      ' _ "$RALPH_PACK_ROOT/.claude" "$prompt" "$out" "$@"
   ) || CONTRACT_EXIT=$?
   return 0
 }
 
 contract_spawn_fake() {
   local out="$1" prompt="$2" work
+  shift 2
   work="$(contract__workdir)"
-  contract__spawn "$out" "$prompt" "$work" "${MODEL:-test-model}" "$PATH" "$HOME"
+  contract__spawn "$out" "$prompt" "$work" "${MODEL:-test-model}" "$PATH" "$HOME" "$@"
   rm -rf "$work"
   return 0
 }
@@ -98,9 +111,10 @@ contract_spawn_fake() {
 # replaced them; the shim never sees this spawn.
 contract_spawn_real() {
   local out="$1" prompt="$2" work
+  shift 2
   work="$(contract__workdir)"
   contract__spawn "$out" "$prompt" "$work" "$CONTRACT_REAL_MODEL" \
-    "$CONTRACT_HOST_PATH" "$CONTRACT_HOST_HOME"
+    "$CONTRACT_HOST_PATH" "$CONTRACT_HOST_HOME" "$@"
   if [ "${RALPH_KEEP_TMP:-0}" = 1 ]; then
     printf 'contract: kept %s\n' "$work" >&2
   else
@@ -232,6 +246,32 @@ contract__check_init() {
     *'"model":"'*) ;;
     *) contract__finding "init carries no model" ;;
   esac
+
+  # The tool set the session ended up with. [06] gives a review lens
+  # `--tools Read,Grep,Glob` because that *removes* the write tools rather than
+  # refusing them permission — `--allowedTools` means nothing under
+  # `--dangerously-skip-permissions`. That is prevention, and prevention that
+  # nothing checks is a hope: this is where it becomes falsifiable, because init
+  # reports what the session actually has.
+  #
+  # A lens that could write would be a model putting code into the repository with
+  # no verdict on it. The gate also measures and undoes such a write
+  # (gate__contain_lens_writes), and that half holds whatever this flag does — but a
+  # release that stopped honouring `--tools` would turn a guarantee into a cleanup,
+  # silently, and this is the only thing that would say so.
+  case "$first" in
+    *'"tools":['*) ;;
+    *)
+      contract__finding "init carries no tools array: nothing can confirm a review lens was given a read-only session"
+      return 0
+      ;;
+  esac
+}
+
+# What init says the session may do, as a comma-separated list. Read off the event
+# rather than off argv: argv is what the pack asked for, this is what it got.
+contract_init_tools() {
+  sed -n 's/.*"tools":\[\([^]]*\)\].*/\1/p' "$1" | head -1 | tr -d '"'
 }
 
 # The last event, read the way the loop reads it. The loop greps every

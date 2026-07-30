@@ -30,39 +30,76 @@ set -uo pipefail
 state="${RALPH_SHIM_STATE:?claude shim: RALPH_SHIM_STATE is not set}"
 mkdir -p "$state/claude.calls"
 
-n=$(($(cat "$state/claude.count" 2>/dev/null || echo 0) + 1))
-printf '%s\n' "$n" >"$state/claude.count"
+# One slot per call, claimed with `mkdir` — which is the test-and-set, the same
+# way the pack's own locks work.
+#
+# It used to be `n = $(cat count) + 1`, which is fine for as long as sessions are
+# spawned one after another and a lie the moment they are not. [06] runs the review
+# lenses as concurrent gate branches: every one of them read the same count, wrote
+# the same slot, and clobbered the others' recorded prompt — so a test asking what
+# the security lens was handed got whichever branch won, and a test counting the
+# calls saw one. A fake that cannot count is worse than no fake, because it is
+# green.
+n=0
+while :; do
+  n=$((n + 1))
+  if mkdir "$state/claude.calls/$n" 2>/dev/null; then
+    break
+  fi
+  [ "$n" -lt 10000 ] || {
+    printf 'claude shim: no free call slot\n' >&2
+    exit 97
+  }
+done
 
-: >"$state/claude.calls/$n.argv"
+: >"$state/claude.calls/$n/argv"
 model="test-model"
 want_model=0
 # Derived from argv, never hard-coded: the contract asserts that a session runs
 # with permissions bypassed, and a fake that answered `bypassPermissions`
 # whatever it was called with would make that assertion vacuous.
 permission_mode="default"
+# Same discipline for the tool set. A session spawned without `--tools` gets the
+# built-in set, which includes the ones that write; a review lens is spawned with
+# `--tools` and gets exactly what it asked for ([06]). A fake that always reported
+# `[]` would make "the lens has no write tool" pass without anything being true.
+#
+# The real binary's list is longer than this and moves between releases. Only two
+# things about it are under contract: that it is there, and that a session given
+# `--tools` comes back with that set and nothing else.
+tools="Task,Bash,Glob,Grep,Read,Edit,Write,NotebookEdit,WebFetch,WebSearch,TodoWrite"
+want_tools=0
 for arg in "$@"; do
-  printf '%s\n' "$arg" >>"$state/claude.calls/$n.argv"
+  printf '%s\n' "$arg" >>"$state/claude.calls/$n/argv"
   if [ "$want_model" = 1 ]; then
     model="$arg"
     want_model=0
   fi
+  if [ "$want_tools" = 1 ]; then
+    tools="$arg"
+    want_tools=0
+  fi
   [ "$arg" = "--model" ] && want_model=1
+  [ "$arg" = "--tools" ] && want_tools=1
   [ "$arg" = "--dangerously-skip-permissions" ] && permission_mode="bypassPermissions"
 done
 
+tools_json="$(printf '%s' "$tools" |
+  awk -F, '{ for (i = 1; i <= NF; i++) printf "%s\"%s\"", (i > 1 ? "," : ""), $i }')"
+
 # The environment the loop spawned us with — the auto-compact posture is only
 # assertable from here.
-env >"$state/claude.calls/$n.env"
+env >"$state/claude.calls/$n/env"
 
 # Never block on a terminal: a test may run the loop without a pipe on stdin.
 if [ -t 0 ]; then
-  : >"$state/claude.calls/$n.stdin"
+  : >"$state/claude.calls/$n/stdin"
 else
-  cat >"$state/claude.calls/$n.stdin"
+  cat >"$state/claude.calls/$n/stdin"
 fi
 
 if [ -x "$state/claude.script" ]; then
-  exec "$state/claude.script" "$@" <"$state/claude.calls/$n.stdin"
+  exec "$state/claude.script" "$@" <"$state/claude.calls/$n/stdin"
 fi
 
 session="test-session-$n"
@@ -78,7 +115,68 @@ rate_limit="$(cat "$state/claude.rate_limit" 2>/dev/null || true)"
 # fake earns the same assertion the same way — by reading the marker out of the
 # prompt it was handed — rather than by being told the answer.
 answer="$(sed -n 's/.*Reply with exactly \([A-Za-z0-9_-]*\).*/\1/p' \
-  "$state/claude.calls/$n.stdin" 2>/dev/null | head -1)"
+  "$state/claude.calls/$n/stdin" 2>/dev/null | head -1)"
+
+# A review lens asks a different question, so the fake recognises the question
+# rather than being told which call it is on: a prompt that asks for a verdict line
+# gets one. Same rule as the model and the permission mode — derived from what the
+# pack actually sent.
+#
+# The name comes out of the prompt too, which is what lets a test say "the security
+# lens failed" without knowing what order the branches were started in. `pass`
+# unless a test asked otherwise, so the whole suite is not obliged to script a
+# verdict for a tier most of its files run with switched off.
+lens=""
+if grep -q 'RALPH-LENS-VERDICT' "$state/claude.calls/$n/stdin" 2>/dev/null; then
+  lens="$(sed -n 's/^## The lens you are: \(.*\)$/\1/p' \
+    "$state/claude.calls/$n/stdin" 2>/dev/null | head -1)"
+fi
+
+if [ -n "$lens" ]; then
+  mkdir -p "$state/claude.lenses"
+  printf '%s\n' "$n" >>"$state/claude.lenses/$lens"
+  verdict="$(cat "$state/lens-$lens.verdict" 2>/dev/null ||
+    cat "$state/lens.verdict" 2>/dev/null || echo pass)"
+
+  # A lens that writes in the tree it is judging: the case [06] has to contain,
+  # and one only a fake can stage on demand. Paths are relative to the working
+  # directory the branch was started in, which is the project root.
+  if [ -f "$state/lens-$lens.writes" ]; then
+    while IFS= read -r target; do
+      [ -n "$target" ] || continue
+      mkdir -p "$(dirname "$target")"
+      printf 'written by the %s lens\n' "$lens" >"$target"
+    done <"$state/lens-$lens.writes"
+  fi
+
+  # `silent` is a lens that reviewed and never said what it decided — the case the
+  # gate has to count red, and the one a verdict of `garbage` does not cover.
+  if [ "$verdict" = silent ]; then
+    answer="findings from the $lens lens: none."
+  else
+    answer="findings from the $lens lens: none. RALPH-LENS-VERDICT: $verdict"
+  fi
+
+# A delivery session that actually writes its write-surface. It lives here rather
+# than in a `script_claude` scenario because a script replaces the whole fake,
+# verdict handling included: a test that scripted a writing session would get
+# lenses that answer nothing, and would be measuring that instead of what it
+# meant to.
+elif [ -f "$state/session.writes" ]; then
+  # An empty list means "whatever this ticket declared", read out of the prompt the
+  # way the canary's honest session reads it. That is the faithful default: a test
+  # driving two tickets at once must not have to hand-list both surfaces, and one
+  # that did would be writing into the other ticket's surface and measuring drift.
+  targets="$(cat "$state/session.writes")"
+  [ -n "$targets" ] || targets="$(sed -n 's/^\*\*Write-surface:\*\* //p' \
+    "$state/claude.calls/$n/stdin" | head -1 | tr -d '`\r' | tr ',' '\n')"
+  printf '%s\n' "$targets" | while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    mkdir -p "$(dirname "$target")"
+    printf 'written by the session\n' >"$target"
+  done
+fi
+
 [ -n "$answer" ] || answer=done
 
 # The event sequence of the capture, in its order: the first thinking estimate
@@ -87,7 +185,7 @@ answer="$(sed -n 's/.*Reply with exactly \([A-Za-z0-9_-]*\).*/\1/p' \
 # session is still running*. A fake that reported usage only on the final result
 # would let the net look covered while it could only ever fire after the fact.
 cat <<EOF
-{"type":"system","subtype":"init","cwd":"$PWD","session_id":"$session","uuid":"uuid-$n-init","model":"$model","permissionMode":"$permission_mode","apiKeySource":"none","claude_code_version":"0.0.0-shim","output_style":"default","tools":[],"mcp_servers":[],"slash_commands":[],"agents":[],"skills":[],"plugins":[],"memory_paths":[],"capabilities":[],"analytics_disabled":true,"product_feedback_disabled":true,"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}
+{"type":"system","subtype":"init","cwd":"$PWD","session_id":"$session","uuid":"uuid-$n-init","model":"$model","permissionMode":"$permission_mode","apiKeySource":"none","claude_code_version":"0.0.0-shim","output_style":"default","tools":[$tools_json],"mcp_servers":[],"slash_commands":[],"agents":[],"skills":[],"plugins":[],"memory_paths":[],"capabilities":[],"analytics_disabled":true,"product_feedback_disabled":true,"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}
 {"type":"system","subtype":"thinking_tokens","estimated_tokens":3,"estimated_tokens_delta":3,"uuid":"uuid-$n-think1","session_id":"$session"}
 {"type":"rate_limit_event","rate_limit_info":$rate_limit,"uuid":"uuid-$n-rate","session_id":"$session"}
 {"type":"system","subtype":"thinking_tokens","estimated_tokens":36,"estimated_tokens_delta":33,"uuid":"uuid-$n-think2","session_id":"$session"}

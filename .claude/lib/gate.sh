@@ -1,24 +1,45 @@
 # shellcheck shell=bash
-# The objective gate.
+# The gate, in two phases.
 #
-# Three deterministic checks decide whether an iteration delivered: the
-# project's test suite, its type check, and the scope-guard. The loop runs them
-# itself, so no model is ever asked whether its own work is good enough —
-# complaisance is not a failure mode a return code has. The review lenses, the
-# tier that does involve judgement, are separate and arrive with the registry.
+# **The objective phase.** Three deterministic checks decide whether an iteration
+# delivered: the project's test suite, its type check, and the scope-guard. The
+# loop runs them itself, so no model is ever asked whether its own work is good
+# enough — complaisance is not a failure mode a return code has.
+#
+# **The lens phase.** The tier that does involve judgement, from the registry in
+# lib/lenses.sh ([06]): a fresh `claude` per lens, reviewing the diff, with a
+# read-only tool set. It is a phase and not three more branches in the fan above,
+# and there are two reasons, both load-bearing:
+#
+#   - A lens runs in the tree it is judging. What a branch writes after the judged
+#     tree was taken is undone by nothing ([29]), and for a `claude` that would
+#     mean model-written code entering the repository with no verdict on it. The
+#     gate snapshots the tree around this phase and puts back whatever moved —
+#     which is only possible because `TEST_CMD` is no longer writing at the same
+#     time. Concurrency here would make the write unattributable, and an
+#     unattributable write cannot be undone.
+#   - A red objective phase makes the gate red whatever a lens would have said,
+#     so spawning one would spend quota to learn nothing. The run says the lenses
+#     did not run, and why.
 #
 # Two properties are load-bearing and easy to lose:
 #
 #   - Green has to be earned. A branch that is unconfigured, whose command does
-#     not exist, or that left no verdict at all counts red. Otherwise a gate
-#     nobody wired up is indistinguishable from a gate everything passes, which
-#     is the one failure this whole framework exists to prevent.
-#   - The branches do not short-circuit each other. They are backgrounded and
-#     then collected, so a red suite still tells you whether the types are also
-#     broken, and the wall-clock is the slowest branch rather than their sum.
-#     Collecting them is the fragile half: a branch that was started and not
-#     waited for is read as having no verdict, which counts red — see
-#     `gate__collect` for why a bare `wait` does not survive a graceful stop.
+#     not exist, that left no verdict at all, or — for a lens — that answered
+#     without one, counts red. Otherwise a gate nobody wired up is
+#     indistinguishable from a gate everything passes, which is the one failure
+#     this whole framework exists to prevent.
+#   - Branches within a phase do not short-circuit each other. They are
+#     backgrounded and then collected, so a red suite still tells you whether the
+#     types are also broken, and the wall-clock of a phase is its slowest branch
+#     rather than their sum. Collecting them is the fragile half: a branch that
+#     was started and not waited for is read as having no verdict, which counts
+#     red — see `gate__collect` for why a bare `wait` does not survive a graceful
+#     stop.
+#
+# `GATE_TIMEOUT` is per phase, not per gate: each fan gets its own deadline, so a
+# gate with lenses can take up to twice it. Anything else would mean an objective
+# phase that ran long silently eating the lenses' budget.
 #
 # What the loop reads back, for the failure policy and the audit receipt:
 #   RALPH_GATE_VERDICTS     e.g. "tests=green typecheck=red scope=green"
@@ -38,7 +59,7 @@ gate__log() {
 # Refuse to start rather than grind a whole frontier behind a gate that proves
 # nothing. Called by the loop from the project root, before it takes the lock.
 gate_preflight() {
-  local rc=0
+  local rc=0 unknown
 
   if [ -z "${TEST_CMD:-}" ]; then
     printf 'ralph: TEST_CMD is empty — a gate with no test suite is green for the wrong reason\n' >&2
@@ -54,6 +75,16 @@ gate_preflight() {
 
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
     printf 'ralph: not a git repository — the scope-guard has nothing to diff against\n' >&2
+    rc=1
+  fi
+
+  # A name in LENSES that nothing can perform. Refused at the door rather than
+  # discovered as a red gate on every iteration of a night — and, above all,
+  # rather than skipped: a typo that quietly removed a reviewer would leave a gate
+  # that looks exactly like a gate whose reviewers all passed.
+  if unknown="$(lenses_unknown)"; then
+    printf 'ralph: LENSES names a lens this pack cannot run: %s\n' \
+      "$(printf '%s' "$unknown" | tr '\n' ' ')" >&2
     rc=1
   fi
 
@@ -253,6 +284,62 @@ gate_changed_files() {
   [ -n "$now" ] || now="$(gate_tree_snapshot)" || now=""
   [ -n "$base" ] && [ -n "$now" ] || return 1
   git diff-tree -r --name-only "$base" "$now" 2>/dev/null | gate__drop_bookkeeping
+}
+
+# Put every path back to the state a tree object records, and print the ones that
+# were put back, one per line.
+#
+# Two callers, and they are the reason this is here rather than in either of them.
+# The rollback of a failed iteration ([07]) restores the tree the session was
+# handed; the containment of what a review lens wrote ([06]) restores the tree the
+# lens was handed. Same twelve lines, and a second copy of them would drift from
+# this one — the pack has already paid for that once, on a bare `wait` written
+# twice ([25]). One of the two callers restores a repository a human may have work
+# in, so the drift would not be cosmetic.
+#
+# What it does *not* do is the caller's business: this moves no ref, unstages
+# nothing, and says nothing about what it could not reach. The rollback needs all
+# three and the lens containment needs none of them.
+#
+# The loop's own bookkeeping is skipped here rather than by each caller, and that
+# is load-bearing in both directions: the tracker is the only authority on state
+# this system has, and the session stream is being appended to inside the very
+# window a lens runs in.
+gate_restore_tree() {
+  local base="$1" now="${2:-}" idx status path
+  [ -n "$base" ] || return 1
+  [ -n "$now" ] || now="$(gate_tree_snapshot)" || now=""
+  [ -n "$now" ] || return 1
+
+  idx="$(mktemp "${TMPDIR:-/tmp}/ralph-restore.XXXXXX")" || return 1
+  rm -f "$idx"
+  if ! GIT_INDEX_FILE="$idx" git read-tree "$base" 2>/dev/null; then
+    rm -f "$idx"
+    return 1
+  fi
+
+  while IFS="$(printf '\t')" read -r status path; do
+    [ -n "$path" ] || continue
+    if gate_is_bookkeeping "$path"; then continue; fi
+    case "$status" in
+      A)
+        rm -f "$path"
+        # Stops at the first directory that is not empty, so a directory the
+        # session did not create survives.
+        rmdir -p "$(dirname "$path")" 2>/dev/null || true
+        ;;
+      *)
+        GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null ||
+          gate__log "could not restore $path"
+        ;;
+    esac
+    printf '%s\n' "$path"
+  done <<RESTORE
+$(git diff-tree -r --name-status "$base" "$now" 2>/dev/null)
+RESTORE
+
+  rm -f "$idx"
+  return 0
 }
 
 # The loop's own writes are not the session's doing: claiming a ticket rewrites
@@ -516,6 +603,163 @@ gate__report_changed() {
   return 0
 }
 
+# One fan, from started to collected, with its own deadline.
+#
+# Extracted because there are two fans now and a second copy of the collection
+# would be a second place for the graceful stop to be got wrong — the pack has
+# already paid for one bare `wait` written twice ([25]).
+#
+# An unset, zero or non-numeric GATE_TIMEOUT means no deadline. That is the status
+# quo and not a false green: a hung branch never comes back green.
+gate__await() {
+  local dir="$1" pids="$2" watchdog='' brc
+
+  case "${GATE_TIMEOUT:-0}" in
+    '' | 0 | *[!0-9]*) ;;
+    *)
+      # shellcheck disable=SC2086
+      gate__watchdog "$GATE_TIMEOUT" "$dir/timed-out" $pids &
+      watchdog=$!
+      ;;
+  esac
+
+  for brc in $pids; do
+    gate__collect "$brc"
+  done
+
+  if [ -n "$watchdog" ]; then
+    kill -TERM "$watchdog" 2>/dev/null || true
+    gate__collect "$watchdog"
+  fi
+  return 0
+}
+
+# Turn the exit-code files a fan left behind into verdicts, and say what went
+# wrong. Appends to RALPH_GATE_VERDICTS and RALPH_GATE_FAILED, so it must be
+# called in the loop's own shell and never from a subshell or a pipeline — the
+# detail would be lost in silence, and the failure policy would be unable to tell
+# a drift from a neutral file ([05]).
+#
+# The absence of an exit-code file is a verdict of its own, and it is red.
+gate__aggregate() {
+  local dir="$1" names="$2" name brc rc=0
+
+  for name in $names; do
+    brc=""
+    if [ -f "$dir/$name.rc" ]; then brc="$(cat "$dir/$name.rc")"; fi
+    if [ "$brc" = 0 ]; then
+      RALPH_GATE_VERDICTS="$RALPH_GATE_VERDICTS $name=green"
+      continue
+    fi
+    RALPH_GATE_VERDICTS="$RALPH_GATE_VERDICTS $name=red"
+    RALPH_GATE_FAILED="$RALPH_GATE_FAILED $name"
+    rc=1
+    if [ -n "$brc" ]; then
+      gate__log "$name red (exit $brc)"
+    elif [ -f "$dir/timed-out" ]; then
+      gate__log "$name red (timed out after ${GATE_TIMEOUT}s)"
+    else
+      gate__log "$name red (no verdict)"
+    fi
+    gate__report "$dir/$name.out"
+  done
+  return "$rc"
+}
+
+# ── the lens phase ───────────────────────────────────────────────────────────
+
+# The judgement tier, after the objective one and never beside it. Returns
+# non-zero if a lens was red or if the tree could not be put back the way the
+# lenses found it.
+#
+# Skipped on a red objective phase, and said out loud when it is: a lens costs a
+# real session against the subscription, and no verdict it could return would
+# change a gate that is already red. Skipped is not passed — nothing is added to
+# the verdicts, exactly as an unconfigured type check is absent rather than green.
+#
+# The local is `lenses` and not `names`, which is not a style choice: the call to
+# gate__aggregate below would otherwise be character-for-character the one in
+# gate_run, and a mutation anchored on either would silently edit the first. That
+# is the trap [29] fell into — a substitution without /g applies to the first match,
+# so a duplicated line turns a mutation into a lie whose symptom is VACUOUS on a
+# healthy test.
+gate__lens_phase() {
+  local ticket="$1" base="$2" dir="$3" objective_rc="$4"
+  local lenses pids='' name pre rc=0
+
+  lenses="$(lenses_triggered "$ticket" | tr '\n' ' ')"
+
+  # A zone nothing guards gets named every time round, not once in a document
+  # ([24]). A gate with no judgement tier is green on its own tests and on
+  # nothing else, and a human reading the morning log has to be able to see that
+  # without remembering which key was set.
+  if [ -z "${lenses# }" ]; then
+    if [ -z "$(lenses_enabled)" ]; then
+      gate__log "$ticket: no review lens ran (LENSES is empty): nothing here judged this work by anything but its own tests"
+    else
+      gate__log "$ticket: no review lens was triggered by this ticket"
+    fi
+    return 0
+  fi
+
+  if [ "$objective_rc" != 0 ]; then
+    gate__log "$ticket: the review lenses did not run: the objective checks are already red ($RALPH_GATE_FAILED)"
+    return 0
+  fi
+
+  # The tree as the lenses found it. Taken here rather than reused from
+  # RALPH_GATE_TREE on purpose: the suite has run since then and may legitimately
+  # have written, so this is the only baseline against which a write is
+  # attributable to a lens and nothing else.
+  pre="$(gate_tree_snapshot)" || pre=""
+
+  for name in $lenses; do
+    gate__start "$dir" "$name" \
+      lenses_review "$name" "$ticket" "$base" "$RALPH_GATE_TREE" "$dir"
+    pids="$pids $!"
+  done
+
+  gate__await "$dir" "$pids"
+  gate__aggregate "$dir" "$lenses" || rc=1
+  gate__contain_lens_writes "$ticket" "$pre" || rc=1
+  return "$rc"
+}
+
+# What a lens wrote in the tree it was judging, put back.
+#
+# This is the half of the read-only promise that is a guarantee. The other half is
+# `--tools` on the spawn (lenses_tools), which is prevention and depends on the
+# binary honouring it; this is verification and depends on nothing but two tree
+# objects. A control that rests on a flag a release could stop honouring is a
+# hope, and this pack has a document listing what happens to those.
+#
+# Red only if something survives being put back. A lens that wrote and was undone
+# has cost the iteration nothing, and reddening it would charge a retry to a
+# session that did nothing wrong — the mistake [29] found in the scope-guard's
+# race, one layer up. A write that *cannot* be undone is different: the pack can no
+# longer say what is in the tree, and green would be a false green.
+gate__contain_lens_writes() {
+  local ticket="$1" pre="$2" changed left
+
+  if [ -z "$pre" ]; then
+    gate__log "$ticket: could not read the tree before the review lenses — cannot say what they wrote, refusing to pass"
+    return 1
+  fi
+
+  changed="$(gate_unjudged_changes "$pre")"
+  [ -n "$changed" ] || return 0
+
+  gate__log "$ticket: a review lens changed $(gate_zone_line "$changed" \
+    'path(s) in the tree it was judging') — putting them back"
+  gate_restore_tree "$pre" >/dev/null || true
+
+  left="$(gate_unjudged_changes "$pre")"
+  [ -n "$left" ] || return 0
+  gate__log "$ticket: could not undo $(gate_zone_line "$left" \
+    'path(s) a review lens wrote') — refusing to pass this iteration"
+  return 1
+}
+
 # Up to 20 lines of what a red branch had to say. Enough to see which test
 # broke in the journal; the full picture belongs to the audit receipt.
 gate__report() {
@@ -528,7 +772,7 @@ gate__report() {
 # green, and that is the only thing that resolves a ticket.
 gate_run() {
   local ticket="$1" base="${2:-}"
-  local dir names='' pids='' name rc=0 brc watchdog=''
+  local dir names='' pids='' rc=0
 
   # Cleared before the first thing that can fail, so a gate that refuses to start
   # never leaves the previous iteration's tree standing for the rollback to act on.
@@ -569,48 +813,18 @@ gate_run() {
   names="$names scope"
   pids="$pids $!"
 
-  # An unset, zero or non-numeric GATE_TIMEOUT means no deadline. That is the
-  # status quo and not a false green: a hung branch never comes back green.
-  case "${GATE_TIMEOUT:-0}" in
-    '' | 0 | *[!0-9]*) ;;
-    *)
-      gate__watchdog "$GATE_TIMEOUT" "$dir/timed-out" $pids &
-      watchdog=$!
-      ;;
-  esac
-
-  for brc in $pids; do
-    gate__collect "$brc"
-  done
-
-  if [ -n "$watchdog" ]; then
-    kill -TERM "$watchdog" 2>/dev/null || true
-    gate__collect "$watchdog"
-  fi
-
-  for name in $names; do
-    brc=""
-    if [ -f "$dir/$name.rc" ]; then brc="$(cat "$dir/$name.rc")"; fi
-    if [ "$brc" = 0 ]; then
-      RALPH_GATE_VERDICTS="$RALPH_GATE_VERDICTS $name=green"
-      continue
-    fi
-    RALPH_GATE_VERDICTS="$RALPH_GATE_VERDICTS $name=red"
-    RALPH_GATE_FAILED="$RALPH_GATE_FAILED $name"
-    rc=1
-    if [ -n "$brc" ]; then
-      gate__log "$name red (exit $brc)"
-    elif [ -f "$dir/timed-out" ]; then
-      gate__log "$name red (timed out after ${GATE_TIMEOUT}s)"
-    else
-      gate__log "$name red (no verdict)"
-    fi
-    gate__report "$dir/$name.out"
-  done
+  gate__await "$dir" "$pids"
+  gate__aggregate "$dir" "$names" || rc=1
 
   if [ -f "$dir/scope.class" ]; then
     RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"
   fi
+
+  # The judgement tier, and it is handed the objective verdict rather than
+  # deciding for itself: a phase that consulted `rc` from inside would have to
+  # know what this one means by it.
+  gate__lens_phase "$ticket" "$base" "$dir" "$rc" || rc=1
+
   RALPH_GATE_VERDICTS="${RALPH_GATE_VERDICTS# }"
   RALPH_GATE_FAILED="${RALPH_GATE_FAILED# }"
 
