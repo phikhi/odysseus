@@ -14,13 +14,20 @@
 # One prompt, one stream, from a file rather than a pipe: a pipeline would run
 # this in a subshell and RALPH_SOFT_LIMIT_HIT would die with it.
 #
-# It lives in a lib rather than in the loop because two callers need it — the
-# loop's delivery iteration and the failure policy's re-slice — and a lib that
-# had to call back up into loop.sh for it would invert the layering. Whoever
-# spawns, the shape is the same: a session that inherited a conversation would
-# defeat the whole point of the pack.
+# It lives in a lib rather than in the loop because three callers need it — the
+# loop's delivery iteration, the failure policy's re-slice and a review lens
+# ([06]) — and a lib that had to call back up into loop.sh for it would invert
+# the layering. Whoever spawns, the shape is the same: a session that inherited a
+# conversation would defeat the whole point of the pack.
+#
+# Anything after the two file arguments is passed to `claude` as it stands. That
+# is the one extension point, and it exists so that a caller which needs a
+# different posture — a review lens, which gets a read-only tool set — does not
+# retype the invocation. A second copy of these flags would be a second thing to
+# keep in step with reality, and only one of them would be under contract ([20]).
 session_spawn() {
   local promptfile="$1" outfile="$2" pid rc=0
+  shift 2
   RALPH_SOFT_LIMIT_HIT=0
 
   # Created before the spawn: the monitor follows the stream through an open
@@ -32,6 +39,7 @@ session_spawn() {
     --output-format stream-json \
     --verbose \
     --dangerously-skip-permissions \
+    "$@" \
     <"$promptfile" >"$outfile" &
   pid=$!
 

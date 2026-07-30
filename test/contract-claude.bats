@@ -173,6 +173,27 @@ CASES
   refute_output_contains '"permissionMode":"bypassPermissions"'
 }
 
+@test "the fake earns its tool set too: it reports what --tools asked for" {
+  # The other half of [06]'s read-only promise. `--tools` removes the write tools
+  # from the session rather than refusing them permission, which is the distinction
+  # that matters when permissions are bypassed anyway — and init is where the
+  # session says what it ended up with.
+  contract_prompt "$RALPH_TEST_DIR/prompt.txt" PONG-TOOLS
+  contract_spawn_fake "$RALPH_TEST_DIR/lens.jsonl" "$RALPH_TEST_DIR/prompt.txt" \
+    --tools Read,Grep,Glob
+  assert_equal "$(contract_init_tools "$RALPH_TEST_DIR/lens.jsonl")" "Read,Grep,Glob"
+
+  # The refutation, and it is the whole value of the assertion above: a session
+  # spawned without the flag really does have the tools that write. A fake that
+  # answered an empty list whatever it was called with would make "the lens cannot
+  # write" true of nothing.
+  contract_spawn_fake "$RALPH_TEST_DIR/plain.jsonl" "$RALPH_TEST_DIR/prompt.txt"
+  run contract_init_tools "$RALPH_TEST_DIR/plain.jsonl"
+  assert_output_contains "Edit"
+  assert_output_contains "Write"
+  assert_output_contains "Bash"
+}
+
 # ── the hermetic promise ─────────────────────────────────────────────────────
 
 @test "no test in this file reaches the real binary without asking" {
@@ -223,6 +244,40 @@ CASES
 
   run contract_check "$RALPH_TEST_DIR/real.jsonl" "$(contract_exit_code)" PONG-8271 real
   assert_success
+}
+
+@test "the real claude honours the read-only tool set a lens is given" {
+  if [ "${RALPH_REAL_CLAUDE:-0}" != 1 ]; then
+    skip "set RALPH_REAL_CLAUDE=1 to run this against the real binary (network + quota)"
+  fi
+  if ! contract_real_available; then
+    skip "no claude binary on the developer's PATH"
+  fi
+
+  # The one assertion in this file that [06] cannot do without, and the only place
+  # it can be made. Everything else about the read-only posture is argv — what the
+  # pack *asked* for. This is what it got.
+  #
+  # If this goes red, the prevention half of [06] is gone and only the containment
+  # half is left: the gate would still measure what a lens wrote and put it back,
+  # but a lens would be free to write in the first place, and the trust-boundary
+  # table needs its line changed the same day.
+  contract_prompt "$RALPH_TEST_DIR/prompt.txt" PONG-4417
+  contract_spawn_real "$RALPH_TEST_DIR/real-lens.jsonl" "$RALPH_TEST_DIR/prompt.txt" \
+    --tools Read,Grep,Glob
+
+  run contract_check "$RALPH_TEST_DIR/real-lens.jsonl" "$(contract_exit_code)" \
+    PONG-4417 real
+  assert_success
+
+  local tools
+  tools="$(contract_init_tools "$RALPH_TEST_DIR/real-lens.jsonl")"
+  [ -n "$tools" ] || fail "the real binary reported no tool set at all"
+  case ",$tools," in
+    *,Edit,* | *,Write,* | *,Bash,* | *,NotebookEdit,* | *,Task,*)
+      fail "the real binary kept a tool that writes despite --tools: $tools"
+      ;;
+  esac
 }
 
 @test "the fake and the real binary emit the same kinds of event" {

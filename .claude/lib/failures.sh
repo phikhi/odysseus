@@ -360,7 +360,7 @@ TRACKER
 # opened for, so both zones are named here every time they are not empty.
 failures_rollback() {
   local pre="$1" base="$2" tree="${3:-}"
-  local head idx status path paths='' undone=0
+  local head restored path paths='' undone=0
 
   if [ -z "$base" ]; then
     failures__log "no pre-session snapshot — refusing to guess what to roll back"
@@ -381,36 +381,22 @@ failures_rollback() {
     fi
   fi
 
-  idx="$(mktemp "${TMPDIR:-/tmp}/ralph-rollback.XXXXXX")" || return 1
-  rm -f "$idx"
-  if ! GIT_INDEX_FILE="$idx" git read-tree "$base" 2>/dev/null; then
-    rm -f "$idx"
+  # The restore itself belongs to whoever owns tree objects, and it has a second
+  # caller now — the containment of what a review lens wrote ([06]). What stays
+  # here is the part that is policy rather than plumbing: moving HEAD, above;
+  # unstaging and counting, below; and saying what could not be reached at all.
+  if ! restored="$(gate_restore_tree "$base" "$tree")"; then
     failures__log "cannot read the pre-session snapshot — nothing was rolled back"
     return 1
   fi
 
-  while IFS="$(printf '\t')" read -r status path; do
+  while IFS= read -r path; do
     [ -n "$path" ] || continue
-    if gate_is_bookkeeping "$path"; then continue; fi
     paths="$paths $path"
     undone=$((undone + 1))
-    case "$status" in
-      A)
-        rm -f "$path"
-        # Stops at the first directory that is not empty, so a directory the
-        # session did not create survives.
-        rmdir -p "$(dirname "$path")" 2>/dev/null || true
-        ;;
-      *)
-        GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null ||
-          failures__log "could not restore $path"
-        ;;
-    esac
   done <<ROLLBACK
-$(git diff-tree -r --name-status "$base" "$tree" 2>/dev/null)
+$restored
 ROLLBACK
-
-  rm -f "$idx"
 
   # What the session staged is not work in progress either. Unstaging is scoped
   # to the same paths, so an index a human left half-prepared elsewhere stands.

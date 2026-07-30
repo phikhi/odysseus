@@ -18,6 +18,7 @@
 #   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
 #   stamp_claim ID [OWNER] [ISO]   claim a ticket behind the pack's back
 #   set_config KEY VALUE           override a config key in ralph.config.sh
+#   config_default KEY             what the shipped example gives that key
 #   run_loop [args ...]            run the real loop.sh through `run`
 #   pack_run CODE                  run pack code as a process, config+libs loaded
 #   pack_run_bg CODE               same, detached; pid in $PACK_BG_PID
@@ -34,6 +35,13 @@
 #   claude_call_stdin N            stdin (the prompt) of the Nth spawn
 #   claude_call_env N              environment the Nth spawn was given
 #   claude_rate_limit JSON         the in-band rate_limit_info the stream carries
+#   session_writes PATH ...        paths the delivery session writes
+#   lens_verdict NAME pass|fail    what a review lens answers ('' = every lens)
+#   lens_writes NAME PATH ...      paths a lens writes in the tree it judges
+#   lens_call_count NAME           how many times that lens was spawned
+#   lenses_that_ran                every lens that was spawned, sorted
+#   lens_call_stdin NAME           the prompt that lens was handed
+#   lens_call_argv NAME            argv that lens was spawned with
 #   stub_exit NAME CODE            exit code for `stub-cmd NAME`
 #   stub_call_count NAME           how many times it ran
 #   usage_respond JSON             body served for /api/oauth/usage
@@ -209,6 +217,28 @@ harness__install_pack() {
   set_config TEST_CMD "stub-cmd tests"
   set_config TYPECHECK_CMD "stub-cmd typecheck"
   set_config MODEL "test-model"
+
+  # The gate's judgement tier, off — an injection of the same kind as the three
+  # above, and for the same reason. A review lens is a `claude` session ([06]), so
+  # a suite that left the tier on would spawn two extra ones per green iteration
+  # and every assertion about how many sessions the loop started would really be
+  # an assertion about the fan.
+  #
+  # The shipped default is *on*, and this is exactly the arrangement that makes a
+  # promise "verified only on the fake that finishes fast". So it is verified in
+  # two other places on purpose: test/lenses.bats drives the registry itself, and
+  # test/canary.bats puts the default back with config_default and runs the loop
+  # the way a project would get it.
+  set_config LENSES none
+}
+
+# What the shipped config gives a key, read out of the example rather than
+# retyped. A test asserting on "the default" has to take the default from the one
+# file a project installs, or it goes on passing against a value nobody ships any
+# more.
+config_default() {
+  sed -n "s/^$1=\"\\\${$1:-\(.*\)}\"\$/\1/p" \
+    "$PACK_DIR/ralph.config.sh.example" | head -1
 }
 
 # Overrides are committed too: otherwise a rollback (`git reset --hard`) would
@@ -421,20 +451,29 @@ script_claude() {
   chmod +x "$SHIM_STATE/claude.script"
 }
 
+# Every spawn, delivery sessions and review lenses alike. Counted from the slots
+# the fake claimed rather than from a counter it wrote: the slots are allocated
+# with `mkdir`, so they survive concurrency, and a number written by three
+# processes at once does not.
 claude_call_count() {
-  cat "$SHIM_STATE/claude.count" 2>/dev/null || echo 0
+  local slot n=0
+  for slot in "$SHIM_STATE/claude.calls"/*; do
+    [ -d "$slot" ] || continue
+    n=$((n + 1))
+  done
+  printf '%s\n' "$n"
 }
 
 claude_call_argv() {
-  cat "$SHIM_STATE/claude.calls/${1:-1}.argv" 2>/dev/null
+  cat "$SHIM_STATE/claude.calls/${1:-1}/argv" 2>/dev/null
 }
 
 claude_call_stdin() {
-  cat "$SHIM_STATE/claude.calls/${1:-1}.stdin" 2>/dev/null
+  cat "$SHIM_STATE/claude.calls/${1:-1}/stdin" 2>/dev/null
 }
 
 claude_call_env() {
-  cat "$SHIM_STATE/claude.calls/${1:-1}.env" 2>/dev/null
+  cat "$SHIM_STATE/claude.calls/${1:-1}/env" 2>/dev/null
 }
 
 # Drive the in-band budget signal the real binary emits early in the stream —
@@ -442,6 +481,66 @@ claude_call_env() {
 # Takes the JSON body of rate_limit_info.
 claude_rate_limit() {
   printf '%s' "$1" >"$SHIM_STATE/claude.rate_limit"
+}
+
+# ── scripting the review lenses ──────────────────────────────────────────────
+#
+# Addressed by lens name and never by call index. The lens branches are started
+# concurrently, so which of them is the loop's second `claude` is not a fact a
+# test is entitled to know — and a test that assumed it would pass or fail on
+# process scheduling.
+
+# What verdict the fake answers for a lens. `lens_verdict '' fail` sets it for
+# every lens that has no verdict of its own.
+lens_verdict() {
+  if [ -n "$1" ]; then
+    printf '%s\n' "$2" >"$SHIM_STATE/lens-$1.verdict"
+  else
+    printf '%s\n' "$2" >"$SHIM_STATE/lens.verdict"
+  fi
+}
+
+# Paths a lens writes in the tree it is judging, one per line. The case the gate
+# has to contain, and nothing but a fake can stage it on demand.
+lens_writes() {
+  local name="$1"
+  shift
+  printf '%s\n' "$@" >"$SHIM_STATE/lens-$name.writes"
+}
+
+# Paths the delivery session writes, one per line. The default fake writes
+# nothing, which is fine for a suite asserting on the tracker and useless for one
+# asserting on a diff.
+session_writes() {
+  printf '%s\n' "$@" >"$SHIM_STATE/session.writes"
+}
+
+lens_call_count() {
+  if [ -f "$SHIM_STATE/claude.lenses/$1" ]; then
+    awk 'END { print NR }' "$SHIM_STATE/claude.lenses/$1"
+  else
+    echo 0
+  fi
+}
+
+# Every lens that was spawned, sorted, as one line — so a test can assert the
+# whole set that ran and, more to the point, the set that did not.
+lenses_that_ran() {
+  local f out=''
+  for f in "$SHIM_STATE/claude.lenses"/*; do
+    [ -e "$f" ] || continue
+    out="$out $(basename "$f")"
+  done
+  printf '%s\n' "$(printf '%s' "${out# }" | tr ' ' '\n' | LC_ALL=C sort |
+    tr '\n' ' ' | sed 's/ *$//')"
+}
+
+lens_call_stdin() {
+  claude_call_stdin "$(head -1 "$SHIM_STATE/claude.lenses/$1" 2>/dev/null)"
+}
+
+lens_call_argv() {
+  claude_call_argv "$(head -1 "$SHIM_STATE/claude.lenses/$1" 2>/dev/null)"
 }
 
 stub_exit() {

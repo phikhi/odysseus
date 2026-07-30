@@ -199,6 +199,7 @@ TRACKER=".claude/lib/tracker-local.sh"
 CLAIM=".claude/lib/claim.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
+LENSES_LIB=".claude/lib/lenses.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
@@ -438,21 +439,39 @@ mutation "07 nothing puts the tree back after a red gate" "$FAILURES" \
   's/  failures_rollback "\$pre" "\$base" "\$tree" \|\| true\n//' \
   test/canary.bats "absolved"
 
+# The next three moved file in [06]: the restore loop they aim at is now
+# `gate_restore_tree` in gate.sh, because the containment of what a review lens
+# wrote needs the same twelve lines and a second copy of them would drift. The
+# guarantees are unchanged and so are the tests that hold them — what changed is
+# which file carries the line, which is exactly what DRIFTED exists to make
+# somebody re-check.
+#
 # Not at the process seam: the loop's post-session snapshot is taken before the
 # retry counter is written, so the tracker is identical on both sides of the
 # rollback's diff and no full-loop test can see the exclusion work. The test that
 # holds it drives the rollback directly, with the counter written in between.
-mutation "07 the rollback rewrites the loop's own bookkeeping" "$FAILURES" \
+#
+# Anchored on `"$path"` and not on `gate_is_bookkeeping`: gate.sh has three callers
+# of that rule now, and the other two ask about `"$file"`.
+mutation "07 the rollback rewrites the loop's own bookkeeping" "$GATE" \
   's/    if gate_is_bookkeeping "\$path"; then continue; fi\n//' \
   test/failures.bats "never restores the tracker"
 
-mutation "07 a file the session added is not removed" "$FAILURES" \
+mutation "07 a file the session added is not removed" "$GATE" \
   's/        rm -f "\$path"\n/        :\n/' \
   test/failures.bats "stray write is undone"
 
-mutation "07 a file the session deleted is not restored" "$FAILURES" \
-  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__log "could not restore \$path"/        :/' \
+mutation "07 a file the session deleted is not restored" "$GATE" \
+  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          gate__log "could not restore \$path"/        :/' \
   test/failures.bats "session deleted comes back"
+
+# The seam [06] introduced between the two: the rollback learns what it undid from
+# what the primitive printed, and it needs that list for the unstaging and for the
+# netting of the "could not undo" line. Emptied rather than removed — a caller that
+# gets an empty list is the failure mode, a caller that does not compile is not.
+mutation "06 the rollback never learns what it put back" "$FAILURES" \
+  's/^\$restored\nROLLBACK/\nROLLBACK/m' \
+  test/failures.bats "stray write is undone"
 
 mutation "07 what the session staged stays staged" "$FAILURES" \
   's/    git reset -q -- \$paths 2>\/dev\/null \|\| true/    :/' \
@@ -948,6 +967,133 @@ mutation "29 the rollback says nothing about what the gate changed" "$FAILURES" 
 mutation "29 a path the rollback put back is named as one it could not" "$FAILURES" \
   's/  local fence=" \$\{2:-\} " item/  local fence="" item/' \
   test/failures.bats "did put back"
+
+# ── [06] the review lens registry ────────────────────────────────────────────
+
+# ── which lenses answer which ticket
+
+mutation "06 an always-on lens is not always on" "$LENSES_LIB" \
+  's/^lenses_want_standards\(\) \{/lenses_want_standards() { return 1;/m' \
+  test/lenses.bats "answer every ticket"
+
+# The other direction, and the one a table of predicates exists for: a gated lens
+# that fires on everything is five sessions an iteration instead of two.
+mutation "06 a gated lens fires on every ticket" "$LENSES_LIB" \
+  's/^lenses__triggered_by\(\) \{/lenses__triggered_by() { return 0;/m' \
+  test/lenses.bats "only looks like a sensitive one"
+
+mutation "06 a tag on the ticket triggers nothing" "$LENSES_LIB" \
+  's/  lenses_has_tag "\$ticket" "\$tag" \&\& return 0\n//' \
+  test/lenses.bats "tagged ticket, and a sensitive surface"
+
+mutation "06 a configured path triggers nothing, only the tag does" "$LENSES_LIB" \
+  's/  \[ -n "\$paths" \] \|\| return 1/  return 1/' \
+  test/lenses.bats "meeting VISIBLE_PATHS"
+
+# Both sides of the intersection are globs, so `src` against `src/auth/*` matches
+# one way round only. Removing the second direction narrows the predicate silently.
+mutation "06 the surface intersection is tried one way only" "$LENSES_LIB" \
+  's/    gate_in_surface "\$paths" "\$entry" \&\& return 0\n//' \
+  test/lenses.bats "directory a sensitive glob is under"
+
+# ── the registry is a registry
+
+mutation "06 a lens LENSES names but nothing can run is let through" "$GATE" \
+  's/  if unknown="\$\(lenses_unknown\)"; then/  if false; then/' \
+  test/lenses.bats "stops the run at the door"
+
+mutation "06 switching the judgement tier off is silent" "$GATE" \
+  's/      gate__log "\$ticket: no review lens ran \(LENSES is empty\)[^\n]*\n/      :\n/' \
+  test/lenses.bats "said out loud"
+
+# ── what a lens is judged on
+
+# The correction [29] left this ticket, planted the way the defect would come back:
+# a lens that takes its own snapshot reviews files the session never wrote.
+mutation "06 a lens snapshots its own tree instead of the judged one" "$LENSES_LIB" \
+  's/  if \[ -z "\$tree" \] \|\| \[ -z "\$base" \]; then/  tree="\$(gate_tree_snapshot)"\n  if [ -z "\$base" ]; then/' \
+  test/lenses.bats "not one of its own"
+
+mutation "06 an iteration that changed nothing is reviewed anyway" "$LENSES_LIB" \
+  's/  \[ -n "\$files" \] \|\| return 1\n//' \
+  test/lenses.bats "changed nothing is red"
+
+mutation "06 the lens is shown the file names and not the diff" "$LENSES_LIB" \
+  's/  lenses__patch "\$base" "\$tree" "\$max" \|\| truncated=1/  :/' \
+  test/lenses.bats "not just the names"
+
+# ── the verdict
+
+mutation "06 a lens that said nothing counts green" "$LENSES_LIB" \
+  's/^lenses__verdict\(\) \{/lenses__verdict() { printf "pass\\\\n"; return 0;/m' \
+  test/lenses.bats "never said what it decided"
+
+# A model quotes the instruction it was given on its way to an answer, and the diff
+# under review can carry the token too — this repository's own does.
+mutation "06 the first verdict in the stream decides, not the last" "$LENSES_LIB" \
+  's/    tail -1 \| sed/    head -1 | sed/' \
+  test/lenses.bats "last one in the stream"
+
+mutation "06 a red lens does not redden the gate" "$GATE" \
+  's/  gate__aggregate "\$dir" "\$lenses" \|\| rc=1/  gate__aggregate "\$dir" "\$lenses" || true/' \
+  test/lenses.bats "red lens makes the gate red"
+
+# ── the lens cannot write, prevention half
+
+mutation "06 the lens is spawned with the tools that write" "$LENSES_LIB" \
+  's/ --tools "\$\(lenses_tools\)"//' \
+  test/lenses.bats "without the tools that write"
+
+mutation "06 the read-only tool set is widened by one" "$LENSES_LIB" \
+  's/Read,Grep,Glob/Read,Grep,Glob,Edit/' \
+  test/lenses.bats "without the tools that write"
+
+# ── the lens cannot write, verification half
+
+mutation "06 what a lens wrote is named and left standing" "$GATE" \
+  's/^gate__contain_lens_writes\(\) \{/gate__contain_lens_writes() { return 0;/m' \
+  test/lenses.bats "is put back"
+
+# The other half of the same function: undoing is not enough if a write that
+# survived the undo still passes. Returning early rather than blanking the log, so
+# the entry cannot pass on the strength of the message being gone.
+mutation "06 a lens write that survived the undo passes anyway" "$GATE" \
+  's/  \[ -n "\$left" \] \|\| return 0/  return 0/' \
+  test/lenses.bats "cannot be undone refuses to pass"
+
+mutation "06 a containment that cannot see the tree shrugs" "$GATE" \
+  's/    gate__log "\$ticket: could not read the tree before the review lenses[^\n]*\n    return 1/    return 0/' \
+  test/lenses.bats "cannot be read before the lenses"
+
+# The stream is the mechanism's own write, and it lives under TMPDIR so that the
+# mechanism puts nothing in the repository. Moved into the tree, the containment
+# above notices it — which is what makes these two guarantees one story.
+mutation "06 the lens stream is written into the tree it judges" "$LENSES_LIB" \
+  's/ stream="\$dir\/lens-\$name.jsonl"/ stream="lens-\$name.jsonl"/' \
+  test/lenses.bats "wrote nothing says nothing"
+
+# ── the phase, and what it costs
+
+mutation "06 the lenses are spawned on an already-red gate" "$GATE" \
+  's/  if \[ "\$objective_rc" != 0 \]; then/  if false; then/' \
+  test/lenses.bats "already red"
+
+# A termination guarantee: taken out, the lens phase waits for a session that never
+# returns, so the mutated run does not come back at all. The test that holds it
+# carries its own deadline — see the [25] entries for why that is the only shape
+# that works here.
+mutation "06 a lens that never returns is left to hang" "$GATE" \
+  's/^gate__await\(\) \{\n  local dir="\$1" pids="\$2" watchdog='"''"' brc\n/gate__await() {\n  local dir="\$1" pids="\$2" watchdog='"''"' brc\n  GATE_TIMEOUT=0\n/m' \
+  test/lenses.bats "deadline of its own"
+
+# ── the fake that drives all of the above
+
+# A fake whose call slots race is a fake that cannot count concurrent sessions, and
+# [06] is the first ticket that spawns any. The non-atomic version reported one call
+# where three had happened and handed a test whichever prompt won.
+mutation "06 the fake allocates its call slots without a test-and-set" "$SHIM" \
+  's/  if mkdir "\$state\/claude.calls\/\$n" 2>\/dev\/null; then\n    break\n  fi/  if [ ! -d "\$state\/claude.calls\/\$n" ]; then\n    mkdir -p "\$state\/claude.calls\/\$n"\n    break\n  fi/' \
+  test/lenses.bats "tagged ticket, and a sensitive surface"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

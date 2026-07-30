@@ -20,6 +20,14 @@ load helpers/assert
 
 setup() {
   harness_setup
+  # At the value a project installs, review lenses included. The rest of the suite
+  # runs with the judgement tier off — the harness injects that so a count of
+  # sessions stays a count of sessions — and a default nothing exercises end to end
+  # is a default verified only in the file that declares it. Two of the tests below
+  # never reach the lens phase, and that is not an oversight: their objective checks
+  # are red, and the gate does not spend a session on a verdict that cannot change
+  # the outcome.
+  set_config LENSES "$(config_default LENSES)"
 }
 
 teardown() {
@@ -33,6 +41,27 @@ script_honest_session() {
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 prompt="$(cat)"
+
+# A review lens, answered the way a real one answers: findings, then a verdict
+# line. It comes first because the sequence counter below is about *delivery*
+# sessions — a lens taking a number from it would make iteration 2 arrive third,
+# and this whole file would be driving a scenario other than the one it describes.
+#
+# Recorded by name and never by call index: the lens branches are concurrent, so
+# which of them is the run's second `claude` is not a fact a test may assume.
+case "$prompt" in
+  *RALPH-LENS-VERDICT*)
+    lens="$(printf '%s' "$prompt" |
+      sed -n 's/^## The lens you are: \(.*\)$/\1/p' | head -1)"
+    mkdir -p "$RALPH_SHIM_STATE/claude.lenses"
+    printf '%s\n' "$lens" >>"$RALPH_SHIM_STATE/claude.lenses/$lens"
+    printf '{"type":"system","subtype":"init","session_id":"lens","model":"test-model"}\n'
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"nothing to report. RALPH-LENS-VERDICT: pass"}],"usage":{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":5}}}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-LENS-VERDICT: pass","num_turns":1,"total_cost_usd":0.001}\n'
+    exit 0
+    ;;
+esac
+
 n="$(cat "$RALPH_SHIM_STATE/canary-seq" 2>/dev/null || echo 0)"
 n=$((n + 1))
 printf '%s\n' "$n" >"$RALPH_SHIM_STATE/canary-seq"
@@ -174,6 +203,16 @@ $loop_output
 OUT"
   assert_equal "$output" "3"
 
+  # And the judgement tier really ran, three times, on the two lenses no ticket is
+  # exempt from. Without this the `set_config LENSES` in setup would be decoration:
+  # a tier the loop never reached looks exactly like a tier nobody switched on, and
+  # the `refute gate-red` above would be passing for the wrong reason. The three
+  # gated lenses stay out because these tickets carry no tag and this project
+  # configures no sensitive or visible paths — five sessions an iteration is what a
+  # predicate exists to prevent.
+  assert_equal "$(lenses_that_ran)" "spec standards"
+  assert_equal "$(lens_call_count standards)" "3"
+
   # Iteration 2's session commits everything it can see. What the run added to
   # the project's history is its own commits and nothing else: not the session's
   # commit, and not one byte of the loop's state — the ticket frozen mid-claim at
@@ -304,6 +343,15 @@ FAKE
   run bash -c "ls -a '$FEATURE_DIR' | grep -E '\.session\.|\.tokens' || true"
   assert_equal "$output" ""
   [ ! -d "$(run_lock_dir)" ] || fail "the lock survived the run"
+
+  # Six review-lens sessions ran during those three iterations, and the line above
+  # is what says they left nothing here. Their prompt and their stream live in the
+  # gate's temp directory, under TMPDIR, and that is on purpose: a lens whose stream
+  # landed in the repository would be a judge writing into the tree it judges, which
+  # is the one thing [06] had to make impossible. Counted, or the assertion above
+  # would hold on a tier that never ran.
+  assert_equal "$(lens_call_count standards)" "3"
+  assert_equal "$(lens_call_count spec)" "3"
 
   # And it did not tidy up after anyone else: the work in progress that was
   # already in the tree is still exactly as it was — still uncommitted, too.

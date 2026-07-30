@@ -179,7 +179,7 @@ Ce que le `.gitignore` du projet couvre en dehors des chemins gardés : jugé pa
 _À éviter_ : zone morte (c'était le nom du défaut, pas de l'état déclaré), angle mort.
 
 **Écritures du gate**:
-Ce que les branches du gate changent dans l'arbre **après** l'arbre jugé : un rapport de couverture, un snapshot de test mis à jour, un `rm -rf dist/` de build, et demain le flux d'une lentille. Dans aucun des deux trees que le rollback diffe, et pas ignoré par git non plus — donc jugé par rien, défait par rien, et **nommé** à chaque itération comme la zone ignorée, la ligne du rollback étant nette de ce qu'il a effectivement remis. Les lignes disent *changed* et non *wrote* parce qu'une suppression en fait partie. Tenable parce que ces commandes viennent d'un fichier scellé ; plus du tout tenable le jour où une branche est un `claude`.
+Ce que les branches du gate changent dans l'arbre **après** l'arbre jugé : un rapport de couverture, un snapshot de test mis à jour, un `rm -rf dist/` de build, et demain le flux d'une lentille. Dans aucun des deux trees que le rollback diffe, et pas ignoré par git non plus — donc jugé par rien, défait par rien, et **nommé** à chaque itération comme la zone ignorée, la ligne du rollback étant nette de ce qu'il a effectivement remis. Les lignes disent *changed* et non *wrote* parce qu'une suppression en fait partie. Tenable parce que ces commandes viennent d'un fichier scellé. Ce qu'écrit une **lentille** n'en fait pas partie et n'a jamais eu le droit d'en faire partie : c'est un modèle, donc ça relève du confinement des écritures de lentille, pas de l'énumération.
 _À éviter_ : artefacts (trop large), pollution, résidus.
 
 **Configuration scellée**:
@@ -251,12 +251,24 @@ _À éviter_ : décision (trop vague), record de leçon (autre canal).
 _(Ajouté par le durcissement v2, ticket [23] — généralise [08]/[14].)_
 
 **Lentille de revue**:
-Un regard de revue dans le fan du gate, avec une nature (objective/jugement) et un **prédicat de déclenchement** (toujours-active ou gatée au risque). Standards & Spec sont toujours-actives ; Fidélité, Sécurité, Accessibilité sont gatées par les caractéristiques du ticket.
-_À éviter_ : reviewer, axe (réservé à Standards/Spec), check.
+Un regard de revue dans la **phase de jugement** du gate — un `claude` frais, sans conversation héritée, qui relit le diff d'une session avec un **jeu d'outils en lecture seule** — avec un **prédicat de déclenchement** (toujours-active ou gatée au risque). Standards & Spec sont toujours-actives ; Fidélité, Sécurité, Accessibilité sont gatées par les caractéristiques du ticket (tag, ou write-surface rencontrant `VISIBLE_PATHS` / `SECURITY_PATHS`). Le prédicat lit le ticket **restauré** du snapshot pré-session, sinon une session éteindrait ses propres reviewers en supprimant une ligne.
+_À éviter_ : reviewer, axe (réservé à Standards/Spec), check (réservé aux branches objectives — une lentille juge, elle ne mesure pas).
 
 **Registre de lentilles**:
-Le jeu extensible des lentilles que le gate évalue par prédicat pour chaque ticket. Un projet y ajoute une lentille (perf, i18n…) sans refondre le gate ; le détecteur [24] propose quand en ajouter.
+Le jeu extensible des lentilles que le gate évalue par prédicat pour chaque ticket. Une lentille = un nom dans `LENSES` plus `lenses_want_<nom>` et `lenses_rubric_<nom>` ; le control-flow du gate n'en nomme aucune, il ne connaît que le registre. Un nom que rien ne sait exécuter est refusé au **préflight** et non silencieusement sauté : une faute de frappe ne doit pas ressembler à un reviewer qui a passé. Le détecteur [24] propose quand en ajouter.
 _À éviter_ : liste de reviewers, config de gate.
+
+**Phase de jugement**:
+La seconde phase du gate : les lentilles déclenchées, en éventail, **après** que les branches objectives ont rendu leur verdict et jamais à côté d'elles. Deux raisons, toutes deux structurelles. Une lentille écrit dans l'arbre qu'elle juge, et ce n'est attribuable — donc défaisable — que si rien d'autre n'écrit dans la fenêtre ; et un gate déjà rouge ne changera pas d'avis, donc y dépenser une session serait dépenser du quota pour rien. Sautée n'est pas passée : rien n'entre dans les verdicts, et le run dit pourquoi. `GATE_TIMEOUT` est **par phase**.
+_À éviter_ : second fan (le fan est le mécanisme, la phase est l'ordonnancement), post-gate.
+
+**Verdict de lentille**:
+La dernière ligne `RALPH-LENS-VERDICT: pass|fail` du flux d'une lentille, lue en **dernière occurrence** — un modèle cite l'instruction en route vers sa réponse, et le diff relu peut porter le jeton lui aussi. Tout le reste compte rouge : session morte, tuée pour contexte, dépassée par le chien de garde, ou qui répond de la prose. Le silence n'achète pas de vert ; un `pass` complaisant, en revanche, n'est distinguable de rien — c'est le prix du palier de jugement, écrit comme tel dans `docs/frontiere-de-confiance.md`.
+_À éviter_ : note, score, approbation (une lentille ne signe rien).
+
+**Confinement des écritures de lentille**:
+Les trois mécanismes qui font qu'un `claude` tournant dans l'arbre du jugé n'y laisse rien : **empêcher** (`--tools Read,Grep,Glob`, qui retire les outils d'écriture au lieu de leur refuser la permission), **mesurer** (l'arbre relevé avant et après la phase de jugement), **défaire** (`gate_restore_tree`, la primitive du rollback). Une seule des trois est une garantie que le pack vérifie lui-même : la mesure. Une écriture qui survit à la restauration rend l'itération rouge ; une écriture défaite ne lui coûte rien, parce que facturer un retry à une session pour ce que son juge a fait est l'erreur que [29] a trouvée un cran plus haut.
+_À éviter_ : sandbox (réservé à l'exécution), read-only (nomme un seul des trois), nettoyage.
 
 **Revue de capacités**:
 Le pas — en sortie de charting (discovery, HITL) et au retro [11] (delivery, propose→escalade) — qui repère si une nouvelle lentille/agent/skill est nécessaire. **Détecter ≠ créer** : une capacité est contractuelle → toujours HITL. Barre : récurrence ou classe non couverte, **réutiliser-avant-créer**.
