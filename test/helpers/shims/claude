@@ -69,6 +69,23 @@ permission_mode="default"
 # `--tools` comes back with that set and nothing else.
 tools="Task,Bash,Glob,Grep,Read,Edit,Write,NotebookEdit,WebFetch,WebSearch,TodoWrite"
 want_tools=0
+# Same discipline again, for the two channels `--tools` does not govern ([31]).
+# What the real binary does with the tree it starts in, probed on 30/07/2026:
+# a project `.mcp.json` gets its server `command` launched and its tools offered
+# to the model — even under `--tools` — and a hook declared in the project's
+# settings runs on the first tool call. Neither is a tool, so neither was covered.
+#
+# `mcp_servers` is the one of the two the real init event reports, so it is the
+# one this fake can answer faithfully: non-empty when a project `.mcp.json` is
+# there and `--strict-mcp-config` was not passed. `--setting-sources` has no
+# observable in init at all — `memory_paths` came back identical either way — so
+# what the fake can honestly do is record what it *would* have loaded and let a
+# test assert that a lens loads nothing. The real-binary half of both is in
+# test/contract-claude.bats, where a hook and a server command leave a marker on
+# disk and no model has to be believed.
+strict_mcp=0
+setting_sources="user,project,local"
+want_sources=0
 for arg in "$@"; do
   printf '%s\n' "$arg" >>"$state/claude.calls/$n/argv"
   if [ "$want_model" = 1 ]; then
@@ -79,10 +96,54 @@ for arg in "$@"; do
     tools="$arg"
     want_tools=0
   fi
+  if [ "$want_sources" = 1 ]; then
+    setting_sources="$arg"
+    want_sources=0
+  fi
   [ "$arg" = "--model" ] && want_model=1
   [ "$arg" = "--tools" ] && want_tools=1
+  [ "$arg" = "--setting-sources" ] && want_sources=1
+  [ "$arg" = "--strict-mcp-config" ] && strict_mcp=1
   [ "$arg" = "--dangerously-skip-permissions" ] && permission_mode="bypassPermissions"
 done
+
+# The project MCP servers this session loaded, reported the way the real init
+# event reports them: `[{"name":"<name>","status":"pending"}]`, one entry per key
+# under `mcpServers`. A crude read of the file on purpose — the pack promises to
+# run with nothing installed, and this fake has no more right to jq than it does.
+# Whitespace is stripped first, so a one-line `.mcp.json` — which is how most of
+# them are written — reads the same as an indented one. A server key is a quoted
+# name followed by an object; nothing else in these files has that shape.
+mcp_json="[]"
+if [ "$strict_mcp" = 0 ] && [ -f "$PWD/.mcp.json" ]; then
+  entries="$(tr -d ' \t\n' <"$PWD/.mcp.json" |
+    sed -n 's/.*"mcpServers":{//p' |
+    grep -o '"[A-Za-z0-9_-]*":{' |
+    tr -d '":{' |
+    awk '{ printf "%s{\"name\":\"%s\",\"status\":\"pending\"}", (NR > 1 ? "," : ""), $0 }')" ||
+    entries=""
+  if [ -n "$entries" ]; then
+    mcp_json="[$entries]"
+    printf '%s\n' ".mcp.json" >"$state/claude.calls/$n/mcp-loaded"
+  fi
+fi
+
+# What the project side of the tree would have contributed: settings (hooks,
+# permissions, env) and CLAUDE.md. Recorded, never executed — a fake that ran a
+# hook out of the tree under test would be a fake with a shell in it.
+record_config() {
+  local f
+  for f in "$@"; do
+    [ -f "$PWD/$f" ] || continue
+    printf '%s\n' "$f" >>"$state/claude.calls/$n/project-config"
+  done
+}
+case ",$setting_sources," in
+  *,project,*) record_config .claude/settings.json CLAUDE.md ;;
+esac
+case ",$setting_sources," in
+  *,local,*) record_config .claude/settings.local.json CLAUDE.local.md ;;
+esac
 
 tools_json="$(printf '%s' "$tools" |
   awk -F, '{ for (i = 1; i <= NF; i++) printf "%s\"%s\"", (i > 1 ? "," : ""), $i }')"
@@ -185,7 +246,7 @@ fi
 # session is still running*. A fake that reported usage only on the final result
 # would let the net look covered while it could only ever fire after the fact.
 cat <<EOF
-{"type":"system","subtype":"init","cwd":"$PWD","session_id":"$session","uuid":"uuid-$n-init","model":"$model","permissionMode":"$permission_mode","apiKeySource":"none","claude_code_version":"0.0.0-shim","output_style":"default","tools":[$tools_json],"mcp_servers":[],"slash_commands":[],"agents":[],"skills":[],"plugins":[],"memory_paths":[],"capabilities":[],"analytics_disabled":true,"product_feedback_disabled":true,"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}
+{"type":"system","subtype":"init","cwd":"$PWD","session_id":"$session","uuid":"uuid-$n-init","model":"$model","permissionMode":"$permission_mode","apiKeySource":"none","claude_code_version":"0.0.0-shim","output_style":"default","tools":[$tools_json],"mcp_servers":$mcp_json,"slash_commands":[],"agents":[],"skills":[],"plugins":[],"memory_paths":[],"capabilities":[],"analytics_disabled":true,"product_feedback_disabled":true,"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}
 {"type":"system","subtype":"thinking_tokens","estimated_tokens":3,"estimated_tokens_delta":3,"uuid":"uuid-$n-think1","session_id":"$session"}
 {"type":"rate_limit_event","rate_limit_info":$rate_limit,"uuid":"uuid-$n-rate","session_id":"$session"}
 {"type":"system","subtype":"thinking_tokens","estimated_tokens":36,"estimated_tokens_delta":33,"uuid":"uuid-$n-think2","session_id":"$session"}

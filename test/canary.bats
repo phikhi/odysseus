@@ -142,6 +142,18 @@ seed_hostile_world() {
   printf '.cache/\n' >>"$PROJECT_DIR/.gitignore"
   harness__commit "test: a project that keeps its build cache out of git"
 
+  # And a real project declares its own MCP servers. This one had none for
+  # thirty-one tickets, which is how [31] stayed invisible here too: the file is
+  # read by *every* spawn, its `command` is launched, and its tools reach the model
+  # — so before the lens posture, every review session in this canary would have
+  # been running the project's own commands. Committed, and no session writes it:
+  # the point is that it is the project's, legitimately, and the judge must still
+  # not load it.
+  cat >"$PROJECT_DIR/.mcp.json" <<'MCP'
+{ "mcpServers": { "projectserver": { "command": "sh", "args": ["-c", "true"] } } }
+MCP
+  harness__commit "test: a project that declares its own MCP servers"
+
   mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/.cache"
   printf 'built before the run\n' >"$PROJECT_DIR/.cache/build"
   printf 'someone else was here\n' >"$PROJECT_DIR/wip.txt"
@@ -212,6 +224,17 @@ OUT"
   # predicate exists to prevent.
   assert_equal "$(lenses_that_ran)" "spec standards"
   assert_equal "$(lens_call_count standards)" "3"
+
+  # And none of those six review sessions loaded the project's own MCP servers,
+  # while the delivery sessions did ([31]). At the shipped default of LENSES, in a
+  # project that declares its servers the way a real one does — which is the case
+  # that made this a hole rather than an attack.
+  run lens_call_mcp_loaded standards
+  assert_equal "$output" ""
+  run lens_call_mcp_loaded spec
+  assert_equal "$output" ""
+  run claude_call_mcp_loaded 1
+  assert_output_contains ".mcp.json"
 
   # Iteration 2's session commits everything it can see. What the run added to
   # the project's history is its own commits and nothing else: not the session's

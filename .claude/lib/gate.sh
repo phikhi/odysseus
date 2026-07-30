@@ -115,13 +115,106 @@ gate_preflight() {
 # judges its successors. `ralph.config.sh` carries TEST_CMD, so a session that
 # set it to `true` would make every later gate green while proving nothing.
 #
+# The list is derived from that sentence and not from the cases that prompted it,
+# because [31] found it three files short of its own criterion. Read against the
+# criterion, in order:
+#
+#   settings.json, settings.local.json    permissions, env, and hooks — a hook is
+#                                         a command, so this is the entry that
+#                                         makes the list about code execution and
+#                                         not only about instructions
+#   CLAUDE.md, CLAUDE.local.md            read by every spawn. Sealing them means
+#                                         no ticket can ever deliver them again,
+#                                         and in this repository that includes its
+#                                         own definition of done. Taken as a
+#                                         decision: the loop does not get to edit
+#                                         the rules it is judged by. [14]'s
+#                                         autonomous promotion of a recurring
+#                                         lesson therefore goes to its own
+#                                         injected index, or escalates
+#   .mcp.json                             a server's `command` is launched by
+#                                         every spawn — probed, [31]. This one is
+#                                         not an instruction channel, it is an
+#                                         execution channel
+#   .claude/agents, commands, skills,     capabilities, which take effect at the
+#   hooks                                 next spawn. Free to seal: [15] already
+#                                         refuses to let a run create a capability
+#                                         on its own, so no ticket needs to write
+#                                         them. One reserve, worth knowing before
+#                                         claiming coverage: here `.claude/skills`
+#                                         is a set of symlinks, and a write
+#                                         *through* a link lands outside the sealed
+#                                         path. The scope-guard sees that write as
+#                                         itself; the seal does not see it at all
+#   the config the next run sources       under the name it actually carries, see
+#                                         gate__sealed_config
+#
 # The pack's *code* is deliberately not sealed. A run has sourced its libs before
 # the first session starts, so editing them cannot change the judgement of the
 # run in progress; and a ticket that rewrites `gate.sh` is exactly what this
 # repository does with itself. What a fresh `claude` reads is the different
 # question, because it lands on the next spawn and nothing looks at it.
+#
+# And sealing *detects*: it reds the iteration at aggregation, after every branch
+# has run in the tree where the file was. That is enough for the next session — the
+# rollback removes the file before anything spawns again — and it is not enough for
+# the gate's own lens phase, which is a `claude` starting in that same tree. What
+# covers that window is argv, on the spawn: see lenses_posture.
+# One printf per group rather than one long line: the groups answer different
+# halves of the criterion, and a reader checking the list against it should be
+# able to see which is which.
 gate_sealed_paths() {
-  printf '%s\n' '.claude/settings.local.json .claude/settings.json .claude/ralph.config.sh'
+  printf '%s ' '.claude/settings.local.json .claude/settings.json'
+  printf '%s ' 'CLAUDE.md CLAUDE.local.md'
+  printf '%s ' '.mcp.json'
+  printf '%s ' '.claude/agents .claude/commands .claude/skills .claude/hooks'
+  gate__sealed_config
+  printf '\n'
+}
+
+# The file the next run sources, under the name it actually carries. `RALPH_CONFIG`
+# is an environment variable: a run started with another value leaves its real
+# configuration open to a write-surface, and a session that writes TEST_CMD there
+# chooses the gate of every run that follows. Probed on 30/07/2026 with
+# `RALPH_CONFIG=.claude/ralph.prod.sh`: green iteration, no complaint, `TEST_CMD`
+# set to `true` waiting for the next run.
+#
+# Worse than a gate that passes, since [29]: what TEST_CMD writes while it runs is
+# judged by nothing and undone by nothing, and the one argument that makes that
+# tolerable is that the command comes from a sealed file. A config under an
+# unsealed name breaks the chain at both ends at once.
+#
+# Repo-relative, because that is what a tree path is. The default is always in the
+# list as well: a run whose RALPH_CONFIG points outside the tree must not quietly
+# unseal the ordinary one.
+# The path is resolved with `pwd -P` before being compared, and that is not
+# defensive noise: `$PWD` is the logical path — on a mac a temporary directory is
+# reached as /var/folders/… — while `git rev-parse --show-toplevel` answers the
+# physical one, /private/var/folders/…. A literal prefix test would decide that the
+# config lives outside the repository and seal nothing at all, which is a control
+# that fails open on the shape of a path.
+#
+# One side, not both: git normalises its own answer, so resolving the root as well
+# was a line nothing could ever make red — removed rather than left with a mutation
+# entry pretending to cover it.
+gate__sealed_config() {
+  local config="${RALPH_CONFIG:-}" root dir
+  printf '%s' '.claude/ralph.config.sh'
+  [ -n "$config" ] || return 0
+
+  case "$config" in
+    /*) ;;
+    *) config="$PWD/$config" ;;
+  esac
+  dir="$(cd "$(dirname "$config")" 2>/dev/null && pwd -P)" || return 0
+  [ -n "$dir" ] || return 0
+  config="$dir/$(basename "$config")"
+
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  [ -n "$root" ] || return 0
+  case "$config" in
+    "$root"/*) printf ' %s' "${config#"$root"/}" ;;
+  esac
 }
 
 # Matched the same way a write-surface is, so a sealed directory would cover what

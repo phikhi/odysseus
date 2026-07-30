@@ -123,6 +123,24 @@ contract_spawn_real() {
   return 0
 }
 
+# A real spawn in a directory the caller prepared, instead of the empty one
+# contract_spawn_real makes for itself. [31] needs it: the two channels `--tools`
+# turned out not to cover are *files in the tree the session starts in* — a
+# `.mcp.json` whose server command gets launched, and a hook in the project's
+# settings that runs on the first tool call. An empty working directory cannot
+# exercise either, which is exactly why neither was noticed for six tickets.
+#
+# The caller owns the directory and its cleanup. The name keeps `contract_spawn_real`
+# as a substring on purpose: contract_unguarded_real_spawns greps for it, so a test
+# using this one is held to the same opt-in.
+contract_spawn_real_in() {
+  local work="$1" out="$2" prompt="$3"
+  shift 3
+  contract__spawn "$out" "$prompt" "$work" "$CONTRACT_REAL_MODEL" \
+    "$CONTRACT_HOST_PATH" "$CONTRACT_HOST_HOME" "$@"
+  return 0
+}
+
 contract_exit_code() {
   printf '%s\n' "$CONTRACT_EXIT"
 }
@@ -173,6 +191,17 @@ contract__load_pack() {
   . "$RALPH_PACK_ROOT/.claude/lib/monitor.sh"
   # shellcheck source=../../.claude/lib/session.sh
   . "$RALPH_PACK_ROOT/.claude/lib/session.sh"
+}
+
+# The flags the pack spawns a review lens with, read out of the pack instead of
+# retyped here — retyping is the drift this whole file exists to catch. In a
+# subshell, so a lib's definitions do not land in the test's shell.
+contract_lens_posture() {
+  (
+    # shellcheck source=../../.claude/lib/lenses.sh
+    . "$RALPH_PACK_ROOT/.claude/lib/lenses.sh"
+    lenses_posture
+  )
 }
 
 # NDJSON, one event per line. The monitor reads this stream line by line while it

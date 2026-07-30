@@ -26,11 +26,15 @@
 # So the answer is in three parts, and the middle one is the only one that is a
 # guarantee rather than a hope:
 #
-#   prevent   the spawn passes `--tools` (see lenses_tools), which removes the
-#             write tools from the session instead of merely refusing them
-#             permission — `--allowedTools` means nothing under
-#             `--dangerously-skip-permissions`. Assertable against the real
-#             binary: `system/init` reports the tool set it ended up with ([20]).
+#   prevent   the spawn passes a posture, not just a tool set (see lenses_tools
+#             and lenses_posture). `--tools` removes the write tools from the
+#             session instead of merely refusing them permission —
+#             `--allowedTools` means nothing under
+#             `--dangerously-skip-permissions` — and it was verified against the
+#             real binary ([20]). It is also not enough on its own: `--tools`
+#             governs the built-in set, so a `.mcp.json` or a hook in the judged
+#             tree walked straight past it ([31]). The rest of the posture closes
+#             those; the comment on lenses_posture carries the probes.
 #   verify    the gate snapshots the tree before the lens fan and again after it,
 #             and restores anything that moved. A flag the binary might stop
 #             honouring is a hope; a diff of two tree objects is a measurement.
@@ -202,8 +206,62 @@ lenses_has_tag() {
 # ([24]). `--tools` removes what is not named from the session rather than
 # refusing it permission, which is the distinction that matters under
 # `--dangerously-skip-permissions`.
+#
+# Verified against the real binary on 30/07/2026 ([20]'s opt-in): `system/init`
+# came back with exactly `["Glob","Grep","Read"]` — no Edit, Write, Bash,
+# NotebookEdit or Task. That is the assertion this half of [06] cannot do without.
 lenses_tools() {
   printf '%s\n' 'Read,Grep,Glob'
+}
+
+# The rest of a lens session's posture, and it exists because `--tools` turned out
+# to cover less than the sentence "a lens cannot write" needs ([31], probed against
+# the real binary on 30/07/2026). A lens starts in the working tree of the session
+# it is judging. Three things in that tree are read *by the process*, before the
+# model sees anything, and none of them is a tool:
+#
+#   .mcp.json                    the server's `command` is launched — probed, the
+#                                marker was written on every spawn, `--tools` or
+#                                not — and once its handshake completes, its tools
+#                                are offered to the model. Probed: a lens spawned
+#                                with `--tools Read,Grep,Glob` issued a `tool_use`
+#                                named `mcp__probe__rogue_write` on its fourth turn
+#                                and got the server's answer back. `--tools` governs
+#                                "the built-in set"; an MCP tool is not built in.
+#   .claude/settings.json,       hooks. A hook is a *command*, so a session that
+#   .claude/settings.local.json  writes one gets code running inside its own
+#                                judge's process on the judge's first tool call.
+#                                Probed with a `PreToolUse` hook on `Read`: the
+#                                marker was written under the tool set above.
+#   CLAUDE.md, CLAUDE.local.md   instructions, read at startup. Probed: the lens
+#                                obeyed a marker instruction from the judged tree.
+#
+# All four files are sealed ([24], widened by [31]), which handles the *next*
+# session — the iteration goes red and the rollback removes them before anything
+# spawns again. It does not handle this one: sealing reds at aggregation, and the
+# lens phase has already run by then (probe 9r). A flag on the spawn is the only
+# control that falls before what it protects, which is why the answer here is argv
+# and not a wider seal.
+#
+# `--setting-sources user` keeps the operator's own settings and drops the
+# project's and the local ones: the trust direction is that a lens inherits from
+# whoever started the run, never from the tree under review. Not configurable, for
+# the same reason as the tool set.
+#
+# It costs the pack nothing, and that is not luck: the only thing the shipped
+# `.claude/settings.json` carries is the auto-compact posture, which session_spawn
+# also exports as an environment variable — precisely so the guarantee does not
+# depend on a settings file the target project could overwrite ([20]). A lens
+# spawned without project settings still runs with DISABLE_AUTO_COMPACT=1. Anything
+# a later ticket puts in that file and *needs* in a lens has to travel by argv or
+# environment, or it will silently not be there.
+#
+# What this does **not** close, and it must not be read as if it did: the rubrics
+# send a lens to read CONTEXT.md, docs/adr/ and the files around the change with
+# its own Read and Grep, in the judged tree. Text a session wrote still reaches its
+# judge — that is the line [06] left without an owner, and no flag addresses it.
+lenses_posture() {
+  printf '%s\n' "--tools $(lenses_tools) --strict-mcp-config --setting-sources user"
 }
 
 # The line a lens has to end on. Read as the *last* match in the stream, so a
@@ -243,7 +301,10 @@ lenses_review() {
     return 1
   fi
 
-  session_spawn "$promptfile" "$stream" --tools "$(lenses_tools)" || rc=$?
+  # Unquoted on purpose: the posture is several flags, and one string is what keeps
+  # them in one definition a test can read.
+  # shellcheck disable=SC2046
+  session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
 
   verdict="$(lenses__verdict "$stream")"
   lenses__findings "$stream"

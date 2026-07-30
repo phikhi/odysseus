@@ -1040,8 +1040,12 @@ mutation "06 a red lens does not redden the gate" "$GATE" \
 
 # ── the lens cannot write, prevention half
 
+# Re-aimed by [31]: the spawn used to pass `--tools "$(lenses_tools)"` inline, and
+# it now passes the whole posture. The guarantee is unchanged and still carried —
+# emptying the tool set out of the posture leaves the lens with the built-in set,
+# writes included — so the entry follows the line rather than being retired.
 mutation "06 the lens is spawned with the tools that write" "$LENSES_LIB" \
-  's/ --tools "\$\(lenses_tools\)"//' \
+  's/"--tools \$\(lenses_tools\) --strict-mcp-config --setting-sources user"/"--strict-mcp-config --setting-sources user"/' \
   test/lenses.bats "without the tools that write"
 
 mutation "06 the read-only tool set is widened by one" "$LENSES_LIB" \
@@ -1094,6 +1098,61 @@ mutation "06 a lens that never returns is left to hang" "$GATE" \
 mutation "06 the fake allocates its call slots without a test-and-set" "$SHIM" \
   's/  if mkdir "\$state\/claude.calls\/\$n" 2>\/dev\/null; then\n    break\n  fi/  if [ ! -d "\$state\/claude.calls\/\$n" ]; then\n    mkdir -p "\$state\/claude.calls\/\$n"\n    break\n  fi/' \
   test/lenses.bats "tagged ticket, and a sensitive surface"
+
+# ── [31] the seal against its own criterion, and the lens posture ────────────
+
+# The list is one printf per group, which is what makes each group mutable on its
+# own: emptying one has to red the test that names that group's paths.
+mutation "31 what a fresh claude reads is not sealed" "$GATE" \
+  's/  printf .%s . .CLAUDE.md CLAUDE.local.md.\n/  printf "%s " ""\n/' \
+  test/gate.bats "fresh claude reads"
+
+mutation "31 a project MCP config is not sealed" "$GATE" \
+  's/  printf .%s . ..mcp.json.\n/  printf "%s " ""\n/' \
+  test/gate.bats "fresh claude reads"
+
+mutation "31 the capabilities a spawn picks up are not sealed" "$GATE" \
+  's/  printf .%s . ..claude\/agents .claude\/commands .claude\/skills .claude\/hooks.\n/  printf "%s " ""\n/' \
+  test/gate.bats "fresh claude reads"
+
+# The config the *next run* sources, under the name it actually carries. Reverting
+# to the literal is precisely the defect [31] found: `RALPH_CONFIG` is an
+# environment variable, and a run started with another value left its real
+# configuration coverable by a write-surface.
+mutation "31 the sourced config is sealed under a hard-coded name only" "$GATE" \
+  's/^gate__sealed_config\(\) \{\n  local config="\$\{RALPH_CONFIG:-\}" root dir/gate__sealed_config() {\n  local config="" root dir/m' \
+  test/gate.bats "under the name it carries"
+
+# The path-shape trap, and it fails *open*: `$PWD` is logical, git answers the
+# physical path, so a literal prefix test seals nothing and says nothing about it.
+# Aimed at the config side because that is the side that carries it — git normalises
+# its own answer, so a `pwd -P` on the root was a line nothing could make red, and
+# it is gone rather than sitting here as an entry that always says ok.
+mutation "31 the sourced config is compared without resolving its own path" "$GATE" \
+  's/  dir="\$\(cd "\$\(dirname "\$config"\)" 2>\/dev\/null \&\& pwd -P\)" \|\| return 0/  dir="\$(dirname "\$config")"/' \
+  test/gate.bats "under the name it carries"
+
+# The two channels `--tools` does not govern. Both were probed against the real
+# binary on 30/07/2026: an MCP server's command is launched and its tools reach the
+# model, and a hook in the project's settings runs on the judge's first tool call.
+mutation "31 a lens loads the MCP servers of the tree it judges" "$LENSES_LIB" \
+  's/ --strict-mcp-config//' \
+  test/lenses.bats "starts sterile"
+
+mutation "31 a lens loads the settings of the tree it judges" "$LENSES_LIB" \
+  's/ --setting-sources user//' \
+  test/lenses.bats "starts sterile"
+
+# And the fake that holds both. It reports what it would have loaded; a fake that
+# always answered "nothing" would make the two entries above pass with the flags
+# gone, which is the exact failure mode this file was written for.
+mutation "31 the fake reports no MCP server whatever it was called with" "$SHIM" \
+  's/if \[ "\$strict_mcp" = 0 \] \&\& \[ -f "\$PWD\/.mcp.json" \]; then/if false; then/' \
+  test/lenses.bats "starts sterile"
+
+mutation "31 the fake reports no project config whatever it was called with" "$SHIM" \
+  's/  \*,project,\*\) record_config .claude\/settings.json CLAUDE.md ;;/  *,nothing,*) : ;;/' \
+  test/lenses.bats "starts sterile"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

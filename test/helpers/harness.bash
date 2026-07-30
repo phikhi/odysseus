@@ -476,6 +476,30 @@ claude_call_env() {
   cat "$SHIM_STATE/claude.calls/${1:-1}/env" 2>/dev/null
 }
 
+# What the tree the session started in contributed to it, as the shim recorded it:
+# the project MCP servers it would have loaded, and the project-side settings and
+# CLAUDE.md it would have read. Empty is the answer a review lens must get ([31]) —
+# and an empty file and a missing one are the same answer here, because a project
+# without a `.mcp.json` contributes nothing either way.
+# `|| true` and not `; return 0`: a missing file is the *expected* answer here, and
+# the runner traps ERR — a `cat` that failed on its way to a zero return still
+# printed a failure line into the output the caller is about to assert on.
+claude_call_mcp_loaded() {
+  cat "$SHIM_STATE/claude.calls/${1:-1}/mcp-loaded" 2>/dev/null || true
+}
+
+claude_call_project_config() {
+  cat "$SHIM_STATE/claude.calls/${1:-1}/project-config" 2>/dev/null || true
+}
+
+lens_call_mcp_loaded() {
+  claude_call_mcp_loaded "$(head -1 "$SHIM_STATE/claude.lenses/$1" 2>/dev/null)"
+}
+
+lens_call_project_config() {
+  claude_call_project_config "$(head -1 "$SHIM_STATE/claude.lenses/$1" 2>/dev/null)"
+}
+
 # Drive the in-band budget signal the real binary emits early in the stream —
 # third event in the capture, after init and a first thinking estimate.
 # Takes the JSON body of rate_limit_info.
