@@ -280,6 +280,117 @@ CASES
   esac
 }
 
+@test "the real claude does not launch a project MCP server for a lens" {
+  if [ "${RALPH_REAL_CLAUDE:-0}" != 1 ]; then
+    skip "set RALPH_REAL_CLAUDE=1 to run this against the real binary (network + quota)"
+  fi
+  if ! contract_real_available; then
+    skip "no claude binary on the developer's PATH"
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    skip "no python3 to answer MCP with"
+  fi
+
+  # [31], and the finding that made the read-only tool set insufficient. `--tools`
+  # governs "the built-in set"; an MCP tool is not built in. Probed on 30/07/2026:
+  # a lens spawned with `--tools Read,Grep,Glob` issued a `tool_use` named
+  # `mcp__probe__rogue_write` on its fourth turn and got the server's answer.
+  #
+  # The assertion is a marker on disk, written by the server *process* — no model
+  # has to be believed, and the refutation half comes free: the same fixture
+  # without the flag must write it.
+  local work="$RALPH_TEST_DIR/mcp-work"
+  mkdir -p "$work"
+  cat >"$work/server.py" <<'SERVER'
+import json, os, sys
+open(os.environ["PROBE_MARKER"], "a").write("launched\n")
+for line in sys.stdin:
+    try:
+        msg = json.loads(line)
+    except Exception:
+        continue
+    if msg.get("id") is None:
+        continue
+    if msg.get("method") == "initialize":
+        v = (msg.get("params") or {}).get("protocolVersion", "2024-11-05")
+        r = {"protocolVersion": v, "capabilities": {"tools": {}},
+             "serverInfo": {"name": "probe", "version": "0.1.0"}}
+    elif msg.get("method") == "tools/list":
+        r = {"tools": [{"name": "rogue_write", "description": "Write a file.",
+                        "inputSchema": {"type": "object", "properties": {}}}]}
+    else:
+        r = {}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}) + "\n")
+    sys.stdout.flush()
+SERVER
+  export PROBE_MARKER="$work/launched"
+  cat >"$work/.mcp.json" <<MCP
+{ "mcpServers": { "probe": {
+    "command": "$(command -v python3)", "args": ["$work/server.py"],
+    "env": { "PROBE_MARKER": "$PROBE_MARKER" } } } }
+MCP
+  contract_prompt "$RALPH_TEST_DIR/prompt.txt" PONG-MCP
+
+  # The refutation first: without the flag the server really does get launched, so
+  # a green below cannot be a fixture that was never going to run anything.
+  contract_spawn_real_in "$work" "$RALPH_TEST_DIR/loose.jsonl" \
+    "$RALPH_TEST_DIR/prompt.txt" --tools Read,Grep,Glob
+  [ -s "$PROBE_MARKER" ] ||
+    fail "the fixture never launched the server even without --strict-mcp-config: nothing below is being tested"
+
+  : >"$PROBE_MARKER"
+  contract_spawn_real_in "$work" "$RALPH_TEST_DIR/lens.jsonl" \
+    "$RALPH_TEST_DIR/prompt.txt" $(contract_lens_posture)
+  if [ -s "$PROBE_MARKER" ]; then
+    fail "a lens launched the project's MCP server command"
+  fi
+
+  run grep -c 'mcp__' "$RALPH_TEST_DIR/lens.jsonl"
+  assert_equal "$output" "0"
+}
+
+@test "the real claude does not run a project hook for a lens" {
+  if [ "${RALPH_REAL_CLAUDE:-0}" != 1 ]; then
+    skip "set RALPH_REAL_CLAUDE=1 to run this against the real binary (network + quota)"
+  fi
+  if ! contract_real_available; then
+    skip "no claude binary on the developer's PATH"
+  fi
+
+  # The sharper half of [31], because a hook is not an instruction: it is a
+  # *command*, so a session that writes the project's settings gets code running
+  # inside its own judge's process on the judge's first tool call. `--tools` never
+  # covered it — a hook is not a tool — and the seal only reds at aggregation, which
+  # is after the lens phase has run.
+  local work="$RALPH_TEST_DIR/hook-work"
+  mkdir -p "$work/.claude"
+  printf 'target\n' >"$work/a.txt"
+  cat >"$work/.claude/settings.json" <<SETTINGS
+{ "hooks": { "PreToolUse": [ { "matcher": "Read",
+  "hooks": [ { "type": "command", "command": "printf ran >> $work/hook-ran" } ] } ] } }
+SETTINGS
+  printf 'Read the file a.txt with the Read tool, then reply with exactly PONG-HOOK.\n' \
+    >"$RALPH_TEST_DIR/prompt.txt"
+
+  contract_spawn_real_in "$work" "$RALPH_TEST_DIR/loose.jsonl" \
+    "$RALPH_TEST_DIR/prompt.txt" --tools Read,Grep,Glob
+  [ -s "$work/hook-ran" ] ||
+    fail "the fixture's hook never ran even with the project settings loaded: nothing below is being tested"
+
+  rm -f "$work/hook-ran"
+  contract_spawn_real_in "$work" "$RALPH_TEST_DIR/lens.jsonl" \
+    "$RALPH_TEST_DIR/prompt.txt" $(contract_lens_posture)
+  if [ -s "$work/hook-ran" ]; then
+    fail "a project hook ran inside a review lens session"
+  fi
+
+  # And the tool call did happen, so the absent marker means the hook was not
+  # loaded rather than never reached.
+  run grep -c '"name":"Read"' "$RALPH_TEST_DIR/lens.jsonl"
+  [ "$output" != "0" ] ||
+    fail "the lens never called a tool, so an absent hook marker proves nothing"
+}
+
 @test "the fake and the real binary emit the same kinds of event" {
   if [ "${RALPH_REAL_CLAUDE:-0}" != 1 ]; then
     skip "set RALPH_REAL_CLAUDE=1 to run this against the real binary (network + quota)"

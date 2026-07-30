@@ -55,12 +55,23 @@ TYPECHECK_CMD="${TYPECHECK_CMD:-}"
 # docs/frontiere-de-confiance.md first. Written with `-` and not `:-` on purpose:
 # an empty value means "nothing extra", and has to survive being exported.
 #
-# Not negotiable, whatever this key says: `.claude/settings.local.json`,
-# `.claude/settings.json` and `.claude/ralph.config.sh` are always snapshotted,
-# and no ticket's write-surface may cover them. They are what a fresh `claude`
-# reads at startup and what the next run sources — a session that wrote one of
-# them would be configuring the harness that judges its successors, and one of
-# them holds TEST_CMD.
+# Not negotiable, whatever this key says: everything a fresh `claude` reads at
+# startup, plus the file the next run sources, is always snapshotted, and no
+# ticket's write-surface may cover it. A session that wrote one of them would be
+# configuring the harness that judges its successors — and one of them holds
+# TEST_CMD. The set is `.claude/settings.json`, `.claude/settings.local.json`,
+# `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/agents`,
+# `.claude/commands`, `.claude/skills`, `.claude/hooks`, and this file — under the
+# name it actually carries, so pointing RALPH_CONFIG somewhere else does not
+# unseal it.
+#
+# Two consequences worth knowing before a ticket is written against them. A sealed
+# path is a path the loop can never deliver: it goes red on every attempt, for
+# ever, which is deliberate for the rules a run is judged by but has to be a
+# decision and not a surprise. And sealing *detects* — it reds the iteration after
+# every gate branch has already run in the tree where the file was. What covers
+# that window for the review lenses is the posture they are spawned with, in
+# lib/lenses.sh, not this list.
 GUARDED_PATHS="${GUARDED_PATHS-.claude}"
 
 # ── Smart-zone net ───────────────────────────────────────────────────────────

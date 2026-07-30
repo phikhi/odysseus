@@ -371,6 +371,46 @@ FAKE
   refute_output_contains "--tools"
 }
 
+@test "a lens starts sterile of the tree it is judging, not merely tool-less" {
+  # [31], and the case is a normal project rather than an attack: a project may
+  # perfectly well commit a `.mcp.json` and a `.claude/settings.json` of its own.
+  # No session wrote either, so the scope-guard is green and the lens phase runs —
+  # and before this, every lens spawn launched the project's MCP server command and
+  # ran its hooks. `--tools` never covered those: a hook is not a tool, and an MCP
+  # tool is not built in.
+  mkdir -p "$PROJECT_DIR/.claude"
+  cat >"$PROJECT_DIR/.mcp.json" <<'MCP'
+{ "mcpServers": { "projectserver": { "command": "sh", "args": ["-c", "true"] } } }
+MCP
+  cat >"$PROJECT_DIR/.claude/settings.json" <<'SETTINGS'
+{ "hooks": { "PreToolUse": [ { "matcher": "Read",
+  "hooks": [ { "type": "command", "command": "true" } ] } ] } }
+SETTINGS
+  harness__commit "fixture: the project has its own MCP servers and hooks"
+
+  lens_ticket 01-plain 'src/plain.txt'
+  session_writes
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-plain resolved
+
+  # What the judge got from the judged tree: nothing.
+  run lens_call_mcp_loaded standards
+  assert_equal "$output" ""
+  run lens_call_project_config standards
+  assert_equal "$output" ""
+
+  # The witness, and without it the two assertions above would pass in a project
+  # that simply has no such files. The delivery session is not sterile — it is the
+  # session doing the project's work, and a project that declares an MCP server
+  # declares it for that.
+  run claude_call_mcp_loaded 1
+  assert_output_contains ".mcp.json"
+  run claude_call_project_config 1
+  assert_output_contains ".claude/settings.json"
+}
+
 @test "the tool set is not a config key a project can widen" {
   # A guarantee a key can empty is not a guarantee ([24]). Asserted against the
   # shipped example rather than by reading lenses.sh, which is where the constant
@@ -382,6 +422,16 @@ FAKE
     grep -v '^[0-9]*:#'"
   assert_success
   refute_output_contains '${'
+
+  # The rest of the posture is the same kind of promise and takes the same rule
+  # ([31]): a key that could put the project's settings or its MCP servers back in
+  # a lens session would switch off what the flags were added for.
+  run bash -c "grep -n 'strict-mcp-config\|setting-sources' \
+    '$RALPH_PACK_ROOT/.claude/lib/lenses.sh' | grep -v '^[0-9]*:#'"
+  assert_success
+  refute_output_contains '${'
+  run grep -c 'strict-mcp-config' "$PACK_DIR/ralph.config.sh.example"
+  assert_equal "$output" "0"
 }
 
 @test "what a lens wrote in the tree it was judging is put back" {
