@@ -841,23 +841,10 @@ FAKE
 }
 
 # ── collecting the branches ──────────────────────────────────────────────────
-
-@test "collecting a branch the deadline killed ends instead of spinning" {
-  # The collection re-waits for as long as `wait` answers over 128, because that
-  # is what a trapped signal looks like — see gate__collect. A branch the watchdog
-  # killed answers over 128 as well, and on bash 3.2 it keeps answering 143 on
-  # every later wait instead of "not a child of this shell": probed. The liveness
-  # check is therefore the only thing that ends the loop, and taking it out hangs
-  # the gate rather than failing an assertion — so the deadline for this one lives
-  # in the test, which is what lets its mutation be run at all.
-  pack_run_bg '
-    sleep 30 &
-    victim=$!
-    kill -TERM "$victim"
-    gate__collect "$victim"
-    : >"$RALPH_SHIM_STATE/collected"
-  '
-
-  wait_for_file "$SHIM_STATE/collected" 100 ||
-    fail "gate__collect never came back on a branch that had been killed"
-}
+#
+# The collection itself moved out of the gate in [28]: `session_spawn` needed the
+# same primitive and a lib may not reach into a neighbour's internals, so it is
+# `proc_collect` now and its own guarantees are covered in test/proc.bats. What
+# stays here is what the gate does with it — see test/loop-happy-path.bats for the
+# stop that lands mid-fan, and "the lens phase has a deadline of its own" in
+# test/lenses.bats for the branch the watchdog takes down.

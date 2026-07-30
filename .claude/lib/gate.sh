@@ -34,7 +34,7 @@
 #     types are also broken, and the wall-clock of a phase is its slowest branch
 #     rather than their sum. Collecting them is the fragile half: a branch that
 #     was started and not waited for is read as having no verdict, which counts
-#     red — see `gate__collect` for why a bare `wait` does not survive a graceful
+#     red — see `proc_collect` for why a bare `wait` does not survive a graceful
 #     stop.
 #
 # `GATE_TIMEOUT` is per phase, not per gate: each fan gets its own deadline, so a
@@ -582,50 +582,6 @@ gate__start() {
   (gate__branch "$dir" "$name" "$@") &
 }
 
-# Collect one branch, all the way to its exit code.
-#
-# `wait` is not a call the graceful stop can be trusted to survive. Bash defers a
-# trap until an external command returns, but documents the opposite for the
-# builtin: "the reception of a signal for which a trap has been set will cause the
-# wait builtin to return immediately with an exit status greater than 128,
-# immediately after which the trap is executed". The loop traps TERM and INT
-# precisely so that a kill lets the current iteration finish — so a single `wait`
-# per branch abandoned the fan the moment a stop was requested, and the
-# aggregation below then read `.rc` files nobody had written yet. Live branches
-# came back "no verdict", which counts red: an unearned `Failures:`, a rollback
-# undoing the session's work while the very test suite judging it was still
-# running, an orphaned branch outliving the run, and `rm -rf` on a directory
-# processes were still writing to. Three of those on one ticket send it to a human
-# as `failed-impl` without a single session having been judged.
-#
-# So wait again. Nothing is lost by doing so: the trap has already run by the time
-# we are back here, `RALPH_STOP` is set, and the loop stops after this iteration —
-# which is the whole promise. Disarming the trap around the fan would collect the
-# branches and drop the stop, which is the opposite trade.
-#
-# `kill -0` is what separates the two ways a status over 128 arrives, since the
-# code alone cannot: an interrupted `wait` leaves the branch running and still
-# answering, whereas a branch that died *from* a signal — the watchdog's doing —
-# has been reaped and no longer answers.
-#
-# It is the loop's only exit, and not a readability flourish. The tempting
-# assumption is that a second `wait` on a pid bash has already reaped comes back
-# 127, "not a child of this shell", which would end the loop by itself. Probed on
-# bash 3.2: it does not. A pid that exited normally answers 0, but a pid that was
-# *killed* answers 143 again, and again, without blocking — so dropping the
-# liveness check turns the watchdog path into a busy spin that never returns.
-# Which is why the test that covers this line carries its own deadline: removing
-# it hangs the gate rather than failing an assertion.
-gate__collect() {
-  local pid="$1" rc
-  while :; do
-    rc=0
-    wait "$pid" 2>/dev/null || rc=$?
-    [ "$rc" -gt 128 ] || return 0
-    kill -0 "$pid" 2>/dev/null || return 0
-  done
-}
-
 # Every descendant, deepest first, then the process itself. Killing the branch
 # alone would leave the command it started — a hung test suite holding a port or
 # a database — running for the rest of the night, and `kill -- -PID` needs a
@@ -716,13 +672,17 @@ gate__await() {
       ;;
   esac
 
+  # The status is dropped here on purpose: a branch's verdict is the `.rc` file it
+  # wrote, and the watchdog is expected to come back 143 because we just killed it.
+  # `proc_collect` hands the child's status back for the caller that does need it —
+  # `session_spawn`, whose exit code is the session's ([28]).
   for brc in $pids; do
-    gate__collect "$brc"
+    proc_collect "$brc" || true
   done
 
   if [ -n "$watchdog" ]; then
     kill -TERM "$watchdog" 2>/dev/null || true
-    gate__collect "$watchdog"
+    proc_collect "$watchdog" || true
   fi
   return 0
 }
