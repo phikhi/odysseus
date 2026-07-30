@@ -24,8 +24,10 @@
 #   RALPH_GATE_VERDICTS     e.g. "tests=green typecheck=red scope=green"
 #   RALPH_GATE_FAILED       the red branch names
 #   RALPH_GATE_SCOPE_CLASS  internal | contract, when the scope-guard is red
-#   RALPH_GATE_TREE         the tree the scope-guard judged, so the rollback and
-#                           the durable commit act on exactly what it approved
+#   RALPH_GATE_TREE         the tree every branch is judged on, so the rollback and
+#                           the durable commit act on exactly what was approved.
+#                           Taken before the fan and filled in before it, so a
+#                           branch — a subshell — inherits it ([29]).
 
 gate__log() {
   printf 'ralph: gate: %s\n' "$*"
@@ -135,20 +137,55 @@ IGNORED
   return 0
 }
 
-# The same zone as one line: how many paths, and the first ten of them. Non-zero
-# when there is nothing to say, so a caller can ask and stay silent.
+# A zone as one line: how many paths, and the first ten of them. Non-zero when
+# there is nothing to say, so a caller can ask and stay silent. Ten names and no
+# more; the count says how many were left out.
 #
-# Two readers have different things to say about one zone — the gate did not judge
-# it, the rollback could not undo it — so the counting and the truncation live
-# here instead of twice. Ten names and no more; the count says how many were left
-# out.
+# Public, and the noun is the caller's. There are two zones nothing in this pack
+# reaches — what git hides and what the gate wrote while it judged — and each of
+# them is read by two callers with different things to say about the same list:
+# the gate did not judge it, the rollback could not undo it. Counting and
+# truncating in four places would drift in four directions.
+gate_zone_line() {
+  local list="$1" noun="$2"
+  [ -n "$list" ] || return 1
+  printf '%s %s: %s\n' \
+    "$(printf '%s\n' "$list" | awk 'END { print NR }')" "$noun" \
+    "$(printf '%s\n' "$list" | head -10 | tr '\n' ' ' | sed 's/ *$//')"
+}
+
 gate_ignored_zone() {
-  local left count
+  local left
   left="$(gate_unguarded_ignored)" || left=""
-  [ -n "$left" ] || return 1
-  count="$(printf '%s\n' "$left" | awk 'END { print NR }')"
-  printf '%s ignored path(s): %s\n' \
-    "$count" "$(printf '%s\n' "$left" | head -10 | tr '\n' ' ' | sed 's/ *$//')"
+  gate_zone_line "$left" 'ignored path(s)'
+}
+
+# ── what the gate itself changed ─────────────────────────────────────────────
+#
+# The gate is not a passive observer of the tree it judges. `TEST_CMD` and
+# `TYPECHECK_CMD` are the target project's own commands — a coverage report, an
+# updated test snapshot, a compiler cache — and a review lens ([06]) will be a
+# `claude`. Whatever they write lands *after* the tree was taken, so it sits in
+# neither of the two trees the rollback diffs: it survives the rollback, and it is
+# not ignored by git either, so the zone of [24] does not name it.
+#
+# Which makes it the rollback's second unenumerated exemption, and it gets the
+# same answer as the first: name it every time rather than let "the tree is back
+# where the session found it" pass for a complete statement. It is not a verdict
+# and must not become one — a project whose suite writes an artefact on every run
+# has done nothing wrong, and reddening that would refuse every project that has
+# a build.
+#
+# Before [29] this set was not merely unnamed, it was undecidable: the scope-guard
+# took its own snapshot from inside its branch, in parallel with the suite, so
+# whether a given artefact was "what the gate wrote" or "what the session wrote"
+# depended on which process got there first.
+gate_unjudged_changes() {
+  local judged="$1" now
+  [ -n "$judged" ] || return 0
+  now="$(gate_tree_snapshot)" || return 0
+  [ "$now" != "$judged" ] || return 0
+  git diff-tree -r --name-only "$judged" "$now" 2>/dev/null | gate__drop_bookkeeping
 }
 
 # ── the diff an iteration is judged on ───────────────────────────────────────
@@ -281,22 +318,31 @@ gate__surface_owner() {
   return 1
 }
 
-# Runs as a gate branch: findings on stdout, the classification and the tree it
-# judged in sidecar files because a branch runs in its own process and cannot
-# set a variable here.
+# Runs as a gate branch: findings on stdout, the classification in a sidecar file
+# because a branch runs in its own process and cannot set a variable here.
+#
+# Both trees are given, and neither is read from the tree on disk. This function
+# used to snapshot the working tree itself, from inside its own branch — which is
+# to say while the test suite and the type check were already writing to it. The
+# same session on the same ticket then got `scope=green` or `scope=red` depending
+# on which process wrote first, and on one path that draw was final: an artefact
+# landing in another ticket's write-surface is classified `contract`, deliberately
+# not retryable, so the ticket went to the human sink without spending a retry for
+# something no session had done. A control that freezes its input while other
+# processes are still writing does not return a verdict, it returns a draw ([29]).
+#
+# An empty tree is refused rather than recomputed, and that matters more than it
+# looks: `gate_changed_files` takes its own snapshot when it is not given one, so
+# falling through to it would quietly restore the very race this argument exists
+# to close. A guard that cannot see must not pass.
 #
 # A ticket with no declared write-surface is the fail-safe case: an unknown
 # surface can never be assumed to contain anything.
 gate__scope_guard() {
-  local ticket="$1" base="$2" classfile="$3" treefile="${4:-}"
-  local now surface changed file owner class='' rc=0
+  local ticket="$1" base="$2" now="$3" classfile="$4"
+  local surface changed file owner class='' rc=0
 
-  now="$(gate_tree_snapshot)" || now=""
-  if [ -n "$treefile" ] && [ -n "$now" ]; then
-    printf '%s\n' "$now" >"$treefile"
-  fi
-
-  if ! changed="$(gate_changed_files "$base" "$now")"; then
+  if [ -z "$now" ] || ! changed="$(gate_changed_files "$base" "$now")"; then
     printf 'the scope-guard could not read the working tree — refusing to pass it\n'
     return 1
   fi
@@ -456,6 +502,20 @@ gate__report_unguarded() {
   return 0
 }
 
+# And the other zone nothing here reaches: what the gate's own branches wrote
+# while they were judging. Same shape as the line above and for the same reason —
+# it is not a verdict, it is the half of "the tree is back where the session found
+# it" that would otherwise go unsaid. Said on every iteration, green included:
+# a green one has no rollback at all, and the artefact is still there.
+gate__report_changed() {
+  local ticket="$1" zone
+  if zone="$(gate_zone_line "$(gate_unjudged_changes "$2")" \
+    'path(s) after the tree it judged')"; then
+    gate__log "$ticket: this gate itself changed $zone"
+  fi
+  return 0
+}
+
 # Up to 20 lines of what a red branch had to say. Enough to see which test
 # broke in the journal; the full picture belongs to the audit receipt.
 gate__report() {
@@ -470,11 +530,27 @@ gate_run() {
   local ticket="$1" base="${2:-}"
   local dir names='' pids='' name rc=0 brc watchdog=''
 
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
+  # Cleared before the first thing that can fail, so a gate that refuses to start
+  # never leaves the previous iteration's tree standing for the rollback to act on.
   RALPH_GATE_VERDICTS=""
   RALPH_GATE_FAILED=""
   RALPH_GATE_SCOPE_CLASS=""
   RALPH_GATE_TREE=""
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
+
+  # The tree every branch is judged on, taken once and before a single branch is
+  # started. Both halves are load-bearing. *Once*, so that the scope-guard, the
+  # rollback, the durable commit and — with [06] — a review lens all speak about
+  # one state of the repository instead of four snapshots taken while the suite
+  # ran. *Before the fan*, so that nothing the gate itself writes can be charged
+  # to the session or, worse, to another ticket. Filled into RALPH_GATE_TREE here
+  # rather than after the collection: a branch is a subshell, so it inherits what
+  # is set before it starts and nothing that is set after.
+  #
+  # An unreadable tree is left empty on purpose. The scope-guard refuses to pass a
+  # ticket it cannot see, which is what makes this branch red rather than absent —
+  # and a branch that was never started leaves no verdict to count.
+  RALPH_GATE_TREE="$(gate_tree_snapshot)" || RALPH_GATE_TREE=""
 
   gate__start "$dir" tests bash -c "$TEST_CMD"
   names="$names tests"
@@ -489,7 +565,7 @@ gate_run() {
   fi
 
   gate__start "$dir" scope \
-    gate__scope_guard "$ticket" "$base" "$dir/scope.class" "$dir/scope.tree"
+    gate__scope_guard "$ticket" "$base" "$RALPH_GATE_TREE" "$dir/scope.class"
   names="$names scope"
   pids="$pids $!"
 
@@ -535,14 +611,12 @@ gate_run() {
   if [ -f "$dir/scope.class" ]; then
     RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"
   fi
-  if [ -f "$dir/scope.tree" ]; then
-    RALPH_GATE_TREE="$(cat "$dir/scope.tree")"
-  fi
   RALPH_GATE_VERDICTS="${RALPH_GATE_VERDICTS# }"
   RALPH_GATE_FAILED="${RALPH_GATE_FAILED# }"
 
   gate__log "$ticket: $RALPH_GATE_VERDICTS"
   gate__report_unguarded "$ticket"
+  gate__report_changed "$ticket" "$RALPH_GATE_TREE"
   rm -rf "$dir"
   return "$rc"
 }

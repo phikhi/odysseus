@@ -13,7 +13,7 @@
 # rule out. Every one of them was a false green in a pack whose entire job is to
 # refuse false greens.
 #
-# Two of those are worth knowing before writing anything here:
+# Three of those are worth knowing before writing anything here:
 #
 #   - every `run` overwrites $output, so a negative assertion aimed at the wrong
 #     one can never fail. Keep the output you mean to assert on in a variable.
@@ -21,6 +21,14 @@
 #     replacement half, which perl interpolates to nothing: they broke the file
 #     instead of removing the guarantee, reported `ok`, and hid three vacuous
 #     tests underneath. A gate that checks tests is a test. Hence BROKEN below.
+#   - a substitution without /g edits the **first** match, so an anchor that is
+#     not unique is a latent lie. Two entries here aimed at `| gate__drop_bookkeeping`
+#     and at `git diff-tree -r`, both unique when written; [29] added a second
+#     caller of each *above* them, and from then on the mutation applied cleanly to
+#     the wrong function while the test it named kept its guarantee. The symptom is
+#     VACUOUS on a healthy test — which reads as the exact opposite of what happened,
+#     and would have been "fixed" by rewriting a test that was fine. Anchor on enough
+#     context to name one line, not on the interesting token.
 #
 # So the mutations are not a habit, they are an artefact. Each entry below names
 # a guarantee, the edit that removes it, and the test that must fail once it is
@@ -357,8 +365,15 @@ mutation "05 'none' is treated as a command to run" "$GATE" \
   's/ && \[ "\$TYPECHECK_CMD" != none \]//' \
   test/gate.bats "genuinely has no type check"
 
+# Anchored on the whole line, not on the pipe alone, and that is the fix for a
+# VACUOUS this file reported the day [29] added a second caller of
+# gate__drop_bookkeeping *above* this one. A perl substitution without /g edits the
+# **first** match: the mutation went on applying cleanly, to the wrong function, and
+# the test it named stayed green while having lost nothing. An anchor that is not
+# unique is a latent lie — and the symptom is VACUOUS on a healthy test, which reads
+# like the opposite of what happened.
 mutation "05 the loop's own writes trip the scope-guard" "$GATE" \
-  's/ \| gate__drop_bookkeeping//' \
+  's/"\$base" "\$now" 2>\/dev\/null \| gate__drop_bookkeeping/"\$base" "\$now" 2>\/dev\/null/' \
   test/gate.bats "stays inside its write-surface"
 
 mutation "05 drift is not told apart from a stray write" "$GATE" \
@@ -387,16 +402,22 @@ mutation "05 a blind scope-guard passes the ticket" "$GATE" \
   's/^gate_changed_files\(\) \{/gate_changed_files() { return 0;/m' \
   test/gate.bats "cannot read the tree"
 
+# Drifted when [29] hoisted the snapshot out of the scope-guard's branch and into
+# gate_run: the line that re-read the tree after the session moved, it did not
+# disappear. Same guarantee, planted one layer up — a gate that judges the tree the
+# session started from sees no session write at all.
 mutation "05 the tree is not re-read after the session" "$GATE" \
-  's/  now="\$\(gate_tree_snapshot\)" \|\| now=""/  now="\$base"/' \
+  's/  RALPH_GATE_TREE="\$\(gate_tree_snapshot\)" \|\| RALPH_GATE_TREE=""/  RALPH_GATE_TREE="\$base"/' \
   test/gate.bats "new file outside"
 
 mutation "05 the snapshot ignores untracked files" "$GATE" \
   's/  GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1/  GIT_INDEX_FILE="\$index" git read-tree HEAD >\/dev\/null 2>\&1; GIT_INDEX_FILE="\$index" git add -u >\/dev\/null 2>\&1/' \
   test/gate.bats "new file outside"
 
+# Same story as the entry above: `-r` appears twice since [29], and the first
+# occurrence is the other diff. Anchored on the trees it takes.
 mutation "05 the tree diff is not recursive" "$GATE" \
-  's/git diff-tree -r --name-only/git diff-tree --name-only/' \
+  's/git diff-tree -r --name-only "\$base" "\$now"/git diff-tree --name-only "\$base" "\$now"/' \
   test/gate.bats "new file outside"
 
 mutation "05 the gate verdict does not decide the marking" "$LOOP" \
@@ -869,10 +890,64 @@ mutation "24 the rollback says nothing about what it left behind" "$FAILURES" \
 
 # Tied to having undone something, which silences it in the one case where the
 # tree is genuinely not back where the session found it: a session whose only
-# write was an ignored file.
+# write was an ignored file. The call it plants gained two arguments with [29].
 mutation "24 the rollback only reports when it undid something" "$FAILURES" \
-  's/\n  failures__report_unrolled\n/\n  if [ -n "\$paths" ]; then failures__report_unrolled; fi\n/' \
+  's/\n  failures__report_unrolled "\$tree" "\$paths"\n/\n  if [ -n "\$paths" ]; then failures__report_unrolled "\$tree" "\$paths"; fi\n/' \
   test/failures.bats "nothing to undo"
+
+# ── [29] the tree the gate judges, taken before the gate runs ────────────────
+
+# The defect itself, planted back. `sleep 1` is what makes it deterministic in the
+# direction the probe found: the old code snapshotted from inside the scope-guard's
+# branch, so a suite that writes at once always won the race and the artefact was
+# charged to the session. Without the sleep this entry would be a draw, which is
+# the whole complaint about the code it plants.
+mutation "29 the scope-guard snapshots the tree from inside its branch again" "$GATE" \
+  's/^gate__scope_guard\(\) \{/gate__scope_guard() { set -- "\$1" "\$2" "\$(sleep 1; gate_tree_snapshot)" "\$4";/m' \
+  test/gate.bats "writes at once is not charged"
+
+# The other half of the hoist, and the one [06] needs: the tree is still taken once
+# and before the fan, but it only reaches RALPH_GATE_TREE after the collection —
+# which is the state a branch was probed in on 29/07/2026, reading `tree=[]`.
+mutation "29 a branch cannot see the tree it is judged on" "$GATE" \
+  's/  RALPH_GATE_TREE="\$\(gate_tree_snapshot\)" \|\| RALPH_GATE_TREE=""/  gate_judged="\$(gate_tree_snapshot)" || gate_judged=""/; s/"\$base" "\$RALPH_GATE_TREE" "\$dir\/scope.class"/"\$base" "\$gate_judged" "\$dir\/scope.class"/; s/^  gate__log "\$ticket: \$RALPH_GATE_VERDICTS"/  RALPH_GATE_TREE="\$gate_judged"\n  gate__log "\$ticket: \$RALPH_GATE_VERDICTS"/m' \
+  test/gate.bats "branch of this gate can read"
+
+# A guard handed nothing falls back to reading the tree itself, which is not a
+# fallback but the race coming back in through gate_changed_files.
+mutation "29 a scope-guard handed no tree recomputes one instead of refusing" "$GATE" \
+  's/  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then/  if ! changed="\$(gate_changed_files "\$base" "\$now")"; then/' \
+  test/gate.bats "cannot read the tree"
+
+mutation "29 the gate never says what it wrote while it judged" "$GATE" \
+  's/^gate__report_changed\(\) \{/gate__report_changed() { return 0;/m' \
+  test/gate.bats "named, not left to be found"
+
+# The two halves of this diff that the entries for [05] cover on the other one, and
+# they are here because that diff has its own callers now. A build writes into a
+# directory, which is why the tests name `build/coverage.xml` and not a path at the
+# root: a non-recursive diff would report `build` and read as covered.
+mutation "29 the diff of what the gate changed is not recursive" "$GATE" \
+  's/git diff-tree -r --name-only "\$judged" "\$now"/git diff-tree --name-only "\$judged" "\$now"/' \
+  test/gate.bats "named, not left to be found"
+
+mutation "29 the loop's own bookkeeping counts as a gate write" "$GATE" \
+  's/"\$judged" "\$now" 2>\/dev\/null \| gate__drop_bookkeeping/"\$judged" "\$now" 2>\/dev\/null/' \
+  test/failures.bats "leaves it standing"
+
+# Emptied rather than removed: the block that names the zone spans four lines, and
+# a list that arrives empty silences it through the same path a gate that wrote
+# nothing does. The ignored-zone line above it is untouched, so this entry cannot
+# pass on the strength of [24]'s.
+mutation "29 the rollback says nothing about what the gate changed" "$FAILURES" \
+  's/"\$\(failures__minus "\$\(gate_unjudged_changes "\$tree"\)" "\$undone"\)"/""/' \
+  test/failures.bats "leaves it standing"
+
+# And the lie in the other direction: an empty fence filters nothing, so a path the
+# rollback did put back is announced as one it could not.
+mutation "29 a path the rollback put back is named as one it could not" "$FAILURES" \
+  's/  local fence=" \$\{2:-\} " item/  local fence="" item/' \
+  test/failures.bats "did put back"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

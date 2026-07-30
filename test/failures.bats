@@ -396,6 +396,52 @@ FAKE
   assert_file_exists "$PROJECT_DIR/cache/payload"
 }
 
+@test "the rollback names what the gate itself changed, and leaves it standing" {
+  # The third exemption of a rollback that announces "the tree is back where the
+  # session found it": the tracker it leaves on purpose, the ignored zone it cannot
+  # see, and — since [29] — what the gate's own branches wrote after the tree it
+  # judged was taken. That artefact is in neither of the two trees this function
+  # diffs, and git does not ignore it, so [24]'s line does not name it either. A
+  # suite that writes a report and then goes red is any real suite.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config TEST_CMD 'mkdir -p build; printf report >build/coverage.xml; exit 1'
+  script_session_writing src/alpha.txt
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains \
+    "this rollback could not undo 1 path(s) the gate itself changed after the tree it judged: build/coverage.xml"
+  assert_file_exists "$PROJECT_DIR/build/coverage.xml"
+  # What it could see is undone, as before.
+  refute_file_exists "$PROJECT_DIR/src/alpha.txt"
+}
+
+@test "a path the rollback did put back is not named as one it could not" {
+  # The lie in the other direction, which is the shape this suite has got wrong
+  # before. A suite that rewrites a file the session had also touched — an updated
+  # snapshot, a formatter, a code generator — differs from the judged tree just like
+  # a fresh artefact does, but this rollback restores it from the pre-session
+  # snapshot like any other path in its diff. Naming it would send a human looking
+  # for something that is not there.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config TEST_CMD 'printf suite >>src/alpha.txt; exit 1'
+  script_session_writing src/alpha.txt
+
+  run_loop
+  assert_failure 4
+
+  # Kept in a variable: the refutation has to be about this line and not about
+  # whichever `run` happened last.
+  local named
+  named="$(printf '%s\n' "$output" | grep 'the gate itself changed' || true)"
+  assert_equal "$named" ""
+  refute_file_exists "$PROJECT_DIR/src/alpha.txt"
+  assert_equal "$(worktree_dirt)" ""
+}
+
 # ── the attempt is kept ──────────────────────────────────────────────────────
 
 @test "before the escalation, a branch keeps the attempt the human will read" {

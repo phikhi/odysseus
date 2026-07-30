@@ -163,8 +163,12 @@ L'ensemble déclaré des fichiers qu'un ticket va créer ou modifier (globs), pr
 _À éviter_ : périmètre, scope (ambigu), fichiers touchés.
 
 **Scope-guard**:
-Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry. Juge contre la surface du **spawn**, restaurée par la protection du tracker avant qu'il ne lise le ticket — sinon il lirait un contrat que la session vient d'écrire. Voit ce que git voit, plus les **chemins gardés** ; la **configuration scellée** est refusée avant même qu'il consulte la surface.
+Le verrou d'intégrité de la write-surface : un check post-hoc au gate (`git diff --name-only` vs globs déclarés) qui échoue si l'itération a écrit hors de sa surface ; hook `PreToolUse` optionnel pour bloquer tôt. Débordement dans un autre ticket = drift (escalade) ; dans un fichier neutre = retry. Juge contre la surface du **spawn**, restaurée par la protection du tracker avant qu'il ne lise le ticket — sinon il lirait un contrat que la session vient d'écrire. Juge l'**arbre jugé**, qu'il reçoit et ne calcule pas. Voit ce que git voit, plus les **chemins gardés** ; la **configuration scellée** est refusée avant même qu'il consulte la surface.
 _À éviter_ : lint, garde-fou, sandbox (réservé à l'exécution).
+
+**Arbre jugé**:
+L'objet tree que le gate prend **une fois, avant de lancer sa première branche**, et sur lequel tout parle ensuite : le scope-guard, le rollback, le commit durable et les lentilles à venir. Deux branches du gate sont les commandes du projet cible, donc écrivent dans l'arbre qu'elles jugent : un contrôle qui figerait son entrée pendant ce temps ne rendrait pas un verdict mais un tirage — le même ticket avec la même session obtenait `scope=green` ou `scope=red` selon qui écrivait le premier.
+_À éviter_ : snapshot du gate (ambigu avec les autres objets tree), état final.
 
 **Chemins gardés**:
 Les chemins que le snapshot d'arbre prend **par force**, règles d'ignore du projet cible incluses (`GUARDED_PATHS`, défaut `.claude`). Sans eux, ce que `.gitignore` couvre est hors du scope-guard *et* hors du rollback : une session écrit hors surface, garde son écriture après un gate rouge, et laisse un fichier qui change le verdict des tickets suivants. La liste est nommée et pas universelle : forcer l'arbre entier ferait entrer le build output du projet dans le tree jugé, donc déborder à chaque itération.
@@ -173,6 +177,10 @@ _À éviter_ : whitelist, chemins protégés (réservé au tracker), exceptions.
 **Zone ignorée non gardée**:
 Ce que le `.gitignore` du projet couvre en dehors des chemins gardés : jugé par rien, défait par rien, **nommé à chaque itération et à chaque rollback** (combien de chemins, et les dix premiers). Le seul mode de panne qui y vit est une suite de tests qui lit un fichier ignoré : un ticket peut passer au vert grâce à ce qu'une session antérieure y a laissé.
 _À éviter_ : zone morte (c'était le nom du défaut, pas de l'état déclaré), angle mort.
+
+**Écritures du gate**:
+Ce que les branches du gate changent dans l'arbre **après** l'arbre jugé : un rapport de couverture, un snapshot de test mis à jour, un `rm -rf dist/` de build, et demain le flux d'une lentille. Dans aucun des deux trees que le rollback diffe, et pas ignoré par git non plus — donc jugé par rien, défait par rien, et **nommé** à chaque itération comme la zone ignorée, la ligne du rollback étant nette de ce qu'il a effectivement remis. Les lignes disent *changed* et non *wrote* parce qu'une suppression en fait partie. Tenable parce que ces commandes viennent d'un fichier scellé ; plus du tout tenable le jour où une branche est un `claude`.
+_À éviter_ : artefacts (trop large), pollution, résidus.
 
 **Configuration scellée**:
 Les fichiers qu'**aucune write-surface ne peut couvrir** : `.claude/settings.local.json`, `.claude/settings.json`, `.claude/ralph.config.sh`. Ce qu'un `claude` frais lit au démarrage (hooks, permissions, env — effet dès le spawn suivant) et ce que le run suivant source (`TEST_CMD`). Toujours dans le snapshot, quoi que dise `GUARDED_PATHS`. Le *code* du pack n'en fait pas partie : un run a sourcé ses libs avant sa première session, et un ticket qui réécrit le gate est un ticket légitime.
@@ -183,7 +191,7 @@ La restauration des tickets qu'une session a édités, depuis un objet tree de `
 _À éviter_ : rollback du tracker (le rollback l'exclut, à dessein), verrou.
 
 **Rollback d'itération**:
-La remise du dépôt dans l'état où la session l'a trouvé, après tout échec. Aussi large que le diff de la session et pas plus : ses ajouts sont supprimés, ses modifications et suppressions restaurées depuis le snapshot pré-session, son commit éventuel défait (`HEAD` remis au commit pré-spawn). **N'est pas** un `git reset --hard` + `git clean` : le travail non commité que le run n'a pas produit ne lui appartient pas. Le tracker en est exclu — c'est la seule autorité d'état. Deux exceptions énumérées et non déduites : le tracker, et la **zone ignorée non gardée**, que le rollback nomme au lieu de la taire.
+La remise du dépôt dans l'état où la session l'a trouvé, après tout échec. Aussi large que le diff de la session et pas plus : ses ajouts sont supprimés, ses modifications et suppressions restaurées depuis le snapshot pré-session, son commit éventuel défait (`HEAD` remis au commit pré-spawn). **N'est pas** un `git reset --hard` + `git clean` : le travail non commité que le run n'a pas produit ne lui appartient pas. Le tracker en est exclu — c'est la seule autorité d'état. Trois exceptions énumérées et non déduites : le tracker, la **zone ignorée non gardée**, et les **écritures du gate** — les deux dernières, le rollback les nomme au lieu de les taire.
 _À éviter_ : reset, nettoyage, revert (réservé à un commit inverse).
 
 **Travail durable**:

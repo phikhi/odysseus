@@ -419,9 +419,162 @@ FAKE
   set_config STERILE_K 1
 
   # No baseline, no verdict. Silence here would be a permanent false green.
-  pack_run 'gate__scope_guard 01-alpha "" /dev/null'
+  pack_run 'gate__scope_guard 01-alpha "" "$(gate_tree_snapshot)" /dev/null'
   assert_failure
   assert_output_contains "could not read the working tree"
+
+  # And no post-session tree either. The guard is given both since [29], and the
+  # tempting fallback is the one thing it must not do: gate_changed_files takes its
+  # own snapshot when it is not given one, so falling through to it would put the
+  # guard back to reading the tree from inside its own branch — the race this
+  # argument exists to close. Refusing is the only safe reading of "I was handed
+  # nothing".
+  pack_run 'gate__scope_guard 01-alpha "$(gate_tree_snapshot)" "" /dev/null'
+  assert_failure
+  assert_output_contains "could not read the working tree"
+}
+
+# ── the tree the gate judges is taken before the gate runs ───────────────────
+#
+# Every branch of this gate runs *in* the tree it is judging, and two of them are
+# the target project's own commands. The scope-guard used to take its snapshot
+# from inside its own branch — the third of three to be started — so the suite had
+# been writing for as long as it took to fork. Whether an artefact counted as the
+# session's work therefore depended on who got there first: probed on 30/07/2026,
+# same ticket and same session, `scope=red` one way and `scope=green` the other.
+#
+# The delay in the TEST_CMDs below is load-bearing, and it is why nothing in this
+# file could see the defect for twenty-nine tickets: `stub-cmd` returns at once
+# and writes nothing outside the shim state, so the window in which the two
+# processes overlap never opened. A test of this with a suite that writes nothing
+# is a draw, exactly like the code it judges.
+
+# What the two probes had in common: a session that stays inside its surface, and
+# a suite that writes something of its own next to it.
+gate_writing_suite() {
+  set_config TEST_CMD "$1"
+  script_session_writing src/alpha.txt
+}
+
+@test "an artefact the suite writes at once is not charged to the session" {
+  # Probe 7b. Written before the guard's own snapshot, so the old code read it as a
+  # session write outside the declared surface and reddened an iteration that had
+  # delivered. Same verdict as the test below, which is the property: green.
+  use_tickets 01-alpha
+  gate_writing_suite 'printf early >late-artifact.txt; exit 0'
+
+  run_loop
+  assert_success
+  assert_output_contains "scope=green"
+  refute_output_contains "late-artifact.txt, outside"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "the same artefact written late gets the same verdict" {
+  # Probe 7, the other side of the draw: two seconds after the fan, so it landed
+  # after the old snapshot and went entirely unnoticed. Same session, same ticket,
+  # same write, and the delay is the only difference — a verdict that depends on it
+  # is not a verdict. The pair is the assertion; either test alone proves nothing.
+  use_tickets 01-alpha
+  gate_writing_suite 'sleep 2; printf late >late-artifact.txt; exit 0'
+
+  run_loop
+  assert_success
+  assert_output_contains "scope=green"
+  refute_output_contains "late-artifact.txt, outside"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "an artefact of the suite cannot escalate the ticket being judged" {
+  # Probe 10, and the reason this was a bug rather than an infelicity. An artefact
+  # landing in *another* ticket's write-surface is classified `contract`, which
+  # [07] made deliberately non-retryable — two tickets drawn over one file, and a
+  # retry cannot settle that. So the old code sent 01-alpha to the human sink with
+  # the reason `decision`, without even spending a retry, over a file its session
+  # had never touched and no human could do anything about.
+  #
+  # 04-claimed is the other ticket: it declares `src/delta.txt` and is held by a
+  # claim that is really alive, so it stays out of the frontier while still being
+  # a surface the guard can attribute a write to.
+  use_tickets 01-alpha 04-claimed
+  gate_writing_suite 'mkdir -p src; printf artefact >src/delta.txt; exit 0'
+
+  run_loop
+  assert_success
+
+  refute_output_contains "scope overflow"
+  refute_output_contains "(drift)"
+  assert_ticket_status 01-alpha resolved
+  run ticket_has_field 01-alpha Escalation
+  assert_failure
+}
+
+@test "what the gate wrote while it judged is named, not left to be found" {
+  # The half the hoist does not close, and why this is a ticket and not a one-line
+  # fix. The artefact is still in the tree when the iteration ends, it is in
+  # neither of the two trees the rollback diffs, and git does not ignore it either
+  # — so [24]'s zone line has nothing to say about it. Deterministic and
+  # attributable is not the same thing as gone.
+  use_tickets 01-alpha
+  gate_writing_suite 'mkdir -p build; printf report >build/coverage.xml; exit 0'
+
+  run_loop
+  assert_success
+  assert_output_contains \
+    "this gate itself changed 1 path(s) after the tree it judged: build/coverage.xml"
+  assert_file_exists "$PROJECT_DIR/build/coverage.xml"
+
+  # And it is named rather than committed: the durable commit takes what the gate
+  # approved, which is the tree it judged and nothing a branch added afterwards.
+  run git -C "$PROJECT_DIR" log --oneline -- build/coverage.xml
+  assert_equal "$output" ""
+}
+
+@test "a branch of this gate can read the tree it is being judged on" {
+  # What [06] inherits. A review lens is a branch like any other, and it has to
+  # read the diff off the tree the scope-guard judged instead of snapshotting one
+  # of its own — which, taken from inside a branch, is the defect above. What makes
+  # that possible is an order and nothing else: a branch is a subshell, so it
+  # inherits what was set before it started and never sees what is set after.
+  # Probed on 29/07/2026, before the hoist: a branch read `tree=[]`, because
+  # gate_run emptied the four RALPH_GATE_* variables before the fan and only filled
+  # them back in after the collection.
+  #
+  # Observed at the seam every branch goes through rather than at a lens that does
+  # not exist yet: the wrapper records what each branch would inherit.
+  use_tickets 01-alpha
+  pack_run '
+    eval "gate__real_start() $(declare -f gate__start | sed 1d)"
+    gate__start() {
+      printf "%s\n" "${RALPH_GATE_TREE:-empty}" >>"$RALPH_SHIM_STATE/seen-by-branch"
+      gate__real_start "$@"
+    }
+    base="$(gate_tree_snapshot)"
+    mkdir -p src && printf "written\n" >src/alpha.txt
+    gate_run 01-alpha "$base" >/dev/null
+    printf "judged=%s\n" "$RALPH_GATE_TREE"'
+  assert_success
+
+  # Three branches, each handed the same non-empty tree, and it is the tree the
+  # gate went on to report to the loop.
+  local judged
+  judged="${output#judged=}"
+  [ -n "$judged" ] || fail "the gate judged no tree at all"
+  assert_equal "$(awk 'END { print NR }' "$SHIM_STATE/seen-by-branch")" "3"
+  assert_equal "$(sort -u "$SHIM_STATE/seen-by-branch")" "$judged"
+}
+
+@test "a gate that wrote nothing says nothing" {
+  # The refutation, and it needs the same care [24]'s did: a line that appeared on
+  # every iteration would be noise a human learns to skip, which is the same as not
+  # printing it. `stub-cmd` writes nothing in the tree, which is every other test
+  # in this suite.
+  use_tickets 01-alpha
+  script_session_writing src/alpha.txt
+
+  run_loop
+  assert_success
+  refute_output_contains "this gate itself changed"
 }
 
 # ── the zone git does not show ───────────────────────────────────────────────
