@@ -195,6 +195,7 @@ LOOP=".claude/loop.sh"
 GATE=".claude/lib/gate.sh"
 MONITOR=".claude/lib/monitor.sh"
 SESSION=".claude/lib/session.sh"
+PROC=".claude/lib/proc.sh"
 TRACKER=".claude/lib/tracker-local.sh"
 CLAIM=".claude/lib/claim.sh"
 STATE=".claude/lib/state.sh"
@@ -807,26 +808,63 @@ mutation "20 an unguarded real spawn is not noticed" "$CONTRACT" \
   test/contract-claude.bats "unguarded real spawn is caught"
 
 # ── [25] the graceful stop, during the gate ──────────────────────────────────
+#
+# The collection itself moved to lib/proc.sh in [28] — `session_spawn` needed the
+# same primitive — so the three entries that used to aim at `gate__collect` aim at
+# `proc_collect` now. Re-checked line by line rather than path-substituted: the
+# same lines still carry the same guarantees, and the two that end a collection now
+# hand the child's status back instead of a blanket 0.
 
-mutation "25 a stop request abandons the branch it interrupted" "$GATE" \
-  's/    \[ "\$rc" -gt 128 \] \|\| return 0/    return 0/' \
+mutation "25 a stop request abandons the branch it interrupted" "$PROC" \
+  's/    \[ "\$rc" -gt 128 \] \|\| return "\$rc"/    return "\$rc"/' \
   test/loop-happy-path.bats "during the gate waits"
 
 mutation "25 the branches are collected with a bare wait again" "$GATE" \
-  's/    gate__collect "\$brc"/    wait "\$brc" 2>\/dev\/null || true/' \
+  's/    proc_collect "\$brc" \|\| true/    wait "\$brc" 2>\/dev\/null || true/' \
   test/loop-happy-path.bats "during the gate waits"
 
 # The one guarantee here whose absence is a hang and not a red: without the
 # liveness check the collection spins for ever on a branch the deadline killed.
 # Runnable only because the test that covers it brings its own deadline instead of
 # asserting on a run that would never come back.
-mutation "25 a branch the deadline killed is waited for for ever" "$GATE" \
-  's/    kill -0 "\$pid" 2>\/dev\/null \|\| return 0\n//' \
-  test/gate.bats "spinning"
+mutation "25 a branch the deadline killed is waited for for ever" "$PROC" \
+  's/    kill -0 "\$pid" 2>\/dev\/null \|\| return "\$rc"\n//' \
+  test/proc.bats "spinning"
 
 mutation "25 a stopped run has no deadline left on a hung branch" "$GATE" \
   's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
   test/loop-happy-path.bats "bounded by the deadline"
+
+# ── [28] the graceful stop, during a session's shutdown ──────────────────────
+#
+# The second copy of the same defect, on the longer window. The first two entries
+# below are the two windows of one line: the gate entry above names it from
+# `loop-happy-path`, this one from the session's own shutdown, and neither test
+# would notice the other's window.
+
+mutation "28 the session is collected with a bare wait again" "$SESSION" \
+  's/  proc_collect "\$pid" \|\| rc=\$\?/  wait "\$pid" || rc=\$?/' \
+  test/smart-zone.bats "shutdown waits"
+
+mutation "28 an interrupted collection gives up on the session" "$PROC" \
+  's/    \[ "\$rc" -gt 128 \] \|\| return "\$rc"/    return "\$rc"/' \
+  test/proc.bats "really exited with"
+
+# The other half of the same line, and a different guarantee: the status has to
+# come back, because it is the session's own exit code as far as the loop is
+# concerned. A primitive answering 0 for every child turns a crashed session into a
+# resolved ticket.
+mutation "28 the collection swallows the status the child exited with" "$PROC" \
+  's/    \[ "\$rc" -gt 128 \] \|\| return "\$rc"/    [ "\$rc" -gt 128 ] || return 0/' \
+  test/failures.bats "a dead session is retried too"
+
+# The lens half of "no claude survives the run", and a different mechanism: a
+# branch is a subshell, so it never inherits the stop trap and is never exposed to
+# the window above. What holds there is that the watchdog walks *down* the process
+# tree — a lens is a grandchild of the loop.
+mutation "28 the deadline kills the branch but not the lens under it" "$GATE" \
+  's/  for child in \$\(ps -A -o pid= -o ppid= 2>\/dev\/null \| awk -v p="\$pid" .\$2 == p \{ print \$1 \}.\); do\n    gate__kill_tree "\$child"\n  done\n//' \
+  test/lenses.bats "deadline of its own"
 
 # ── [26] what the retry counter counts, and what clears it ───────────────────
 

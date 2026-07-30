@@ -117,6 +117,68 @@ FAKE
   assert_equal "$output" "0"
 }
 
+@test "a graceful kill during a session's shutdown waits for it" {
+  # The second window the bare `wait` left open ([28]), and the longer of the two
+  # in a real run. On the normal path `monitor_watch` only returns once it has seen
+  # the process gone, so the `wait` after it does not block. On the soft-limit path
+  # it sends its TERM and returns straight away, so that `wait` spans the whole of
+  # the session's shutdown — and bash cuts `wait` short the moment a trapped signal
+  # arrives. The loop then judged, rolled back, `rm -f`ed the stream and left the
+  # run with a live `claude` still burning quota into it.
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 1
+
+  # Only the first session is slow. Left slow for all of them, the re-slice
+  # session outlives the one under observation and the orphan has time to finish on
+  # its own — which hid this on the first probe. `trap '' TERM` is what a real
+  # `claude` looks like from outside: it does not vanish the instant the monitor
+  # fires, it shuts down.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+if [ -e "$RALPH_SHIM_STATE/first-session" ]; then
+  echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}'
+  exit 0
+fi
+: >"$RALPH_SHIM_STATE/first-session"
+trap '' TERM
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":9000,"output_tokens":5}},"session_id":"s"}'
+# Load-bearing, the same way it is in the gate's own stop test: the marker must
+# not appear before the loop is actually blocked in `wait`, because a signal that
+# lands between two commands runs its trap there, interrupts nothing, and the test
+# would pass against the broken code.
+sleep 0.6
+: >"$RALPH_SHIM_STATE/session-terminating"
+sleep 2
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":7,"total_cost_usd":0.3}'
+: >"$RALPH_SHIM_STATE/session-finished"
+FAKE
+
+  bash "$PACK_DIR/loop.sh" >"$RALPH_TEST_DIR/loop.out" 2>&1 &
+  PACK_BG_PID=$!
+
+  wait_for_file "$SHIM_STATE/session-terminating" 200 ||
+    fail "the monitor never terminated the oversized session"
+  kill -TERM "$PACK_BG_PID"
+
+  rc=0
+  wait "$PACK_BG_PID" || rc=$?
+  PACK_BG_PID=""
+
+  assert_equal "$rc" "4"
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "stop requested"
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "crossed the 5000-token soft limit"
+
+  # No `claude` outlives the run: the session had written its last marker before
+  # the loop returned.
+  assert_file_exists "$SHIM_STATE/session-finished"
+
+  # And the stream was still readable when it did. num_turns comes off the result
+  # event the session emitted *after* the stop landed: a loop that gave up on
+  # `wait` journals turns=0 and then `rm -f`s a file a live process is writing to.
+  assert_file_contains "$FEATURE_DIR/run.log" "turns=7"
+}
+
 @test "a terminated session resolves nothing and the ticket stops being claimed" {
   set_config SOFT_LIMIT_TOKENS 5000
   set_config STERILE_K 1

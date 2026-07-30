@@ -86,8 +86,17 @@ contract__spawn() {
       SOFT_LIMIT_TOKENS="${SOFT_LIMIT_TOKENS:-150000}" \
       bash -c '
         set -uo pipefail
-        . "$1/lib/monitor.sh"
-        . "$1/lib/session.sh"
+        # Every lib, in lexical order, exactly as loop.sh sources them. It used to
+        # name the two it thought it needed, and that list was a fiction the moment
+        # a lib gained a dependency: [28] moved the session collection into
+        # lib/proc.sh and this spawn died with `proc_collect: command not found`,
+        # exit 127, reported as "the fake claude has drifted from the real format".
+        # A harness that enumerates the pack by hand tests a pack that is not the
+        # one being installed. Sourcing a lib runs nothing, so there is no cost.
+        for lib in "$1"/lib/*.sh; do
+          [ -e "$lib" ] || continue
+          . "$lib"
+        done
         pack="$1"
         prompt="$2"
         out="$3"
@@ -186,6 +195,13 @@ contract__note() {
 
 # Reads the pack's own extractor into this shell. Function definitions only —
 # sourcing these libs runs nothing.
+#
+# Two libs and not the whole glob, unlike the spawn above, and the difference is
+# deliberate: this one lands in the test's own shell, so pulling in every module
+# would drop the pack's entire namespace beside the harness helpers. What is needed
+# here is the stream extractor and nothing else. If a lib it names ever grows a
+# dependency of its own, this list has to grow with it — the spawn is the one that
+# must stay faithful to production.
 contract__load_pack() {
   # shellcheck source=../../.claude/lib/monitor.sh
   . "$RALPH_PACK_ROOT/.claude/lib/monitor.sh"

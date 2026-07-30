@@ -44,7 +44,12 @@ session_spawn() {
   pid=$!
 
   monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS" || RALPH_SOFT_LIMIT_HIT=1
-  wait "$pid" || rc=$?
+  # Not a bare `wait`: on the soft-limit path the monitor returns as soon as its
+  # TERM is away, so this call spans the whole of the session's shutdown — and bash
+  # cuts a bare `wait` short the instant the loop's stop trap fires. The loop then
+  # took the iteration back, deleted the stream and exited with `claude` still
+  # writing into it ([28]). See proc_collect for why waiting again is the answer.
+  proc_collect "$pid" || rc=$?
   return "$rc"
 }
 

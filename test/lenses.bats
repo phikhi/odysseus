@@ -550,6 +550,17 @@ SETTINGS
 prompt="$(cat)"
 case "$prompt" in
   *RALPH-LENS-VERDICT*)
+    # One file per pid, never one shared marker: a plain ticket draws two lenses
+    # and they run in parallel, so a single `lens-pid` would record whichever
+    # branch wrote last and the assertion below would only ever check one of them.
+    mkdir -p "$RALPH_SHIM_STATE/lens-pids"
+    : >"$RALPH_SHIM_STATE/lens-pids/$$"
+    # 120 and not 30: this sleep is load-bearing twice over. It has to outlast the
+    # 60s this test gives the run to come back, or the mutation "06 a lens that
+    # never returns is left to hang" stops hanging — the lens finishes on its own,
+    # answers no verdict, the gate is red anyway and the test stays green against a
+    # gate with no deadline at all. Shortened to 30 while delivering [28] and caught
+    # by exactly that VACUOUS.
     sleep 120
     ;;
   *)
@@ -573,4 +584,34 @@ FAKE
   wait "$loop_pid" || true
 
   assert_ticket_status 01-plain ready-for-agent
+
+  # And no `claude` outlives the run. This is the lens half of that promise, and it
+  # is a different mechanism from the session's: a branch runs in a subshell, which
+  # does not inherit the parent's traps, so a lens is never exposed to the window
+  # `proc_collect` closes ([28]). What has to hold here is that the watchdog walks
+  # *down* — a lens is a grandchild of the loop, so killing the branch alone would
+  # leave a live session spending subscription quota with the run already gone.
+  local pidfile lens_pid alive waited=0
+  run bash -c "ls '$SHIM_STATE/lens-pids' 2>/dev/null | wc -l | tr -d ' '"
+  [ "$output" != "0" ] || fail "no lens ever recorded its pid"
+
+  # A killed grandchild is briefly a zombie until it is reparented and reaped, so
+  # "gone" is given a moment rather than asserted on the instant the run returns.
+  while [ "$waited" -lt 30 ]; do
+    alive=""
+    for pidfile in "$SHIM_STATE/lens-pids"/*; do
+      lens_pid="$(basename "$pidfile")"
+      if kill -0 "$lens_pid" 2>/dev/null; then alive="$alive $lens_pid"; fi
+    done
+    [ -n "$alive" ] || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+
+  if [ -n "$alive" ]; then
+    for lens_pid in $alive; do
+      kill -9 "$lens_pid" 2>/dev/null || true
+    done
+    fail "a lens session outlived the run the watchdog stopped:$alive"
+  fi
 }
