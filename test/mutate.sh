@@ -204,6 +204,7 @@ LENSES_LIB=".claude/lib/lenses.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
+EXAMPLE=".claude/ralph.config.sh.example"
 
 # ── [01] foundation & harness ────────────────────────────────────────────────
 
@@ -283,8 +284,11 @@ mutation "03 a tracker that does not exist is not checked" "$LOOP" \
   's/    if \[ ! -d "\$dir" \]; then/    if false; then/' \
   test/loop-happy-path.bats "does not exist"
 
+# The condition gained a third term in [23], so the anchor spans two lines now.
+# Re-checked rather than path-substituted: what this removes is still the whole of
+# "the session's own exit code decides", which is what the test names.
 mutation "03 the session decides whether it succeeded" "$LOOP" \
-  's/    if \[ "\$rc" -eq 0 \] && \[ "\$\{RALPH_SOFT_LIMIT_HIT:-0\}" = 0 \]; then/    if true; then/' \
+  's/    if \[ "\$rc" -eq 0 \] && \[ "\$\{RALPH_SOFT_LIMIT_HIT:-0\}" = 0 \] &&\n      \[ -z "\$\{RALPH_SESSION_TIMEOUT:-\}" \]; then/    if true; then/' \
   test/loop-happy-path.bats "a session that fails resolves nothing"
 
 mutation "03 the sterile counter never resets" "$LOOP" \
@@ -313,8 +317,12 @@ mutation "04 auto-compact is not turned off for the session" "$SESSION" \
   's/DISABLE_AUTO_COMPACT=1 claude/claude/' \
   test/smart-zone.bats "auto-compact is off"
 
+# Aimed at the whole termination and not at the TERM inside it, since [23]: the
+# TERM alone no longer ends a session, a reaper follows it, and a mutation that
+# removed only the signal would be racing that reaper rather than removing a
+# guarantee. What the soft limit promises is that the session is *terminated*.
 mutation "04 crossing the soft limit does not kill the session" "$MONITOR" \
-  's/        kill -TERM "\$pid" 2>\/dev\/null\n//' \
+  's/      monitor__terminate "\$pid"\n//' \
   test/smart-zone.bats "is terminated"
 
 mutation "04 a session that survives its SIGTERM counts as resolved" "$LOOP" \
@@ -329,12 +337,15 @@ mutation "04 a key matches a longer key" "$MONITOR" \
   's/\{line##\*\\"\$2\\":\}/{line##*\$2\\":}/' \
   test/smart-zone.bats "counts cached tokens"
 
+# Only the carry-over, since [23] put a second statement on that line: what is
+# removed here is that the half-line is *kept*, not that it counts as writing —
+# the entry below covers the other half of the same line.
 mutation "04 a partial stream line is dropped" "$MONITOR" \
-  's/\{ partial="\$partial\$line"; false; \}/{ partial=""; false; }/' \
+  's/\{ partial="\$partial\$line";/{ partial="";/' \
   test/smart-zone.bats "split across two writes"
 
 mutation "04 the threshold is hard-coded" "$SESSION" \
-  's/  monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/  monitor_watch "\$outfile" "\$pid" 150000/' \
+  's/! monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/! monitor_watch "\$outfile" "\$pid" 150000/' \
   test/smart-zone.bats "not a hard-coded"
 
 # ── [05] the objective gate ──────────────────────────────────────────────────
@@ -862,9 +873,104 @@ mutation "28 the collection swallows the status the child exited with" "$PROC" \
 # branch is a subshell, so it never inherits the stop trap and is never exposed to
 # the window above. What holds there is that the watchdog walks *down* the process
 # tree — a lens is a grandchild of the loop.
-mutation "28 the deadline kills the branch but not the lens under it" "$GATE" \
-  's/  for child in \$\(ps -A -o pid= -o ppid= 2>\/dev\/null \| awk -v p="\$pid" .\$2 == p \{ print \$1 \}.\); do\n    gate__kill_tree "\$child"\n  done\n//' \
+#
+# The walk moved to lib/proc.sh in [23], which gave it its second caller; the
+# entry follows it and the test that notices does not change, because what it
+# covers is the gate's deadline and not the primitive.
+mutation "28 the deadline kills the branch but not the lens under it" "$PROC" \
+  's/  for child in \$\(ps -A -o pid= -o ppid= 2>\/dev\/null \| awk -v p="\$pid" .\$2 == p \{ print \$1 \}.\); do\n    proc_kill_tree "\$child" "\$signal"\n  done\n//' \
   test/lenses.bats "deadline of its own"
+
+# ── [23] the session that hangs, and the run behind it ───────────────────────
+#
+# Every entry here removes a *termination*, which is the shape mutate.sh cannot
+# handle the ordinary way: take the guarantee out and the mutated run does not
+# fail, it never comes back. Two answers, and each entry says which it uses. Most
+# of these are bounded by the fake — a quiet session gives up after thirty seconds
+# on its own, so the test fails on its assertion instead of hanging, slowly. The
+# grace entries are not: a session that ignores its TERM is not bounded by
+# anything the pack can see, so that test carries its own deadline.
+
+mutation "23 a session that stops writing is never noticed" "$MONITOR" \
+  's/      MONITOR_STOPPED=stall\n/      :\n/' \
+  test/smart-zone.bats "stops writing"
+
+mutation "23 the stall deadline is hard-coded" "$MONITOR" \
+  's/monitor__deadline "\$\{SESSION_STALL_TIMEOUT:-0\}"/monitor__deadline 1800/' \
+  test/smart-zone.bats "stops writing"
+
+mutation "23 a session that emits for ever is never bounded" "$MONITOR" \
+  's/      MONITOR_STOPPED=wall\n/      :\n/' \
+  test/smart-zone.bats "bounded by the wall clock"
+
+mutation "23 the wall deadline is hard-coded" "$MONITOR" \
+  's/monitor__deadline "\$\{SESSION_TIMEOUT:-0\}"/monitor__deadline 10800/' \
+  test/smart-zone.bats "bounded by the wall clock"
+
+# The wall clock is measured from the spawn and not from the last write, and that
+# is not a detail of implementation: the stream is a file in `.scratch/` that the
+# session itself can append to, so a deadline reading it is a deadline a session
+# can push back. This is the one nothing it writes can move.
+mutation "23 the wall clock restarts whenever the session writes" "$MONITOR" \
+  's/\[ "\$\(\(SECONDS - started\)\)" -ge "\$wall" \]/[ "\$((SECONDS - idle))" -ge "\$wall" ]/' \
+  test/smart-zone.bats "bounded by the wall clock"
+
+mutation "23 half a line does not count as the session writing" "$MONITOR" \
+  's/ \[ -z "\$line" \] \|\| idle=\$SECONDS;//' \
+  test/smart-zone.bats "slow halves"
+
+mutation "23 a deadline of nonsense is a deadline" "$MONITOR" \
+  "s/'' \\| \\*\\[!0-9\\]\\*\\) printf '0/'' | *[!0-9]*) printf '1/" \
+  test/smart-zone.bats "no deadline at all"
+
+mutation "23 a deadline of zero is a deadline" "$MONITOR" \
+  's/\[ "\$stall" -gt 0 \]/[ "\$stall" -ge 0 ]/' \
+  test/smart-zone.bats "no deadline at all"
+
+# A TERM is a request. Without the reaper the run never comes back at all, which
+# is why the test this names brings its own deadline rather than asserting on a
+# run that would never return.
+mutation "23 a TERM nobody answers hangs the run for ever" "$MONITOR" \
+  's/  monitor__reaper "\$pid" "\$grace" &\n  MONITOR_REAPER=\$!\n//' \
+  test/smart-zone.bats "killed after the grace"
+
+mutation "23 the grace is hard-coded" "$MONITOR" \
+  's/monitor__deadline "\$\{SESSION_KILL_GRACE:-30\}"/monitor__deadline 30/' \
+  test/smart-zone.bats "killed after the grace"
+
+# And the other half of the same act: the deadline asks before it takes. A
+# `claude` killed outright loses whatever it was in the middle of writing, and
+# the pack would never see the result event a real one emits on its way out.
+mutation "23 the deadline goes straight to KILL" "$MONITOR" \
+  's/  proc_kill_tree "\$pid"\n/  proc_kill_tree "\$pid" KILL\n/' \
+  test/smart-zone.bats "exiting cleanly"
+
+mutation "23 the loop reads a terminated session as a finished one" "$LOOP" \
+  's/ &&\n      \[ -z "\$\{RALPH_SESSION_TIMEOUT:-\}" \]//' \
+  test/smart-zone.bats "exiting cleanly"
+
+# A hang is not evidence about the size of the slice. Classified as one, the loop
+# spends a second session producing a split nobody measured — which is what the
+# session count in this test is there to catch.
+mutation "23 a session that hung is re-sliced as a slice too big" "$FAILURES" \
+  "s/    session-stalled \\| session-timeout\\)\\n      printf 'timeout/    session-stalled | session-timeout)\\n      printf 'too-big/" \
+  test/smart-zone.bats "stops writing"
+
+# A planning session cut short answers 0, so nothing but this refusal stands
+# between half a plan and tickets nobody can delete.
+mutation "23 a plan written by a session that hung is acted on" "$FAILURES" \
+  's/  if \[ -n "\$\{RALPH_SESSION_TIMEOUT:-\}" \]; then\n    rc=1\n/  if false; then\n    rc=1\n/' \
+  test/failures.bats "cut short is refused whole"
+
+mutation "23 a hung ticket is escalated as a failed implementation" "$FAILURES" \
+  's/        \[ "\$class" != timeout \] \|\| reason=session-timeout\n//' \
+  test/smart-zone.bats "human sink under its own name"
+
+# The default is part of the guarantee: a deadline nobody sets is a deadline
+# nobody has, and an AFK pack that shipped these switched off would ship the hole.
+mutation "23 the shipped configuration leaves a session unbounded" "$EXAMPLE" \
+  's/SESSION_STALL_TIMEOUT:-1800/SESSION_STALL_TIMEOUT:-0/' \
+  test/smart-zone.bats "shipped configuration bounds"
 
 # ── [26] what the retry counter counts, and what clears it ───────────────────
 
