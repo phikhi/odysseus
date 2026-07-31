@@ -275,7 +275,8 @@ loop_main() {
 
     outcome=""
     tree=""
-    if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ]; then
+    if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ] &&
+      [ -z "${RALPH_SESSION_TIMEOUT:-}" ]; then
       # An edited tracker takes the green away whatever the branches said. The
       # restore is what let the scope-guard read the right contract at all, so a
       # session that edited it has to pay for the attempt — otherwise it retries
@@ -309,6 +310,16 @@ loop_main() {
     elif [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
       outcome=over-soft-limit
       loop_log "session crossed the ${SOFT_LIMIT_TOKENS}-token soft limit (peak $tokens) — terminated"
+    # Two outcomes and not one, because they are two different things to read in
+    # the morning — and neither of them is over-soft-limit. A session cut for
+    # context says the slice was too big, which is why that one is re-sliced; a
+    # session that hung says nothing whatsoever about the ticket ([23]).
+    elif [ "${RALPH_SESSION_TIMEOUT:-}" = stall ]; then
+      outcome=session-stalled
+      loop_log "session wrote nothing for ${SESSION_STALL_TIMEOUT}s — hung, terminated"
+    elif [ "${RALPH_SESSION_TIMEOUT:-}" = wall ]; then
+      outcome=session-timeout
+      loop_log "session ran past the ${SESSION_TIMEOUT}s wall clock without finishing — terminated"
     else
       outcome=failed
     fi

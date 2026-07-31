@@ -44,11 +44,19 @@ PROBE
 }
 
 @test "the example config declares the whole configuration surface" {
-  keys="FEATURE MODEL TEST_CMD TYPECHECK_CMD SOFT_LIMIT_TOKENS \
+  # Enumerated by hand, which is the one thing wrong with it: four keys added by
+  # [24] and [06] were missing from this list for as long as nobody looked, so it
+  # was quietly measuring a smaller surface than the pack has. Put back whole in
+  # [23], along with that ticket's three — and left as a list, because deriving it
+  # from the code means telling a config key from a RALPH_ runtime variable, which
+  # is a second hand-written list wearing a grep costume.
+  keys="FEATURE MODEL TEST_CMD TYPECHECK_CMD GUARDED_PATHS SOFT_LIMIT_TOKENS \
+SESSION_STALL_TIMEOUT SESSION_TIMEOUT SESSION_KILL_GRACE \
 THRESH_5H THRESH_WEEK USAGE_UA ITER_CAP STERILE_K RETRY_N GATE_TIMEOUT \
 HUMAN_CHECKPOINT_EVERY SCHEDULER WEEKLY_RESUME MAX_PARALLEL CLAIM_TTL \
 TRACKER_BACKEND WAIT_CI VISUAL_CMD VISUAL_REAL_ASSETS RUN_CMD \
-PLAYTHROUGH_REINJECT_MAX SECURITY_PATHS SECURITY_REFS FIDELITY_REFS \
+PLAYTHROUGH_REINJECT_MAX LENSES SECURITY_PATHS SECURITY_REFS FIDELITY_REFS \
+VISIBLE_PATHS LENS_DIFF_MAX_LINES \
 LANG_INTERACT LANG_ARTIFACT LANG_CHECK LANG_CHECK_THRESHOLD \
 LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
 

@@ -1,12 +1,13 @@
 # shellcheck shell=bash
-# The processes this run started, and how it waits for them.
+# The processes this run started: how it waits for them, and how it takes them
+# down.
 #
-# One function, and it exists as a module rather than as a private helper because
-# the pack has already paid twice for the line it replaces. `wait` was written out
-# by hand in the gate's fan and again in `session_spawn`, separately, with the same
-# fault in both — and the second copy sat on a longer window. A primitive of the
-# loop is a defect repeated as many times as it is called ([25], [28]), so the
-# third caller has to find it here instead of writing a fourth one.
+# Two functions, and the module exists because the pack has already paid twice for
+# the first of them. `wait` was written out by hand in the gate's fan and again in
+# `session_spawn`, separately, with the same fault in both — and the second copy
+# sat on a longer window. A primitive of the loop is a defect repeated as many
+# times as it is called ([25], [28]), so the third caller has to find it here
+# instead of writing a fourth one.
 #
 # Layering is what settled where it lives. `gate__collect` was private to the gate,
 # and `test/layering.bats` refuses a lib that reaches into a neighbour's `__`
@@ -14,6 +15,12 @@
 # placed rather than copied. Neither `session.sh` nor `gate.sh` could own it — each
 # would be reaching into the other — and `state.sh` is about run state, not about
 # child processes.
+#
+# `proc_kill_tree` arrived here the same way and one ticket later. [28] left it
+# private to the gate on purpose — the rule is "a second caller makes it public",
+# not "anticipate one" — and [23] is that second caller: a session deadline has to
+# kill a `claude` and the tool processes under it, which is the same walk the
+# gate's deadline does over a hung test suite.
 
 # Wait for a child all the way to its exit status, and hand that status back.
 #
@@ -77,4 +84,26 @@ proc_collect() {
     [ "$rc" -gt 128 ] || return "$rc"
     kill -0 "$pid" 2>/dev/null || return "$rc"
   done
+}
+
+# Every descendant, deepest first, then the process itself. Killing the process
+# alone would leave whatever it started — a hung test suite holding a port or a
+# database, a dev server a session's Bash tool brought up — running for the rest
+# of the night, and `kill -- -PID` needs a process group this shell never made.
+# `ps` is POSIX; the pack still needs nothing installed.
+#
+# The signal is an argument because the two callers ask for different things at
+# different moments, and the second one only exists because the first is a
+# request. The gate's deadline and a session deadline both start with TERM, which
+# is what lets `claude` shut down cleanly and a test suite remove its lock file;
+# what follows a TERM nobody honoured is the caller's business, not this walk's —
+# see monitor__reaper for the session's answer, and for why the gate does not need
+# the same one.
+proc_kill_tree() {
+  local pid="$1" signal="${2:-TERM}" child
+  for child in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$pid" '$2 == p { print $1 }'); do
+    proc_kill_tree "$child" "$signal"
+  done
+  kill -"$signal" "$pid" 2>/dev/null || true
+  return 0
 }

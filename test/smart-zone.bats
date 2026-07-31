@@ -37,6 +37,28 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":9,"total
 FAKE
 }
 
+# A session that writes its opening events and then goes quiet for as long as it
+# is given, in tenths of a second — a hang, seen from outside. Bounded, so that a
+# deadline which never fires makes an assertion fail instead of hanging the suite.
+#
+# The wait is a run of short sleeps rather than one long one on purpose: the
+# monitor TERMs the whole process tree, so a single `sleep` would be killed with
+# the session and the fake would end for the wrong reason.
+script_quiet_session() {
+  local ticks="${1:-300}"
+  script_claude <<FAKE
+#!/usr/bin/env bash
+echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
+echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":5}},"session_id":"s"}'
+i=0
+while [ \$i -lt $ticks ]; do
+  sleep 0.1
+  i=\$((i + 1))
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":9,"total_cost_usd":0.5}'
+FAKE
+}
+
 # Same context size, but the session finishes on its own.
 script_sized_session() {
   local tokens="$1"
@@ -147,7 +169,14 @@ echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":
 # not appear before the loop is actually blocked in `wait`, because a signal that
 # lands between two commands runs its trap there, interrupts nothing, and the test
 # would pass against the broken code.
-sleep 0.6
+#
+# In tenths and not as one `sleep 0.6`, and that is the delay staying a delay:
+# since [23] the monitor TERMs the whole process tree, so a single sleep would be
+# killed along with the session and the marker would appear at once. Six sleeps
+# lose one of them and keep the cushion — a constant of coverage, in a test whose
+# guarantee is about a window.
+i=0
+while [ $i -lt 6 ]; do sleep 0.1; i=$((i + 1)); done
 : >"$RALPH_SHIM_STATE/session-terminating"
 sleep 2
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":7,"total_cost_usd":0.3}'
@@ -272,6 +301,230 @@ FAKE
 }
 
 # ── reading a stream that is still being written ─────────────────────────────
+
+# ── the two deadlines ────────────────────────────────────────────────────────
+#
+# What the net above cannot do: it watches the stream, so a session that writes
+# nothing is bounded by nothing at all ([23]). Every delay in this section is a
+# constant of coverage twice over — once because the guarantee is a termination,
+# and once because the deadlines are measured with SECONDS, an integer clock that
+# fires anywhere between limit-1 and limit+1 seconds.
+
+@test "a session that stops writing is terminated as a hang, not as a slice too big" {
+  set_config SESSION_STALL_TIMEOUT 2
+  set_config SESSION_TIMEOUT 0
+  set_config STERILE_K 1
+  script_quiet_session
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "wrote nothing for 2s — hung, terminated"
+  # The distinction the whole ticket is about: a session cut for context says the
+  # slice was too big, a session that hung says nothing about the ticket at all.
+  refute_output_contains "soft limit"
+  assert_file_contains "$FEATURE_DIR/run.log" "session-stalled"
+
+  # Asserting the message alone would pass with no kill behind it: a quiet session
+  # left alone reaches its own ending and reports num_turns=9.
+  run bash -c "grep -c 'turns=9' '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+
+  # Retried fresh, and never re-sliced — one `claude` is the proof, since a
+  # re-slice spawns a second one to produce the split.
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  assert_equal "$(claude_call_count)" "1"
+}
+
+@test "a session that never stops writing is bounded by the wall clock" {
+  set_config SESSION_STALL_TIMEOUT 0
+  set_config SESSION_TIMEOUT 3
+  set_config STERILE_K 1
+
+  # Twice a second, for ever, without ever finishing: never silent, never near
+  # the token ceiling, and nothing but the wall clock notices. The stall deadline
+  # is switched off here so that the wall clock is the only thing that can fire.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
+i=0
+while [ $i -lt 60 ]; do
+  echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":5}},"session_id":"s"}'
+  sleep 0.5
+  i=$((i + 1))
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":9,"total_cost_usd":0.5}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "ran past the 3s wall clock"
+  assert_file_contains "$FEATURE_DIR/run.log" "session-timeout"
+  run bash -c "grep -c 'turns=9' '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+}
+
+@test "a session that answers the deadline's TERM by exiting cleanly is not resolved" {
+  # Claude Code traps SIGTERM and shuts down with exit 0, so the exit status of a
+  # terminated session says success about work the loop cut short. That is why
+  # the reason comes back beside the status and not inside it — the same trap the
+  # soft limit fell into ([04]), one deadline further on.
+  set_config SESSION_STALL_TIMEOUT 2
+  set_config SESSION_TIMEOUT 0
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+trap 'echo "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":4,\"total_cost_usd\":0.2}"; exit 0' TERM
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+i=0
+while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_file_contains "$FEATURE_DIR/run.log" "session-stalled"
+  run bash -c "grep -c resolved '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # And the deadline asked before it took: turns=4 is the result event this fake
+  # only ever emits from its TERM handler, so it is the proof that the session was
+  # given the chance to shut down rather than killed outright. A deadline that
+  # went straight to KILL would journal turns=0 and nothing else would notice.
+  assert_file_contains "$FEATURE_DIR/run.log" "turns=4"
+}
+
+@test "a session that ignores the deadline's TERM is killed after the grace" {
+  # The half a TERM cannot promise. A TERM is a request, and the loop waits for
+  # the exit status of what it asked to stop: without the KILL that follows, this
+  # run does not come back at all. So the deadline for this one lives in the
+  # test rather than in an assertion about a run that would never return — which
+  # is what makes its mutation runnable (see test/mutate.sh).
+  set_config SESSION_STALL_TIMEOUT 1
+  set_config SESSION_KILL_GRACE 2
+  set_config SESSION_TIMEOUT 0
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+i=0
+while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+: >"$RALPH_SHIM_STATE/session-ran-to-the-end"
+FAKE
+
+  bash "$PACK_DIR/loop.sh" >"$RALPH_TEST_DIR/loop.out" 2>&1 &
+  PACK_BG_PID=$!
+
+  # Twelve seconds against a stall of one and a grace of two, so that a run which
+  # only comes back when the fake gives up says so here rather than passing
+  # slowly.
+  wait_for_file "$FEATURE_DIR/run.log" 240 ||
+    fail "the run never finished its iteration: the session ignored its TERM and nothing killed it"
+
+  rc=0
+  wait "$PACK_BG_PID" || rc=$?
+  PACK_BG_PID=""
+
+  assert_equal "$rc" "4"
+  assert_file_contains "$FEATURE_DIR/run.log" "session-stalled"
+  assert_file_contains "$RALPH_TEST_DIR/loop.out" "hung, terminated"
+
+  # And the assertion that does not depend on how long this test was willing to
+  # wait. `wait_for_file` counts *tries*, not seconds, so under load its deadline
+  # stretches — during a full mutate.sh run it outlasted the session's own thirty
+  # seconds, the fake ended by itself, every assertion above held and the mutation
+  # that removes the KILL came back VACUOUS. What cannot stretch is this marker:
+  # the session reaches it only by running to its own end, which is exactly what
+  # the KILL exists to prevent.
+  refute_file_exists "$SHIM_STATE/session-ran-to-the-end"
+}
+
+@test "a deadline of zero, or of nonsense, is no deadline at all" {
+  # The reading GATE_TIMEOUT gives a missing deadline, and the one that lets a
+  # project say "off" without inventing a huge number.
+  set_config SESSION_STALL_TIMEOUT off
+  set_config SESSION_TIMEOUT 0
+  set_config ITER_CAP 1
+  # Quiet for three seconds and then done: a session either deadline would have
+  # killed if a nonsense value or a zero had been read as a number.
+  script_quiet_session 30
+
+  run_loop
+  assert_failure 4
+  refute_output_contains "hung, terminated"
+  refute_output_contains "wall clock"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a stream arriving in slow halves is not silence" {
+  # The corollary of reading the stream through an open descriptor: a tick can
+  # land in the middle of a `printf`, and half a line is still the session
+  # writing. Counting only whole lines would kill a session *for* writing — here
+  # the halves are 2.5s apart and the whole lines 5s apart, on either side of a
+  # four-second deadline.
+  set_config SESSION_STALL_TIMEOUT 4
+  set_config SESSION_TIMEOUT 0
+  set_config ITER_CAP 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+i=0
+while [ $i -lt 2 ]; do
+  printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read'
+  sleep 2.5
+  printf '_input_tokens":100,"output_tokens":5}}},"session_id":"s"}\n'
+  sleep 2.5
+  i=$((i + 1))
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.05}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  refute_output_contains "hung, terminated"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a ticket whose sessions keep hanging goes to the human sink under its own name" {
+  set_config SESSION_STALL_TIMEOUT 2
+  set_config SESSION_TIMEOUT 0
+  set_config RETRY_N 1
+  set_config STERILE_K 2
+  script_quiet_session
+
+  run_loop
+  assert_failure 4
+  assert_ticket_status 01-alpha ready-for-human
+  # Not `failed-impl`: no gate ever judged these sessions, and a human sent to
+  # read a verdict that was never returned has been misrouted ([26]).
+  assert_equal "$(ticket_field 01-alpha Escalation)" "session-timeout"
+  assert_equal "$(ticket_field 01-alpha Failures)" "2"
+
+  # The attempt is kept all the same, and on this path it is the only thing there
+  # is to read.
+  run git -C "$PROJECT_DIR" rev-parse --verify "refs/heads/failed/01-alpha"
+  assert_success
+}
+
+@test "the shipped configuration bounds a session rather than leaving it to the night" {
+  # A deadline nobody sets is a deadline nobody has, so the defaults are part of
+  # the guarantee and not a matter of taste. Read out of the example a project
+  # installs, never retyped.
+  stall="$(config_default SESSION_STALL_TIMEOUT)"
+  wall="$(config_default SESSION_TIMEOUT)"
+  grace="$(config_default SESSION_KILL_GRACE)"
+
+  # And the wall clock is the generous one of the two: a session may legitimately
+  # be long, it may not legitimately be silent.
+  run bash -c "[ \"$stall\" -gt 0 ] && [ \"$grace\" -gt 0 ] &&
+    [ \"$wall\" -gt \"$stall\" ] && echo bounded"
+  assert_success
+  assert_output_contains "bounded"
+}
 
 @test "a usage event split across two writes is counted whole, once" {
   set_config SOFT_LIMIT_TOKENS 5000

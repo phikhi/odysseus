@@ -80,6 +80,37 @@ GUARDED_PATHS="${GUARDED_PATHS-.claude}"
 # before the ~200K hard dumb-zone frontier.
 SOFT_LIMIT_TOKENS="${SOFT_LIMIT_TOKENS:-150000}"
 
+# ── Session deadlines ────────────────────────────────────────────────────────
+#
+# The net above bounds a session's context, not its time. These two bound its
+# time, and one of them alone would not: a session that hangs writes nothing, a
+# session looping over an edit it cannot get right writes all night. For a run
+# left alone until morning, an unbounded session is the most expensive failure
+# there is — nothing ground, and the terminal never given back.
+
+# Seconds a session may write nothing at all before it is terminated. Keep it
+# comfortably above the longest single tool call this project's sessions make: a
+# test suite run through a Bash tool puts nothing on the stream while it runs, and
+# from here that is indistinguishable from a hang.
+# 0 or non-numeric disables it, the same reading GATE_TIMEOUT gives a missing
+# deadline.
+SESSION_STALL_TIMEOUT="${SESSION_STALL_TIMEOUT:-1800}"
+
+# Seconds a session may run in total, whatever it writes: a stream that
+# progresses is not proof of progress. Generous on purpose — a legitimate session
+# can be long — and it is the one of the two nothing can push back, being measured
+# from the spawn rather than from the stream a session is free to append to.
+# 0 or non-numeric disables it.
+SESSION_TIMEOUT="${SESSION_TIMEOUT:-10800}"
+
+# Seconds between the TERM a deadline sends and the KILL that follows it. A TERM
+# is a request: `claude` honours it and shuts down, and a session that does not
+# hangs the run just as surely as one that never wrote, because the loop waits for
+# its exit status.
+# 0 or non-numeric means no KILL — and then the two deadlines above bound the
+# moment this loop *asks* a session to stop, not the moment it gets it back.
+SESSION_KILL_GRACE="${SESSION_KILL_GRACE:-30}"
+
 # ── Usage budget ─────────────────────────────────────────────────────────────
 
 # Utilization ratios (0..1) at or above which the loop stops spawning.

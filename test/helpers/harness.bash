@@ -432,6 +432,14 @@ pack_run_bg() {
 }
 
 # Wait for a file to appear, so a test never races a background process.
+#
+# It counts *tries*, not seconds, and that is fine for what it is for — waiting on
+# something that is about to happen. It is not a deadline: under load a try costs
+# more than its sleep, so 240 of them can outlast a wall-clock minute. A test whose
+# guarantee is that something terminates must therefore not rest its verdict on
+# this timing out; it needs an assertion on what only the termination could have
+# prevented. One did, and a full mutate.sh run stretched it far enough for the
+# session to end by itself — the test stayed green with the guarantee removed ([23]).
 wait_for_file() {
   local target="$1" tries="${2:-100}"
   while [ "$tries" -gt 0 ]; do

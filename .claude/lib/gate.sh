@@ -582,20 +582,6 @@ gate__start() {
   (gate__branch "$dir" "$name" "$@") &
 }
 
-# Every descendant, deepest first, then the process itself. Killing the branch
-# alone would leave the command it started — a hung test suite holding a port or
-# a database — running for the rest of the night, and `kill -- -PID` needs a
-# process group this shell never made. `ps` is POSIX; the pack still needs
-# nothing installed.
-gate__kill_tree() {
-  local pid="$1" child
-  for child in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$pid" '$2 == p { print $1 }'); do
-    gate__kill_tree "$child"
-  done
-  kill -TERM "$pid" 2>/dev/null || true
-  return 0
-}
-
 # The deadline. `wait` cannot take a timeout in bash 3.2, so the deadline is a
 # process of its own: it sleeps in one-second steps — so that killing it leaves
 # at most a one-second orphan behind — and then takes the branches down.
@@ -604,6 +590,16 @@ gate__kill_tree() {
 # counts red. The timeout needs no verdict of its own: it only has to stop a
 # `TEST_CMD` that hangs from hanging the whole run, which the smart-zone net
 # cannot do because it watches the session and not the gate.
+#
+# The walk itself lives in lib/proc.sh since [23] gave it a second caller. What
+# does *not* follow it here is the KILL a session deadline needs: what this
+# collects is `gate__branch` in a subshell, and a subshell has its traps reset to
+# their defaults, so it dies of the TERM whether or not the command under it does
+# — probed on 30/07/2026, 143 with no trap against a survivor with `trap '' TERM`.
+# A `TEST_CMD` that ignores the signal is therefore orphaned rather than hanging
+# the run, which is a leak and not a deadlock. The session is the other case, and
+# it is the one that hangs: `claude` is an external binary the loop waits on
+# directly, with nothing between the signal and the process.
 gate__watchdog() {
   local limit="$1" marker="$2"
   shift 2
@@ -614,7 +610,7 @@ gate__watchdog() {
   done
   : >"$marker"
   for pid in "$@"; do
-    gate__kill_tree "$pid"
+    proc_kill_tree "$pid"
   done
   return 0
 }

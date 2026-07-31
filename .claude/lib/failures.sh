@@ -13,6 +13,10 @@
 #   gate-red   tests, type check or a stray write. Retryable: up to RETRY_N
 #              fresh sessions, then the human sink with `Failures:` to show it.
 #   crash      the session died. Same policy as a red gate.
+#   timeout    the session hung, or ran past the wall clock ([23]). Retried like
+#              a red gate — a fresh session is exactly what a hung one needs —
+#              and never re-sliced: nothing here measured the slice. Escalated
+#              under a name of its own, because no gate ever judged it.
 #
 # A session that wrote the tracker is reported apart (`tracker-write`) and
 # handled as a red gate: it is the same kind of failure — something in the
@@ -42,6 +46,14 @@ failures_classify() {
   case "$outcome" in
     over-soft-limit)
       printf 'too-big\n'
+      ;;
+    # Deliberately not too-big. The two look alike from outside — a session the
+    # loop cut short — and they say opposite things: crossing the soft limit is
+    # evidence about the size of the slice, hanging is evidence about nothing.
+    # Re-slicing on a timeout would carve a ticket up on a measurement nobody
+    # took, and spend a second session doing it.
+    session-stalled | session-timeout)
+      printf 'timeout\n'
       ;;
     gate-red | tracker-write)
       if [ "$scope_class" = contract ]; then
@@ -84,6 +96,13 @@ failures_handle() {
       count="$(tracker_bump_failures "$ticket")" || count=""
       if [ -z "$count" ] || [ "$count" -gt "${RETRY_N:-2}" ]; then
         reason=failed-impl
+        # Routed apart at the ceiling, for the reason [26] had to learn about
+        # `Failures:`: a name that promises something has to hold it. Nothing
+        # judged a session that hung — the gate never ran — so `failed-impl`
+        # would send a human to read a verdict that was never returned. The
+        # `failed/<ticket>` branch is written either way, and on this path it is
+        # the only thing there is to read.
+        [ "$class" != timeout ] || reason=session-timeout
       fi
       ;;
   esac
@@ -622,7 +641,7 @@ failures_make_durable() {
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head seen issues prev_soft rc=0
+  local plan out base head seen issues prev_soft prev_timeout rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -636,6 +655,7 @@ failures_reslice() {
   seen="$(failures_tracker_snapshot)"
   issues="$(failures_tracker_tree)" || issues=""
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
+  prev_timeout="${RALPH_SESSION_TIMEOUT:-}"
 
   failures__reslice_prompt "$ticket" "$plan" >"$plan.prompt"
   session_spawn "$plan.prompt" "$out" || rc=$?
@@ -643,7 +663,18 @@ failures_reslice() {
     rc=1
     failures__log "$ticket: the re-slice session crossed the soft limit too"
   fi
+  # The same refusal for the two deadlines of [23], and it carries more here than
+  # it looks. A planning session the monitor cut short comes back a *success* —
+  # `claude` traps TERM and exits 0 — carrying whatever it had written so far, and
+  # half a plan that happens to parse is a plan: it would create tickets, drop the
+  # acceptance criteria the missing half was carrying, and nothing could take that
+  # back, the tracker being outside the rollback's reach on purpose.
+  if [ -n "${RALPH_SESSION_TIMEOUT:-}" ]; then
+    rc=1
+    failures__log "$ticket: the re-slice session ran out of time too (${RALPH_SESSION_TIMEOUT})"
+  fi
   RALPH_SOFT_LIMIT_HIT="$prev_soft"
+  RALPH_SESSION_TIMEOUT="$prev_timeout"
 
   # A planning session has no write-surface, so nothing it left in the
   # repository is wanted — including the plan, if it ignored the instructions.

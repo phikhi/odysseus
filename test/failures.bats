@@ -673,6 +673,65 @@ FAKE
   esac
 }
 
+@test "a plan from a planning session the loop cut short is refused whole" {
+  # The twin of "the re-slice session crossed the soft limit too", for the two
+  # deadlines of [23] — and the one that needed writing, because a session cut for
+  # *time* comes back a success: `claude` traps TERM and exits 0. The planner here
+  # writes a plan that would validate perfectly and then hangs. Acting on it would
+  # mean creating tickets out of what a session had written *so far*, and the
+  # tracker is the one thing no rollback can take back.
+  use_tickets 07-overlaps-alpha
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config SESSION_STALL_TIMEOUT 2
+  set_config STERILE_K 1
+
+  script_too_big_then <<'FAKE'
+if [ "$n" = 2 ]; then
+    plan="$(printf '%s' "$prompt" | sed -n 's/^Write the plan to \([^,]*\),.*/\1/p' | head -1)"
+    cat >"$plan" <<'PLAN'
+--- ticket: alpha-half | The alpha half ---
+**What to build:** The first half of what was too big.
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+
+**Status:** ready-for-agent
+
+- [ ] the alpha half exists
+--- ticket: eta-half | The eta half ---
+**What to build:** The second half of what was too big.
+
+**Blocked by:** None
+
+**Write-surface:** `src/eta.txt`
+
+**Status:** ready-for-agent
+
+- [ ] the eta half exists
+PLAN
+    trap 'echo "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,\"total_cost_usd\":0.01}"; exit 0' TERM
+    i=0
+    while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+    exit 0
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "the re-slice session ran out of time too (stall)"
+  assert_output_contains "no re-slice plan came back"
+
+  assert_ticket_status 07-overlaps-alpha ready-for-human
+  assert_equal "$(ticket_field 07-overlaps-alpha Escalation)" "too-big"
+
+  # And the split it had already written on disk was not acted on: one ticket in
+  # the tracker, the one that was too big.
+  run bash -c "ls '$TRACKER_DIR' | awk 'END { print NR }'"
+  assert_equal "$output" "1"
+}
+
 @test "a slice nobody can split goes to the human, with the reason said" {
   use_tickets 07-overlaps-alpha
   set_config SOFT_LIMIT_TOKENS 5000

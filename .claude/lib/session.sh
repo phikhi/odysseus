@@ -9,7 +9,22 @@
 # on a settings file the target project could overwrite.
 #
 # The session runs in the background so the smart-zone net can watch its stream
-# and stop it while it is still running. Sets RALPH_SOFT_LIMIT_HIT when it does.
+# and stop it while it is still running. Which of the net's three reasons it was
+# comes back in two variables the caller reads: RALPH_SOFT_LIMIT_HIT for the token
+# ceiling, and RALPH_SESSION_TIMEOUT — `stall` or `wall` — for the two deadlines
+# of [23]. They are separate because the loop does two different things with them:
+# a session cut for context says the *slice* was too big and gets re-sliced, a
+# session that hung says nothing about the ticket at all.
+#
+# Neither of them survives a subshell, and that is a real limit rather than an
+# oversight: `lenses_review` calls this from a gate branch, so what it sets there
+# is read by that branch and never by the loop ([04], [06]). Every caller that
+# needs the answer is the shell that asked for the session — the loop's iteration,
+# the failure policy's re-slice, and the lens branch — and a lens that was
+# terminated is red through its missing verdict rather than through a variable.
+# A file beside the stream would cross the boundary and was refused for the reason
+# the trust boundary exists: `.scratch/` is writable by the very session being
+# judged, and a signal a session can forge is not a signal.
 #
 # One prompt, one stream, from a file rather than a pipe: a pipeline would run
 # this in a subshell and RALPH_SOFT_LIMIT_HIT would die with it.
@@ -26,9 +41,10 @@
 # retype the invocation. A second copy of these flags would be a second thing to
 # keep in step with reality, and only one of them would be under contract ([20]).
 session_spawn() {
-  local promptfile="$1" outfile="$2" pid rc=0
+  local promptfile="$1" outfile="$2" pid rc=0 reaper=''
   shift 2
   RALPH_SOFT_LIMIT_HIT=0
+  RALPH_SESSION_TIMEOUT=''
 
   # Created before the spawn: the monitor follows the stream through an open
   # descriptor, and a descriptor cannot be opened on a file that is not there.
@@ -43,13 +59,28 @@ session_spawn() {
     <"$promptfile" >"$outfile" &
   pid=$!
 
-  monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS" || RALPH_SOFT_LIMIT_HIT=1
-  # Not a bare `wait`: on the soft-limit path the monitor returns as soon as its
+  if ! monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS"; then
+    case "${MONITOR_STOPPED:-}" in
+      soft-limit) RALPH_SOFT_LIMIT_HIT=1 ;;
+      stall | wall) RALPH_SESSION_TIMEOUT="$MONITOR_STOPPED" ;;
+    esac
+  fi
+  # Read before the collection, because the collection is what makes it stale: the
+  # reaper gives up on its own the moment the session is gone.
+  reaper="${MONITOR_REAPER:-}"
+  # Not a bare `wait`: on a terminated session the monitor returns as soon as its
   # TERM is away, so this call spans the whole of the session's shutdown — and bash
   # cuts a bare `wait` short the instant the loop's stop trap fires. The loop then
   # took the iteration back, deleted the stream and exited with `claude` still
   # writing into it ([28]). See proc_collect for why waiting again is the answer.
   proc_collect "$pid" || rc=$?
+  # And the deadline's second half, put away the same way the gate puts its
+  # watchdog away: a reaper left alive would go on holding a pid the system is now
+  # free to hand to somebody else.
+  if [ -n "$reaper" ]; then
+    kill -TERM "$reaper" 2>/dev/null || true
+    proc_collect "$reaper" || true
+  fi
   return "$rc"
 }
 
