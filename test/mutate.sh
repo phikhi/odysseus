@@ -158,14 +158,20 @@ mutation() {
   out="$(bash test/run.sh "$testfile" -f "$filter" 2>&1)"
   cp "$BACKUP_DIR/$key.bak" "$file"
 
-  if printf '%s' "$out" | grep -qE '(^| )0 failures'; then
-    printf 'VACUOUS  %s\n         %s -f "%s" stayed green without it\n' \
-      "$label" "$testfile" "$filter"
+  # "No test ran" is asked *before* "no test failed", and the order is the whole
+  # difference between a diagnosis and a lie. A run that matched nothing prints
+  # `0 tests, 0 failures`, so with the other order a mistyped filter came back
+  # VACUOUS — which reads as "this test is a lie" about a test that never ran, and
+  # would be "fixed" by rewriting something that was fine. This file has already
+  # cost the pack three vacuous tests by being wrong about its own verdicts ([30]).
+  if printf '%s' "$out" | grep -qE '^0 tests|(^| )0 tests,'; then
+    printf 'DRIFTED  %s\n         no test matches -f "%s" in %s\n' "$label" "$filter" "$testfile"
     BAD=$((BAD + 1))
     return 0
   fi
-  if printf '%s' "$out" | grep -qE '^0 tests|(^| )0 tests,'; then
-    printf 'DRIFTED  %s\n         no test matches -f "%s" in %s\n' "$label" "$filter" "$testfile"
+  if printf '%s' "$out" | grep -qE '(^| )0 failures'; then
+    printf 'VACUOUS  %s\n         %s -f "%s" stayed green without it\n' \
+      "$label" "$testfile" "$filter"
     BAD=$((BAD + 1))
     return 0
   fi
@@ -1035,8 +1041,11 @@ mutation "24 the zone nothing judged is never named" "$GATE" \
   's/^gate__report_unguarded\(\) \{/gate__report_unguarded() { return 0;/m' \
   test/gate.bats "not judged, and the gate says so"
 
+# Both filters moved into gate__ignored_walk with [30], which gave the listing a
+# third exclusion and a descent. The entries follow the lines rather than the
+# function: DRIFTED here would mean the guarantee is no longer carried anywhere.
 mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
-  's/    if gate_is_bookkeeping "\$file"; then continue; fi\n    if gate_in_surface/    if gate_in_surface/' \
+  's/  if gate_is_bookkeeping "\$file"; then return 0; fi\n  if gate_in_surface/  if gate_in_surface/' \
   test/gate.bats "own bookkeeping"
 
 # The lie in the other direction: naming a path the gate *did* judge. Held by the
@@ -1044,7 +1053,7 @@ mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
 # before — so the guarded case had to be a project whose only ignored path is a
 # guarded one, or the refutation would pass on the strength of another path.
 mutation "24 a guarded path is reported as unjudged too" "$GATE" \
-  's/    if gate_in_surface "\$\{file%\/\}" "\$guarded"; then continue; fi\n//' \
+  's/  if gate_in_surface "\$\{file%\/\}" "\$guarded"; then return 0; fi\n//' \
   test/gate.bats "guarded path is caught"
 
 mutation "24 the rollback says nothing about what it left behind" "$FAILURES" \
@@ -1057,6 +1066,101 @@ mutation "24 the rollback says nothing about what it left behind" "$FAILURES" \
 mutation "24 the rollback only reports when it undid something" "$FAILURES" \
   's/\n  failures__report_unrolled "\$tree" "\$paths"\n/\n  if [ -n "\$paths" ]; then failures__report_unrolled "\$tree" "\$paths"; fi\n/' \
   test/failures.bats "nothing to undo"
+
+# ── [30] who moves the frontier of that zone ─────────────────────────────────
+
+# The control itself: the snapshot stops obeying the rules of the spawn and goes
+# back to obeying whatever the session left behind.
+#
+# Not aimed at the `.git/info/exclude` test, and that is worth writing down rather
+# than discovering twice: there the frontier is *put back* before the tree is taken,
+# so the file behind the rule is caught by the ordinary `git add -A` and this entry
+# comes back VACUOUS against a healthy test. It is the evidence for the claim in
+# gate_run that the verdict does not rest on that ordering. The two tests below are
+# the ones where the forcing is the only thing standing: a rule in the working tree,
+# which is legitimate and therefore never put back, and a rule this run could not
+# put back at all.
+mutation "30 the snapshot obeys the rules the session left behind" "$GATE" \
+  's/    for path in \$\(gate_guarded_paths\) \$hidden; do/    for path in \$(gate_guarded_paths); do/' \
+  test/gate.bats "does not hide what it wrote behind it"
+
+mutation "30 the same, where the frontier could not be put back" "$GATE" \
+  's/    for path in \$\(gate_guarded_paths\) \$hidden; do/    for path in \$(gate_guarded_paths); do/' \
+  test/gate.bats "could not put back"
+
+# The pin records no working-tree rule, so *every* ignored path reads as newly
+# hidden: the lie in the other direction, and the one that would make a real
+# project red on its own build cache from the first iteration.
+mutation "30 the pin records none of the working tree's rules" "$GATE" \
+  's/    cp "\$file" "\$rules\/\$file" 2>\/dev\/null \|\| true/    :/' \
+  test/gate.bats "does not hide what it wrote behind it"
+
+# And the same for the source that needs no write-surface. Separate entry because
+# separate copy: a pin that recorded the tree and not the git directory would red
+# every project whose human keeps local excludes.
+mutation "30 the pin records nothing of .git/info/exclude" "$GATE" \
+  's/  \[ -f "\$file" \] && cp "\$file" "\$rules\/\.git\/info\/exclude" 2>\/dev\/null/  :/' \
+  test/gate.bats "does not hide what it wrote behind it"
+
+# The half that keeps one red iteration from buying a whole night: without the
+# restore, the *next* pin records the widened frontier as the project's own.
+mutation "30 the frontier of the git directory is not put back" "$GATE" \
+  's/^gate__ignore_restore\(\) \{/gate__ignore_restore() { return 1;/m' \
+  test/gate.bats "widen the blind zone"
+
+# Reporting the intention instead of the result. `git config --unset` writes the
+# repository config, so a key a session put in the user's config survives it — and
+# the message said "(put back)" all the same.
+mutation "30 a restore that was only attempted reports success" "$GATE" \
+  's/  \[ "\$\(gate__ignore_current "\$name"\)" = "\$pinned" \]/  return 0/' \
+  test/gate.bats "could not put back"
+
+# The verdict, as opposed to the visibility: the frontier moves, the file behind it
+# is still judged through the pin, and nothing says who moved it.
+mutation "30 moving the frontier is not a finding" "$GATE" \
+  's/^gate_ignore_frontier\(\) \{/gate_ignore_frontier() { return 0;/m' \
+  test/gate.bats "widen the blind zone"
+
+mutation "30 the scope-guard drops the frontier findings" "$GATE" \
+  's/  if \[ -n "\$\{RALPH_GATE_IGNORE:-\}" \]; then/  if [ -n "" ]; then/' \
+  test/gate.bats "outside the repository is named"
+
+# The cause behind [24]'s consequence, which is the one line a human gets when the
+# rule is legitimate work.
+mutation "30 nothing says the session moved the frontier" "$GATE" \
+  's/^gate__report_frontier\(\) \{/gate__report_frontier() { return 0;/m' \
+  test/gate.bats "does not hide what it wrote behind it"
+
+# Fail-closed. A pin that is set and unreadable must not read as "no pin at all",
+# which is the fail-open the whole mechanism would collapse into.
+mutation "30 a broken pin snapshots anyway" "$GATE" \
+  's/  if gate__ignore_pin_broken; then return 1; fi/  :/' \
+  test/gate.bats "pin that cannot be read"
+
+# The folding, which is what keeps a node_modules out of the morning log: descend
+# into every folded directory instead of only those holding something judged.
+mutation "30 every folded directory is walked, not only the ones that need it" "$GATE" \
+  's/^gate__ignored_holds_judged\(\) \{/gate__ignored_holds_judged() { return 0;/m' \
+  test/gate.bats "were already there cost nothing"
+
+# And the descent itself, without which the tracker of a project that has not
+# committed it is announced as a path nobody judged.
+mutation "30 a folded directory holding a judged path is reported whole" "$GATE" \
+  's/^gate__ignored_holds_judged\(\) \{/gate__ignored_holds_judged() { return 1;/m' \
+  test/gate.bats "tracker is not named"
+
+# The second caller, and the reason it exists: a planning session is never gated,
+# so nothing else on that path would put the rules back.
+mutation "30 the re-slice session's frontier is left where it put it" "$FAILURES" \
+  's/moved="\$\(gate_ignore_frontier\)"/moved=""/' \
+  test/failures.bats "re-slice session cannot leave"
+
+# The fixture's own world: `.git/info/exclude` is created by every real `git init`,
+# and the empty template took it away — which is how the source that needs no
+# write-surface stayed unexercisable for thirty tickets.
+mutation "30 the fixture project has no local excludes, as before" "$HARNESS" \
+  's/  mkdir -p "\$PROJECT_DIR\/\.git\/info"\n/  /' \
+  test/gate.bats "widen the blind zone"
 
 # ── [29] the tree the gate judges, taken before the gate runs ────────────────
 

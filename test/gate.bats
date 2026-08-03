@@ -840,6 +840,345 @@ FAKE
   esac
 }
 
+# ── who moves the frontier of that zone ──────────────────────────────────────
+#
+# [24] measured how far these checks see into the ignored zone and named what is
+# left. The missing half is who decides where the zone starts: ignore rules are
+# files, and a session can write them ([30]). The rules that decide an iteration
+# are the ones it was handed — pinned in a witness repository at spawn time — so a
+# session cannot widen the blind spot it is judged through, and a ticket may still
+# add an ignore rule for the iteration after it.
+#
+# Every test here writes the rule source it means, in the source it means. There
+# are four of them and they are not interchangeable: two are versioned project
+# work, one lives in the git directory and needs no write-surface at all, and one
+# is outside the repository altogether.
+
+@test "a session cannot widen the blind zone through .git/info/exclude" {
+  # The path that needs nothing granted to it: no ticket declares `.git/`, and
+  # before [30] nothing in the pack looked there. Probed on 30/07/2026 — two green
+  # iterations, both rogue files standing, no complaint from the scope-guard.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >>.git/info/exclude
+mkdir -p rogue src
+printf 'backdoor\n' >rogue/backdoor
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  # Named on the same grounds as the sealed configuration, and put back — without
+  # that, the next iteration would pin the widened frontier and inherit the
+  # blindness as if it were the project's own.
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+
+  # And the file behind the rule is judged, which is the whole point: the rule did
+  # not buy invisibility, so this is an ordinary overflow and the rollback reaches it.
+  assert_output_contains "wrote rogue/backdoor, outside the declared write-surface"
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+
+  # The lie in the other direction, and this project is built for it: `rogue/` is
+  # the *only* ignored path it has, so a zone line here could only be naming a path
+  # the gate did judge. [24] paid for this shape once on the guarded paths.
+  refute_output_contains "nothing in this gate judged"
+}
+
+@test "an ignore rule written by the session does not hide what it wrote behind it" {
+  # The other path, and the one that needs a write-surface: a ticket that declares
+  # `.gitignore` is doing something legitimate, and before [30] the loop went green
+  # *and committed the rule*, so the blindness outlived the run.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `.gitignore`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that may write the ignore rules"
+
+  # And rules that were already there, one in each source, with something behind
+  # them. They are what makes the assertions below say *newly* hidden rather than
+  # just hidden: a pin that recorded no rules at all would force these into the
+  # judged tree too, and this iteration would be red about a project's build cache
+  # and a human's local notes. That failure would be silent in a test whose project
+  # has no pre-existing rules — which was this test, once.
+  ignore_paths 'cache/'
+  printf 'localonly/\n' >>"$PROJECT_DIR/.git/info/exclude"
+  mkdir -p "$PROJECT_DIR/cache" "$PROJECT_DIR/localonly"
+  printf 'before\n' >"$PROJECT_DIR/cache/payload"
+  printf 'before\n' >"$PROJECT_DIR/localonly/note"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'lib/\n' >>.gitignore
+mkdir -p lib src
+printf 'rogue\n' >lib/rogue.sh
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "wrote lib/rogue.sh, outside the declared write-surface"
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/lib/rogue.sh"
+
+  # The two refutations, one per rule source: what the *spawn's* rules already hid
+  # stays hidden, so it is neither judged nor undone.
+  refute_output_contains "cache/payload"
+  refute_output_contains "localonly/note"
+  assert_file_contains "$PROJECT_DIR/cache/payload" "before"
+  assert_file_contains "$PROJECT_DIR/localonly/note" "before"
+
+  # The rule itself is not a finding: it is in the surface, so writing it is work
+  # like any other. What the run does instead is say the frontier moved and which
+  # rules this iteration was judged through — the cause behind [24]'s consequence.
+  refute_output_contains "moved the ignore frontier in .gitignore"
+  assert_output_contains "this session moved the ignore frontier: .gitignore"
+}
+
+@test "an ignore rule a ticket delivered counts from the next iteration" {
+  # The legitimate case, and it has to survive: [19]'s installer writes a
+  # `.gitignore` into every target project. So the same write is green when the
+  # ticket declares what it puts behind the rule — and from the next iteration on
+  # the zone is honestly the project's, which is [24]'s territory again.
+  use_tickets 01-alpha 02-beta
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `.gitignore`, `dist`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that may add an ignore rule"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+mkdir -p src dist
+case "$prompt" in
+  *"Ticket: 01-alpha"*)
+    printf 'dist/\n' >>.gitignore
+    printf 'built\n' >dist/out
+    printf 'written\n' >src/alpha.txt
+    ;;
+  *)
+    printf 'sneaky\n' >dist/other
+    printf 'written\n' >src/beta.txt
+    ;;
+esac
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  local loop_output="$output"
+
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  assert_file_contains "$PROJECT_DIR/.gitignore" "dist/"
+
+  # The rule was judged as work and the file behind it was judged against the
+  # surface that declared it — a green iteration, not an exemption.
+  output="$loop_output"
+  assert_output_contains "this session moved the ignore frontier: .gitignore"
+  refute_output_contains "scope=red"
+
+  # And the second iteration is the other half of the acceptance: the rule is now
+  # what its session was handed, so `dist/` really is the project's ignored zone —
+  # off-surface and unjudged, and *named*, which is all [24] ever promised there.
+  local named
+  named="$(printf '%s\n' "$loop_output" | grep 'nothing in this gate judged' | tail -1)"
+  case "$named" in
+    *dist/*) ;;
+    *) fail "the delivered rule was not honoured on the next iteration: $named" ;;
+  esac
+  assert_file_exists "$PROJECT_DIR/dist/other"
+}
+
+@test "core.excludesFile is put back, and what it hid is judged" {
+  # Same family as `.git/info/exclude` and it took a probe to see that it is two
+  # sources at once: the key in `.git/config`, and the file it now points at.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >.git/my-excludes
+git config core.excludesFile .git/my-excludes
+mkdir -p rogue src
+printf 'backdoor\n' >rogue/backdoor
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "moved the ignore frontier in core.excludesFile"
+  assert_output_contains "(put back)"
+  assert_output_contains "wrote rogue/backdoor, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+
+  run git -C "$PROJECT_DIR" config --get core.excludesFile
+  assert_failure
+
+  # And the finding is net of what the run put back: once the key is restored, the
+  # file it pointed at is out of play, so naming it as something nothing can undo
+  # would send a human after a path no session had even touched. Probed — the first
+  # version of this said exactly that.
+  refute_output_contains ".git/my-excludes"
+}
+
+@test "a frontier this run could not put back says so instead of claiming it did" {
+  # The other half of the restore, and it is a *verification* and not an attempt:
+  # `git config --unset` writes the repository's config, so a key a session put in
+  # the user's own config survives it untouched. Reporting "(put back)" there would
+  # be a control announcing its intention — and the widened frontier would then be
+  # what the next iteration pins.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >"$HOME/my-excludes"
+git config --global core.excludesFile "$HOME/my-excludes"
+mkdir -p rogue src
+printf 'backdoor\n' >rogue/backdoor
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "moved the ignore frontier in core.excludesFile"
+  assert_output_contains "could not put it back"
+  refute_output_contains "(put back)"
+
+  # And the iteration is still judged through the pin, which is what makes this a
+  # residue rather than a hole: the write behind the rule is caught and undone, and
+  # only the *durability* of the widening is beyond this run's reach.
+  assert_output_contains "wrote rogue/backdoor, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+}
+
+@test "an excludes file outside the repository is named as one nothing can put back" {
+  # The one source this ticket cannot close, said out loud rather than assumed.
+  # What a session writes outside the tree is out of reach of a pack that diffs
+  # trees; the iteration that did it is still judged through the pin.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+mkdir -p "$HOME/.config/git"
+printf 'rogue/\n' >>"$HOME/.config/git/ignore"
+mkdir -p rogue src
+printf 'backdoor\n' >rogue/backdoor
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "outside the repository"
+  assert_output_contains "nothing here can put it back"
+  assert_output_contains "wrote rogue/backdoor, outside the declared write-surface"
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+  # Still there, and that is the declared limit rather than a defect: the run says
+  # so instead of pretending the rule is gone.
+  assert_file_contains "$HOME/.config/git/ignore" "rogue/"
+}
+
+@test "ignore rules that were already there cost nothing and are still named" {
+  # The direction that matters most, and [31] is where this pack learned to look
+  # for it: the common case is not an attack. A human's local excludes and a
+  # project's build cache must not turn every iteration red, in either source.
+  use_tickets 01-alpha
+  ignore_paths 'cache/'
+  printf 'localonly/\n' >>"$PROJECT_DIR/.git/info/exclude"
+  mkdir -p "$PROJECT_DIR/cache" "$PROJECT_DIR/localonly"
+  printf 'before\n' >"$PROJECT_DIR/cache/payload"
+  printf 'before\n' >"$PROJECT_DIR/localonly/note"
+  script_session_writing src/alpha.txt
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  refute_output_contains "moved the ignore frontier"
+  assert_file_contains "$PROJECT_DIR/cache/payload" "before"
+  assert_file_contains "$PROJECT_DIR/localonly/note" "before"
+
+  # Both sources land in the zone, folded — and folded is asserted rather than
+  # implied: naming `cache/payload` instead of `cache/` would mean the walk had
+  # stopped folding, which is what keeps a `node_modules/` from printing a hundred
+  # thousand lines.
+  local named
+  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
+  assert_equal "${named#*ignored path(s): }" "cache/ localonly/"
+}
+
+@test "the tracker is not named as a path nothing judged" {
+  # The lie [24] left in the other direction, and it needed [30] to be found:
+  # `--directory` folds a wholly-ignored directory into one line, so a project that
+  # gitignores `.scratch/` and has not committed its tracker yet — a fresh install,
+  # first run — was told nothing had judged `.scratch/`, while [21] snapshots the
+  # tickets under it by force and restores them.
+  use_tickets 01-alpha
+  mkdir -p "$PROJECT_DIR/.scratch/other-feature/issues"
+  printf 'another tracker\n' >"$PROJECT_DIR/.scratch/other-feature/issues/99-x.md"
+  printf '.scratch/\n' >"$PROJECT_DIR/.gitignore"
+  git -C "$PROJECT_DIR" add .gitignore
+  git -C "$PROJECT_DIR" rm -r -q --cached .scratch
+  git -C "$PROJECT_DIR" commit -q -m "test: a project that keeps its scratch out of git"
+  script_session_writing src/alpha.txt
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  # And both directions in one line, which is the only way this is worth asserting:
+  # the feature this run judges is not named, and a neighbouring tracker it really
+  # does not judge still is. A walk that silenced the whole of `.scratch/` would
+  # pass the first assertion and fail this one.
+  local named
+  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
+  assert_equal "${named#*ignored path(s): }" ".scratch/other-feature/"
+}
+
+@test "a pin that cannot be read refuses to hand back a tree" {
+  # Fail-closed, and it is the pin's whole reason for being: what the checks can
+  # see must not depend on what the session left behind. The witness lives in a
+  # temporary directory, which a session can reach — so a destroyed pin has to
+  # close the control rather than quietly restore the hole it was closing.
+  use_tickets 01-alpha
+
+  # `pack_run` runs the pack's own bootstrap and already wraps it in `run`; a
+  # second `run` around it swallows both the status and the output, which is how
+  # this assertion first passed against nothing at all.
+  pack_run 'export RALPH_IGNORE_PIN=/nonexistent/ralph-pin; gate_tree_snapshot'
+  assert_failure
+  assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
+
+  # The refutation, without which the assertion above could be passing on any
+  # error at all: the same call with a pin it can read hands back a tree object.
+  pack_run 'export RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN"'
+  assert_success
+  case "$output" in
+    [0-9a-f][0-9a-f]*) ;;
+    *) fail "a readable pin should still yield a tree object: $output" ;;
+  esac
+}
+
 # ── collecting the branches ──────────────────────────────────────────────────
 #
 # The collection itself moved out of the gate in [28]: `session_spawn` needed the

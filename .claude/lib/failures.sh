@@ -641,7 +641,7 @@ failures_make_durable() {
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head seen issues prev_soft prev_timeout rc=0
+  local plan out base head seen issues prev_soft prev_timeout moved rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -679,6 +679,16 @@ failures_reslice() {
   # A planning session has no write-surface, so nothing it left in the
   # repository is wanted — including the plan, if it ignored the instructions.
   failures_rollback "$head" "$base" '' >/dev/null 2>&1 || true
+
+  # And the frontier of what any of that can see, which no rollback reaches:
+  # `.git/info/exclude` is in no tree ([30]). The second caller of this, and it is
+  # the same argument as the second caller of gate_restore_tree — a planning
+  # session is a session, it is never gated, so nothing else here would ever put
+  # the rules back and the *next* iteration would pin the widened ones. Said out
+  # loud rather than quietly undone: there is no gate on this path to carry a
+  # finding, so the log line is the only trace a human gets.
+  moved="$(gate_ignore_frontier)" || failures__log \
+    "$ticket: the re-slice session moved the ignore frontier — $(printf '%s' "$moved" | tr '\n' ';')"
 
   # And the plan is refused whole if it wrote the tracker instead of returning
   # one. A session that writes the tracker has stepped past the only check that

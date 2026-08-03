@@ -154,11 +154,19 @@ harness__template() {
 # Names as well as contents: hashing only the bytes made the key blind to a
 # rename, so moving a lib reused the cached template and quietly tested the
 # previous layout.
+#
+# This file is in the key too, and it took a mutation to notice it was not: the
+# template carries a whole `.git` directory built by harness__build_project, so an
+# edit to how the fixture world is *built* was reusing a project stamped out before
+# it. The symptom was the honest shape of a false green — a mutation that removed a
+# line from the fixture's git directory reported VACUOUS against a test that was
+# fine, because the mutated line had never run.
 harness__pack_fingerprint() {
   (
     cd "$RALPH_PACK_ROOT" || return 1
     local files
-    files="$(find .claude test/fixtures -type f ! -name 'settings.local.json' | LC_ALL=C sort)"
+    files="$(find .claude test/fixtures test/helpers/harness.bash -type f \
+      ! -name 'settings.local.json' | LC_ALL=C sort)"
     printf '%s\n' "$files"
     printf '%s' "$files" | tr '\n' '\0' | xargs -0 cat
   ) | cksum | awk '{print $1}'
@@ -293,6 +301,15 @@ harness__init_git() {
   # leak into a fixture project.
   git -c init.defaultBranch=main init -q \
     --template="$PROJECT_DIR/.git-template" "$PROJECT_DIR"
+  # What the empty template took away and every real `git init` puts there. It is
+  # not decoration: `.git/info/exclude` is an ignore rule source, so it decides
+  # what any check built on a git tree can see — and a fixture without it is a
+  # world where the hole [30] closed could not even be staged. Probed the hard
+  # way: the first probe of that ticket wrote to a directory that did not exist,
+  # and the session's own widening silently failed with it.
+  mkdir -p "$PROJECT_DIR/.git/info"
+  printf '# git ls-files --others --exclude-from=.git/info/exclude\n' \
+    >"$PROJECT_DIR/.git/info/exclude"
   git -C "$PROJECT_DIR" config user.name "ralph test"
   git -C "$PROJECT_DIR" config user.email "ralph@test.invalid"
   git -C "$PROJECT_DIR" config commit.gpgsign false
