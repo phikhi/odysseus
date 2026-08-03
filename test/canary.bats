@@ -142,6 +142,17 @@ seed_hostile_world() {
   printf '.cache/\n' >>"$PROJECT_DIR/.gitignore"
   harness__commit "test: a project that keeps its build cache out of git"
 
+  # And a real repository has a second ignore rule source, which nothing versions
+  # and no ticket can declare: `.git/info/exclude`, where a human puts what is
+  # local to their machine. It is the source [30] closed, and this is the direction
+  # that matters here — the common case is not an attack ([31]). Three iterations
+  # must be green *through* somebody else's local excludes, not in spite of them:
+  # the pack pins the rules it was handed, so a rule that was already there costs
+  # nothing, and the file behind it must still be standing at the end.
+  printf 'scratchpad-of-mine/\n' >>"$PROJECT_DIR/.git/info/exclude"
+  mkdir -p "$PROJECT_DIR/scratchpad-of-mine"
+  printf 'a human keeps notes here\n' >"$PROJECT_DIR/scratchpad-of-mine/notes"
+
   # And a real project declares its own MCP servers. This one had none for
   # thirty-one tickets, which is how [31] stayed invisible here too: the file is
   # read by *every* spawn, its `command` is launched, and its tools reach the model
@@ -362,6 +373,10 @@ FAKE
 
   run_loop
   assert_success
+  # Kept before the first `run` below overwrites it. This file has shipped two
+  # vacuous refutations by asserting on the output of a later `run`, and the
+  # negative assertion at the bottom of this test is exactly that shape.
+  loop_output="$output"
 
   run bash -c "ls -a '$FEATURE_DIR' | grep -E '\.session\.|\.tokens' || true"
   assert_equal "$output" ""
@@ -391,6 +406,21 @@ FAKE
   # tidying the ignored zone — a `git clean` added anywhere in the loop would take
   # a project's `node_modules` down with it ([24]).
   assert_file_contains "$PROJECT_DIR/.cache/build" "built before the run"
+
+  # And the other rule source, the one that lives in the git directory: the human's
+  # local excludes are still what they were, the notes behind them are untouched,
+  # and the run never once claimed somebody had moved the frontier ([30]). A pack
+  # that put back rules it should have honoured, or reddened an iteration over a
+  # rule that was already there, would fail here rather than in a project's
+  # morning log.
+  assert_file_contains "$PROJECT_DIR/.git/info/exclude" "scratchpad-of-mine/"
+  assert_file_contains "$PROJECT_DIR/scratchpad-of-mine/notes" "a human keeps notes here"
+  output="$loop_output"
+  # The witness for the refutation below, and it is not decoration: a refutation
+  # against an empty `$output` cannot fail, which is how two of them in this file
+  # passed for months. This line proves the loop's output is what is being read.
+  assert_output_contains "nothing in this gate judged"
+  refute_output_contains "moved the ignore frontier"
 
   run git -C "$PROJECT_DIR" status --porcelain -- wip.txt CONTEXT.md
   assert_output_contains "?? wip.txt"

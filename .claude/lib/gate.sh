@@ -45,6 +45,10 @@
 #   RALPH_GATE_VERDICTS     e.g. "tests=green typecheck=red scope=green"
 #   RALPH_GATE_FAILED       the red branch names
 #   RALPH_GATE_SCOPE_CLASS  internal | contract, when the scope-guard is red
+#   RALPH_GATE_IGNORE       the ignore rule sources this session moved outside the
+#                           working tree, already phrased as scope findings. Filled
+#                           before the fan, like the tree, because the branch that
+#                           reports them is a subshell ([30])
 #   RALPH_GATE_TREE         the tree every branch is judged on, so the rollback and
 #                           the durable commit act on exactly what was approved.
 #                           Taken before the fan and filled in before it, so a
@@ -232,33 +236,401 @@ gate_guarded_paths() {
   printf '%s %s\n' "${GUARDED_PATHS-.claude}" "$(gate_sealed_paths)"
 }
 
+# ── who moves the frontier of that zone ──────────────────────────────────────
+#
+# [24] asked how far these checks see into the zone above and answered it. The
+# missing half is who decides where the zone *starts*: ignore rules are files, and
+# a session can write them ([30]). Two paths, both probed on 30/07/2026, both
+# green with the off-surface file still standing and no complaint from the
+# scope-guard:
+#
+#   - a `.gitignore` a ticket declares in its write-surface. The loop then commits
+#     the rule, so the blindness outlives the run;
+#   - `.git/info/exclude`, which needs no write-surface at all, because nothing
+#     in this pack looks at `.git/`.
+#
+# Forcing the whole tree is not the answer and never will be — see
+# gate_tree_snapshot. The answer is that **the rules that decide an iteration are
+# the rules it was handed**, which is the same shape as the write-surface since
+# [21] and makes the legitimate case free: a ticket may add an ignore rule, and it
+# takes effect on the next iteration rather than on the one that wrote it.
+#
+# Four sources decide and they get three treatments, because they are not the same
+# kind of thing (see gate_ignore_frontier): the `.gitignore` files of the working
+# tree; `.git/info/exclude` and `core.excludesFile`, in the git directory; and the
+# global excludes file, which lives outside the repository altogether.
+
+# The rules as they stood, kept as a witness repository — a git directory of its
+# own carrying copies of every rule source and no project files at all. Printed as
+# a path; the loop holds it in RALPH_IGNORE_PIN for the length of one iteration
+# and takes a fresh one for the next.
+#
+# A witness repository rather than a parsed copy of the rules, because gitignore
+# semantics belong to git: directory-only patterns, negations, `**`, and a rule
+# whose meaning depends on which directory its file sits in. So "would these rules
+# have hidden this path" is asked of `git check-ignore` inside the witness, which
+# answers on path names and never stats them — probed on 30/07/2026, including a
+# nested `.gitignore` and a directory-only pattern matching a file under it.
+#
+# It lives in a temporary directory, which is as far from the tree as a pack that
+# diffs trees can put anything. A session that reaches into `$TMPDIR` is the same
+# limit as one that reaches into `.git/`: out of reach of the loop, and the reason
+# the pin is refused rather than ignored when it cannot be read.
+gate_ignore_pin() {
+  local pin rules file dir
+  pin="$(mktemp -d "${TMPDIR:-/tmp}/ralph-ignore.XXXXXX")" || return 1
+  rules="$pin/rules"
+  mkdir -p "$rules" "$pin/empty" || return 1
+
+  # An empty template: the machine's git templates must not leave an
+  # `info/exclude` of their own in the witness, and its hooks have no business
+  # running for a repository that exists to answer one question.
+  if ! git init -q --template="$pin/empty" "$rules" >/dev/null 2>&1; then
+    rm -rf "$pin"
+    return 1
+  fi
+
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    dir="$(dirname "$file")"
+    mkdir -p "$rules/$dir" 2>/dev/null || continue
+    # A tracked rule file the session has since deleted stays in the pin, and
+    # that is the right direction: the pin may only ever be wider than what the
+    # rules say now, and a narrowing is something this ticket says nothing about.
+    cp "$file" "$rules/$file" 2>/dev/null || true
+  done <<RULES
+$(gate__ignore_tree_rules)
+RULES
+
+  # `info/` is created by git's default template, and this witness was told to use
+  # an empty one: the directory has to be made rather than assumed. Probed the hard
+  # way — without it the copy failed, the pin recorded no local excludes, and the
+  # snapshot went on being taken through whatever the session had written there.
+  mkdir -p "$rules/.git/info" || true
+  : >"$rules/.git/info/exclude"
+  file="$(gate__ignore_exclude_path)"
+  [ -f "$file" ] && cp "$file" "$rules/.git/info/exclude" 2>/dev/null
+  : >"$pin/global"
+  file="$(gate__ignore_global_path)"
+  [ -f "$file" ] && cp "$file" "$pin/global" 2>/dev/null
+  # Set locally, so the machine's own `core.excludesFile` — from the user's global
+  # config or from the default `~/.config/git/ignore` — cannot leak into the
+  # witness's answers. What the project's rules said about it is pinned above.
+  git -C "$rules" config core.excludesFile "$pin/global" >/dev/null 2>&1 || true
+
+  if ! gate__ignore_manifest >"$pin/manifest"; then
+    rm -rf "$pin"
+    return 1
+  fi
+  printf '%s\n' "$pin"
+}
+
+# Every `.gitignore` of the working tree, tracked or not. A rule file inside an
+# ignored directory is deliberately absent: git never reads one either, because it
+# never walks into the directory that holds it.
+gate__ignore_tree_rules() {
+  git ls-files --cached --others --exclude-standard -- '*.gitignore' 2>/dev/null || true
+}
+
+gate__ignore_exclude_path() {
+  local gitdir
+  gitdir="$(git rev-parse --git-dir 2>/dev/null)" || gitdir=""
+  [ -n "$gitdir" ] || return 0
+  printf '%s/info/exclude\n' "$gitdir"
+}
+
+# The excludes file outside the repository: whatever `core.excludesFile` resolves
+# to, or git's own default when nothing set it. Named by its path, because that is
+# what a human reading a finding needs to go and look at.
+gate__ignore_global_path() {
+  local value
+  value="$(git config --get core.excludesFile 2>/dev/null)" || value=""
+  [ -n "$value" ] || value="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
+  case "$value" in
+    '~/'*) value="$HOME/${value#\~/}" ;;
+  esac
+  printf '%s\n' "$value"
+}
+
+# What the rules are right now, one line per source: kind, name, digest. The three
+# kinds are the three answers to "may a session write this, and can the run put it
+# back" — gate_ignore_frontier is where that is spelled out.
+#
+# A missing file digests to `-`, which is what makes an appearing or vanishing
+# rule file a movement like any other.
+gate__ignore_manifest() {
+  local file
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    printf 'tree\t%s\t%s\n' "$file" "$(gate__digest "$file")"
+  done <<RULES
+$(gate__ignore_tree_rules)
+RULES
+  printf 'dir\t%s\t%s\n' '.git/info/exclude' \
+    "$(gate__digest "$(gate__ignore_exclude_path)")"
+  printf 'dir\t%s\t%s\n' 'core.excludesFile' \
+    "$(git config --get core.excludesFile 2>/dev/null || printf -- '-')"
+  file="$(gate__ignore_global_path)"
+  printf 'host\t%s\t%s\n' "$file" "$(gate__digest "$file")"
+  return 0
+}
+
+gate__digest() {
+  [ -n "${1:-}" ] && [ -f "$1" ] || {
+    printf -- '-\n'
+    return 0
+  }
+  cksum <"$1" | awk '{ print $1 "." $2 }'
+}
+
+# A pin that was set and cannot be read. Refused rather than ignored: the point of
+# the pin is that what the checks can see does not depend on what the session left
+# behind, so a missing one is a control that cannot see.
+gate__ignore_pin_broken() {
+  local pin="${RALPH_IGNORE_PIN:-}"
+  [ -n "$pin" ] || return 1
+  [ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ] && return 1
+  return 0
+}
+
+# The rule sources that are not what the pin recorded — appeared, vanished or
+# changed — as `kind<TAB>name`. Non-zero when the frontier has not moved, so a
+# caller can ask and then do nothing, which is the normal case and the cheap one.
+#
+# The symmetric difference of two manifests: a line present in both appears twice
+# and `uniq -u` drops it. Names are unique inside one manifest, so nothing else
+# can pair up.
+gate_ignore_moved() {
+  local pin="${RALPH_IGNORE_PIN:-}" moved
+  [ -n "$pin" ] || return 1
+  [ -f "$pin/manifest" ] || return 1
+  moved="$( { gate__ignore_manifest; cat "$pin/manifest"; } |
+    LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
+  [ -n "$moved" ] || return 1
+  printf '%s\n' "$moved"
+}
+
+gate__ignore_pinned() {
+  awk -F'\t' -v name="$1" '$2 == name { print $3 }' \
+    "${RALPH_IGNORE_PIN:-/dev/null}/manifest" 2>/dev/null || true
+}
+
+gate__ignore_current() {
+  { gate__ignore_manifest || true; } |
+    awk -F'\t' -v name="$1" '$2 == name { print $3 }'
+}
+
+# Put one rule source back where the pin found it, and answer whether it is really
+# back. Attempt and then verify, because the attempt can succeed on the wrong
+# level: `git config --unset` writes the repository's config, so a value a session
+# put in the *user's* config would survive it and the restore would be a lie.
+gate__ignore_restore() {
+  local name="$1" pinned target
+  pinned="$(gate__ignore_pinned "$name")"
+  case "$name" in
+    'core.excludesFile')
+      if [ "$pinned" = '-' ]; then
+        git config --unset-all core.excludesFile >/dev/null 2>&1 || true
+      else
+        git config core.excludesFile "$pinned" >/dev/null 2>&1 || true
+      fi
+      ;;
+    '.git/info/exclude')
+      target="$(gate__ignore_exclude_path)"
+      [ -n "$target" ] || return 1
+      if [ "$pinned" = '-' ]; then
+        rm -f "$target" 2>/dev/null || true
+      else
+        # The directory too: a session that removed `info/` outright would
+        # otherwise leave a restore that reports success and put nothing back —
+        # which the verification below would catch, but as a mystery.
+        mkdir -p "$(dirname "$target")" 2>/dev/null || true
+        cp "${RALPH_IGNORE_PIN}/rules/.git/info/exclude" "$target" 2>/dev/null || true
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  [ "$(gate__ignore_current "$name")" = "$pinned" ]
+}
+
+# The frontier this session moved, put back where the run can reach it, and
+# phrased as findings for the scope-guard to carry. Non-zero when it found
+# something, so `gate_run` can fill a variable and forget about it.
+#
+# Three kinds, and the difference is the whole of the design:
+#
+#   tree  a `.gitignore` of the working tree. Ordinary project work — a ticket is
+#         allowed to add an ignore rule and [19]'s installer writes one — so
+#         nothing is restored and nothing is red. What the rule hides is judged
+#         this time round all the same, because the snapshot obeys the pinned
+#         rules; from the next iteration on, the rule is what the session was
+#         handed and the zone is honestly the project's.
+#   dir   `.git/info/exclude` and `core.excludesFile`. Not versioned, not
+#         declarable in a write-surface, and between them they decide what every
+#         check here can see. Put back from the pin, because otherwise the *next*
+#         iteration would pin the widened frontier and inherit the blindness as
+#         the project's own configuration — one red iteration would buy a night.
+#         And red, on exactly the grounds the sealed configuration is red: this is
+#         the harness's own visibility, and no surface may cover it.
+#   host  the global excludes file, outside the repository. Red on the same
+#         grounds, and this run cannot put it back — what a session writes outside
+#         the tree is out of reach of a pack that diffs trees, and the rampart
+#         there is the host's isolation ([24]). The iteration that moved it is
+#         still judged through the pin; a later one is not, and that residue is
+#         written down rather than papered over.
+#
+# In two passes, and that is the lesson of [29] rather than a shape: a finding has
+# to be net of what the run *did* put back. `core.excludesFile` names the file the
+# rules come from, so moving it moves two sources at once — the key and the file it
+# now points at — and reporting both from one look at the manifest announced a
+# path outside the repository as unrecoverable a line after restoring the key that
+# had brought it into play. Probed on 03/08/2026: the second finding named a file
+# no session had touched.
+gate_ignore_frontier() {
+  local kind name rc=0
+  [ -n "${RALPH_IGNORE_PIN:-}" ] || return 0
+
+  while IFS="$(printf '\t')" read -r kind name; do
+    [ "$kind" = dir ] && [ -n "$name" ] || continue
+    if gate__ignore_restore "$name"; then
+      printf 'moved the ignore frontier in %s, which decides what every check here can see — no write-surface may cover it (put back)\n' "$name"
+    else
+      printf 'moved the ignore frontier in %s, which decides what every check here can see — and this run could not put it back\n' "$name"
+    fi
+    rc=1
+  done <<INSIDE
+$( { gate_ignore_moved || true; } )
+INSIDE
+
+  while IFS="$(printf '\t')" read -r kind name; do
+    [ "$kind" = host ] && [ -n "$name" ] || continue
+    printf 'moved the ignore frontier in %s, outside the repository — no write-surface may cover it, and nothing here can put it back\n' "$name"
+    rc=1
+  done <<OUTSIDE
+$( { gate_ignore_moved || true; } )
+OUTSIDE
+  return "$rc"
+}
+
+# The ignored paths the pinned rules did *not* hide: what a rule written during
+# this iteration took out of sight. Forced into the snapshot, which is what makes
+# them judged like anything else.
+#
+# Empty and cheap when the frontier has not moved, which is every ordinary
+# iteration: the manifest costs a `git ls-files` and a handful of digests, where
+# walking the ignored zone costs the whole working tree.
+gate_newly_hidden() {
+  local pin="${RALPH_IGNORE_PIN:-}" listing hidden path fence
+  [ -n "$pin" ] || return 0
+  if gate__ignore_pin_broken; then return 1; fi
+  gate_ignore_moved >/dev/null || return 0
+
+  listing="$(git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
+    listing=""
+  [ -n "$listing" ] || return 0
+  hidden="$( (cd "$pin/rules" 2>/dev/null &&
+    printf '%s\n' "$listing" | git check-ignore --stdin 2>/dev/null) || true)"
+
+  fence="
+$hidden
+"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$fence" in
+      *"
+$path
+"*) continue ;;
+    esac
+    printf '%s\n' "$path"
+  done <<LISTING
+$listing
+LISTING
+  return 0
+}
+
 # The ignored paths nothing in this pack looks at, enumerated rather than
 # alluded to. "The tree is back where the session found it, except for a set of
 # paths nobody lists" is the half-truth [24] was opened for.
 #
 # Directories are collapsed, so a project's `node_modules/` is one line and not a
-# hundred thousand. Two exclusions, and both are load-bearing: the guarded paths,
-# because the snapshot takes those by force and they *are* judged; and the
-# feature's own bookkeeping, because [19] gitignores the run journal, the run
-# lock and the session stream, all of which are written *during* the window being
-# watched. Without the second one, every iteration of every project would report
-# its own journal as an unjudged write — which is the same reason the scope-guard
-# drops it (gate_is_bookkeeping, one definition, now three readers).
+# hundred thousand — which is also the source of the one lie this list has told,
+# see gate__ignored_walk.
 gate_unguarded_ignored() {
-  local listing guarded file
+  local listing guarded hidden file
   listing="$(git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
     listing=""
   guarded="$(gate_guarded_paths)"
+  hidden="$(gate_newly_hidden)" || hidden=""
 
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    if gate_is_bookkeeping "$file"; then continue; fi
-    if gate_in_surface "${file%/}" "$guarded"; then continue; fi
-    printf '%s\n' "$file"
+    gate__ignored_walk "$file" "$guarded" "$hidden"
   done <<IGNORED
 $listing
 IGNORED
   return 0
+}
+
+# One entry of that listing: dropped, printed, or walked into.
+#
+# Three exclusions, all load-bearing. The guarded paths, because the snapshot
+# takes those by force and they *are* judged. The feature's own bookkeeping,
+# because [19] gitignores the run journal, the run lock and the session stream,
+# all written *during* the window being watched — without it every iteration of
+# every project would report the loop's own writes (gate_is_bookkeeping, one
+# definition, four readers). And what the pinned rules did not hide, because those
+# are forced in too ([30]).
+#
+# The walk is the lie [24] left in the other direction, and it took [30] to see
+# it: `--directory` folds a wholly-ignored directory into one line, so a project
+# that gitignores `.scratch/` and has not committed its tracker yet — a fresh
+# install, first run — was told `nothing in this gate judged 1 ignored path(s):
+# .scratch/`, while [21] snapshots the tickets under it by force. Naming a path
+# the pack judged is exactly the half-truth [24] refused for the guarded paths.
+# So a folded directory that *holds* something judged is walked one level down
+# instead of being reported whole. Everything inside a folded directory is ignored
+# by construction — that is why git folded it — so its children can be globbed
+# rather than asked of git again.
+gate__ignored_walk() {
+  local file="$1" guarded="$2" hidden="$3" child
+  if gate_is_bookkeeping "$file"; then return 0; fi
+  if gate_in_surface "${file%/}" "$guarded"; then return 0; fi
+  case "
+$hidden
+" in
+    *"
+$file
+"*) return 0 ;;
+  esac
+
+  case "$file" in
+    */)
+      if gate__ignored_holds_judged "$file" "$guarded"; then
+        for child in "$file"* "$file".*; do
+          case "${child##*/}" in '.' | '..') continue ;; esac
+          [ -e "$child" ] || continue
+          if [ -d "$child" ]; then child="$child/"; fi
+          gate__ignored_walk "$child" "$guarded" "$hidden"
+        done
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' "$file"
+  return 0
+}
+
+# Whether a folded directory holds a path this pack judges after all: a guarded
+# path, taken by force, or the tracker [21] snapshots by force. Strictly under it —
+# a directory that *is* one of those was dropped by the filters above.
+gate__ignored_holds_judged() {
+  local dir="$1" path
+  for path in $2 ".scratch/${FEATURE:-}"; do
+    case "$path" in
+      "$dir"?*) return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # A zone as one line: how many paths, and the first ten of them. Non-zero when
@@ -332,26 +704,41 @@ gate_unjudged_changes() {
 # tracker's own guard off.
 #
 # Without paths, the whole tree, and there the project's ignore rules are obeyed
-# with one named exception. `git add -A --force` on everything is not the fix and
+# with two named exceptions. `git add -A --force` on everything is not the fix and
 # never will be: a project's build output would land in the tree the scope-guard
 # judges and the rollback acts on, so every iteration would look like an overflow
 # and every rollback would delete a cache the run has no business touching. So
 # the guarded paths are forced on top of an ordinary `git add -A` — a named list,
-# which only sees what somebody thought to name. What is left is enumerated
+# which only sees what somebody thought to name — and so is whatever a rule
+# written *during this iteration* took out of sight, which is the asymmetric half
+# ([30]): the rules obeyed here are the ones the session was handed, so a session
+# cannot widen the blind spot it is judged through. What is left is enumerated
 # instead of judged: see gate_unguarded_ignored.
 gate_tree_snapshot() {
-  local index tree path
+  local index tree path hidden
   index="$(mktemp "${TMPDIR:-/tmp}/ralph-index.XXXXXX")" || return 1
   rm -f "$index"
   if [ "$#" -gt 0 ]; then
     GIT_INDEX_FILE="$index" git add -A --force -- "$@" >/dev/null 2>&1
   else
+    # Asked before anything is added, and a broken pin refuses the whole snapshot:
+    # a caller that gets a tree back believes it was built through the rules of the
+    # spawn, and a guard that cannot see must not pass.
+    if ! hidden="$(gate_newly_hidden)"; then
+      rm -f "$index"
+      # On stderr, and that is not a detail: every caller of this takes the tree
+      # through a command substitution, so a diagnosis on stdout would be captured
+      # into the variable and thrown away with the failed status — leaving the
+      # refusal downstream with no cause. Probed by destroying a pin mid-session.
+      gate__log 'the pinned ignore rules cannot be read — refusing to snapshot a tree whose visibility nothing vouches for' >&2
+      return 1
+    fi
     GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1
-    # One `git add` per guarded path rather than one for all of them: a pathspec
-    # that matches nothing makes git refuse the whole call, and a project is free
+    # One `git add` per path rather than one for all of them: a pathspec that
+    # matches nothing makes git refuse the whole call, and a project is free
     # to name a path it does not have yet. A refused pathspec leaves the snapshot
     # exactly as the plain `git add -A` left it, which is the status quo.
-    for path in $(gate_guarded_paths); do
+    for path in $(gate_guarded_paths) $hidden; do
       GIT_INDEX_FILE="$index" git add -A --force -- "$path" >/dev/null 2>&1 || true
     done
   fi
@@ -527,6 +914,19 @@ gate__scope_guard() {
     return 1
   fi
 
+  # The frontier of what any of this can see, moved by the session itself, and
+  # asked outside the loop over changed files because the sources that carry it are
+  # not tree paths at all — `.git/info/exclude` is in no tree, which is precisely
+  # why nothing here saw it before [30]. Reported like the seal and for the same
+  # reason: it is the harness's own visibility, so no write-surface may cover it,
+  # and it is retryable because a fresh session starts from rules the gate has
+  # already put back.
+  if [ -n "${RALPH_GATE_IGNORE:-}" ]; then
+    printf '%s\n' "$RALPH_GATE_IGNORE"
+    class=internal
+    rc=1
+  fi
+
   surface="$(gate_write_surface "$ticket")"
 
   while IFS= read -r file; do
@@ -631,6 +1031,24 @@ gate__report_unguarded() {
   if zone="$(gate_ignored_zone)"; then
     gate__log "$ticket: nothing in this gate judged $zone"
   fi
+  return 0
+}
+
+# And the cause behind that zone, when the session is the one that moved it. The
+# line of [24] names the consequence — `nothing in this gate judged … lib/` — and a
+# human reading in the morning cannot tell a build directory a project has always
+# ignored from a directory a session decided to make invisible ([30]).
+#
+# Only the working tree's own rules land here: the sources outside it are findings
+# on the scope-guard, not a line, because those the pack refuses outright. This one
+# is legitimate work — a ticket may add an ignore rule — so it is said and not
+# judged, and what it says is that it did not count this time round.
+gate__report_frontier() {
+  local ticket="$1" moved
+  moved="$( { gate_ignore_moved || true; } |
+    awk -F'\t' '$1 == "tree" { print $2 }' | tr '\n' ' ' | sed 's/ *$//')"
+  [ -n "$moved" ] || return 0
+  gate__log "$ticket: this session moved the ignore frontier: $moved — this iteration was judged through the rules it was handed, the new ones apply from the next"
   return 0
 }
 
@@ -828,8 +1246,18 @@ gate_run() {
   RALPH_GATE_VERDICTS=""
   RALPH_GATE_FAILED=""
   RALPH_GATE_SCOPE_CLASS=""
+  RALPH_GATE_IGNORE=""
   RALPH_GATE_TREE=""
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
+
+  # Before the tree, so that every branch runs in a repository whose visibility is
+  # the run's own and not the session's. The verdict does *not* rest on that
+  # ordering, and saying so is the point: the snapshot goes through the pin either
+  # way, so a file hidden by a rule written during the session is judged whether or
+  # not the rule is still in place. What the restore buys is the iteration *after*
+  # this one — without it, the widened frontier is what the next pin records, and a
+  # single red iteration would have bought a whole night of blindness ([30]).
+  RALPH_GATE_IGNORE="$(gate_ignore_frontier)" || true
 
   # The tree every branch is judged on, taken once and before a single branch is
   # started. Both halves are load-bearing. *Once*, so that the scope-guard, the
@@ -879,6 +1307,7 @@ gate_run() {
 
   gate__log "$ticket: $RALPH_GATE_VERDICTS"
   gate__report_unguarded "$ticket"
+  gate__report_frontier "$ticket"
   gate__report_changed "$ticket" "$RALPH_GATE_TREE"
   rm -rf "$dir"
   return "$rc"

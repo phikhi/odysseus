@@ -673,6 +673,34 @@ FAKE
   esac
 }
 
+@test "the re-slice session cannot leave the ignore frontier widened" {
+  # A planning session is a session, and it is the one this pack never gates: its
+  # whole output is thrown away, so nothing downstream would ever have put the
+  # ignore rules back — and `.git/info/exclude` is in no tree, so the rollback
+  # cannot reach it either ([30]). Left alone, one planning session would set what
+  # the *next* iteration pins as if it were the project's own configuration.
+  use_tickets 07-overlaps-alpha
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 1
+
+  script_too_big_then <<'FAKE'
+if [ "$n" = 2 ]; then
+    printf 'rogue/\n' >>.git/info/exclude
+    mkdir -p rogue && printf 'backdoor\n' >rogue/backdoor
+    echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}'
+    exit 0
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}'
+FAKE
+
+  run_loop
+  assert_output_contains "the re-slice session moved the ignore frontier"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+  # And what it wrote behind the rule went with the rest of its output: the
+  # rollback runs through the pin, so the rule bought no invisibility here either.
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+}
+
 @test "a plan from a planning session the loop cut short is refused whole" {
   # The twin of "the re-slice session crossed the soft limit too", for the two
   # deadlines of [23] — and the one that needed writing, because a session cut for

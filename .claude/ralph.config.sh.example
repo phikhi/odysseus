@@ -72,6 +72,18 @@ TYPECHECK_CMD="${TYPECHECK_CMD:-}"
 # every gate branch has already run in the tree where the file was. What covers
 # that window for the review lenses is the posture they are spawned with, in
 # lib/lenses.sh, not this list.
+#
+# And there is nothing to configure about *who moves the frontier* of that zone,
+# which is why this section has no second key. The ignore rules an iteration is
+# judged through are the ones it was handed — pinned at spawn time, out of the
+# tree — so a session cannot widen the blind spot it is judged in, whichever source
+# it writes: this project's `.gitignore` files, `.git/info/exclude`,
+# `core.excludesFile`, or the global excludes file. A ticket is still free to add
+# an ignore rule; the rule counts from the next iteration. The two sources in the
+# git directory are put back on top of that, and the iteration goes red — they are
+# versioned by nothing and declarable by no write-surface, so there is no legitimate
+# case to protect. Nothing here can turn that off, for the reason above: a guarantee
+# a config key can empty is not a guarantee.
 GUARDED_PATHS="${GUARDED_PATHS-.claude}"
 
 # ── Smart-zone net ───────────────────────────────────────────────────────────

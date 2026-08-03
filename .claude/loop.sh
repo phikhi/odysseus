@@ -167,6 +167,7 @@ loop_main() {
 
   local iteration=0 sterile=0 ticket outfile base pre seen issues tree rc
   local turns cost tokens outcome tracker_written reclaimed rid rdisposition
+  local RALPH_IGNORE_PIN=''
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -232,8 +233,26 @@ loop_main() {
 
     iteration=$((iteration + 1))
 
+    # The project's ignore rules as they stand, pinned for the length of this
+    # iteration: every snapshot below is taken through *these* and not through
+    # whatever the session leaves behind, so a session cannot widen the blind spot
+    # it is judged through ([30]). A ticket may still add an ignore rule — the rule
+    # simply counts from the next iteration, the way its write-surface has counted
+    # from the spawn since [21].
+    #
+    # Taken before the claim rather than beside the other three snapshots, so that
+    # a machine which cannot give the run a pin refuses the iteration with nothing
+    # to unwind. Refusing is the point: the pin is what the visibility of every
+    # check rests on, and a guard that cannot see must not pass.
+    if ! RALPH_IGNORE_PIN="$(gate_ignore_pin)"; then
+      loop_log "cannot pin this project's ignore rules — refusing to grind a frontier whose visibility nothing can vouch for"
+      exit 4
+    fi
+
     if ! tracker_claim "$ticket" "pid:$$"; then
       loop_log "could not claim $ticket — someone else has it"
+      rm -rf "$RALPH_IGNORE_PIN"
+      RALPH_IGNORE_PIN=''
       sterile=$((sterile + 1))
       continue
     fi
@@ -336,6 +355,12 @@ loop_main() {
 
     loop_journal_append "$ticket" "$outcome" "$turns" "$cost" "$tokens"
     rm -f "$outfile" "$outfile.tokens"
+    # The pin dies with the iteration: the next one is entitled to the rules it is
+    # handed, including a rule this iteration legitimately delivered. Leaked on a
+    # kill, like the gate's own temporary directory — a witness repository holds
+    # copies of ignore rules and nothing else.
+    rm -rf "$RALPH_IGNORE_PIN"
+    RALPH_IGNORE_PIN=''
     loop_log "iteration $iteration: $ticket -> $outcome"
   done
 }
