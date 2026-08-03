@@ -100,6 +100,43 @@ teardown() {
   [ ! -d "$PROJECT_DIR/.scratch/ghost" ] || fail "the run created .scratch/ghost"
 }
 
+@test "a duplicate number is named at the start, in the journal, and does not stop the run" {
+  # A tracker a human left in this state: two files carrying `01`, and `03`
+  # pointing at it. The bare number resolves to nothing, so 03 drops out of a
+  # frontier that is a memoryless scan — for good, and until now without a word
+  # anywhere ([27]). Reported rather than refused: 01 and everything that does
+  # not name it are still perfectly grindable.
+  use_tickets 01-alpha 03-blocked
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+
+  run_loop
+  assert_success
+  assert_output_contains "two or more tickets carry the number 01"
+  assert_output_contains "03-blocked is blocked on 01"
+
+  # In run.log and not only on the console: that is the file a human reads in
+  # the morning, and the only one a receipt will be able to read.
+  assert_file_contains "$FEATURE_DIR/run.log" "ambiguous-id"
+  assert_file_contains "$FEATURE_DIR/run.log" "blocked-on-ambiguous-id"
+
+  # Said once at the start, not rediscovered on every scan.
+  run bash -c "grep -c 'ambiguous-id' '$FEATURE_DIR/run.log'"
+  assert_equal "$output" "2"
+
+  # And the run did its night's work anyway.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 03-blocked ready-for-agent
+}
+
+@test "a tracker with nothing wrong with it says nothing at the start" {
+  use_tickets 01-alpha 03-blocked
+
+  run_loop
+  assert_success
+  refute_output_contains "ambiguous"
+  refute_file_contains "$FEATURE_DIR/run.log" "ambiguous-id"
+}
+
 # ── the session ──────────────────────────────────────────────────────────────
 
 @test "the session gets the ticket and pointers to the rest of the context" {

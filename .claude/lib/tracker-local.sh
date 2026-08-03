@@ -290,13 +290,96 @@ tracker_local_open_ticket() {
   printf '%s\n' "$id"
 }
 
+# The next free number, and free is checked rather than assumed.
+#
+# Both halves are there because a session names files in this directory too
+# ([21] restores what it edits, [27] renumbers what it adds — neither stops it
+# choosing a name). A ticket called `1000000000000000000000000000000-x.md` used
+# to end the answer: awk renders that in scientific notation, `$(( ))` calls it a
+# syntax error rather than a big number, and the caller got nothing. What that
+# cost is not cosmetic — `tracker_open_ticket` builds an id out of it, and the
+# renumber that keeps a bare number resolvable falls back to leaving the
+# collision in place. So numbers too wide to be arithmetic are not candidates for
+# "the highest one", and the result is walked forward until nothing carries it.
 tracker_local__next_nn() {
-  local dir max
+  local dir max nn
   dir="$(tracker_local__issues_dir)"
   max=$(ls "$dir" 2>/dev/null |
     sed -n 's/^\([0-9][0-9]*\)-.*\.md$/\1/p' |
-    awk 'BEGIN { m = 0 } { n = $1 + 0; if (n > m) m = n } END { print m }')
-  printf '%02d\n' "$((max + 1))"
+    awk 'BEGIN { m = 0 } length($1) <= 15 { n = $1 + 0; if (n > m) m = n } END { print m }')
+  nn=$((max + 1))
+  while tracker_local__number_taken "$dir" "$(printf '%02d' "$nn")"; do
+    nn=$((nn + 1))
+  done
+  printf '%02d\n' "$nn"
+}
+
+# Does any ticket carry this number — as `NN.md` or as `NN-slug.md`.
+tracker_local__number_taken() {
+  local dir="$1" nn="$2" hit
+  [ ! -f "$dir/$nn.md" ] || return 0
+  for hit in "$dir/$nn"-*.md; do
+    [ -e "$hit" ] || continue
+    return 0
+  done
+  return 1
+}
+
+# Give a ticket a number no other ticket carries, and say which id it now has.
+#
+# Called on what a session added to the tracker, and only there. The collision it
+# undoes is born of two decisions that are each correct on their own ([21]): a
+# renamed ticket file is a `D` plus an `A`, the deletion is restored and the
+# addition is left for a human — so both files end up carrying the same `NN`,
+# `tracker_local__path` rightly refuses to resolve a bare number, and every
+# ticket holding `Blocked by: NN` leaves the frontier for good ([27]).
+#
+# Renaming the *addition* rather than restoring it away is what keeps [21]'s rule
+# intact: nothing a session wrote is destroyed, it is handed to a human under a
+# name that resolves. The body is left exactly as the session wrote it, heading
+# included — the note the quarantine appends is where the old name is recorded,
+# because rewriting the content would be the very deletion this avoids.
+tracker_local_renumber() {
+  local id="$1" file dir base nn slug newnn newid carriers=0 hit
+  file="$(tracker_local__path "$id")" || return 1
+  dir="$(tracker_local__issues_dir)"
+  base="$(basename "$file" .md)"
+
+  # No `NN-` prefix, no bare number to be ambiguous about.
+  case "$base" in
+    [0-9]*-*) nn="${base%%-*}" ;;
+    *)
+      printf '%s\n' "$id"
+      return 0
+      ;;
+  esac
+  case "$nn" in
+    *[!0-9]*)
+      printf '%s\n' "$id"
+      return 0
+      ;;
+  esac
+
+  # Exactly the rule tracker_local__path applies, and it has to stay that way: a
+  # file named `NN.md` is matched before the glob, so a bare `NN` resolves to it
+  # whatever else shares the number. Calling that a collision would renumber a
+  # ticket nothing was ever going to mis-resolve.
+  if [ ! -f "$dir/$nn.md" ]; then
+    for hit in "$dir/$nn"-*.md; do
+      [ -e "$hit" ] || continue
+      carriers=$((carriers + 1))
+    done
+  fi
+  if [ "$carriers" -le 1 ]; then
+    printf '%s\n' "$id"
+    return 0
+  fi
+
+  slug="${base#*-}"
+  newnn="$(tracker_local__next_nn)"
+  newid="$newnn-$slug"
+  mv "$file" "$dir/$newid.md" || return 1
+  printf '%s\n' "$newid"
 }
 
 tracker_local_append_note() {

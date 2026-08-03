@@ -963,6 +963,96 @@ FAKE
   refute_output_contains "the session edited the tracker"
 }
 
+@test "a renamed ticket file does not leave two tickets carrying one number" {
+  # The composition the two checks above did not cover, and it is permanent when
+  # it lands: a rename is a deletion plus an addition, so the restore puts the
+  # ticket back and the quarantine keeps the copy — one `NN` on two files, a bare
+  # number that resolves to nothing, and every ticket holding `Blocked by: NN`
+  # out of the frontier for the rest of the tracker's life ([27]).
+  #
+  # Only the first session renames. The run has to be able to finish afterwards:
+  # 03 depends on 01, so it can only be reached if the number 01 still resolves.
+  use_tickets 01-alpha 03-blocked
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); printf '%s\n' "$n" >"$RALPH_SHIM_STATE/seq"
+
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+
+if [ "$n" = 1 ]; then
+  mv .scratch/demo/issues/01-alpha.md .scratch/demo/issues/01-alpha-v2.md
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # The rename cost the iteration, like any other tracker edit.
+  assert_output_contains "the session edited the tracker — restored 1 ticket file(s)"
+  assert_file_contains "$FEATURE_DIR/run.log" "tracker-write"
+
+  # The addition is kept — nothing a session wrote is destroyed — under a number
+  # nobody else carries, and it is named as having moved.
+  refute_file_exists "$TRACKER_DIR/01-alpha-v2.md"
+  assert_file_exists "$(ticket_file 04-alpha-v2)"
+  assert_ticket_status 04-alpha-v2 ready-for-human
+  assert_equal "$(ticket_field 04-alpha-v2 Escalation)" "decision"
+  assert_file_contains "$(ticket_file 04-alpha-v2)" "reached the tracker as \`01-alpha-v2\`"
+  assert_output_contains "renumbered 01-alpha-v2 -> 04-alpha-v2"
+
+  # And the frontier survives it: 01 still resolves, so 03 is reachable and the
+  # run drains it instead of walking past a ticket that left the board in silence.
+  assert_file_exists "$(ticket_file 01-alpha)"
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 03-blocked resolved
+  assert_file_contains "$PROJECT_DIR/src/gamma.txt" "written"
+}
+
+@test "a ticket the session invents on a number already taken moves too" {
+  # The same collision without a rename, and the likelier half: nothing stops a
+  # session writing a file called `01-anything.md` into the tracker. The repair
+  # is keyed on the number, not on git calling something a rename.
+  use_tickets 01-alpha 03-blocked
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src .scratch/demo/issues
+printf 'written\n' >src/alpha.txt
+cat >.scratch/demo/issues/01-self-served.md <<'TICKET'
+# 01 — Self served
+
+**Blocked by:** None
+
+**Write-surface:** `src/anything.txt`
+
+**Status:** ready-for-agent
+
+- [ ] whatever this session felt like doing next
+TICKET
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  refute_file_exists "$TRACKER_DIR/01-self-served.md"
+  assert_file_exists "$(ticket_file 04-self-served)"
+  assert_ticket_status 04-self-served ready-for-human
+
+  # An addition alone is not a failure of its own ([07]), renumbered or not.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 03-blocked resolved
+  refute_output_contains "the session edited the tracker"
+}
+
 @test "a session that deletes the whole tracker gets it back" {
   # The hostile end of the same mechanism, and the one that would end a run: the
   # tracker is the only authority on state, so a `rm -rf` in the wrong place is

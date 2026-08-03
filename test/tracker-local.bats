@@ -450,3 +450,116 @@ TICKET
   assert_success
   assert_equal "$output" "ready-for-agent"
 }
+
+# ── two tickets, one number ──────────────────────────────────────────────────
+#
+# The state above is not hypothetical: a session that renames a ticket file
+# produces it out of two decisions that are each correct ([21] restores the
+# deletion, quarantines the addition). Nothing used to get the tracker out of
+# it, and every ticket holding `Blocked by: NN` left the frontier for good.
+
+@test "renumber moves the ticket that collides and leaves the rest alone" {
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+  pack_run 'tracker_field 01 Status'
+  assert_failure
+
+  pack_run 'tracker_renumber 01-alpha-bis'
+  assert_success
+  assert_equal "$output" "10-alpha-bis"
+
+  assert_file_exists "$(ticket_file 10-alpha-bis)"
+  refute_file_exists "$TRACKER_DIR/01-alpha-bis.md"
+  assert_file_exists "$(ticket_file 01-alpha)"
+
+  # The whole point: the bare number resolves again, so what depends on it can
+  # come back to the frontier.
+  pack_run 'tracker_field 01 Status'
+  assert_success
+  assert_equal "$output" "ready-for-agent"
+  pack_run 'tracker_frontier'
+  refute_output_contains "03-blocked"
+  pack_run 'tracker_mark_resolved 01-alpha'
+  pack_run 'tracker_frontier'
+  assert_output_contains "03-blocked"
+}
+
+@test "renumber leaves an id nobody shares exactly where it is" {
+  # The paired witness: without it the test above would pass on an implementation
+  # that renumbers every ticket it is handed, which would move ids other tickets
+  # point at — the very damage being repaired.
+  pack_run 'tracker_renumber 02-beta'
+  assert_success
+  assert_equal "$output" "02-beta"
+  assert_file_exists "$(ticket_file 02-beta)"
+  refute_file_exists "$(ticket_file 10-beta)"
+}
+
+@test "a ticket named after the number alone is not a collision" {
+  # `NN.md` is matched before the `NN-*` glob, so a bare number resolves to it
+  # whatever else carries the number. Two `02-*` files are what makes this a test
+  # rather than a restatement of the one above: without the exact-match rule the
+  # renumber would move one of them, and nothing could have mis-resolved `02`.
+  cp "$(ticket_file 02-beta)" "$TRACKER_DIR/02.md"
+  cp "$(ticket_file 02-beta)" "$TRACKER_DIR/02-beta-bis.md"
+
+  pack_run 'tracker_renumber 02-beta'
+  assert_success
+  assert_equal "$output" "02-beta"
+  assert_file_exists "$(ticket_file 02-beta)"
+
+  pack_run 'tracker_field 02 Status'
+  assert_success
+  assert_equal "$output" "ready-for-agent"
+}
+
+@test "a number too wide to be arithmetic does not stop the renumber" {
+  # A session names the files it writes, so the highest number in the directory
+  # is not a number the pack chose. awk renders this one in scientific notation
+  # and `$(( ))` calls that a syntax error: the next free number came back empty,
+  # and the renumber that keeps a bare number resolvable fell back to leaving the
+  # collision exactly where it was — the guarantee above, defeated by a filename.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/1000000000000000000000000000000-huge.md"
+
+  pack_run 'tracker_renumber 01-alpha-bis'
+  assert_success
+  assert_equal "$output" "10-alpha-bis"
+
+  pack_run 'tracker_field 01 Status'
+  assert_success
+}
+
+@test "the next number is checked against the directory, not deduced from it" {
+  # The other half: a ticket already carrying the number the count would hand
+  # out. The count reads `NN-slug.md` names, so a ticket named after its number
+  # alone is invisible to it — and the id it returns is one a file already has.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/10.md"
+
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_ticket next "Next"'
+  assert_success
+  assert_equal "$output" "11-next"
+
+  # Which is the damage being avoided: `10` used to resolve to a ticket, and a
+  # second one carrying it takes every `Blocked by: 10` out of the frontier.
+  assert_file_contains "$TRACKER_DIR/10.md" "# 01 — Alpha"
+  refute_file_exists "$(ticket_file 10-next)"
+}
+
+@test "the preflight names the duplicate number and what it takes out of the frontier" {
+  # A human can still write this by hand, and finding it ticket by ticket in the
+  # middle of a night is what the scan exists to avoid.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+
+  pack_run 'tracker_preflight'
+  assert_failure
+  assert_output_contains "two or more tickets carry the number 01"
+  assert_output_contains "01-alpha-bis, 01-alpha"
+  assert_output_contains "03-blocked is blocked on 01"
+  assert_output_contains "ambiguous-id"
+}
+
+@test "the preflight says nothing about a tracker with nothing wrong with it" {
+  pack_run 'tracker_preflight'
+  assert_success
+  assert_equal "$output" ""
+}

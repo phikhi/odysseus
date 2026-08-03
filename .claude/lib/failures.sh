@@ -254,18 +254,54 @@ failures__strays() {
 # non-zero when there was something to quarantine, so a caller that was reading
 # the session's output can stop reading it.
 failures_quarantine_strays() {
-  local ticket="$1" seen="$2" strays stray
+  local ticket="$1" seen="$2" strays stray final renamed_to kept='' renamed=''
   strays="$(failures__strays "$seen")"
   [ -n "$strays" ] || return 0
 
-  for stray in $strays; do
-    tracker_mark_escalated "$stray" decision || true
-  done
-  printf 'The %s session wrote these tickets into the tracker itself: %s. Nothing validated their write-surface or their acceptance criteria, so they are waiting for a human instead of sitting on the frontier.\n' \
-    "$ticket" "$(printf '%s' "$strays" | tr '\n' ' ' | sed 's/ *$//; s/ /, /g')" |
+  # Renumbered before it is escalated, and that ordering is the whole of [27]:
+  # what a session adds may carry a number another ticket already has — a renamed
+  # ticket file is a deletion restored plus an addition kept, two correct
+  # decisions whose composition leaves one `NN` on two files. From that moment a
+  # bare number resolves to nothing, and every ticket holding `Blocked by: NN`
+  # leaves the frontier permanently, whatever this iteration did. The addition is
+  # what moves, never the ticket that was already there: the pre-existing id is
+  # the one other tickets point at.
+  while IFS= read -r stray; do
+    [ -n "$stray" ] || continue
+    final="$stray"
+    # A refusal is said, never swallowed. Rendering the unchanged id when the
+    # renumber could not run would hand back exactly the state being repaired,
+    # in silence — a fix whose failure mode is the defect it fixes.
+    if ! renamed_to="$(tracker_renumber "$stray")" || [ -z "$renamed_to" ]; then
+      failures__log "$ticket: could not give $stray a number of its own — if another ticket already carries it, no bare number will resolve until a human renames one"
+    else
+      final="$renamed_to"
+    fi
+    if [ "$final" != "$stray" ]; then
+      renamed="$renamed $stray -> $final"
+      printf 'This ticket reached the tracker as `%s`, written by the %s session, and carried a number another ticket already had. It was renumbered to `%s` rather than deleted or left in place: nothing a session wrote is destroyed, and a duplicate number takes every ticket that points at it out of the frontier for good. The body below is exactly as the session wrote it, heading included.\n' \
+        "$stray" "$ticket" "$final" | tracker_append_note "$final" || true
+    fi
+    tracker_mark_escalated "$final" decision || true
+    kept="$kept $final"
+  done <<STRAYS
+$strays
+STRAYS
+
+  printf 'The %s session wrote these tickets into the tracker itself: %s. Nothing validated their write-surface or their acceptance criteria, so they are waiting for a human instead of sitting on the frontier.%s\n' \
+    "$ticket" "$(failures__join "$kept")" \
+    "$(if [ -n "$renamed" ]; then
+      printf ' Renumbered on the way in, to keep a bare number resolvable:%s.' "$renamed"
+    fi)" |
     tracker_append_note "$ticket" || true
-  failures__log "$ticket: the session wrote the tracker itself — quarantined $(printf '%s' "$strays" | tr '\n' ' ' | sed 's/ *$//')"
+  failures__log "$ticket: the session wrote the tracker itself — quarantined${kept}"
+  [ -z "$renamed" ] ||
+    failures__log "$ticket: a ticket the session added took a number another ticket already had — renumbered${renamed}"
   return 1
+}
+
+failures__join() {
+  printf '%s' "$1" | tr -s ' ' '\n' | sed '/^$/d' | tr '\n' ' ' | sed 's/ *$//; s/ /, /g'
 }
 
 # Where the tickets live, relative to the repository root. Same assumption
