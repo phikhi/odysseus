@@ -20,6 +20,8 @@
 #   tracker_block_on ID DEPS          hold it until those tickets are resolved
 #   tracker_bump_failures ID          count one failure; new count on stdout
 #   tracker_open_ticket SLUG TITLE    create a ticket from stdin; id on stdout
+#   tracker_renumber ID               give it an id no other ticket shares; the
+#                                     id it now carries on stdout
 #   tracker_append_note ID            append a comment from stdin
 #   tracker_emit_receipt ID           write the audit receipt from stdin
 #
@@ -48,6 +50,11 @@ tracker_mark_ready() { tracker__dispatch mark_ready "$@"; }
 tracker_block_on() { tracker__dispatch block_on "$@"; }
 tracker_bump_failures() { tracker__dispatch bump_failures "$@"; }
 tracker_open_ticket() { tracker__dispatch open_ticket "$@"; }
+# Only the quarantine calls this, and only on what a session added. A backend
+# whose ids cannot collide — one numbered server-side — returns the id unchanged
+# and is done; it still owes its own ticket an answer to the question underneath
+# ([27]): what does `tracker_ids` do when two tickets claim one identifier.
+tracker_renumber() { tracker__dispatch renumber "$@"; }
 tracker_append_note() { tracker__dispatch append_note "$@"; }
 tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
 
@@ -75,3 +82,97 @@ tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
 # having waited". The two go together: an owner the pack never pinged is not
 # evidence that an attempt failed.
 tracker_field() { tracker__dispatch field "$@"; }
+
+# ── what is wrong with this tracker before the run starts ────────────────────
+#
+# One scan, at the preflight, of the state no per-ticket read would ever surface:
+# two tickets carrying one number. Dependencies are written as bare numbers
+# (`Blocked by: 01`), so a duplicate does not break the ticket that carries it —
+# it breaks every ticket that *points* at it, silently and permanently, by
+# keeping them out of a frontier that is a memoryless scan ([27]).
+#
+# A session can no longer create one (the quarantine renumbers what it adds), so
+# what is left is a human editing the directory by hand, and finding that ticket
+# by ticket in the middle of a night is exactly what this avoids.
+#
+# Not dispatched: the question is about the *shape* of ids, which the interface
+# owns, not about how a backend stores them. A backend numbering server-side
+# finds nothing here, which is the right answer rather than an unimplemented one.
+#
+# Findings are `subject <TAB> outcome <TAB> sentence`, one per line, and non-zero
+# means there was at least one. Reporting, not refusing: a duplicate costs the
+# tickets that name it and nothing else, and a run that refuses to start over it
+# trades a night of work for a warning a human can read in the morning either way.
+tracker_preflight() {
+  local ids nn dep found=0 carriers raw id
+  ids="$(tracker_ids)" || return 0
+  [ -n "$ids" ] || return 0
+
+  for nn in $(tracker__ambiguous_numbers "$ids"); do
+    carriers="$(tracker__carriers "$ids" "$nn")"
+    printf '%s\tambiguous-id\ttwo or more tickets carry the number %s (%s): a bare "%s" is never safe to resolve, so anything blocked on it can never enter the frontier\n' \
+      "$nn" "$nn" "$(tracker__commas "$carriers")" "$nn"
+    found=1
+  done
+  [ "$found" = 1 ] || return 0
+
+  for id in $ids; do
+    raw="$(tracker_field "$id" 'Blocked by')" || continue
+    for dep in $(printf '%s' "$raw" | tr ',' ' '); do
+      case "$dep" in
+        [0-9]*) ;;
+        *) continue ;;
+      esac
+      tracker__is_ambiguous "$ids" "$dep" || continue
+      printf '%s\tblocked-on-ambiguous-id\t%s is blocked on %s, which %s tickets carry (%s): it stays out of the frontier until a human renames one of them\n' \
+        "$id" "$id" "$dep" \
+        "$(tracker__carriers "$ids" "$dep" | wc -w | tr -d ' ')" \
+        "$(tracker__commas "$(tracker__carriers "$ids" "$dep")")"
+    done
+  done
+  return 1
+}
+
+# Every id shaped `NN-slug` for this NN. An id that is *exactly* the number is
+# not one of them and settles the question on its own: a backend resolving a bare
+# number matches the exact id before anything else, so `01.md` beside `01-alpha.md`
+# is unambiguous — and renumbering over it would move a ticket nobody could
+# have mis-resolved.
+tracker__carriers() {
+  local ids="$1" nn="$2" id out=''
+  for id in $ids; do
+    [ "$id" != "$nn" ] || return 0
+  done
+  for id in $ids; do
+    case "$id" in
+      "$nn"-*) out="$out $id" ;;
+    esac
+  done
+  printf '%s\n' "${out# }"
+}
+
+tracker__is_ambiguous() {
+  local n
+  n="$(tracker__carriers "$1" "$2" | wc -w)"
+  [ "$n" -gt 1 ]
+}
+
+tracker__ambiguous_numbers() {
+  local ids="$1" id nn seen=' ' out=''
+  for id in $ids; do
+    case "$id" in
+      [0-9]*-*) nn="${id%%-*}" ;;
+      *) continue ;;
+    esac
+    case "$nn" in *[!0-9]*) continue ;; esac
+    case "$seen" in *" $nn "*) continue ;; esac
+    seen="$seen$nn "
+    tracker__is_ambiguous "$ids" "$nn" || continue
+    out="$out $nn"
+  done
+  printf '%s\n' "${out# }"
+}
+
+tracker__commas() {
+  printf '%s' "$1" | tr -s ' ' '\n' | sed '/^$/d' | tr '\n' ' ' | sed 's/ *$//; s/ /, /g'
+}

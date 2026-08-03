@@ -203,6 +203,7 @@ MONITOR=".claude/lib/monitor.sh"
 SESSION=".claude/lib/session.sh"
 PROC=".claude/lib/proc.sh"
 TRACKER=".claude/lib/tracker-local.sh"
+TRACKER_IFACE=".claude/lib/tracker.sh"
 CLAIM=".claude/lib/claim.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
@@ -563,8 +564,12 @@ mutation "07 a session's own tickets reach the frontier" "$LOOP" \
   's/    failures_quarantine_strays "\$ticket" "\$seen" \|\| true\n//' \
   test/failures.bats "own tickets"
 
+# The escalated id is `$final` and not `$stray` since [27]: what a session adds
+# is renumbered before it is quarantined, so the id that leaves the frontier is
+# the one the ticket ends up carrying. The guarantee is unchanged — a ticket the
+# session wrote itself must not sit on the frontier — the line moved under it.
 mutation "07 a quarantined ticket is only logged, not taken off the frontier" "$FAILURES" \
-  's/    tracker_mark_escalated "\$stray" decision \|\| true\n/    :\n/' \
+  's/    tracker_mark_escalated "\$final" decision \|\| true\n/    :\n/' \
   test/failures.bats "own tickets"
 
 mutation "07 a plan is read even from a session that wrote the tracker" "$FAILURES" \
@@ -1401,6 +1406,40 @@ mutation "31 the fake reports no MCP server whatever it was called with" "$SHIM"
 mutation "31 the fake reports no project config whatever it was called with" "$SHIM" \
   's/  \*,project,\*\) record_config .claude\/settings.json CLAUDE.md ;;/  *,nothing,*) : ;;/' \
   test/lenses.bats "starts sterile"
+
+# ── [27] two tickets, one number ─────────────────────────────────────────────
+
+mutation "27 a stray keeps the number another ticket has" "$FAILURES" \
+  's/    if ! renamed_to="\$\(tracker_renumber "\$stray"\)" \|\| \[ -z "\$renamed_to" \]; then/    if true; then/' \
+  test/failures.bats "one number"
+
+mutation "27 the renumber moves a ticket nothing collides with" "$TRACKER" \
+  's/  if \[ "\$carriers" -le 1 \]; then/  if false; then/' \
+  test/tracker-local.bats "nobody shares"
+
+mutation "27 a ticket named after the number alone counts as a collision" "$TRACKER" \
+  's/  if \[ ! -f "\$dir\/\$nn.md" \]; then/  if true; then/' \
+  test/tracker-local.bats "number alone"
+
+mutation "27 nothing looks at the tracker before the run starts" "$TRACKER_IFACE" \
+  's/^tracker_preflight\(\) \{/tracker_preflight() { return 0;/m' \
+  test/loop-happy-path.bats "duplicate number is named"
+
+mutation "27 the duplicate is named without saying what it blocks" "$TRACKER_IFACE" \
+  's/      tracker__is_ambiguous "\$ids" "\$dep" \|\| continue\n/      continue\n/' \
+  test/tracker-local.bats "takes out of the frontier"
+
+mutation "27 the next number is deduced from a session's filenames" "$TRACKER" \
+  's/awk .BEGIN \{ m = 0 \} length\(\$1\) <= 15 \{/awk \x27BEGIN { m = 0 } {/' \
+  test/tracker-local.bats "too wide to be arithmetic"
+
+mutation "27 the next number is never checked against the directory" "$TRACKER" \
+  's/  while tracker_local__number_taken "\$dir" "\$\(printf .%02d. "\$nn"\)"; do\n    nn=\$\(\(nn \+ 1\)\)\n  done\n//' \
+  test/tracker-local.bats "checked against the directory"
+
+mutation "27 the finding is printed but never journalled" "$LOOP" \
+  's/    loop_journal_append "\$subject" "\$outcome" 0 0 0\n//' \
+  test/loop-happy-path.bats "duplicate number is named"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

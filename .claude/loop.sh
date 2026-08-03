@@ -143,8 +143,37 @@ loop_preflight() {
     fi
   fi
 
+  if [ "$rc" = 0 ]; then
+    loop__report_tracker_findings
+  fi
+
   gate_preflight || rc=1
   return "$rc"
+}
+
+# What is wrong with the tracker itself, said once at the start rather than
+# discovered ticket by ticket in the middle of a night ([27]). Two tickets
+# carrying one number do not break the tickets that carry it — they break every
+# ticket whose `Blocked by:` names it, which drops out of a frontier that is a
+# memoryless scan and never comes back, with nothing anywhere to say why.
+#
+# Said in `run.log` and not only on the console, because that is the file a human
+# reads in the morning and the only one a receipt ([10]) will be able to read.
+# The lines land before the locks are taken, so a run refused by another run's
+# lock still records what it saw — one honest duplicate rather than a silence.
+#
+# It does not refuse the run: a duplicate number costs the tickets that point at
+# it and nothing else, so stopping here would trade a whole night's work for a
+# warning that reads the same in the morning either way.
+loop__report_tracker_findings() {
+  local subject outcome message
+  while IFS="$(printf '\t')" read -r subject outcome message; do
+    [ -n "$subject" ] || continue
+    loop_log "$message"
+    loop_journal_append "$subject" "$outcome" 0 0 0
+  done <<FINDINGS
+$(tracker_preflight)
+FINDINGS
 }
 
 loop_main() {
