@@ -630,8 +630,13 @@ mutation "21 a ticket the session deleted counts as one it created" "$FAILURES" 
   's/      A\)\n        # Left where it is/      A | D)\n        # Left where it is/' \
   test/failures.bats "deletes the whole tracker"
 
+# Re-aimed by [34], which turned the single `git add` of this branch into a loop
+# passing `:(literal)`. The guarantee is unchanged and still carried — `--force` is
+# what makes the tracker snapshot ignore the project's ignore rules — so the entry
+# follows the line rather than being retired. Anchored on `\n    done` so it cannot
+# match the other branch, whose line ends in `|| true`.
 mutation "21 the tracker snapshot obeys the project's ignore rules" "$GATE" \
-  's/    GIT_INDEX_FILE="\$index" git add -A --force -- "\$@" >\/dev\/null 2>&1/    GIT_INDEX_FILE="\$index" git add -A -- "\$@" >\/dev\/null 2>\&1/' \
+  's/      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1\n    done/      GIT_INDEX_FILE="\$index" git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1\n    done/' \
   test/failures.bats "scratch out of git"
 
 mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
@@ -1208,6 +1213,64 @@ mutation "33 a surface is cut into words by the shell again" "$GATE" \
   's/  while IFS= read -r pattern; do\n    pattern="\$\{pattern%\/\}"\n    \[ -n "\$pattern" \] \|\| continue\n    case "\$file" in\n      \$pattern \| \$pattern\/\*\) return 0 ;;\n    esac\n  done <<SURFACE\n\$2\nSURFACE/  for pattern in \$2; do\n    pattern="\${pattern%\/}"\n    [ -n "\$pattern" ] || continue\n    case "\$file" in\n      \$pattern | \$pattern\/*) return 0 ;;\n    esac\n  done/' \
   test/gate.bats "covers what it should"
 
+# ── [34] a refusal is not an empty measurement ───────────────────────────────
+#
+# Every entry here aims at the *status* of a measurement and never at what it
+# measures. Replacing a list with an empty one would prove that a gate which finds
+# nothing says nothing, which nobody doubts; what has to redden is the case where
+# nothing could be looked at in the first place.
+
+# The primitive itself, both halves. Answering a refusal with zero is the whole of
+# the defect: four readers were written against "empty list means nothing to say".
+mutation "34 the primitive answers a refused snapshot with an empty list" "$GATE" \
+  's/  now="\$\(gate_tree_snapshot\)" \|\| return 1/  now="\$(gate_tree_snapshot)" || return 0/' \
+  test/lenses.bats "closes the measurement"
+
+mutation "34 the primitive answers a missing baseline with an empty list" "$GATE" \
+  's/  \[ -n "\$judged" \] \|\| return 1/  [ -n "\$judged" ] || return 0/' \
+  test/failures.bats "stops the run instead of laundering"
+
+# The reader that produced the false green: the one half of [06] that is a
+# guarantee rather than a hope, passing green without having measured.
+mutation "34 the containment reads a refusal as nothing to undo" "$GATE" \
+  's/  if ! changed="\$\(gate_unjudged_changes "\$pre"\)"; then\n[^\n]*\n    return 1\n  fi/  changed="\$(gate_unjudged_changes "\$pre")" || changed=""/' \
+  test/lenses.bats "cannot be read after the lenses"
+
+# And the second measurement of the same function: putting a write back is a claim
+# about a result, so a restore nobody could check is not a restore.
+mutation "34 the containment does not check its own restore" "$GATE" \
+  's/  if ! left="\$\(gate_unjudged_changes "\$pre"\)"; then\n[^\n]*\n    return 1\n  fi/  left="\$(gate_unjudged_changes "\$pre")" || left=""/' \
+  test/lenses.bats "cannot check its own restore"
+
+# The two readers that announce rather than judge. Neither may go red — this is a
+# line printed on green iterations — so what must redden is the announcement
+# itself becoming silence.
+mutation "34 the gate's own zone line reads a refusal as an empty zone" "$GATE" \
+  's/  if ! changed="\$\(gate_unjudged_changes "\$2"\)"; then\n[^\n]*\n    return 0\n  fi/  changed="\$(gate_unjudged_changes "\$2")" || changed=""/' \
+  test/failures.bats "stops the run instead of laundering"
+
+mutation "34 the rollback's zone line reads a refusal as an empty zone" "$FAILURES" \
+  's/  if ! changed="\$\(gate_unjudged_changes "\$tree"\)"; then\n[^\n]*\n    return 0\n  fi/  changed="\$(gate_unjudged_changes "\$tree")" || changed=""/' \
+  test/failures.bats "cannot measure what the gate left"
+
+# The other half of the ticket: a rollback that could not act says so, and the run
+# stops instead of letting the next iteration adopt the tree as its own baseline.
+# Two entries, because raising the flag and reading it are two places to lose it.
+mutation "34 a rollback that read no tree does not say so to the loop" "$FAILURES" \
+  's/    failures__log "cannot read the working tree — nothing was rolled back"\n    RALPH_ROLLBACK_FAILED=1\n/    failures__log "cannot read the working tree — nothing was rolled back"\n/' \
+  test/failures.bats "stops the run instead of laundering"
+
+mutation "34 the loop grinds on after a rollback that could not act" "$LOOP" \
+  's/    if \[ "\$\{RALPH_ROLLBACK_FAILED:-0\}" = 1 \]; then/    if false; then/' \
+  test/failures.bats "stops the run instead of laundering"
+
+# The [33] reading, on the branch [33] had no caller to decide for. The tracker's
+# own guard is that caller: a feature directory named with a glob character would
+# be snapshotted as a different directory altogether.
+mutation "34 the snapshot's pathspec branch hands git a pattern" "$GATE" \
+  's/    for path in "\$\@"; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path"/    for path in "\$\@"; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path"/' \
+  test/gate.bats "taken literally, not as a pattern"
+
 # ── [29] the tree the gate judges, taken before the gate runs ────────────────
 
 # The defect itself, planted back. `sleep 1` is what makes it deterministic in the
@@ -1253,7 +1316,7 @@ mutation "29 the loop's own bookkeeping counts as a gate write" "$GATE" \
 # nothing does. The ignored-zone line above it is untouched, so this entry cannot
 # pass on the strength of [24]'s.
 mutation "29 the rollback says nothing about what the gate changed" "$FAILURES" \
-  's/"\$\(failures__minus "\$\(gate_unjudged_changes "\$tree"\)" "\$undone"\)"/""/' \
+  's/"\$\(failures__minus "\$changed" "\$undone"\)"/""/' \
   test/failures.bats "leaves it standing"
 
 # And the lie in the other direction: an empty fence filters nothing, so a path the

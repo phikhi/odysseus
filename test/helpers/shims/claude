@@ -210,6 +210,19 @@ if [ -n "$lens" ]; then
     done <"$state/lens-$lens.writes"
   fi
 
+  # A lens that closes the instrument the gate measures its writes with ([34]):
+  # the pinned ignore rules, without which `gate_tree_snapshot` refuses to hand a
+  # tree back at all. A hook rather than a scripted scenario, and only for a lens:
+  # a delivery session can be scripted whole, where scripting a lens would take the
+  # verdict handling with it and measure that instead.
+  #
+  # The directory to sweep is named by the test rather than globbed out of the
+  # machine's `$TMPDIR` — the harness assumes concurrent runners, and a fake that
+  # deleted every pin it could find would take down the suite running beside it.
+  if [ -f "$state/lens-$lens.closes-measurement" ]; then
+    rm -rf "$(cat "$state/lens-$lens.closes-measurement")"/ralph-ignore.* 2>/dev/null || true
+  fi
+
   # `silent` is a lens that reviewed and never said what it decided — the case the
   # gate has to count red, and the one a verdict of `garbage` does not cover.
   if [ "$verdict" = silent ]; then

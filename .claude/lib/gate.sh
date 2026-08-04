@@ -756,10 +756,21 @@ gate_ignored_zone() {
 # took its own snapshot from inside its branch, in parallel with the suite, so
 # whether a given artefact was "what the gate wrote" or "what the session wrote"
 # depended on which process got there first.
+#
+# A measurement that could not be taken is not an empty measurement ([34]). This
+# hands back nothing at all in two cases that look identical on stdout and are
+# opposites: nothing changed, and nothing can be said about what changed —
+# a baseline the gate never got, or a snapshot the pin refused. So the difference
+# lives in the *status*: zero means measured, non-zero means could not measure,
+# and every caller below chooses what to do with that rather than inheriting a
+# silence. The snapshot already drew that line for the tree it returns; not
+# drawing it here left `gate__contain_lens_writes` — the one half of [06] that is
+# a guarantee rather than a hope — passing green without having measured, one call
+# away from a fail-closed that was correctly written.
 gate_unjudged_changes() {
   local judged="$1" now
-  [ -n "$judged" ] || return 0
-  now="$(gate_tree_snapshot)" || return 0
+  [ -n "$judged" ] || return 1
+  now="$(gate_tree_snapshot)" || return 1
   [ "$now" != "$judged" ] || return 0
   git diff-tree -r --name-only "$judged" "$now" 2>/dev/null | gate__drop_bookkeeping
 }
@@ -799,7 +810,21 @@ gate_tree_snapshot() {
   index="$(mktemp "${TMPDIR:-/tmp}/ralph-index.XXXXXX")" || return 1
   rm -f "$index"
   if [ "$#" -gt 0 ]; then
-    GIT_INDEX_FILE="$index" git add -A --force -- "$@" >/dev/null 2>&1
+    # `:(literal)` here too, for the reason the branch below carries at length: a
+    # pathspec is a pattern, so a feature directory really named `sprint[1]` would
+    # be forced as `sprint1` — and the caller of this branch is the tracker's own
+    # guard ([21]). Left open by [33], which had no caller here to decide for;
+    # closed by [34], which had to enumerate every caller anyway.
+    #
+    # No `|| true`, unlike the branch below, and the asymmetry is the whole point:
+    # there a named path a project has not created yet is a tolerated case and the
+    # snapshot stands, here a pathspec that matches nothing means the caller cannot
+    # be given the thing it asked to watch. `set -e` takes the function down, the
+    # caller gets no tree, and that is the refusal it needs — a tracker guard handed
+    # an empty tree instead would read it as "the session changed nothing".
+    for path in "$@"; do
+      GIT_INDEX_FILE="$index" git add -A --force -- ":(literal)$path" >/dev/null 2>&1
+    done
   else
     # Asked before anything is added, and a broken pin refuses the whole snapshot:
     # a caller that gets a tree back believes it was built through the rules of the
@@ -1167,10 +1192,21 @@ gate__report_frontier() {
 # it is not a verdict, it is the half of "the tree is back where the session found
 # it" that would otherwise go unsaid. Said on every iteration, green included:
 # a green one has no rollback at all, and the artefact is still there.
+#
+# And when the measurement cannot be taken, it says that instead — it does not go
+# red by symmetry with the containment above ([34]). This is an announcement on an
+# iteration that may be perfectly green, and a machine whose `$TMPDIR` was cleaned
+# under the run would start refusing honest work. What it owes a human reading the
+# morning log is the difference between "this gate wrote nothing" and "nobody
+# knows what this gate wrote", which is the lesson [30] paid for on
+# `core.excludesFile`: a control that reports its intention rather than its result.
 gate__report_changed() {
-  local ticket="$1" zone
-  if zone="$(gate_zone_line "$(gate_unjudged_changes "$2")" \
-    'path(s) after the tree it judged')"; then
+  local ticket="$1" changed zone
+  if ! changed="$(gate_unjudged_changes "$2")"; then
+    gate__log "$ticket: this gate could not check what it changed after the tree it judged — nothing here vouches for that zone"
+    return 0
+  fi
+  if zone="$(gate_zone_line "$changed" 'path(s) after the tree it judged')"; then
     gate__log "$ticket: this gate itself changed $zone"
   fi
   return 0
@@ -1315,6 +1351,12 @@ gate__lens_phase() {
 # session that did nothing wrong — the mistake [29] found in the scope-guard's
 # race, one layer up. A write that *cannot* be undone is different: the pack can no
 # longer say what is in the tree, and green would be a false green.
+# Fail-closed on both sides of the measurement, and the second side is what [34]
+# had to add. The tree *before* the phase was already guarded here; the tree
+# *after* it was taken through `gate_unjudged_changes`, which returned an empty
+# list when the snapshot refused — so a lens that closed the instrument (a
+# destroyed pin, a cleaned `$TMPDIR`, a hook of the judged project) got "nothing to
+# undo" and a green iteration with its write still in the tree. Probed.
 gate__contain_lens_writes() {
   local ticket="$1" pre="$2" changed left
 
@@ -1323,14 +1365,24 @@ gate__contain_lens_writes() {
     return 1
   fi
 
-  changed="$(gate_unjudged_changes "$pre")"
+  if ! changed="$(gate_unjudged_changes "$pre")"; then
+    gate__log "$ticket: could not read the tree after the review lenses — cannot say what they wrote, refusing to pass"
+    return 1
+  fi
   [ -n "$changed" ] || return 0
 
   gate__log "$ticket: a review lens changed $(gate_zone_line "$changed" \
     'path(s) in the tree it was judging') — putting them back"
   gate_restore_tree "$pre" >/dev/null || true
 
-  left="$(gate_unjudged_changes "$pre")"
+  # And once more after the restore, for the same reason: "I put it back" is a
+  # claim about a result, and the only thing that can vouch for it is a second
+  # measurement. One that refuses says nothing, which is not the same as saying
+  # the tree is clean ([30] on `core.excludesFile`, one layer up).
+  if ! left="$(gate_unjudged_changes "$pre")"; then
+    gate__log "$ticket: could not check what a review lens wrote was put back — refusing to pass this iteration"
+    return 1
+  fi
   [ -n "$left" ] || return 0
   gate__log "$ticket: could not undo $(gate_zone_line "$left" \
     'path(s) a review lens wrote') — refusing to pass this iteration"

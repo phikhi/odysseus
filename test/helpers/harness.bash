@@ -412,6 +412,19 @@ run_loop() {
   run bash "$PACK_DIR/loop.sh" "$@"
 }
 
+# The same run, with a temporary directory of its own.
+#
+# Everything the pack mktemps lands there — the pinned ignore rules above all
+# ([30]) — which is what makes "a session that closes the instrument" stageable at
+# all: the pin is the one part of the pack a session can reach and the pack cannot
+# protect, so a scenario has to be able to destroy it. A fake reaching into the
+# machine's shared `$TMPDIR` would find the pin of a suite running beside this one,
+# and the harness already assumes concurrent runners ([34]).
+run_loop_own_tmp() {
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  run env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" "$@"
+}
+
 # Run pack code as a real process, with the config and libs loaded the way
 # loop.sh loads them. Mirrors that bootstrap deliberately: the smoke test keeps
 # loop.sh honest, this keeps the libs drivable before the loop uses them.
@@ -555,6 +568,15 @@ lens_writes() {
   local name="$1"
   shift
   printf '%s\n' "$@" >"$SHIM_STATE/lens-$name.writes"
+}
+
+# A lens that destroys the pinned ignore rules `gate_tree_snapshot` refuses
+# without ([34]) — the instrument the gate measures a lens's writes with. Only
+# meaningful under `run_loop_own_tmp`, which is what makes the sweep hit this
+# test's pin and nobody else's.
+lens_closes_measurement() {
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  printf '%s\n' "$RALPH_TEST_DIR/tmp" >"$SHIM_STATE/lens-$1.closes-measurement"
 }
 
 # Paths the delivery session writes, one per line. The default fake writes

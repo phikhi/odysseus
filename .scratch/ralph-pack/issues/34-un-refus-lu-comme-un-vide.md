@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/gate.sh`, `.claude/lib/failures.sh`, `.claude/loop.sh`, `test/gate.bats`, `test/lenses.bats`, `test/failures.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Le confinement des écritures d'une lentille échoue **fermé** des deux côtés : il refuse déjà de passer quand l'arbre d'avant est illisible, il doit refuser aussi quand l'arbre d'après l'est. Aujourd'hui la première garde existe et la seconde manque, à une ligne près.
-- [ ] Aucun appelant de `gate_tree_snapshot` ne traite plus un refus comme un vide sans le dire. Les appelants sont énumérés dans le ticket au moment de le livrer, et chacun reçoit son traitement explicite — le `|| return 0` de `gate_unjudged_changes` est le cas qui a produit un faux vert, pas le seul cas.
-- [ ] Une itération dont le rollback n'a rien pu défaire ne laisse pas l'itération suivante prendre son arbre pour un état d'avant : soit la boucle refuse de continuer, soit ce qu'elle laisse est nommé au tour suivant. Le choix est tranché dans le ticket, avec son coût — refuser de continuer transforme une session hostile en arrêt du run, ce qui est aussi ce qu'un `exit 4` fait déjà pour un témoin manquant.
-- [ ] Les deux tests portent leur témoin appairé (le même scénario sans destruction du témoin doit annoncer l'écriture et la remettre), et la mutation vise la garde neuve et non le message.
-- [ ] La ligne « Ce qu'une lentille de revue écrit dans l'arbre qu'elle juge » de `docs/frontiere-de-confiance.md` dit ce qui arrive à la mesure quand elle ne peut pas être prise, et la ligne « La frontière de visibilité » cesse de laisser croire qu'un témoin détruit ne coûte qu'une itération.
+- [x] Le confinement des écritures d'une lentille échoue **fermé** des deux côtés : il refuse déjà de passer quand l'arbre d'avant est illisible, il doit refuser aussi quand l'arbre d'après l'est. Aujourd'hui la première garde existe et la seconde manque, à une ligne près.
+- [x] Aucun appelant de `gate_tree_snapshot` ne traite plus un refus comme un vide sans le dire. Les appelants sont énumérés dans le ticket au moment de le livrer, et chacun reçoit son traitement explicite — le `|| return 0` de `gate_unjudged_changes` est le cas qui a produit un faux vert, pas le seul cas.
+- [x] Une itération dont le rollback n'a rien pu défaire ne laisse pas l'itération suivante prendre son arbre pour un état d'avant : soit la boucle refuse de continuer, soit ce qu'elle laisse est nommé au tour suivant. Le choix est tranché dans le ticket, avec son coût — refuser de continuer transforme une session hostile en arrêt du run, ce qui est aussi ce qu'un `exit 4` fait déjà pour un témoin manquant.
+- [x] Les deux tests portent leur témoin appairé (le même scénario sans destruction du témoin doit annoncer l'écriture et la remettre), et la mutation vise la garde neuve et non le message.
+- [x] La ligne « Ce qu'une lentille de revue écrit dans l'arbre qu'elle juge » de `docs/frontiere-de-confiance.md` dit ce qui arrive à la mesure quand elle ne peut pas être prise, et la ligne « La frontière de visibilité » cesse de laisser croire qu'un témoin détruit ne coûte qu'une itération.
 
 ## Comments
 
@@ -69,3 +69,69 @@
 - **Contrainte pour [13].** Un worktree par itération referme la moitié B par construction : l'arbre de l'itération suivante ne porte pas ce que la précédente a laissé. Il ne referme rien de la moitié A. Et il ajoute un appelant de `gate_tree_snapshot` par worktree, donc la revue des appelants demandée par l'AC 2 doit être refaite là-bas — à écrire dans son ticket.
 
 - **Contrainte pour [10].** Le reçu d'audit doit pouvoir dire « ce gate n'a pas pu mesurer » et pas seulement « ce gate n'a rien trouvé ». C'est une quatrième catégorie après les trois exemptions de [29], et c'est la première qui soit un aveu d'ignorance plutôt qu'une liste.
+
+## Compte rendu de livraison — 04/08/2026
+
+- **La forme du correctif : un statut chez le producteur, un choix chez chaque lecteur.** `gate_unjudged_changes` rendait `0` et rien du tout dans trois cas — pas de base, snapshot refusé, rien n'a changé — et les quatre lecteurs avaient été écrits contre le troisième sens. Elle rend maintenant non-zéro pour les deux premiers. C'est la seule forme qui tenait : ajouter la garde chez le confinement (le réflexe, et ce que le ticket appelait « nécessaire et pas suffisant ») aurait laissé trois lecteurs sur la même valeur ambiguë, et le prochain appelant — [13] en ajoute un par worktree, [35] en ajoute un — serait reparti du mauvais défaut.
+
+- **Les six appelants de `gate_tree_snapshot`, énumérés comme l'AC 2 le demandait, et ce que chacun fait d'un refus.**
+
+  | Appelant | Avant | Après |
+  |---|---|---|
+  | `loop.sh` (`base` pré-session) | `\|\| base=""` → scope rouge | inchangé, et le rollback qui suit refuse **et arrête le run** |
+  | `gate_run` (`RALPH_GATE_TREE`) | `\|\| ""` → scope rouge, `gate__report_changed` muet | scope rouge, et la ligne dit qu'elle n'a pas pu compter |
+  | `gate__lens_phase` (`pre`) | `\|\| pre=""` → confinement rouge | inchangé (c'était la garde qui existait) |
+  | `gate_unjudged_changes` | **`\|\| return 0` — le faux vert** | `return 1`, et ses quatre lecteurs choisissent |
+  | `gate_changed_files`, `gate_restore_tree` | `\|\| now=""` puis `return 1` | inchangé, déjà fermé |
+  | `failures_handle`, `failures_rollback` | `\|\| tree=""` → « rien défait », run continue | dit **et** arrête le run |
+  | `failures_tracker_tree` (branche à pathspecs) | pathspec-motif, pas de refus explicite | `:(literal)`, refus par `set -e` assumé et écrit |
+  | `failures_reslice` (`base` du planning) | rollback refusé dans un `2>&1`, silence total | la raison est dite, et le run s'arrête |
+
+  Et les quatre lecteurs de `gate_unjudged_changes` : le confinement des lentilles (deux fois : avant la remise et après) rougit ; `gate__report_changed` et `failures__report_unrolled` disent qu'ils n'ont pas pu compter, sans rougir.
+
+- **Pourquoi les deux annonceurs ne rougissent pas, et c'est le second piège du ticket.** Rendre le refus rouge partout par symétrie ferait refuser une itération honnête sur une machine dont `$TMPDIR` a été nettoyé sous le run — et ces deux lignes s'impriment sur des itérations vertes, où il n'y a plus rien à refuser. Ce qu'elles doivent, c'est ne pas dire « zéro » quand la réponse est « personne ne sait » : c'est la leçon de [30] sur `core.excludesFile`, un cran plus loin.
+
+- **Le choix de l'AC 3, tranché : la boucle refuse de continuer (`exit 4`).** Le ticket laissait l'alternative « nommer ce qui reste au tour suivant ». Elle a été écartée pour une raison structurelle et pas par goût du fail-stop : `loop.sh` n'hérite **rien** d'une itération à l'autre, à dessein — « un run crashé et un démarrage à froid se comportent pareil ». Porter « l'arbre est sale d'une façon que personne ne sait décrire » jusqu'au tour suivant demanderait de l'écrire dans le tracker, seul état durable, et ça se perdrait exactement dans le cas où ça compte (un run tué). La dériver de l'arbre ne marche pas non plus : « l'arbre diffère de HEAD » est vrai de tout dépôt où un humain travaille. Le prix est écrit : une session qui ferme l'instrument fait tomber le run, ce que `exit 4` fait déjà pour un témoin qu'on ne peut pas prendre ([30]). Le ticket, lui, a déjà été rendu ou escaladé quand l'arrêt tombe — un humain lit une ligne et repart d'un état connu.
+
+- **`RALPH_ROLLBACK_FAILED`, et pourquoi un drapeau plutôt qu'un code de retour.** Le code de retour de `failures_rollback` est déjà pris : tous ses appelants traitent un rollback raté comme non fatal *à l'itération*, ce qui est correct — le ticket doit être marqué et escaladé quoi qu'il arrive. Ce qui n'est pas survivable est l'itération d'**après**. Le drapeau est remis à zéro en tête de `failures_handle` et jamais ailleurs : une itération peut faire tourner deux rollbacks (le sien, puis celui du re-slice), et le remettre à zéro dans `failures_rollback` aurait fait effacer le premier échec par le second succès. Lu une fois, en fin d'itération, après le journal et après la destruction du pin.
+
+- **Le reliquat de [33] fermé au passage.** La branche à pathspecs de `gate_tree_snapshot` passe `:(literal)`, un `git add` par chemin. Elle a exactement un appelant (`failures_tracker_tree`, la protection du tracker de [21]), ce que l'énumération de l'AC 2 a rendu évident — reporter la décision à [37] revenait à la reporter pour un seul appel qu'on avait sous les yeux. Décision de type identique à [33] : c'est un chemin, pas un glob. Différence assumée avec sa voisine : **pas de `|| true`** — là-bas un chemin gardé qu'un projet n'a pas encore est un cas toléré et le snapshot tient, ici un pathspec qui ne matche rien veut dire que l'appelant n'aura pas ce qu'il a demandé à surveiller, et un garde du tracker à qui l'on rendrait un arbre vide conclurait « la session n'a rien changé ».
+
+- **Sondes rejouées, et ce qu'elles rendent maintenant.**
+
+  *Sonde A — une lentille qui écrit et détruit le témoin* (`test/lenses.bats`, `a lens that closes the measurement cannot buy a green iteration`, bout en bout via le vrai faux `claude`) :
+
+  ```
+  ralph: gate: the pinned ignore rules cannot be read — refusing to snapshot …
+  ralph: gate: 01-plain: could not read the tree after the review lenses —
+    cannot say what they wrote, refusing to pass
+  ralph: iteration 1: 01-plain -> gate-red
+  ```
+
+  L'artefact de la lentille est **toujours dans l'arbre** et c'est la moitié honnête du refus : le confinement refuse *avant* de remettre, parce qu'une remise qu'il ne peut pas vérifier est précisément ce qu'il décline d'affirmer. Témoin appairé : le même scénario sans destruction annonce `a review lens changed 1 path(s) …` et remet le fichier.
+
+  *Sonde B — le blanchiment en deux coups* (`test/failures.bats`, `a rollback that could not act stops the run instead of laundering it`) :
+
+  ```
+  ralph: gate: scope red (exit 1)
+  ralph: cannot read the working tree — nothing was rolled back
+  ralph: gate: 01-alpha: this gate could not check what it changed after the tree it judged
+  ralph: the rollback could not put the working tree back — stopping rather than
+    letting the next iteration inherit a tree nothing here can describe
+  ```
+
+  `lib/rogue.sh` est encore là, `02-beta` n'a jamais été réclamé, un seul `claude` a tourné. Témoin appairé : la même session sans destruction fait rollbacker `lib/rogue.sh`, escalader `01-alpha` et **broyer `02-beta`** — deux appels, ce qui réfute à la fois « la boucle s'arrête après tout échec » et « le snapshot refuse toujours ».
+
+- **Ce que le harnais a gagné, et pourquoi.** `run_loop_own_tmp` lance la boucle avec un `TMPDIR` à elle, et `lens_closes_measurement` fait détruire le pin par une lentille. Le `TMPDIR` privé n'est pas de la décoration : le pin vit dans le répertoire temporaire de la machine, le harnais suppose explicitement des runners concurrents, et un faux qui balaierait `$TMPDIR/ralph-ignore.*` détruirait le pin de la suite d'à côté. La destruction est un **hook du shim** et pas un `script_claude` pour la lentille seule : scripter une lentille emporte la gestion du verdict avec elle, et le test mesurerait ça.
+
+- **Piège de test payé deux fois, à savoir avant d'écrire ici.** Deux `pack_run` dans un même test partagent un projet : le premier laisse son artefact sur le disque, donc le second le trouve dans son propre `base` et un fichier qui n'a pas changé n'est dans aucun diff. Les deux témoins appairés sont passés au vert pour cette raison-là avant d'être renommés — c'est-à-dire qu'ils prouvaient exactement rien. Chaque témoin écrit maintenant sous un nom qui lui est propre, et le commentaire le dit sur place.
+
+- **Coût sur la suite** : 291 → 298 tests (0 échec, 5 skips opt-in), 235 → 244 mutations. Aucune ligne de code ajoutée dans le chemin chaud : le refus est un `return` de plus, les deux annonceurs font un test de statut qu'ils faisaient déjà implicitement.
+
+- **Contrainte pour [13]** (écrite dans son ticket) : la liste des appelants est à relire là-bas, un worktree par itération en ajoutant ; et le ticket doit trancher explicitement s'il **retire** l'arrêt du run — l'isolation referme la moitié B par construction — ou s'il le garde. `RALPH_ROLLBACK_FAILED` rejoint par ailleurs `RALPH_SOFT_LIMIT_HIT` et `RALPH_SESSION_TIMEOUT` dans la liste des signaux de shell que la concurrence casse en silence.
+
+- **Contrainte pour [10]** (écrite dans son ticket) : les deux phrases d'aveu d'ignorance sont nommées, les trois verdicts aussi, et l'arrêt du run est une **fin de run** sans ligne d'itération à elle — un reçu qui compte les itérations sans lire la dernière ligne raconterait une nuit qui s'arrête sans dire pourquoi.
+
+- **Contrainte pour [35]** (écrite dans son ticket) : son contrôle sera un cinquième lecteur de la même famille de valeur et doit choisir de la même façon. Et la seconde route vers le faux livré, constatée dans la sonde B, y est consignée : `failures_make_durable` commite `base..arbre jugé`, donc une itération dont le travail était déjà dans le `base` est `resolved` **sans commiter quoi que ce soit**. Ce chemin-là est fermé par l'arrêt du run, mais il dit où poser le contrôle de [35] — sur ce que le gate a approuvé, pas sur ce que la session a écrit.
+
+- **Ce qui reste ouvert, et c'est nommé.** L'arrêt du run est un fail-stop qu'une session peut déclencher : détruire le pin coûte la nuit. C'est assumé et c'est le sens de la protection — mais ça veut dire qu'une machine qui nettoie agressivement `$TMPDIR` (un `tmpreaper`, un redémarrage) peut arrêter un run AFK sans qu'aucune session ait rien fait de mal. Le pin et le répertoire du gate vivent tous deux là, et [36] note déjà que personne ne les nettoie ; la question « où vit l'état temporaire d'un run » n'a pas de propriétaire.
