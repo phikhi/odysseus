@@ -388,9 +388,19 @@ lenses__findings() {
 # ── the prompt ───────────────────────────────────────────────────────────────
 
 # Non-zero when there is nothing to review, and the caller turns that into a red
-# branch rather than a spawn: an iteration that changed no file the gate can see
-# has not delivered a ticket, whatever its tests say. Deterministic, and it costs
-# no quota to find out.
+# branch rather than a spawn: a judge with no diff must not be spent.
+#
+# This is no longer what holds "an iteration that changed no file has not
+# delivered a ticket" ([35]). [06] delivered that here, described as deterministic
+# and settled before any spawn — true in the window where a lens runs, and false
+# everywhere else: the refusal sat once per lens, so it went out with the tier
+# whenever `LENSES` was empty or no lens was triggered, and a session that wrote
+# nothing was resolved. The guarantee lives in `gate_run` now, before the fan, and
+# what is left here is the local half. It is unreachable from the loop by
+# construction — the gate refuses the iteration before the phase is reached — so a
+# direct call is what covers it, and that is deliberate rather than an oversight:
+# `lenses_review` is public, and a caller that hands it a base equal to its tree
+# has to get a refusal and not a verdict.
 lenses__write_prompt() {
   local name="$1" ticket="$2" base="$3" tree="$4" files max truncated=0
 

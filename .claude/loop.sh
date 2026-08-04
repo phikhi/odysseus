@@ -344,6 +344,13 @@ loop_main() {
         sterile=0
       else
         outcome=gate-red
+        # A gate that refused before judging anything is not a red check, and the
+        # journal is where that difference has to survive the night ([35]): a
+        # session answered, cost quota, and left the repository exactly as it
+        # found it. Kept under `tracker-write` on purpose — a session that wrote
+        # only the tracker delivered nothing *and* stepped past the one rule that
+        # cannot be undone afterwards, and that is the one a human has to see.
+        [ "${RALPH_GATE_NOTHING_DELIVERED:-0}" = 0 ] || outcome=nothing-delivered
         [ "$tracker_written" = 0 ] || outcome=tracker-write
         tree="${RALPH_GATE_TREE:-}"
         # Which kind of overflow it was decides what happens next: a stray

@@ -101,6 +101,37 @@ HEAD
   assert_failure
 }
 
+@test "a ticket nothing ever delivers goes to the human sink under its own name" {
+  # Not `failed-impl`, for the reason [26] had to learn about `Failures:` and [23]
+  # applied to a session that hung: nothing was judged, so a human sent to read a
+  # verdict has been misrouted. One step further than [23], though — there is
+  # nothing to read *at all* here, so the forensic branch is not written and the
+  # note carries the question instead ([35]).
+  use_tickets 01-alpha
+  set_config RETRY_N 1
+  set_config STERILE_K 3
+  session_writes_nothing
+
+  run_loop
+  # Exit 0: two attempts, then nothing left on the frontier to grind.
+  assert_success
+  assert_output_contains "01-alpha: nothing-delivered -> fresh retry (1 of 1)"
+  assert_output_contains "escalated to the human sink (nothing-delivered)"
+
+  assert_ticket_status 01-alpha ready-for-human
+  assert_equal "$(ticket_field 01-alpha Escalation)" "nothing-delivered"
+  assert_equal "$(ticket_field 01-alpha Failures)" "2"
+
+  # No branch to send a human to: it would hold the very tree the session was
+  # handed, offered as the thing to go and read.
+  run git -C "$PROJECT_DIR" rev-parse --verify "refs/heads/failed/01-alpha"
+  assert_failure
+
+  # What the ticket gets instead is the question to ask.
+  assert_file_contains "$(ticket_file 01-alpha)" "changed no file the gate can see"
+  assert_file_contains "$(ticket_file 01-alpha)" "why this ticket makes a session do nothing"
+}
+
 @test "the retry budget is the configured one, not a number in the code" {
   use_tickets 01-alpha
   set_config RETRY_N 0
@@ -751,9 +782,20 @@ FAKE
   assert_file_contains "$(ticket_file 08-alpha-half)" "- [ ] the alpha half exists"
   assert_file_contains "$(ticket_file 08-alpha-half)" "Re-sliced out of 07-overlaps-alpha"
 
-  # The ticket that was too big waited for them, then earned its own green gate.
+  # The ticket that was too big waited for them, came back to the frontier, and
+  # went to a human — which is what [35] changed here and it is worth reading
+  # slowly. Its acceptance criteria were split into the two children by
+  # construction, so once they are resolved a session on the parent has nothing
+  # left to write; before [35] that empty iteration was `resolved` on three green
+  # branches, which is to say the parent was rubber-stamped by a gate that had
+  # nothing to judge. Now it is refused and escalated, and the note on it asks
+  # exactly the right question — "why does this ticket make a session do nothing",
+  # whose third answer is "the work is already done". Whether a split really added
+  # up to its parent is a human's call: nothing in the pack checks that the
+  # children carried every criterion, the re-slice prompt only *asks* for it.
   assert_file_contains "$(ticket_file 07-overlaps-alpha)" "Re-sliced into: 08-alpha-half, 09-eta-half"
-  assert_ticket_status 07-overlaps-alpha resolved
+  assert_ticket_status 07-overlaps-alpha ready-for-human
+  assert_equal "$(ticket_field 07-overlaps-alpha Escalation)" "nothing-delivered"
 
   # The plan was written outside the repository, and the planning session never
   # became an iteration of its own.
@@ -1138,8 +1180,16 @@ FAKE
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
+prompt="$(cat)"
 mkdir -p src .scratch/demo/issues
-printf 'written\n' >src/alpha.txt
+# Its own ticket's surface, and not 01-alpha's twice: the second iteration would
+# otherwise be writing bytes that are already there, which delivers nothing since
+# [35] — and used to deliver a `resolved` for a session that had done nothing for
+# the ticket it was handed.
+for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' '); do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
 cat >.scratch/demo/issues/01-self-served.md <<'TICKET'
 # 01 — Self served
 

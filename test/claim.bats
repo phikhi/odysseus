@@ -265,6 +265,17 @@ live_record() {
   use_tickets 01-alpha
   local n
 
+  # Delivering something *new* each night, because the scenario is three green
+  # deliveries and the default fake writes the same bytes every time: a second
+  # night that leaves the tree exactly as it found it delivers nothing since [35],
+  # and this test would be measuring that instead of the counter.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+mkdir -p src && printf 'one more night\n' >>src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
   for n in 1 2 3; do
     stamp_claim 01-alpha "assignee:alice" "$LAST_WEEK"
     run_loop

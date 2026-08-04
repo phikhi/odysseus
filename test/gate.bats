@@ -323,12 +323,19 @@ FAKE
   assert_ticket_status 08-no-write-surface ready-for-agent
 }
 
-@test "a ticket with no write-surface that writes nothing is still resolvable" {
+@test "a ticket with no write-surface has nothing it could deliver" {
+  # It used to be resolvable, and that reading was not wrong about any one check:
+  # no surface, no write, no overflow, three green branches. It was the whole of
+  # the hole [35] closed — the loop calling an iteration delivered because nothing
+  # had objected to it. The default fake writes the surface its ticket declared,
+  # and this ticket declares none.
   use_tickets 08-no-write-surface
+  set_config STERILE_K 1
 
   run_loop
-  assert_success
-  assert_ticket_status 08-no-write-surface resolved
+  assert_failure 4
+  assert_output_contains "nothing was delivered"
+  assert_ticket_status 08-no-write-surface ready-for-agent
 }
 
 # ── unit: matching a path against a declared surface ─────────────────────────
@@ -1370,6 +1377,179 @@ FAKE
     [0-9a-f][0-9a-f]*) ;;
     *) fail "a readable pin should still yield a tree object: $output" ;;
   esac
+}
+
+# ── an iteration that delivered nothing ──────────────────────────────────────
+#
+# [35]. Not one of the three objective branches asks whether the session changed
+# anything: `tests` and `typecheck` are the project's own commands and answer
+# about the tree rather than about the change, and the scope-guard judges an
+# *overflow*, which an empty diff satisfies by construction — nothing sticks out.
+# The only thing asking lived in `lenses_review`, once per lens, as a side effect
+# of a judge refusing to judge nothing. So it went out with the tier: a session
+# that answered without writing a line got `tests=green typecheck=green
+# scope=green`, its ticket was resolved, `Failures:` was dropped with the claim
+# ([26]), `sterile` went back to zero, and the run reported a night of work.
+#
+# The canary cannot hold this — it runs at the shipped default of LENSES, where
+# the two always-on lenses caught it — and that is the shape of the finding: it is
+# the *combination* that made the hole, so the three configurations are the test.
+
+@test "a session that answered and wrote nothing resolves nothing" {
+  # The configuration the rest of this suite runs in, and it is a project's right
+  # ([24]): `LENSES=none`. Nothing hostile is needed to produce the session — one
+  # that refused the task, one handed a truncated prompt, one that spent its turn
+  # reading.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  session_writes_nothing
+  local before
+  before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
+  run_loop
+  assert_failure 4
+  local loop_output="$output"
+
+  assert_output_contains "nothing was delivered"
+  assert_output_contains "delivery=red"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+
+  # Before the fan and not beside it: an iteration that delivered nothing does not
+  # spend the project's suite on a verdict that could not have changed it.
+  assert_equal "$(stub_call_count tests)" "0"
+  assert_equal "$(stub_call_count typecheck)" "0"
+
+  # And the journal says what happened instead of saying delivered — the line a
+  # human reads in the morning is the only trace this route leaves.
+  assert_file_contains "$FEATURE_DIR/run.log" "nothing-delivered"
+  run bash -c "grep -c resolved '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+
+  run git -C "$PROJECT_DIR" log --format='%s' "$before..HEAD"
+  assert_equal "$output" ""
+  output="$loop_output"
+  refute_output_contains "committed"
+}
+
+@test "a LENSES no ticket triggers does not switch the delivery check off either" {
+  # The other half of the hole, and the ordinary path rather than a project that
+  # disarmed anything: `gate__lens_phase` returns 0 as soon as `lenses_triggered`
+  # is empty, so a `LENSES` of gated lenses and a ticket that trips none of them
+  # left nobody asking the question at all.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config LENSES "security accessibility"
+  session_writes_nothing
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "nothing was delivered"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(lenses_that_ran)" ""
+}
+
+@test "the refusal falls once for the iteration, not once per lens" {
+  # At the value a project installs, where the two always-on lenses would each
+  # have refused separately — which is where [06] left the guarantee, and why it
+  # read as covered. The gate settles it now: one line, no lens spawned, the tier
+  # never reached.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config LENSES "$(config_default LENSES)"
+  session_writes_nothing
+
+  run_loop
+  assert_failure 4
+  local loop_output="$output"
+
+  assert_equal "$(lenses_that_ran)" ""
+  assert_equal "$(claude_call_count)" "1"
+  refute_output_contains "has nothing to review"
+
+  run bash -c "grep -c 'nothing was delivered' <<'OUT'
+$loop_output
+OUT"
+  assert_equal "$output" "1"
+}
+
+@test "a tree the gate could not read is not read as nothing to deliver" {
+  # The fifth reader of a value with two empty answers ([34]), and the one that
+  # would turn a fail-closed into this ticket's own false delivered: `nothing
+  # changed` and `nobody could look` are the same silence. A refusal concludes
+  # nothing here — it falls through to the fan, where the scope-guard refuses to
+  # pass a tree it cannot see and says so in words a human can act on.
+  use_tickets 01-alpha
+
+  # No baseline. The post-session tree is readable, so only the comparison is
+  # impossible — which is exactly the case an eager reading would call empty.
+  pack_run '
+    mkdir -p src && printf "written\n" >src/alpha.txt
+    gate_run 01-alpha "" || true
+    printf "verdicts=%s\n" "$RALPH_GATE_VERDICTS"'
+  assert_success
+  assert_output_contains "could not read the working tree"
+  assert_output_contains "verdicts=tests=green typecheck=green scope=red"
+  refute_output_contains "nothing was delivered"
+
+  # And the other side of the same value: a baseline, and no tree to compare it
+  # with, because the pinned ignore rules are gone ([30]). The snapshot refuses,
+  # so the gate is handed nothing — and still does not conclude that nothing was
+  # delivered.
+  pack_run '
+    mkdir -p src && printf "written\n" >src/alpha.txt
+    base="$(gate_tree_snapshot)"
+    export RALPH_IGNORE_PIN=/nonexistent/ralph-pin
+    gate_run 01-alpha "$base" || true
+    printf "verdicts=%s\n" "$RALPH_GATE_VERDICTS"'
+  assert_success
+  assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
+  assert_output_contains "could not read the working tree"
+  refute_output_contains "nothing was delivered"
+}
+
+@test "a session whose only writes are in the ignored zone delivered nothing" {
+  # The zone [24] enumerates is a zone this gate cannot see, so a session that
+  # wrote only there has delivered nothing the loop could commit, and the ticket
+  # must not be resolved on it. The price is asserted rather than left in a
+  # comment: the file survives — no rollback reaches it either — and a ticket
+  # whose whole write-surface a project ignores can never be delivered, on every
+  # attempt, out loud.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  ignore_paths 'cache/'
+  session_writes cache/payload
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "nothing was delivered"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_file_exists "$PROJECT_DIR/cache/payload"
+}
+
+@test "a session that delivered nothing and moved the ignore frontier is still told so" {
+  # The one line no branch is left to print on this path. The findings of
+  # `gate_ignore_frontier` normally travel on the scope-guard's output, and the
+  # scope-guard is not started here — so a session that widened the frontier and
+  # wrote nothing behind it would have had its move put back in silence. A zone
+  # nobody guards gets named every time round ([24], [30]), and "every time"
+  # includes the iterations that delivered nothing.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >>.git/info/exclude
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "nothing was delivered"
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
 }
 
 # ── collecting the branches ──────────────────────────────────────────────────

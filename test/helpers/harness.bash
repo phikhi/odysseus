@@ -35,7 +35,9 @@
 #   claude_call_stdin N            stdin (the prompt) of the Nth spawn
 #   claude_call_env N              environment the Nth spawn was given
 #   claude_rate_limit JSON         the in-band rate_limit_info the stream carries
-#   session_writes PATH ...        paths the delivery session writes
+#   session_writes PATH ...        paths the delivery session writes (default:
+#                                  the write-surface the ticket declared)
+#   session_writes_nothing         a session that answers and writes nothing
 #   lens_verdict NAME pass|fail    what a review lens answers ('' = every lens)
 #   lens_writes NAME PATH ...      paths a lens writes in the tree it judges
 #   lens_call_count NAME           how many times that lens was spawned
@@ -579,11 +581,23 @@ lens_closes_measurement() {
   printf '%s\n' "$RALPH_TEST_DIR/tmp" >"$SHIM_STATE/lens-$1.closes-measurement"
 }
 
-# Paths the delivery session writes, one per line. The default fake writes
-# nothing, which is fine for a suite asserting on the tracker and useless for one
-# asserting on a diff.
+# Paths the delivery session writes, one per line. With no arguments — and by
+# default, without calling this at all — it writes whatever the ticket it was
+# handed declared as its write-surface.
+#
+# Delivering is the default since [35] and the reason is not comfort: an iteration
+# that changes no file the gate can see is red now, so a fake that wrote nothing
+# would put every test in this suite on the failure path. The empty case is what a
+# test asks for explicitly.
 session_writes() {
   printf '%s\n' "$@" >"$SHIM_STATE/session.writes"
+}
+
+# A session that answers and writes nothing at all: the defect [35] closed, and
+# nothing hostile is needed to produce it — a session that refuses the task, one
+# that was handed a truncated prompt, one that spent its turn reading.
+session_writes_nothing() {
+  : >"$SHIM_STATE/session.silent"
 }
 
 lens_call_count() {

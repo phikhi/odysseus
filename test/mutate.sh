@@ -517,7 +517,7 @@ mutation "07 a contractual overflow is retried like any other failure" "$FAILURE
   test/failures.bats "without spending a retry"
 
 mutation "07 the attempt is not kept before the rollback undoes it" "$FAILURES" \
-  's/  if \[ -n "\$reason" \]; then\n    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi\n//' \
+  's/  if \[ -n "\$reason" \] && \[ "\$class" != nothing-delivered \]; then\n    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi\n//' \
   test/failures.bats "keeps the attempt"
 
 mutation "07 the failed branch carries the loop's own bookkeeping" "$FAILURES" \
@@ -1291,8 +1291,16 @@ mutation "29 a branch cannot see the tree it is judged on" "$GATE" \
 
 # A guard handed nothing falls back to reading the tree itself, which is not a
 # fallback but the race coming back in through gate_changed_files.
+#
+# Anchored on the `local` line above it since [35], and the reason is the one this
+# file opens with: that refusal is now written twice — `gate__nothing_delivered`
+# refuses an empty `now` for exactly the same reason and is defined *above* this
+# one. A substitution without /g edits the first match, so the entry went on
+# applying cleanly to the wrong function and came back VACUOUS about a guard that
+# had lost nothing. Caught by the gate; the lesson is unchanged and now has a
+# third instance.
 mutation "29 a scope-guard handed no tree recomputes one instead of refusing" "$GATE" \
-  's/  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then/  if ! changed="\$(gate_changed_files "\$base" "\$now")"; then/' \
+  's/  local surface changed file owner class=.. rc=0\n\n  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then/  local surface changed file owner class=\x27\x27 rc=0\n\n  if ! changed="\$(gate_changed_files "\$base" "\$now")"; then/' \
   test/gate.bats "cannot read the tree"
 
 mutation "29 the gate never says what it wrote while it judged" "$GATE" \
@@ -1378,9 +1386,14 @@ mutation "06 a lens snapshots its own tree instead of the judged one" "$LENSES_L
   's/  if \[ -z "\$tree" \] \|\| \[ -z "\$base" \]; then/  tree="\$(gate_tree_snapshot)"\n  if [ -z "\$base" ]; then/' \
   test/lenses.bats "not one of its own"
 
+# Re-aimed by [35], which moved the guarantee this used to cover into the gate:
+# the loop cannot reach a lens with an empty diff any more, so the test that holds
+# the local half calls `lenses_review` directly. The line is still here and still
+# load-bearing — a public function handed a base equal to its tree must refuse
+# rather than spend a model — and the entry follows it.
 mutation "06 an iteration that changed nothing is reviewed anyway" "$LENSES_LIB" \
   's/  \[ -n "\$files" \] \|\| return 1\n//' \
-  test/lenses.bats "changed nothing is red"
+  test/lenses.bats "diff of nothing refuses"
 
 mutation "06 the lens is shown the file names and not the diff" "$LENSES_LIB" \
   's/  lenses__patch "\$base" "\$tree" "\$max" \|\| truncated=1/  :/' \
@@ -1553,6 +1566,60 @@ mutation "27 the next number is never checked against the directory" "$TRACKER" 
 mutation "27 the finding is printed but never journalled" "$LOOP" \
   's/    loop_journal_append "\$subject" "\$outcome" 0 0 0\n//' \
   test/loop-happy-path.bats "duplicate number is named"
+
+# ── [35] an iteration that delivered nothing ─────────────────────────────────
+
+mutation "35 an iteration that changed no file is resolved" "$GATE" \
+  's/^gate__nothing_delivered\(\) \{/gate__nothing_delivered() { return 1;/m' \
+  test/gate.bats "answered and wrote nothing resolves nothing"
+
+# The other direction, and it is the one [34] paid for: `nothing changed` and
+# `nobody could look` are the same silence, and reading the second as the first
+# turns a fail-closed into the very false delivered this ticket exists to refuse.
+mutation "35 a measurement it could not take is read as nothing delivered" "$GATE" \
+  's/  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then\n    return 1\n  fi/  changed="\$(gate_changed_files "\$base" "\$now")" || changed=""/' \
+  test/gate.bats "could not read is not read as nothing to deliver"
+
+# The findings of `gate_ignore_frontier` ride on the scope-guard's output, and the
+# scope-guard is not started on this path. Without this loop a session that moved
+# an ignore rule and wrote nothing would have its move put back in silence ([30]).
+mutation "35 a frontier moved on this path is put back without a word" "$GATE" \
+  's/      gate__log "\$ticket: \$finding"/      :/' \
+  test/gate.bats "moved the ignore frontier is still told so"
+
+mutation "35 the loop journals it as an ordinary red gate" "$LOOP" \
+  's/        \[ "\$\{RALPH_GATE_NOTHING_DELIVERED:-0\}" = 0 \] \|\| outcome=nothing-delivered\n//' \
+  test/gate.bats "answered and wrote nothing resolves nothing"
+
+# Renamed rather than deleted: the outcome then falls through to the `*)` arm and
+# is classified `crash`, which is what a classifier that does not know about this
+# route would make of it.
+mutation "35 nothing delivered is classified as something else entirely" "$FAILURES" \
+  's/    nothing-delivered\)/    never-happens)/' \
+  test/failures.bats "nothing ever delivers"
+
+mutation "35 a ticket nothing delivered is escalated as a failed implementation" "$FAILURES" \
+  's/          reason=nothing-delivered\n//' \
+  test/failures.bats "nothing ever delivers"
+
+# The note is the whole of the routing on this path — there is no verdict and no
+# branch to read — so the way to remove what it promises is to take the question
+# out of the sentence.
+mutation "35 the escalated ticket does not say what to ask about it" "$FAILURES" \
+  's/so the question is why this ticket makes a session do nothing/so somebody should look at it/' \
+  test/failures.bats "nothing ever delivers"
+
+mutation "35 a forensic branch is written for an attempt that wrote nothing" "$FAILURES" \
+  's/  if \[ -n "\$reason" \] && \[ "\$class" != nothing-delivered \]; then/  if [ -n "\$reason" ]; then/' \
+  test/failures.bats "nothing ever delivers"
+
+# And the fake that makes the whole suite mean something now. A session that
+# delivers is the cooperative case since [35], so a fake that writes nothing puts
+# every green in this suite on the failure path — which is exactly the world the
+# defect lived in for thirty-five tickets.
+mutation "35 the fake session delivers nothing by default" "$SHIM" \
+  's/elif \[ ! -f "\$state\/session.silent" \]; then/elif false; then/' \
+  test/gate.bats "green on every branch is what resolves a ticket"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

@@ -44,10 +44,18 @@ teardown() {
 }
 
 @test "the loop leaves tickets it must not touch alone" {
-  use_tickets
+  # The set is spelled out rather than "every fixture", and the reason is [35]:
+  # two of the fixtures are about something else and now fail on their own. 07
+  # shares a write-surface with 01 by design, so a session that writes what its
+  # ticket declared drifts into 01's; 08 declares no surface at all, so it can
+  # never deliver anything. Both have tests of their own, and neither has anything
+  # to say about the tickets this one is about — one ground ticket beside the
+  # three the loop must not touch.
+  use_tickets 01-alpha 04-claimed 05-needs-triage 06-resolved 09-escalated
 
   run_loop
   assert_success
+  assert_ticket_status 01-alpha resolved
 
   assert_ticket_status 04-claimed claimed
   assert_ticket_status 05-needs-triage needs-triage
@@ -108,6 +116,10 @@ teardown() {
   # not name it are still perfectly grindable.
   use_tickets 01-alpha 03-blocked
   cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+  # Its own file to write, or the second of the two would be delivering bytes
+  # that are already there — which is nothing delivered since [35], and has
+  # nothing to do with the duplicate number this test is about.
+  perl -pi -e 's|src/alpha\.txt|src/alpha-bis.txt|' "$TRACKER_DIR/01-alpha-bis.md"
 
   run_loop
   assert_success
@@ -181,12 +193,16 @@ teardown() {
 @test "the session runs at the project root, whatever the caller's cwd" {
   use_tickets 01-alpha
 
-  # Markers land outside the repository on purpose: a fake that scribbles in
-  # the project would be caught by the scope-guard, and this test is about the
-  # working directory, not about the gate.
+  # The marker lands outside the repository on purpose: a fake that scribbled
+  # anywhere in the project would be caught by the scope-guard, and this test is
+  # about the working directory and not about the gate. What it does write inside
+  # is exactly its own write-surface — since [35] a session that writes nothing at
+  # all delivers nothing, and this test would be measuring three failed attempts
+  # instead of one honest iteration.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 pwd >"$RALPH_SHIM_STATE/session-cwd"
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -204,6 +220,7 @@ FAKE
 #!/usr/bin/env bash
 sed -n 's/^\*\*Status:\*\* //p' .scratch/demo/issues/01-alpha.md |
   head -1 >"$RALPH_SHIM_STATE/status-during-session"
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -217,8 +234,14 @@ FAKE
 @test "a session that fails resolves nothing and gives the ticket back" {
   use_tickets 01-alpha
 
+  # It writes its write-surface *and then* dies, which is both the realistic crash
+  # and what keeps this test about the exit code. Found by the mutation gate: with
+  # a fake that wrote nothing, a loop that ignored `rc` altogether still refused
+  # the iteration — for delivering nothing ([35]) — so the guarantee this test
+  # names was carried by something else and its mutation came back VACUOUS.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"error_during_execution","is_error":true}'
 exit 1
 FAKE
@@ -277,7 +300,11 @@ n="$(cat "$RALPH_SHIM_STATE/call-seq" 2>/dev/null || echo 0)"
 n=$((n + 1))
 echo "$n" >"$RALPH_SHIM_STATE/call-seq"
 case "$n" in
-  3) echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}' ;;
+  # Delivering, and not merely reporting success: an iteration that changes no
+  # file resolves nothing since [35], so a barren third call would leave the
+  # counter it is here to reset exactly where it was.
+  3) mkdir -p src && printf 'alpha\n' >src/alpha.txt
+     echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}' ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -301,6 +328,10 @@ FAKE
 #!/usr/bin/env bash
 : >"$RALPH_SHIM_STATE/session-started"
 sleep 1
+# The stop lands during the first iteration, so this only ever runs for 01-alpha
+# — and it has to deliver something, or the iteration the stop interrupts would
+# resolve nothing whether or not it was allowed to finish ([35]).
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -472,6 +503,7 @@ FAKE
   rm "$FEATURE_DIR/run.log"
   script_claude <<'FAKE'
 #!/usr/bin/env bash
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
