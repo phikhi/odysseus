@@ -91,6 +91,50 @@ failures_classify() {
   esac
 }
 
+# ── the frontier of what any of this can see ─────────────────────────────────
+
+# The ignore rules put back, on an iteration no gate judged ([32]).
+#
+# `.git/info/exclude` and `core.excludesFile` are in no tree, so no rollback
+# reaches them, and they decide what every check in this pack can see. [30] made
+# that a finding and put them back — inside `gate_run`, which is exactly where an
+# iteration that crashed or was cut short never goes. Left alone, the *next*
+# iteration pins the widened frontier as the project's own configuration and
+# writes behind it at green: one non-zero exit, which a session controls, buys the
+# rest of the night. Probed on both paths in [32].
+#
+# Said out loud rather than quietly undone, and for the reason the second caller
+# in `failures_reslice` says it too: there is no scope-guard here to carry a
+# finding, so the log line is the only trace a human gets in the morning. It is
+# not a verdict and must not become one — the iteration is already failing, and
+# what was missing was the restore and never a class of its own.
+#
+# The tree's own `.gitignore` files have nothing to put back — a ticket may add an
+# ignore rule, that is project work ([30]) — but on this path nobody was naming
+# them either, so a human read `this rollback could not undo … lib/` with no way
+# to tell a build directory from a directory a session had just decided to hide.
+# The sentence differs from the gated one because the fact does: here the rollback
+# below takes the rule away with the rest of the session's writes, so the new rules
+# apply to nothing. If that rollback refuses, it says so itself and the run stops
+# ([34]) — a line that has been contradicted two lines later and loudly is not the
+# half-truth [29] refused.
+failures__ignore_frontier() {
+  local ticket="$1" moved findings finding
+
+  if moved="$(gate_moved_tree_rules)"; then
+    failures__log "$ticket: this session moved the ignore frontier: $moved — no gate judged this iteration, and those rules go back with the rest of what it wrote"
+  fi
+
+  findings="$(gate_ignore_frontier)" || true
+  while IFS= read -r finding; do
+    [ -n "$finding" ] || continue
+    failures__log "$ticket: $finding"
+  done <<FRONTIER
+$findings
+FRONTIER
+  return 0
+}
+
 # ── the policy ───────────────────────────────────────────────────────────────
 
 # One failed iteration, from classification to a ticket somebody can act on.
@@ -102,6 +146,38 @@ failures_handle() {
   local class count="" reason=""
 
   class="$(failures_classify "$outcome" "${RALPH_GATE_SCOPE_CLASS:-}")"
+
+  # Which of the six classes reach here without their ignore rules having been put
+  # back, read off the `case` above rather than remembered — that list is where
+  # [30] went wrong, closing the one path without a gate it had in mind and
+  # missing the two [23] had added two days earlier ([32]).
+  #
+  #   gate-red, contract, nothing-delivered  a gate ran: `gate_run` restored the
+  #                                          rules before it took the tree, and
+  #                                          printed the findings either on the
+  #                                          scope-guard's output or, on the
+  #                                          delivery refusal, by itself ([35]).
+  #   too-big                                `failures_reslice` restores below,
+  #                                          after the planning session it spawns
+  #                                          — a session that is never gated
+  #                                          either, and the restore has to fall
+  #                                          after it to cover what *it* moved.
+  #   crash, timeout                         nobody. That is this ticket.
+  #
+  # Conditioned on the class rather than made idempotent, and the choice is worth
+  # writing down: what a second call would report twice is exactly what could not
+  # be put back — the global excludes file, outside the repository — so an
+  # unconditional call would announce one movement twice on the paths that already
+  # restore. One caller per iteration, whichever path it takes.
+  #
+  # Before the tree snapshot below, so the rollback measures the repository
+  # through the rules the run was handed rather than the ones the session left,
+  # and before the rollback itself, so the line about the tree's rules names them
+  # while they are still there.
+  case "$class" in
+    crash | timeout) failures__ignore_frontier "$ticket" ;;
+  esac
+
   [ -n "$tree" ] || tree="$(gate_tree_snapshot)" || tree=""
 
   # Cleared here and raised only by failures_rollback, so it accumulates across the

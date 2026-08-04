@@ -595,6 +595,23 @@ OUTSIDE
   return "$rc"
 }
 
+# The `.gitignore` files of the working tree this session moved, on one line, and
+# non-zero when it moved none.
+#
+# Public because it has a second caller, and the second caller is the point of
+# [32]: the sentence written around this list is not the same one on a path where
+# a gate judged and on a path where nothing did. Here the new rules apply from the
+# next iteration; there the rollback takes them away with the rest of what the
+# session wrote. One lister, two claims, each owned by the site that can vouch for
+# it — rather than one message with a clause nobody checks.
+gate_moved_tree_rules() {
+  local moved
+  moved="$( { gate_ignore_moved || true; } |
+    awk -F'\t' '$1 == "tree" { print $2 }' | tr '\n' ' ' | sed 's/ *$//')"
+  [ -n "$moved" ] || return 1
+  printf '%s\n' "$moved"
+}
+
 # The ignored paths the pinned rules did *not* hide: what a rule written during
 # this iteration took out of sight. Forced into the snapshot, which is what makes
 # them judged like anything else.
@@ -1230,9 +1247,7 @@ gate__report_unguarded() {
 # judged, and what it says is that it did not count this time round.
 gate__report_frontier() {
   local ticket="$1" moved
-  moved="$( { gate_ignore_moved || true; } |
-    awk -F'\t' '$1 == "tree" { print $2 }' | tr '\n' ' ' | sed 's/ *$//')"
-  [ -n "$moved" ] || return 0
+  moved="$(gate_moved_tree_rules)" || return 0
   gate__log "$ticket: this session moved the ignore frontier: $moved — this iteration was judged through the rules it was handed, the new ones apply from the next"
   return 0
 }

@@ -587,6 +587,212 @@ FAKE
   assert_equal "$(claude_call_count)" "2"
 }
 
+# ── the ignore frontier, where no gate judged ────────────────────────────────
+#
+# [30] put `.git/info/exclude` and `core.excludesFile` back after every iteration
+# that widened them, because the *next* iteration pins what it finds and would
+# inherit the blindness as the project's own configuration. It put them back
+# inside `gate_run` and inside the re-slice — and an iteration whose session
+# crashed or was cut short goes through neither ([32]). The price for a session is
+# a non-zero exit, which it controls.
+#
+# Every class of `failures_classify` is named by one test, here or elsewhere: a
+# correction placed on the path that happened to be probed is exactly what [30]
+# shipped. `crash` and `timeout` below; `too-big` in "the re-slice session cannot
+# leave the ignore frontier widened"; `gate-red` and `nothing-delivered` in the
+# two counting tests below, which is where `contract` rides too — it is a
+# `gate-red` the scope-guard classified, judged by the same gate.
+
+@test "a session that crashed cannot leave the ignore frontier widened" {
+  # The probe of [32], in both halves. The first alone would pass on a correction
+  # that puts the file back without anybody checking that putting it back counts
+  # for anything — so what the *second* iteration inherits is asserted first.
+  use_tickets 01-alpha
+  set_config RETRY_N 1
+  set_config STERILE_K 3
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); printf '%s\n' "$n" >"$RALPH_SHIM_STATE/seq"
+mkdir -p src rogue
+printf 'written\n' >src/alpha.txt
+if [ "$n" = 1 ]; then
+  printf 'rogue/\n' >>.git/info/exclude
+  printf 'backdoor\n' >rogue/backdoor
+  exit 1
+fi
+printf 'second\n' >rogue/second
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  local loop_output="$output"
+
+  # The half that matters, and the reason the restore exists at all: the second
+  # session writes outside its surface behind the rule the first one wrote. Left
+  # widened, `rogue/` is what this iteration pins, so nothing sees the write, the
+  # gate is green and the ticket resolves carrying it.
+  assert_output_contains "wrote rogue/second, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/rogue/second"
+  assert_ticket_status 01-alpha ready-for-human
+
+  # And the half [30] already held, on a path it never reached.
+  output="$loop_output"
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+
+  # Once for the whole run: the second iteration has nothing to put back, so a
+  # second line here would mean the run is reporting a movement nobody made.
+  run bash -c "grep -c 'moved the ignore frontier in .git/info/exclude' <<'OUT'
+$loop_output
+OUT"
+  assert_equal "$output" "1"
+}
+
+@test "a session the loop cut short cannot leave it widened either" {
+  # The other class with no caller, and the one that was two days old when [30]
+  # was written ([23]). A hung session is killed, `claude` traps TERM and comes
+  # back a success, and the iteration is never gated — same hole, different door.
+  use_tickets 01-alpha
+  set_config SESSION_STALL_TIMEOUT 2
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >>.git/info/exclude
+mkdir -p rogue && printf 'backdoor\n' >rogue/backdoor
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read_input_tokens":9000,"output_tokens":5}}}'
+i=0
+while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+exit 0
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "hung, terminated"
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+
+  # What was written behind the rule goes with it: the rollback runs after the
+  # restore, so it measures the tree through the rules the run was handed.
+  refute_file_exists "$PROJECT_DIR/rogue/backdoor"
+}
+
+@test "an iteration a gate judged says the frontier moved once, not twice" {
+  # The failure mode of the obvious correction: a restore at the head of
+  # `failures_handle` covers the two missing classes and doubles the one path that
+  # already had it. Two findings for one movement, and a line claiming no gate
+  # judged an iteration a gate judged — the half-truth [29] refused, in the other
+  # direction.
+  #
+  # Both sources are moved, and that is what makes this test able to fail. The
+  # restore of `.git/info/exclude` is idempotent by construction — the second
+  # caller finds it back where the pin says and reports nothing — so a doubled
+  # call is invisible there. The tree's rules are never put back, on purpose, so
+  # they are the one place a second speaker has something to say twice.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  stub_exit tests 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >>.git/info/exclude
+printf 'lib/\n' >>.gitignore
+mkdir -p src && printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  local loop_output="$output"
+
+  assert_output_contains "tests=red"
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+
+  # A gate ran, so the sentence a gateless path prints has no business here.
+  output="$loop_output"
+  refute_output_contains "no gate judged this iteration"
+
+  run bash -c "grep -c 'moved the ignore frontier in .git/info/exclude' <<'OUT'
+$loop_output
+OUT"
+  assert_equal "$output" "1"
+
+  run bash -c "grep -c 'this session moved the ignore frontier: .gitignore' <<'OUT'
+$loop_output
+OUT"
+  assert_equal "$output" "1"
+}
+
+@test "an iteration refused before the fan says it once too" {
+  # The third printer, and the one that only exists since [35]: a delivery refusal
+  # returns its verdict before a single branch starts, so there is no scope-guard
+  # to carry the findings and `gate_run` prints them itself. A restore added in
+  # `failures_handle` without looking would double this one as well.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  session_writes_nothing
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'rogue/\n' >>.git/info/exclude
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  local loop_output="$output"
+
+  assert_output_contains "nothing was delivered"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+
+  run bash -c "grep -c 'moved the ignore frontier in .git/info/exclude' <<'OUT'
+$loop_output
+OUT"
+  assert_equal "$output" "1"
+}
+
+@test "a rule the crashed session wrote in the tree is named before it goes" {
+  # The `.gitignore` of the working tree has nothing to put back — a ticket may
+  # add an ignore rule, that is project work ([30]) — but on a path with no gate
+  # nobody was naming it either. A human read `this rollback could not undo … lib/`
+  # with no way to tell a build directory from one a session had just decided to
+  # hide. And the sentence is not the gated one: here the rollback takes the rule
+  # away, so "the new rules apply from the next iteration" would be false.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'lib/\n' >>.gitignore
+mkdir -p lib src
+printf 'rogue\n' >lib/rogue.sh
+printf 'written\n' >src/alpha.txt
+exit 1
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "this session moved the ignore frontier: .gitignore"
+  assert_output_contains "no gate judged this iteration"
+
+  # And it really did go: the line describes what the rollback is about to do.
+  refute_file_exists "$PROJECT_DIR/.gitignore"
+  refute_file_exists "$PROJECT_DIR/lib/rogue.sh"
+}
+
 # ── the attempt is kept ──────────────────────────────────────────────────────
 
 @test "before the escalation, a branch keeps the attempt the human will read" {

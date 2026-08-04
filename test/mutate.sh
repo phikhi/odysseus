@@ -1621,6 +1621,35 @@ mutation "35 the fake session delivers nothing by default" "$SHIM" \
   's/elif \[ ! -f "\$state\/session.silent" \]; then/elif false; then/' \
   test/gate.bats "green on every branch is what resolves a ticket"
 
+# ── [32] the frontier put back where no gate judged ──────────────────────────
+#
+# Each entry aims at the *class* that reaches the restore and never at the restore
+# itself, which is [30]'s and already has its entries: what this ticket delivers is
+# that the two classes nothing gated get there at all.
+
+mutation "32 an iteration no gate judged keeps its widened frontier" "$FAILURES" \
+  's/    crash \| timeout\) failures__ignore_frontier "\$ticket" ;;/    crash | timeout) : ;;/' \
+  test/failures.bats "crashed cannot leave the ignore frontier widened"
+
+# The correction placed on the path that happened to be probed — which is exactly
+# what [30] shipped, and why every class is named by a test of its own.
+mutation "32 only the class the probe used gets its frontier back" "$FAILURES" \
+  's/    crash \| timeout\) failures__ignore_frontier/    crash) failures__ignore_frontier/' \
+  test/failures.bats "cut short cannot leave it widened either"
+
+# And the other way the correction goes wrong: bolted onto every class, so the
+# paths a gate already handled speak twice about one movement.
+mutation "32 the restore is bolted onto every class, gated or not" "$FAILURES" \
+  's/    crash \| timeout\) failures__ignore_frontier/    *) failures__ignore_frontier/' \
+  test/failures.bats "once, not twice"
+
+# The cause line behind [24]'s consequence, on the path where `gate__report_frontier`
+# never runs: without it a human reads "this rollback could not undo … lib/" with
+# nothing saying a session had just decided to hide it.
+mutation "32 nothing names the tree rules a crashed session wrote" "$FAILURES" \
+  's/  if moved="\$\(gate_moved_tree_rules\)"; then/  if false; then/' \
+  test/failures.bats "named before it goes"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
