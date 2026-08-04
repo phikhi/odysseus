@@ -171,18 +171,29 @@ lenses_sensitive_surface() {
 # gated lens, and SECURITY_PATHS ships empty — so out of the box, Security fires
 # on the tag alone. A ticket written so as to attract no lens is a real hole and
 # it is in the trust-boundary table under the name it deserves.
+#
+# The config key is whitespace-separated, which is how a human writes a list of
+# globs, and this is the one place it is read: converted here into the one-per-
+# line shape every list travels in ([33]). The surface is walked line by line for
+# the same reason and one more — `for entry in $(...)` also expanded each declared
+# glob against the working tree, so a surface of `src/*` arrived as whatever
+# happened to exist under `src` on the day the lens was chosen.
 lenses__triggered_by() {
   local ticket="$1" tag="$2" paths="$3" entry
   lenses_has_tag "$ticket" "$tag" && return 0
   [ -n "$paths" ] || return 1
-  for entry in $(gate_write_surface "$ticket"); do
+  paths="$(gate_authored_list "$paths")"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
     # Both directions, because both sides are globs and neither is a path on
     # disk: a surface of `src` against a pattern of `src/auth/*` matches only one
     # way round. Approximate, and approximating towards running the lens is the
     # only safe direction for it to be wrong in.
     gate_in_surface "$entry" "$paths" && return 0
     gate_in_surface "$paths" "$entry" && return 0
-  done
+  done <<SURFACE
+$(gate_write_surface "$ticket")
+SURFACE
   return 1
 }
 

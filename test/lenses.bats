@@ -101,6 +101,23 @@ lens_ticket() {
   assert_equal "$(lenses_that_ran)" "spec standards"
 }
 
+@test "a config key naming several globs still meets a surface on any of them" {
+  # The key is whitespace-separated, which is how a human writes a list of globs,
+  # and [33] made every list inside the pack travel one entry per line: the
+  # conversion happens here, in the one place the key is read. Without it the key
+  # arrives as a single pattern with a space in it, matches nothing, and the gated
+  # lens quietly stops firing — a green with one reviewer fewer and no line saying
+  # so. The matching glob is the *second* one on purpose: a reader that only ever
+  # honoured the first word would pass this test.
+  set_config SECURITY_PATHS 'src/keys/* src/auth/*'
+  lens_ticket 01-sensitive 'src/auth/token.txt'
+  session_writes
+
+  run_loop
+  assert_success
+  assert_equal "$(lens_call_count security)" "1"
+}
+
 @test "the security lens answers a tagged ticket, and a sensitive surface" {
   set_config SECURITY_PATHS 'src/auth/*'
   lens_ticket 01-tagged 'src/plain.txt' 'security, needs-care'

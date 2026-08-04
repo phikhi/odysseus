@@ -336,10 +336,11 @@ FAKE
 @test "the write-surface is read as globs, whatever the markdown around it" {
   use_tickets 07-overlaps-alpha
 
-  # Backticks and commas are for the human reader; the guard sees two globs.
+  # Backticks and commas are for the human reader; the guard sees two globs, one
+  # per line — the shape every list travels in since [33].
   pack_run 'gate_write_surface 07-overlaps-alpha'
   assert_success
-  assert_output_contains "src/alpha.txt src/eta.txt"
+  assert_equal "$output" "$(printf 'src/alpha.txt\nsrc/eta.txt')"
   refute_output_contains '`'
 }
 
@@ -364,6 +365,17 @@ FAKE
   # An empty surface is the fail-safe case: nothing is inside it.
   pack_run 'gate_in_surface "src/alpha.txt" "" && echo in || echo out'
   assert_equal "$output" "out"
+
+  # And the surface is matched against the path, never resolved against the
+  # working tree first ([33]). `for pattern in $2` expanded the list as a glob
+  # before matching it, so a declared `src/*` arrived as the files that happened
+  # to exist — and the one path a session had just *deleted* was then outside its
+  # own write-surface. The file on disk is what makes this test say anything: with
+  # an empty `src/` the old expansion found nothing and left the pattern alone.
+  mkdir -p "$PROJECT_DIR/src"
+  printf 'here\n' >"$PROJECT_DIR/src/alpha.txt"
+  pack_run 'gate_in_surface "src/eta.txt" "src/*" && echo in || echo out'
+  assert_equal "$output" "in"
 }
 
 # ── one iteration is judged on its own writes ────────────────────────────────
@@ -1152,6 +1164,162 @@ FAKE
   local named
   named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
   assert_equal "${named#*ignored path(s): }" ".scratch/other-feature/"
+}
+
+# ── a list of paths is not a line of words ───────────────────────────────────
+#
+# [33]. Every path below is one path. The pack used to carry them joined by
+# spaces and cut them apart again with `for path in $list`, which is not the
+# inverse operation: a space makes two paths out of one, a glob character makes
+# whichever paths happen to exist. Each test here carries its paired witness —
+# the same scenario under a name with nothing special in it — because a test that
+# only shows the odd name going green proves nothing about the name.
+
+@test "a rule hiding a path whose name has a space does not buy it a free pass" {
+  # Probe 2 of [30] with one character changed. The legitimate half is unchanged
+  # and has to stay legitimate: a ticket may declare `.gitignore` and add a rule.
+  # What the rule hides is still judged this time round — unless the path was
+  # called `my dir/`, in which case the forcing cut it into `my` and `dir/`, both
+  # matching nothing, and the `|| true` written for a path a project has not
+  # created yet swallowed the failure.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `.gitignore`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that may write the ignore rules"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'my dir/\nplaindir/\n' >>.gitignore
+mkdir -p 'my dir' plaindir src
+printf 'rogue\n' >'my dir/backdoor'
+printf 'rogue\n' >plaindir/backdoor
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # The witness first: without it a green on the line above would read as "the
+  # scenario does not red anything", which is what a spaced name looks like.
+  assert_output_contains "wrote plaindir/backdoor, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/plaindir/backdoor"
+
+  # And the case the ticket is about, judged and undone the same way.
+  assert_output_contains "wrote my dir/backdoor, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/my dir/backdoor"
+}
+
+@test "a guarded path whose name has a space is a guard, and the zone line agrees" {
+  # The older half, open since [24] and never probed: the guarded paths came in
+  # through the same `for`. Three ignored directories, and the two halves of the
+  # mechanism have to say the same thing about each — what the snapshot took by
+  # force is judged and *not* named as unjudged, what it did not take is named.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config GUARDED_PATHS "$(printf 'my vendor\nplainvendor')"
+  ignore_paths 'my vendor/' 'plainvendor/' 'my cache/'
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+mkdir -p 'my vendor' plainvendor 'my cache' src
+printf 'rogue\n' >'my vendor/rogue'
+printf 'rogue\n' >plainvendor/rogue
+printf 'left\n' >'my cache/payload'
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  local loop_output="$output"
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # The witness, then the spaced name: both guarded, both judged, both undone.
+  assert_output_contains "wrote plainvendor/rogue, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/plainvendor/rogue"
+  assert_output_contains "wrote my vendor/rogue, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/my vendor/rogue"
+
+  # The other half, and the reason this is one test and not two: the zone line
+  # names what nothing judged and only that. `my cache/` is ignored and guarded by
+  # nothing, so it survives and is named; the two guarded directories were taken
+  # by force, so naming them would be the lie [24] refused in the other direction.
+  output="$loop_output"
+  assert_file_exists "$PROJECT_DIR/my cache/payload"
+  local named
+  named="$(printf '%s\n' "$loop_output" | grep 'nothing in this gate judged' | tail -1)"
+  assert_equal "${named#*ignored path(s): }" "my cache/"
+}
+
+@test "a guarded path whose name has a glob character guards itself, not its neighbour" {
+  # The second way out of the forcing, and it needs no space at all: `for path in
+  # $list` expands globs as well as it splits words, so a directory really called
+  # `zone[1]` was replaced by whatever the pattern matched — here `zone1`, which is
+  # a real directory in this project. The guard then watched the wrong one.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config GUARDED_PATHS 'zone[1]'
+  ignore_paths 'zone*/'
+  mkdir -p "$PROJECT_DIR/zone[1]" "$PROJECT_DIR/zone1"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+mkdir -p 'zone[1]' zone1 src
+printf 'rogue\n' >'zone[1]/rogue'
+printf 'left\n' >zone1/payload
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  local loop_output="$output"
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # The guarded directory is the one that was named, character for character.
+  assert_output_contains "wrote zone[1]/rogue, outside the declared write-surface"
+  refute_file_exists "$PROJECT_DIR/zone[1]/rogue"
+
+  # And its neighbour is the witness: guarded by nothing, so it survives and is
+  # named. A guard that globbed its own list would have these two the wrong way
+  # round, and both assertions above would pass on the wrong directory.
+  output="$loop_output"
+  assert_file_exists "$PROJECT_DIR/zone1/payload"
+  local named
+  named="$(printf '%s\n' "$loop_output" | grep 'nothing in this gate judged' | tail -1)"
+  assert_equal "${named#*ignored path(s): }" "zone1/"
+}
+
+@test "a guarded path written as a glob guards nothing, and says so" {
+  # The pathspec half of the same reading, and the price of it, asserted rather
+  # than left in a comment. A git pathspec is a pattern too: `zone*` handed to
+  # `git add` matches `zone1/` and would guard a directory the project never
+  # named, while the half that decides what was guarded reads the same list
+  # literally and would go on calling `zone1/` unjudged. `:(literal)` is what
+  # makes the forcing mean the path, at the cost of a glob here guarding nothing.
+  #
+  # Green on purpose: the two halves agree, and the run says out loud that this
+  # directory is judged by nothing — which is all [24] ever promised there.
+  use_tickets 01-alpha
+  set_config GUARDED_PATHS 'zone*'
+  ignore_paths 'zone1/'
+  script_session_writing src/alpha.txt zone1/payload
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  assert_file_exists "$PROJECT_DIR/zone1/payload"
+
+  local named
+  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
+  assert_equal "${named#*ignored path(s): }" "zone1/"
 }
 
 @test "a pin that cannot be read refuses to hand back a tree" {
