@@ -524,6 +524,126 @@ SETTINGS
   assert_output_contains "cannot say what they wrote"
 }
 
+@test "a gate whose tree cannot be read after the lenses does not pass either" {
+  # The other side of the same refusal, and it was missing ([34]). The tree
+  # *before* the phase was guarded above; the tree *after* it went through
+  # `gate_unjudged_changes`, which handed back an empty list when the snapshot
+  # refused — and an empty list reads as "the lenses wrote nothing". So the one
+  # half of [06] that is a guarantee rather than a hope failed open: green, with
+  # the lens's write still lying in the tree.
+  #
+  # Staged by taking the snapshot away rather than by destroying a pin: what is
+  # asserted here is the decision. The end-to-end probe is below.
+  pack_run '
+    pre="$(gate_tree_snapshot)"
+    mkdir -p rogue && printf "left behind\n" >rogue/artefact.txt
+    gate_tree_snapshot() { return 1; }
+    if gate__contain_lens_writes 01-plain "$pre"; then
+      printf "verdict=green\n"
+    else
+      printf "verdict=red\n"
+    fi'
+  assert_success
+  assert_output_contains "verdict=red"
+  assert_output_contains "could not read the tree after the review lenses"
+
+  # The paired witness, without which the assertion above would pass on a
+  # containment that refused everything it was handed: the same write, measurable,
+  # is announced and put back.
+  #
+  # A different filename, and it is not cosmetic: the two `pack_run` calls share one
+  # project directory, and the first one left its artefact behind — it is in this
+  # one's baseline, so writing it again would change nothing and the containment
+  # would be green for a reason that has nothing to do with what is asserted here.
+  pack_run '
+    pre="$(gate_tree_snapshot)"
+    mkdir -p rogue && printf "left behind\n" >rogue/witness.txt
+    if gate__contain_lens_writes 01-plain "$pre"; then
+      printf "verdict=green\n"
+    else
+      printf "verdict=red\n"
+    fi'
+  assert_success
+  assert_output_contains "verdict=green"
+  assert_output_contains "a review lens changed 1 path(s) in the tree it was judging"
+  refute_file_exists "$PROJECT_DIR/rogue/witness.txt"
+}
+
+@test "a containment that cannot check its own restore refuses too" {
+  # Third measurement, same rule ([34]). "I put it back" is a claim about a result,
+  # and the only thing that can vouch for it is a second look — the lesson [30] paid
+  # for on `core.excludesFile`, where a `git config --unset` that returned 0 was
+  # reported as "(put back)" while the effective value had not moved.
+  #
+  # The instrument is closed by the restore itself, which is the one place that can
+  # stage this branch and nothing else: the write has to be measured first, or the
+  # containment returns before ever restoring.
+  pack_run '
+    pre="$(gate_tree_snapshot)"
+    mkdir -p rogue && printf "left behind\n" >rogue/artefact.txt
+    gate_restore_tree() { gate_tree_snapshot() { return 1; }; return 0; }
+    if gate__contain_lens_writes 01-plain "$pre"; then
+      printf "verdict=green\n"
+    else
+      printf "verdict=red\n"
+    fi'
+  assert_success
+  assert_output_contains "a review lens changed 1 path(s) in the tree it was judging"
+  assert_output_contains "verdict=red"
+  assert_output_contains "could not check what a review lens wrote was put back"
+
+  # The witness: a restore that does nothing and a measurement that works is the
+  # *other* red — "could not undo" — so this test is not passing on any refusal at
+  # all. Two branches, two messages, and they must not be swapped. A different
+  # filename for the reason the test above spells out: the first `pack_run` left
+  # its artefact in the project both of them share.
+  pack_run '
+    pre="$(gate_tree_snapshot)"
+    mkdir -p rogue && printf "left behind\n" >rogue/witness.txt
+    gate_restore_tree() { return 0; }
+    if gate__contain_lens_writes 01-plain "$pre"; then
+      printf "verdict=green\n"
+    else
+      printf "verdict=red\n"
+    fi'
+  assert_success
+  assert_output_contains "verdict=red"
+  assert_output_contains "could not undo 1 path(s) a review lens wrote"
+  refute_output_contains "could not check what a review lens wrote was put back"
+}
+
+@test "a lens that closes the measurement cannot buy a green iteration" {
+  # Probe A of [34], end to end and against the real chain rather than a stubbed
+  # function: the lens writes in the tree it is judging, destroys the pinned ignore
+  # rules the snapshot refuses without, and answers `pass`. Before the fix that
+  # ended `tests=green typecheck=green scope=green standards=green`, `resolved`,
+  # and the artefact still on disk.
+  #
+  # The threat model is not a malicious lens ([31] took its write tools away). It is
+  # that a control whose whole mechanism is a measurement must refuse to conclude
+  # when it did not measure — a release that stops honouring a flag, a hook of an
+  # ordinary project, or a machine that cleans `$TMPDIR` under the run all arrive
+  # through this one code path.
+  set_config STERILE_K 1
+  lens_ticket 01-plain 'src/plain.txt'
+  session_writes
+  lens_writes standards 'rogue/lens-artifact.txt'
+  lens_closes_measurement standards
+
+  run_loop_own_tmp
+  assert_failure 4
+
+  # Not green, and it says which of the two it is: nothing was measured, rather
+  # than nothing was found.
+  assert_output_contains "could not read the tree after the review lenses"
+  assert_ticket_status 01-plain ready-for-agent
+
+  # And the artefact really is still there — the honest half of the refusal. The
+  # containment refuses before restoring, because a restore it cannot verify is
+  # exactly what the branch above declines to claim.
+  assert_file_exists "$PROJECT_DIR/rogue/lens-artifact.txt"
+}
+
 @test "a gate whose lenses wrote nothing says nothing about it" {
   # The refutation the two zone lines of [24] and [29] each needed: a line printed
   # on every iteration is a line a human learns to skip, which is the same as not

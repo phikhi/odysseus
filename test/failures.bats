@@ -442,6 +442,120 @@ FAKE
   assert_equal "$(worktree_dirt)" ""
 }
 
+@test "a rollback that cannot measure what the gate left says so, and does not go red" {
+  # The fourth reader of the same primitive ([34]). This line is printed after a
+  # rollback that has already happened, so there is nothing left to refuse — what it
+  # owes is the difference between "there was nothing left" and "nobody knows what
+  # was left". Driven directly: the instrument has to close *between* the trees the
+  # rollback was handed and the report that comes after it, which is a window the
+  # loop has no way to hand a test.
+  use_tickets 01-alpha
+  pack_run '
+    base="$(gate_tree_snapshot)"
+    printf "stray\n" >stray.txt
+    tree="$(gate_tree_snapshot)"
+    mkdir -p build && printf "report\n" >build/coverage.xml
+    gate_tree_snapshot() { return 1; }
+    failures_rollback "" "$base" "$tree"'
+  # `assert_success` is the "does not go red" half: pack_run runs under `set -e`,
+  # so a rollback that returned non-zero here would take the script down with it.
+  assert_success
+  assert_output_contains "this rollback could not check what the gate itself changed"
+
+  # The witness: the same window with the instrument open names the artefact
+  # instead. Without it this test would pass on a report that had simply stopped
+  # counting.
+  #
+  # A different artefact, and it is not cosmetic: the two `pack_run` calls share one
+  # project directory, and the first one's `build/coverage.xml` is still lying there
+  # — it would be in this one's baseline, and a file that did not change is in no
+  # diff, so the report would be silent for a reason that has nothing to do with
+  # what is asserted here.
+  pack_run '
+    base="$(gate_tree_snapshot)"
+    printf "stray\n" >stray.txt
+    tree="$(gate_tree_snapshot)"
+    mkdir -p build && printf "report\n" >build/witness.xml
+    failures_rollback "" "$base" "$tree"'
+  assert_success
+  assert_output_contains \
+    "this rollback could not undo 1 path(s) the gate itself changed after the tree it judged: build/witness.xml"
+  refute_output_contains "could not check what the gate itself changed"
+}
+
+@test "a rollback that could not act stops the run instead of laundering it" {
+  # Probe B of [34], end to end. Every fail-closed on the way works and none of
+  # them is enough: the session writes out of its surface and destroys the pinned
+  # ignore rules, so the snapshot refuses, the scope-guard refuses to pass a tree
+  # it cannot read, and the rollback says out loud that it undid nothing. What
+  # nothing stopped was the *next* iteration, which snapshots that tree as its own
+  # pre-session baseline — after which `lib/rogue.sh` is nobody's change and the
+  # ticket that inherits it goes green carrying it. One retry was the price [30]
+  # wrote down; a laundered write is not.
+  #
+  # Two tickets on the frontier, which is what makes "the run stopped" mean
+  # something: without the stop the loop goes straight on to 02-beta.
+  use_tickets 01-alpha 02-beta
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src lib
+printf 'written\n' >src/alpha.txt
+printf 'rogue\n' >lib/rogue.sh
+rm -rf "${TMPDIR:-/tmp}"/ralph-ignore.*
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_failure 4
+  assert_output_contains "cannot read the working tree — nothing was rolled back"
+  assert_output_contains "stopping rather than letting the next iteration inherit a tree nothing here can describe"
+
+  # And the announcement of what the gate itself left behind says which of the two
+  # it is. This one is not red and must not become one — it is printed on green
+  # iterations too — but "this gate wrote nothing" and "nobody knows what this gate
+  # wrote" are not the same line to read in the morning.
+  assert_output_contains "this gate could not check what it changed after the tree it judged"
+
+  # The out-of-surface write really is still there — that is what the run is
+  # stopping *about*, and asserting the message alone would pass on a run that
+  # stopped for any other reason.
+  assert_file_exists "$PROJECT_DIR/lib/rogue.sh"
+
+  # And the second ticket was never ground: one session, one iteration.
+  assert_ticket_status 02-beta ready-for-agent
+  assert_equal "$(claude_call_count)" "1"
+}
+
+@test "a rollback that could act lets the run carry on to the next ticket" {
+  # The paired witness of the test above, and it carries two refutations at once.
+  # Without it, a loop that stopped after every failed iteration — or a snapshot
+  # that always refused — would pass there and nothing here would notice. The same
+  # session, the same out-of-surface write, the pin left alone: rolled back, one
+  # retry charged, and the run goes on.
+  use_tickets 01-alpha 02-beta
+  set_config RETRY_N 0
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src lib
+printf 'written\n' >src/alpha.txt
+printf 'rogue\n' >lib/rogue.sh
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+
+  refute_output_contains "nothing was rolled back"
+  refute_output_contains "stopping rather than letting the next iteration"
+  refute_file_exists "$PROJECT_DIR/lib/rogue.sh"
+
+  # 01-alpha is out of retries and escalated, so the loop moved on and ground
+  # 02-beta with the same session — two calls, which is the whole point.
+  assert_ticket_status 01-alpha ready-for-human
+  assert_equal "$(claude_call_count)" "2"
+}
+
 # ── the attempt is kept ──────────────────────────────────────────────────────
 
 @test "before the escalation, a branch keeps the attempt the human will read" {

@@ -1322,6 +1322,31 @@ FAKE
   assert_equal "${named#*ignored path(s): }" "zone1/"
 }
 
+@test "a path handed to the snapshot is taken literally, not as a pattern" {
+  # The other branch of the same reading, and the one [33] left open because it had
+  # no caller to decide for. It has one — the tracker's own guard ([21]) hands this
+  # function `.scratch/<feature>/issues` — and a feature directory whose name
+  # carries a glob character drags its neighbours in with it: the guard would then
+  # vouch for another feature's tracker, restore files that are not its business,
+  # and call an iteration `tracker-write` for what a concurrent run legitimately did.
+  #
+  # The staging is the one that discriminates, and the first attempt at it did not.
+  # A git pathspec is matched **literally first** and only wildmatched as a fallback,
+  # so `zone[1]` finds `zone[1]/payload` whether the magic is there or not — the
+  # mutation reported VACUOUS against a test that looked exactly right. What only
+  # `:(literal)` changes is the **over-match**: the named directory comes back either
+  # way, and without it a sibling comes back too. Probed both ways before rewriting.
+  pack_run '
+    mkdir -p "zone*" zone1
+    printf "wanted\n" >"zone*/payload"
+    printf "unwanted\n" >zone1/payload
+    tree="$(gate_tree_snapshot "zone*")"
+    git ls-tree -r --name-only "$tree"'
+  assert_success
+  assert_output_contains "zone*/payload"
+  refute_output_contains "zone1/payload"
+}
+
 @test "a pin that cannot be read refuses to hand back a tree" {
   # Fail-closed, and it is the pin's whole reason for being: what the checks can
   # see must not depend on what the session left behind. The witness lives in a

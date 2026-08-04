@@ -11,8 +11,8 @@
 #   1  could not start — another run holds this feature's tracker, or this
 #      working tree
 #   2  cannot run: no config, or a config that would make the gate meaningless
-#   4  stopped by a guard: stop requested, iteration cap, sterile run, or a lock
-#      this run no longer holds
+#   4  stopped by a guard: stop requested, iteration cap, sterile run, a lock
+#      this run no longer holds, or a rollback that could not put the tree back
 #   5  nothing to grind: the frontier was already empty when the run started
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
@@ -196,7 +196,7 @@ loop_main() {
 
   local iteration=0 sterile=0 ticket outfile base pre seen issues tree rc
   local turns cost tokens outcome tracker_written reclaimed rid rdisposition
-  local RALPH_IGNORE_PIN=''
+  local RALPH_IGNORE_PIN='' RALPH_ROLLBACK_FAILED=0
 
   while :; do
     if [ "$RALPH_STOP" = 1 ]; then
@@ -391,6 +391,30 @@ loop_main() {
     rm -rf "$RALPH_IGNORE_PIN"
     RALPH_IGNORE_PIN=''
     loop_log "iteration $iteration: $ticket -> $outcome"
+
+    # A rollback that could not put the tree back ends the run, and this is the
+    # decision [34] was opened to take. Everything upstream of it worked: the
+    # snapshot refused rather than guess, the scope-guard refused to pass a tree it
+    # could not read, the rollback said out loud that it undid nothing. What none
+    # of them can do is stop the *next* iteration from snapshotting that tree as
+    # its own pre-session baseline — after which what the session left is no longer
+    # anybody's change, and the ticket that inherits it goes green carrying it.
+    # One retry is the price [30] wrote down as acceptable; a laundered write is
+    # not, and it is exactly the false green this pack exists to refuse.
+    #
+    # Stopping rather than carrying the finding forward, and the reason is
+    # structural rather than a preference: nothing is inherited between iterations
+    # here on purpose, so a crashed run and a cold start behave identically. A flag
+    # saying "the tree is dirty in a way nobody can describe" would have to survive
+    # in the tracker to mean anything, and it would be lost in the one case that
+    # matters. The cost is written down and accepted: a session that closes the
+    # instrument takes the run down with it, which is what `exit 4` already does
+    # for a pin that cannot be taken. The ticket has been marked or given back
+    # before we get here, so a human reads one line and starts from a known state.
+    if [ "${RALPH_ROLLBACK_FAILED:-0}" = 1 ]; then
+      loop_log "the rollback could not put the working tree back — stopping rather than letting the next iteration inherit a tree nothing here can describe"
+      exit 4
+    fi
   done
 }
 

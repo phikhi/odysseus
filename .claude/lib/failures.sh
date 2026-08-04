@@ -31,6 +31,13 @@
 # a reason behind, because the two failures this pack cannot afford are a dirty
 # tree the next session inherits as its own, and a ticket in the human sink with
 # nothing saying why.
+#
+# What the loop reads back:
+#   RALPH_ROLLBACK_FAILED   1 when a rollback refused to act — no baseline, or a
+#                           working tree it could not read. The iteration is over
+#                           either way; the run is not, and the loop stops on it
+#                           rather than let the next iteration adopt whatever is
+#                           lying in the tree as the state it started from ([34]).
 
 failures__log() {
   printf 'ralph: %s\n' "$*"
@@ -80,6 +87,12 @@ failures_handle() {
 
   class="$(failures_classify "$outcome" "${RALPH_GATE_SCOPE_CLASS:-}")"
   [ -n "$tree" ] || tree="$(gate_tree_snapshot)" || tree=""
+
+  # Cleared here and raised only by failures_rollback, so it accumulates across the
+  # two rollbacks one iteration can run — the policy's own, and the one a re-slice
+  # does after its planning session — instead of the second quietly clearing the
+  # first. The loop reads it once, at the end of the iteration ([34]).
+  RALPH_ROLLBACK_FAILED=0
 
   case "$class" in
     contract)
@@ -413,17 +426,32 @@ TRACKER
 # own branches wrote after the tree was taken ([29]). Announcing "rolled back N
 # paths" while an unenumerated set of paths is exempt is the half-truth [24] was
 # opened for, so both zones are named here every time they are not empty.
+#
+# Its three refusals raise RALPH_ROLLBACK_FAILED, which the loop reads and stops
+# on ([34]). Saying "nothing was rolled back" honestly is not enough on its own:
+# the session's writes are still in the tree, and the *next* iteration snapshots
+# that tree as its own pre-session baseline — after which they belong to nobody
+# and are green by construction. The fail-closed of [30] bought a retry and the
+# retry laundered it, which is a two-step whitewash; a probe delivered a ticket
+# with an out-of-surface `lib/rogue.sh` still sitting in the tree.
+#
+# A flag rather than a return value because the return value is already taken:
+# every caller here treats a failed rollback as non-fatal to the *iteration*,
+# which is right — the ticket still has to be marked and escalated. What is not
+# survivable is the iteration *after*.
 failures_rollback() {
   local pre="$1" base="$2" tree="${3:-}"
   local head restored path paths='' undone=0
 
   if [ -z "$base" ]; then
     failures__log "no pre-session snapshot — refusing to guess what to roll back"
+    RALPH_ROLLBACK_FAILED=1
     return 1
   fi
   [ -n "$tree" ] || tree="$(gate_tree_snapshot)" || tree=""
   if [ -z "$tree" ]; then
     failures__log "cannot read the working tree — nothing was rolled back"
+    RALPH_ROLLBACK_FAILED=1
     return 1
   fi
 
@@ -442,6 +470,7 @@ failures_rollback() {
   # unstaging and counting, below; and saying what could not be reached at all.
   if ! restored="$(gate_restore_tree "$base" "$tree")"; then
     failures__log "cannot read the pre-session snapshot — nothing was rolled back"
+    RALPH_ROLLBACK_FAILED=1
     return 1
   fi
 
@@ -482,13 +511,21 @@ ROLLBACK
 # The netting is also why this may be read after the restores rather than before
 # them: putting a path back does make it differ from the judged tree, and that path
 # is in the list of what was undone by construction.
+# And a measurement it could not take is said as such rather than printed as an
+# empty zone ([34]). Same choice as `gate__report_changed` and for the same reason:
+# this is a line about a rollback that has already happened, so reddening here
+# would change nothing that is still changeable — what it owes is the difference
+# between "there was nothing left" and "nobody knows what was left".
 failures__report_unrolled() {
-  local tree="${1:-}" undone="${2:-}" zone
+  local tree="${1:-}" undone="${2:-}" zone changed
   if zone="$(gate_ignored_zone)"; then
     failures__log "this rollback could not undo $zone"
   fi
-  if zone="$(gate_zone_line \
-    "$(failures__minus "$(gate_unjudged_changes "$tree")" "$undone")" \
+  if ! changed="$(gate_unjudged_changes "$tree")"; then
+    failures__log "this rollback could not check what the gate itself changed after the tree it judged — nothing here vouches for that zone"
+    return 0
+  fi
+  if zone="$(gate_zone_line "$(failures__minus "$changed" "$undone")" \
     'path(s) the gate itself changed after the tree it judged')"; then
     failures__log "this rollback could not undo $zone"
   fi
@@ -714,7 +751,16 @@ failures_reslice() {
 
   # A planning session has no write-surface, so nothing it left in the
   # repository is wanted — including the plan, if it ignored the instructions.
-  failures_rollback "$head" "$base" '' >/dev/null 2>&1 || true
+  #
+  # Quiet when it works and loud when it does not ([34]). The success line here is
+  # noise — a planning session that wrote is the expected case — but a refusal is
+  # the same finding as anywhere else, and it was the one place in the pack where a
+  # rollback could refuse into `2>&1`. The unreadable-baseline case is reached from
+  # inside this function: `base` above is a snapshot that may have been refused, and
+  # `|| base=""` is exactly what the rollback's first refusal is written for.
+  if ! failures_rollback "$head" "$base" '' >/dev/null 2>&1; then
+    failures__log "$ticket: the re-slice session's writes could not be rolled back — they are still in the tree"
+  fi
 
   # And the frontier of what any of that can see, which no rollback reaches:
   # `.git/info/exclude` is in no tree ([30]). The second caller of this, and it is

@@ -1,6 +1,6 @@
 # 38 — Une entrée de mutation qui ment un tour sur quatre
 
-**What to build:** Rendre déterministe l'entrée `23 a TERM nobody answers hangs the run for ever` de `test/mutate.sh`, ou le test qu'elle nomme (`test/smart-zone.bats`, « a session that ignores the deadline's TERM is killed after the grace »). Aujourd'hui elle rend `VACUOUS` environ **une fois sur quatre**, sur `main` comme sur une branche : la garantie « un TERM que personne n'écoute est suivi d'un KILL » n'est prouvée que la plupart du temps, et un `bash test/mutate.sh` vert ne dit donc pas la même chose d'un run à l'autre.
+**What to build:** Rendre déterministe le test `test/smart-zone.bats` « a session that ignores the deadline's TERM is killed after the grace », et avec lui les **deux** entrées de `test/mutate.sh` qui le nomment — `23 a TERM nobody answers hangs the run for ever` et `23 the grace is hard-coded`. Aujourd'hui l'une ou l'autre rend `VACUOUS` environ **une fois sur trois**, sur `main` comme sur une branche : la garantie « un TERM que personne n'écoute est suivi d'un KILL » n'est prouvée que la plupart du temps, et un `bash test/mutate.sh` vert ne dit donc pas la même chose d'un run à l'autre.
 
 **Blocked by:** None
 
@@ -8,7 +8,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] L'entrée de mutation rend le même verdict sur dix runs consécutifs. Le compte est dans le ticket, pas dans un « ça a l'air stable ».
+- [ ] **Les deux** entrées de mutation rendent le même verdict sur dix runs consécutifs chacune. Le compte est dans le ticket, pas dans un « ça a l'air stable ».
 - [ ] La cause est **nommée** : pourquoi le faux `claude` meurt parfois à ~1 s alors qu'il porte `trap '' TERM` et que le reaper a été retiré. Un correctif qui stabilise le test sans expliquer ça déplace la flakiness, il ne la retire pas.
 - [ ] Si la cause est dans `monitor.sh` — quelqu'un d'autre que le reaper tue l'arbre — c'est une trouvaille de production et pas de harnais : elle vaut sa propre ligne dans `docs/frontiere-de-confiance.md`.
 - [ ] Le canari (`test/canary.bats`) ne gagne pas un `skip` pour ça : une entrée de mutation instable est une garantie non couverte un tour sur quatre, pas une faille connue en attente.
@@ -37,3 +37,7 @@
 - **Piste à écarter en premier.** `proc_kill_tree` descend l'arbre de processus et TERM chaque pid. Le faux ignore TERM, ses `sleep` ne l'ignorent pas. Selon l'instant où le balayage tombe, il est possible qu'un pid soit lu, puis réutilisé, ou que le shell interposé par le shim reçoive le signal au lieu du faux. Regarder ce que `proc_kill_tree` vise réellement dans les deux cas — c'est une mesure, pas une hypothèse à trancher au raisonnement.
 
 - **Contrainte pour [23].** Écrite dans son ticket : la ligne « le KILL borne le moment où la boucle récupère la main » est vraie, et sa preuve ne l'est qu'un tour sur quatre.
+
+- **Confirmé et élargi en livrant [34], le 04/08/2026 : ce n'est pas une entrée, c'est le test.** Le run complet a rendu `VACUOUS` sur l'**autre** entrée, `23 the grace is hard-coded`, qui vise le même test. Rejouée seule sur la branche → `VACUOUS, ok, ok` ; dans un worktree propre de `main` → `ok, VACUOUS, ok, ok`. Même signature, même fréquence, même cible : ce qui est instable est `killed after the grace`, et chaque entrée qui le nomme hérite de son instabilité. Deux conséquences pour qui livrera ça : le correctif est à faire **dans le test ou dans `monitor.sh`**, pas dans une entrée de mutation ; et le critère de sortie porte sur les deux entrées, sinon la moitié du problème reste verte par chance.
+
+- **Ce que ça coûte à la procédure, en attendant.** Un `bash test/mutate.sh` complet rend aujourd'hui `1 not ok` de façon attendue, et un agent qui suit `CLAUDE.md` à la lettre — « `bash test/mutate.sh` vert avant d'annoncer » — n'a aucun moyen de le savoir sans lire ce ticket. La manœuvre reste celle de la mémoire de harnais : sur un `not ok`, rejouer l'entrée seule 3-4 fois **et** dans un worktree de `main` avant de conclure à une régression. Tant que ce ticket n'est pas livré, c'est la seule chose qui distingue une entrée instable d'une garantie cassée.
