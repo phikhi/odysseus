@@ -95,6 +95,73 @@ gate_preflight() {
   return "$rc"
 }
 
+# ── how a list of paths travels ──────────────────────────────────────────────
+#
+# **One entry per line, everywhere inside this pack.** A path may contain a space
+# and it may contain a glob character, so a list carried as one whitespace-joined
+# line is not a list of paths — it is a list of whatever word splitting and
+# pathname expansion make of it, and the two halves of a mechanism reading it with
+# different splitters do not disagree loudly, they disagree in silence.
+#
+# That is the whole of [33]. `gate_tree_snapshot` forced its paths through
+# `for path in $list` while `gate__ignored_walk` excluded them by whole-string
+# comparison: an ignore rule naming `my dir/` was cut into two pathspecs that
+# matched nothing, so the forcing took nothing — swallowed by the `|| true` that
+# exists for a path a project has not created yet — while the zone line dropped
+# the path from its listing on the grounds that it was forced. Neither judged, nor
+# undone, nor named. The same `for` was the only way in for the guarded paths, so
+# a project whose `GUARDED_PATHS` named a directory with a space had no guard at
+# all, and had had none since [24].
+#
+# Two authored formats feed those lists, and each is converted where it is read
+# rather than travelling as it was typed:
+#
+#   - a ticket's `Write-surface:` field: markdown on one line, commas and
+#     backticks for the human. Converted by gate_write_surface;
+#   - the config keys that name globs (`SECURITY_PATHS`, `VISIBLE_PATHS`):
+#     whitespace-separated, converted by their reader in lib/lenses.sh.
+#
+# Neither can express a path with a space, and that is a property of the format a
+# human types — not of the lists this pack builds. `GUARDED_PATHS` is the one
+# exception and is authored one path per line, because it names paths rather than
+# globs and a project whose guarded directory carries a space has to be able to
+# name it. See its comment in ralph.config.sh.example.
+
+# An authored whitespace list as one entry per line. Empty in, empty out.
+gate_authored_list() {
+  printf '%s\n' "${1-}" | tr -s '[:space:]' '\n' | sed '/^$/d'
+}
+
+# Whether a path is one of a list of paths, or under one of them.
+#
+# Taken **literally**, and that is the difference with gate_in_surface, which
+# matches a list of globs a human wrote. This one reads lists of paths the pack
+# itself carries — the guarded paths, the sealed configuration — and a path is
+# not a pattern: `zone[1]` is a directory a project may really have, and a guard
+# that reads it as a character class guards `zone1` instead.
+#
+# The two readings cannot be mixed, and choosing was the second half of [33]. The
+# forcing in gate_tree_snapshot uses `:(literal)` pathspecs for the same reason,
+# so a guarded path means the same thing to the half that takes it and to the
+# half that decides it was taken. The price is written down rather than hidden: a
+# `GUARDED_PATHS` entry written as a glob — `vendor/*` — now guards nothing, and
+# says so, because the forcing matches nothing and the zone line then names
+# `vendor/` as a path this gate did not judge. Before, it guarded something and
+# the zone line stayed quiet about the paths it did not.
+gate__under_path() {
+  local file="$1" path
+  while IFS= read -r path; do
+    path="${path%/}"
+    [ -n "$path" ] || continue
+    case "$file" in
+      "$path" | "$path"/*) return 0 ;;
+    esac
+  done <<PATHS
+$2
+PATHS
+  return 1
+}
+
 # ── the zone git does not show ───────────────────────────────────────────────
 #
 # Every check in this pack is built on a git tree object, so every check inherits
@@ -166,14 +233,15 @@ gate_preflight() {
 # covers that window is argv, on the spawn: see lenses_posture.
 # One printf per group rather than one long line: the groups answer different
 # halves of the criterion, and a reader checking the list against it should be
-# able to see which is which.
+# able to see which is which. One path per line within a group, for the reason in
+# "how a list of paths travels": the last entry is a path a run names through
+# `RALPH_CONFIG`, and nothing stops that path from carrying a space.
 gate_sealed_paths() {
-  printf '%s ' '.claude/settings.local.json .claude/settings.json'
-  printf '%s ' 'CLAUDE.md CLAUDE.local.md'
-  printf '%s ' '.mcp.json'
-  printf '%s ' '.claude/agents .claude/commands .claude/skills .claude/hooks'
+  printf '%s\n' '.claude/settings.local.json' '.claude/settings.json'
+  printf '%s\n' 'CLAUDE.md' 'CLAUDE.local.md'
+  printf '%s\n' '.mcp.json'
+  printf '%s\n' '.claude/agents' '.claude/commands' '.claude/skills' '.claude/hooks'
   gate__sealed_config
-  printf '\n'
 }
 
 # The file the next run sources, under the name it actually carries. `RALPH_CONFIG`
@@ -203,7 +271,7 @@ gate_sealed_paths() {
 # entry pretending to cover it.
 gate__sealed_config() {
   local config="${RALPH_CONFIG:-}" root dir
-  printf '%s' '.claude/ralph.config.sh'
+  printf '%s\n' '.claude/ralph.config.sh'
   [ -n "$config" ] || return 0
 
   case "$config" in
@@ -217,14 +285,16 @@ gate__sealed_config() {
   root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
   [ -n "$root" ] || return 0
   case "$config" in
-    "$root"/*) printf ' %s' "${config#"$root"/}" ;;
+    "$root"/*) printf '%s\n' "${config#"$root"/}" ;;
   esac
 }
 
-# Matched the same way a write-surface is, so a sealed directory would cover what
-# is under it. See gate_in_surface, below.
+# A sealed directory covers what is under it, so `.claude/agents` seals the files
+# in it. Matched literally and not as a glob: the last entry of the list is a path
+# a run names through `RALPH_CONFIG`, and a seal that read it as a pattern would
+# seal a file nobody named. See gate__under_path.
 gate_is_sealed() {
-  gate_in_surface "$1" "$(gate_sealed_paths)"
+  gate__under_path "$1" "$(gate_sealed_paths)"
 }
 
 # The paths the whole-tree snapshot takes by force. `.claude` by default — the
@@ -232,8 +302,14 @@ gate_is_sealed() {
 # to widen or narrow: a project whose own tooling writes under a guarded path
 # while a session runs would otherwise watch every iteration go red on it. The
 # sealed configuration is added whatever the key says.
+#
+# One path per line, on both sides, and the key is authored that way too: a
+# directory a project guards may have a space in its name, and splitting the key
+# on whitespace would leave it with no guard rather than with a guard it can see
+# ([33]).
 gate_guarded_paths() {
-  printf '%s %s\n' "${GUARDED_PATHS-.claude}" "$(gate_sealed_paths)"
+  printf '%s\n' "${GUARDED_PATHS-.claude}"
+  gate_sealed_paths
 }
 
 # ── who moves the frontier of that zone ──────────────────────────────────────
@@ -594,7 +670,7 @@ IGNORED
 gate__ignored_walk() {
   local file="$1" guarded="$2" hidden="$3" child
   if gate_is_bookkeeping "$file"; then return 0; fi
-  if gate_in_surface "${file%/}" "$guarded"; then return 0; fi
+  if gate__under_path "${file%/}" "$guarded"; then return 0; fi
   case "
 $hidden
 " in
@@ -625,11 +701,15 @@ $file
 # a directory that *is* one of those was dropped by the filters above.
 gate__ignored_holds_judged() {
   local dir="$1" path
-  for path in $2 ".scratch/${FEATURE:-}"; do
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
     case "$path" in
       "$dir"?*) return 0 ;;
     esac
-  done
+  done <<JUDGED
+$2
+.scratch/${FEATURE:-}
+JUDGED
   return 1
 }
 
@@ -738,9 +818,27 @@ gate_tree_snapshot() {
     # matches nothing makes git refuse the whole call, and a project is free
     # to name a path it does not have yet. A refused pathspec leaves the snapshot
     # exactly as the plain `git add -A` left it, which is the status quo.
-    for path in $(gate_guarded_paths) $hidden; do
-      GIT_INDEX_FILE="$index" git add -A --force -- "$path" >/dev/null 2>&1 || true
-    done
+    #
+    # One path per line rather than `for path in $list`, and the `|| true` above
+    # is why it matters ([33]): word splitting turned a path carrying a space
+    # into two pathspecs matching nothing, and the tolerance written for a path a
+    # project has not created yet swallowed exactly that. Both producers already
+    # print one path per line, and the listing that decides what was *not* forced
+    # compares whole lines — so the two halves now cut the list the same way, and
+    # cannot disagree about which paths this loop took.
+    #
+    # `:(literal)` for the same reason one step further in: a git pathspec is a
+    # pattern too, so a directory really named `zone[1]` would be taken as a
+    # character class and the forcing would land on `zone1`. The listing that
+    # names what was not forced reads these paths literally (gate__under_path),
+    # and the two halves have to mean the same thing by a guarded path.
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      GIT_INDEX_FILE="$index" git add -A --force -- ":(literal)$path" >/dev/null 2>&1 || true
+    done <<FORCED
+$(gate_guarded_paths)
+$hidden
+FORCED
   fi
   tree="$(GIT_INDEX_FILE="$index" git write-tree 2>/dev/null)" || tree=""
   rm -f "$index"
@@ -849,23 +947,35 @@ gate__drop_bookkeeping() {
 
 # ── the scope-guard ──────────────────────────────────────────────────────────
 
-# The declared write-surface as a plain list of globs. Backticks and commas are
-# how a ticket writes it for a human; neither means anything here.
+# The declared write-surface as a plain list of globs, one per line. Backticks
+# and commas are how a ticket writes it for a human; neither means anything here.
+# This is one of the two places an authored whitespace list is converted into the
+# shape every list travels in — see "how a list of paths travels".
 gate_write_surface() {
-  tracker_field "$1" 'Write-surface' 2>/dev/null | tr -d '`,' | awk '{ $1 = $1; print }'
+  gate_authored_list "$(tracker_field "$1" 'Write-surface' 2>/dev/null | tr -d '`,')"
 }
 
 # Whether a path is covered by a surface. A pattern also covers what is under
 # it, so a ticket can declare a directory instead of enumerating its files.
+#
+# The surface is read one line per pattern rather than `for pattern in $2`, and
+# that is not style ([33]). Word splitting cut a pattern carrying a space into
+# two patterns matching nothing — a sealed `my dir/ralph.config.sh` was sealed by
+# nothing, a guarded `my vendor/` guarded nothing — and the same expansion also
+# globbed the *list* against the working tree, so a pattern like `a[0].txt` was
+# replaced by whatever happened to exist. What is deliberately still a glob is
+# the pattern in `case`, where an expansion is not word-split.
 gate_in_surface() {
   local file="$1" pattern
-  for pattern in $2; do
+  while IFS= read -r pattern; do
     pattern="${pattern%/}"
     [ -n "$pattern" ] || continue
     case "$file" in
       $pattern | $pattern/*) return 0 ;;
     esac
-  done
+  done <<SURFACE
+$2
+SURFACE
   return 1
 }
 

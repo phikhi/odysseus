@@ -1,0 +1,25 @@
+# 37 — Les ids du tracker sont une ligne de mots
+
+**What to build:** Faire passer les ids du tracker par la convention que [33] a posée pour les chemins — une entrée par ligne, lue ligne par ligne — au lieu d'une ligne de mots recoupée par `for id in $(tracker_ids)`. `tracker_local_ids` rend un id par ligne, et un id est un **nom de fichier que la session choisit** : `99-my ticket.md` donne l'id `99-my ticket`, qu'un `for` découpe en deux ids inexistants. `failures_tracker_snapshot` va plus loin et rejoint tout par des espaces (`printf ' %s' "$(tracker_ids | tr '\n' ' ')"`) avant que `failures__strays` ne compare mot à mot (`case "$seen" in *" $id "*`). Sept appelants font le même découpage.
+
+**Blocked by:** None
+
+**Write-surface:** `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`, `.claude/lib/claim.sh`, `.claude/lib/gate.sh`, `test/failures.bats`, `test/tracker-local.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
+
+**Status:** ready-for-agent
+
+- [ ] Un ticket dont le nom de fichier porte une espace est vu comme **un** id par la détection d'intrus (`failures__strays`), mis en quarantaine sous ce nom-là, et renuméroté par `tracker_renumber` comme n'importe quel autre.
+- [ ] Les sept `for id in $(tracker_ids)` du pack (`claim.sh`, `failures.sh`, `gate.sh`, `tracker.sh` ×4) lisent ligne par ligne : un id à espace n'est plus deux ids fantômes, et un id à métacaractère n'est plus remplacé par ce que le glob trouve dans le répertoire courant.
+- [ ] Le format d'échange de `failures_tracker_snapshot` suit la même convention que le reste du pack depuis [33] — un id par ligne — et son lecteur compare des lignes entières.
+- [ ] Le test porte le témoin appairé : le même scénario avec un nom sans espace doit rougir, sinon il ne prouve rien sur l'espace. Et un id à métacaractère (`99-a[0]`) est couvert, sinon la moitié glob du défaut reste ouverte.
+- [ ] La mutation vise le passage des ids, pas le contenu du tracker.
+
+## Comments
+
+- **Origine : livraison de [33], le 04/08/2026.** [27] avait nommé cette famille et laissé le producteur en place, en écrivant que si un correctif touchait la convention de liste du pack, ces deux fonctions devaient être **décidées avec lui**. [33] a touché la convention — toute liste que le pack se passe à lui-même voyage à raison d'une entrée par ligne, les chemins gardés et scellés sont lus littéralement — et la décision est : **même convention, ticket séparé**, parce que ce n'est pas le même espace de noms. [33] tenait des chemins de fichiers dans `gate.sh` et `lenses.sh` ; ici il s'agit de l'espace d'ids du tracker, sept appelants dans quatre libs, et la moitié de la question est de savoir jusqu'où un id à espace survit *ailleurs* que dans ces boucles (résolution `Blocked by:`, `tracker_field`, `tracker_renumber`, le prompt de session).
+
+- **Ce qui rend le défaut atteignable, et c'est la frontière de confiance.** Un id n'est pas une donnée du pack, c'est le nom d'un fichier qu'une session dépose dans `issues/`. C'est exactement le corollaire de [27] — « une borne calculée à partir d'un nom de fichier qu'une session choisit n'est pas une borne » — appliqué non plus au numéro mais au découpage. La sonde à écrire : une session qui crée `.scratch/<feature>/issues/99-my ticket.md`, puis regarder ce que `failures_quarantine_strays` met en quarantaine et sous quel nom.
+
+- **Piège attendu.** `tracker_renumber` et la quarantaine manipulent le nom de fichier ; un id à espace y arrive comme argument, ce qui est correct tant que tout est cité. Le vrai risque est ailleurs : un id à espace qui traverserait la boucle et finirait dans `Blocked by:` — champ dont [27] dit qu'il se lit par `tr ',' ' '`, donc un troisième découpage en mots, dans un troisième format rédigé par un humain. Décider aussi de celui-là, ou écrire pourquoi il reste tel quel : un `Blocked by:` est de la prose de ticket, comme le champ `Write-surface:`, et [33] a laissé les formats rédigés inchangés en les convertissant à la lecture. La réponse est probablement la même — mais elle doit être écrite, pas supposée.
+
+- **Contrainte pour [21].** `gate_tree_snapshot "$(failures__issues_path)"` — la branche à pathspecs — passe encore son chemin sans `:(literal)`. Un `FEATURE` à métacaractère ferait porter la protection du tracker sur un autre répertoire. Nommé par [33] et laissé à celui qui touchera cette branche : c'est la même décision de type, un cran plus haut dans l'arbre.

@@ -84,6 +84,15 @@ TYPECHECK_CMD="${TYPECHECK_CMD:-}"
 # versioned by nothing and declarable by no write-surface, so there is no legitimate
 # case to protect. Nothing here can turn that off, for the reason above: a guarantee
 # a config key can empty is not a guarantee.
+#
+# **One path per line**, not one per word, and this key is the only list here
+# written that way. It names paths and not globs, so a directory called
+# `Design Assets` has to be nameable — before [33] it was split on the space, both
+# halves matched nothing, and the project had no guard at all rather than a guard
+# it could see. Several of them:
+#
+#   GUARDED_PATHS='.claude
+#   Design Assets'
 GUARDED_PATHS="${GUARDED_PATHS-.claude}"
 
 # ── Smart-zone net ───────────────────────────────────────────────────────────

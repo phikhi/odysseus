@@ -1024,7 +1024,7 @@ mutation "26 the escalated ticket does not say no verdict was involved" "$FAILUR
 # ── [24] the zone git does not show ──────────────────────────────────────────
 
 mutation "24 the snapshot obeys the ignore rules on a guarded path" "$GATE" \
-  's/      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path" >\/dev\/null 2>&1 \|\| true/      :/' \
+  's/      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/      :/' \
   test/gate.bats "guarded path is caught"
 
 mutation "24 the guarded paths are a constant, not the configured ones" "$GATE" \
@@ -1050,7 +1050,7 @@ mutation "24 the zone nothing judged is never named" "$GATE" \
 # third exclusion and a descent. The entries follow the lines rather than the
 # function: DRIFTED here would mean the guarantee is no longer carried anywhere.
 mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
-  's/  if gate_is_bookkeeping "\$file"; then return 0; fi\n  if gate_in_surface/  if gate_in_surface/' \
+  's/  if gate_is_bookkeeping "\$file"; then return 0; fi\n  if gate__under_path/  if gate__under_path/' \
   test/gate.bats "own bookkeeping"
 
 # The lie in the other direction: naming a path the gate *did* judge. Held by the
@@ -1058,7 +1058,7 @@ mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
 # before — so the guarded case had to be a project whose only ignored path is a
 # guarded one, or the refutation would pass on the strength of another path.
 mutation "24 a guarded path is reported as unjudged too" "$GATE" \
-  's/  if gate_in_surface "\$\{file%\/\}" "\$guarded"; then return 0; fi\n//' \
+  's/  if gate__under_path "\$\{file%\/\}" "\$guarded"; then return 0; fi\n//' \
   test/gate.bats "guarded path is caught"
 
 mutation "24 the rollback says nothing about what it left behind" "$FAILURES" \
@@ -1086,11 +1086,11 @@ mutation "24 the rollback only reports when it undid something" "$FAILURES" \
 # which is legitimate and therefore never put back, and a rule this run could not
 # put back at all.
 mutation "30 the snapshot obeys the rules the session left behind" "$GATE" \
-  's/    for path in \$\(gate_guarded_paths\) \$hidden; do/    for path in \$(gate_guarded_paths); do/' \
+  's/\$\(gate_guarded_paths\)\n\$hidden\nFORCED/\$(gate_guarded_paths)\nFORCED/' \
   test/gate.bats "does not hide what it wrote behind it"
 
 mutation "30 the same, where the frontier could not be put back" "$GATE" \
-  's/    for path in \$\(gate_guarded_paths\) \$hidden; do/    for path in \$(gate_guarded_paths); do/' \
+  's/\$\(gate_guarded_paths\)\n\$hidden\nFORCED/\$(gate_guarded_paths)\nFORCED/' \
   test/gate.bats "could not put back"
 
 # The pin records no working-tree rule, so *every* ignored path reads as newly
@@ -1166,6 +1166,47 @@ mutation "30 the re-slice session's frontier is left where it put it" "$FAILURES
 mutation "30 the fixture project has no local excludes, as before" "$HARNESS" \
   's/  mkdir -p "\$PROJECT_DIR\/\.git\/info"\n/  /' \
   test/gate.bats "widen the blind zone"
+
+# ── [33] a list of paths is not a line of words ──────────────────────────────
+#
+# Each entry aims at the *passing* of the paths and never at the content of a
+# list — replacing what `gate_guarded_paths` returns would prove that removing a
+# guarded path removes its guard, which nobody doubted.
+
+# The forcing, cut back into words. Both halves of the old defect come back with
+# it: a space makes two pathspecs out of one path, and a glob character makes
+# whichever path happens to exist.
+mutation "33 the forced paths are split on whitespace again" "$GATE" \
+  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    for path in \$(gate_guarded_paths) \$hidden; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path" >\/dev\/null 2>&1 \|\| true\n    done/' \
+  test/gate.bats "name has a space is a guard"
+
+# The same edit, judged by the other producer's test: the guarded paths and what
+# a rule hid during the iteration travel through one loop, so one entry per list
+# rather than one entry for the loop.
+mutation "33 the same, on a path a rule hid during the iteration" "$GATE" \
+  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    for path in \$(gate_guarded_paths) \$hidden; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path" >\/dev\/null 2>&1 \|\| true\n    done/' \
+  test/gate.bats "name has a space does not buy it"
+
+# The pathspec half. A git pathspec is a pattern too, and it falls back to
+# wildmatch when nothing carries the name literally — so the guard lands on a
+# directory nobody named and the zone line goes quiet about the one it should
+# have named.
+mutation "33 the forcing hands git a pattern instead of a path" "$GATE" \
+  's/ -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/ -- "\$path" >\/dev\/null 2>&1 || true/' \
+  test/gate.bats "written as a glob guards nothing"
+
+# The reading half, which has to agree with the forcing: a list of paths read as a
+# list of globs makes `zone[1]` mean `zone1` on one side of the mechanism and not
+# on the other.
+mutation "33 the guarded paths are read as globs again" "$GATE" \
+  's/^gate__under_path\(\) \{\n  local file="\$1" path/gate__under_path() {\n  gate_in_surface "\$1" "\$2"; return;\n  local file="\$1" path/m' \
+  test/gate.bats "glob character guards itself"
+
+# And the surface, whose list was expanded against the working tree before it was
+# matched against anything.
+mutation "33 a surface is cut into words by the shell again" "$GATE" \
+  's/  while IFS= read -r pattern; do\n    pattern="\$\{pattern%\/\}"\n    \[ -n "\$pattern" \] \|\| continue\n    case "\$file" in\n      \$pattern \| \$pattern\/\*\) return 0 ;;\n    esac\n  done <<SURFACE\n\$2\nSURFACE/  for pattern in \$2; do\n    pattern="\${pattern%\/}"\n    [ -n "\$pattern" ] || continue\n    case "\$file" in\n      \$pattern | \$pattern\/*) return 0 ;;\n    esac\n  done/' \
+  test/gate.bats "covers what it should"
 
 # ── [29] the tree the gate judges, taken before the gate runs ────────────────
 
@@ -1248,6 +1289,13 @@ mutation "06 a configured path triggers nothing, only the tag does" "$LENSES_LIB
 mutation "06 the surface intersection is tried one way only" "$LENSES_LIB" \
   's/    gate_in_surface "\$paths" "\$entry" \&\& return 0\n//' \
   test/lenses.bats "directory a sensitive glob is under"
+
+# The boundary [33] put here: the key is authored whitespace-separated and every
+# list inside the pack travels one entry per line. Skip the conversion and the key
+# arrives as one pattern carrying a space, matching nothing.
+mutation "33 the lens path key is not converted where it is read" "$LENSES_LIB" \
+  's/  paths="\$\(gate_authored_list "\$paths"\)"\n//' \
+  test/lenses.bats "naming several globs"
 
 # ── the registry is a registry
 
@@ -1355,17 +1403,19 @@ mutation "06 the fake allocates its call slots without a test-and-set" "$SHIM" \
 # ── [31] the seal against its own criterion, and the lens posture ────────────
 
 # The list is one printf per group, which is what makes each group mutable on its
-# own: emptying one has to red the test that names that group's paths.
+# own: emptying one has to red the test that names that group's paths. The paths
+# became one argument each with [33] — one path per line, so that a path carrying
+# a space is one path — hence one quoted word per group member below.
 mutation "31 what a fresh claude reads is not sealed" "$GATE" \
-  's/  printf .%s . .CLAUDE.md CLAUDE.local.md.\n/  printf "%s " ""\n/' \
+  's/  printf .%s.n. .CLAUDE.md. .CLAUDE.local.md.\n/  :\n/' \
   test/gate.bats "fresh claude reads"
 
 mutation "31 a project MCP config is not sealed" "$GATE" \
-  's/  printf .%s . ..mcp.json.\n/  printf "%s " ""\n/' \
+  's/  printf .%s.n. ..mcp.json.\n/  :\n/' \
   test/gate.bats "fresh claude reads"
 
 mutation "31 the capabilities a spawn picks up are not sealed" "$GATE" \
-  's/  printf .%s . ..claude\/agents .claude\/commands .claude\/skills .claude\/hooks.\n/  printf "%s " ""\n/' \
+  's/  printf .%s.n. ..claude\/agents. ..claude\/commands. ..claude\/skills. ..claude\/hooks.\n/  :\n/' \
   test/gate.bats "fresh claude reads"
 
 # The config the *next run* sources, under the name it actually carries. Reverting
