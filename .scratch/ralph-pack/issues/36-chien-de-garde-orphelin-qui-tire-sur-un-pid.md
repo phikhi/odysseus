@@ -53,6 +53,8 @@
 
 - **Ce que ce ticket ne prétend pas fermer.** Un `kill -9` sur le run est par définition hors de portée de tout code du run ; ce qui est en portée, c'est ce que les processus que le run a laissés font **ensuite**. La fuite de `$TMPDIR` en fait partie ; le tir, surtout.
 
+- **Note posée par [32], livré le 04/08/2026 : le témoin d'ignore laissé dans `$TMPDIR` n'est pas qu'un répertoire à balayer.** La remise de la frontière d'ignore tombe maintenant sur les trois sorties d'une itération (gate, re-slice, classification d'échec), donc le seul cas où `.git/info/exclude` reste élargi est un run **tué** — et son témoin meurt avec lui. Un nettoyage opportuniste de `$TMPDIR` retenu ici ne doit donc pas être lu comme « on récupère l'état » : le témoin d'un run mort ne sert à rien à personne, la frontière élargie, elle, sera épinglée par le run suivant. C'est écrit comme une limite structurelle dans `docs/frontiere-de-confiance.md` (il faudrait un état qui survive au run, et le seul qui existe est le tracker, que la session écrit) — à ne pas rouvrir par inadvertance en croyant qu'un fichier de `$TMPDIR` peut le porter.
+
 - **Contrainte pour [13].** Plusieurs itérations concurrentes veulent plusieurs chiens de garde, donc plusieurs tireurs en vol : un tir aveugle par worktree, et une machine où les pids des branches d'un run sont ceux des branches d'un autre run une minute plus tard. La garde de ce ticket est un préalable à la concurrence, pas un complément.
 
 - **Contrainte pour [19].** L'installeur est le seul composant qui tourne hors de la boucle ([31]) : si un nettoyage opportuniste de `$TMPDIR` est retenu ici, c'est lui qui a le droit de le faire au démarrage d'un run, pas une itération.
