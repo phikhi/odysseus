@@ -285,19 +285,42 @@ FAKE
   assert_output_contains "b/src/plain.txt"
 }
 
-@test "an iteration that changed nothing is red, and costs no lens session" {
-  # The default fake writes nothing at all, which is a session that reported
-  # success having delivered no ticket. Deterministic, so it is decided before a
-  # model is spawned — one `claude` for the session, none for the lenses.
+@test "an iteration that changed nothing never reaches a lens" {
+  # A session that reported success having delivered no ticket. [06] refused it
+  # here, once per lens, and [35] moved the refusal into the gate — before the fan
+  # and before this phase — because a refusal that only exists inside the
+  # judgement tier goes out with the tier. What this file still owns is the half
+  # that costs quota: no model is spawned to be told there is nothing to look at.
   set_config STERILE_K 1
   lens_ticket 01-plain 'src/plain.txt'
+  session_writes_nothing
 
   run_loop
   assert_failure 4
   assert_ticket_status 01-plain ready-for-agent
-  assert_output_contains "nothing to review"
+  assert_output_contains "nothing was delivered"
   assert_equal "$(claude_call_count)" "1"
   assert_equal "$(lenses_that_ran)" ""
+}
+
+@test "a lens handed a diff of nothing refuses instead of judging it" {
+  # The local half, and it is called directly on purpose: the gate refuses the
+  # iteration before this phase is reached now ([35]), so nothing the loop does
+  # can exercise this any more. `lenses_review` is public all the same, and a
+  # caller that hands it a base equal to the tree it judges has to get a refusal
+  # — a judge with no diff must not be spent, and must not answer either.
+  lens_ticket 01-plain 'src/plain.txt'
+
+  pack_run '
+    mkdir -p src && printf "written\n" >src/plain.txt
+    tree="$(gate_tree_snapshot)"
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-lens-test.XXXXXX")"
+    lenses_review standards 01-plain "$tree" "$tree" "$dir" || printf "rc=%s\n" "$?"
+    rm -rf "$dir"'
+  assert_success
+  assert_output_contains "the standards lens has nothing to review"
+  assert_output_contains "rc=1"
+  assert_equal "$(claude_call_count)" "0"
 }
 
 # ── the verdict ──────────────────────────────────────────────────────────────

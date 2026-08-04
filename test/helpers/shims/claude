@@ -236,15 +236,27 @@ if [ -n "$lens" ]; then
 # verdict handling included: a test that scripted a writing session would get
 # lenses that answer nothing, and would be measuring that instead of what it
 # meant to.
-elif [ -f "$state/session.writes" ]; then
+#
+# The default since [35], where it used to be opt-in, and the flip is the finding
+# rather than a convenience. An iteration the gate sees change no file is red now,
+# whatever its tests say — so a fake that wrote nothing no longer models a
+# cooperative session, it models the one failure this pack exists to refuse, and
+# every green in this suite would have been measuring that instead. A test that
+# wants the empty case asks for it: `session_writes_nothing`.
+elif [ ! -f "$state/session.silent" ]; then
   # An empty list means "whatever this ticket declared", read out of the prompt the
   # way the canary's honest session reads it. That is the faithful default: a test
   # driving two tickets at once must not have to hand-list both surfaces, and one
   # that did would be writing into the other ticket's surface and measuring drift.
-  targets="$(cat "$state/session.writes")"
+  targets="$(cat "$state/session.writes" 2>/dev/null || true)"
   [ -n "$targets" ] || targets="$(sed -n 's/^\*\*Write-surface:\*\* //p' \
     "$state/claude.calls/$n/stdin" | head -1 | tr -d '`\r' | tr ',' '\n')"
-  printf '%s\n' "$targets" | while IFS= read -r target; do
+  # `read` without `IFS=`, which is the one place in this file that is deliberate:
+  # a surface is written `\`a\`, \`b\`` for a human, so splitting it on the comma
+  # leaves a leading space on every entry but the first. A session that wrote
+  # ` src/eta.txt` would be overflowing its own write-surface — the pack reads a
+  # surface by whitespace and cannot express a path with a space in it either.
+  printf '%s\n' "$targets" | while read -r target; do
     [ -n "$target" ] || continue
     mkdir -p "$(dirname "$target")"
     printf 'written by the session\n' >"$target"

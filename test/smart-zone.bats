@@ -37,6 +37,22 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":9,"total
 FAKE
 }
 
+# What both fakes below write before anything else: the write-surface of the
+# ticket they were handed, read out of their own prompt the way the canary's
+# honest session reads it.
+#
+# It is not decoration. Since [35] a session that reaches its own ending having
+# changed no file resolves nothing, so a fake that delivered nothing would put a
+# test about a threshold or a disabled deadline on the refusal path instead —
+# and reading the surface rather than hard-coding `src/alpha.txt` matters just as
+# much, because this file grinds two tickets and the second one writing the
+# first one's file delivers nothing either.
+SCRIPT_DELIVERS='prompt="$(cat)"
+for target in $(printf "%s" "$prompt" | sed -n "s/^\*\*Write-surface:\*\* //p" |
+  head -1 | tr -d "\`\r" | tr "," " "); do
+  mkdir -p "$(dirname "$target")" && printf "written\n" >"$target"
+done'
+
 # A session that writes its opening events and then goes quiet for as long as it
 # is given, in tenths of a second — a hang, seen from outside. Bounded, so that a
 # deadline which never fires makes an assertion fail instead of hanging the suite.
@@ -48,6 +64,7 @@ script_quiet_session() {
   local ticks="${1:-300}"
   script_claude <<FAKE
 #!/usr/bin/env bash
+$SCRIPT_DELIVERS
 echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
 echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":5}},"session_id":"s"}'
 i=0
@@ -64,6 +81,7 @@ script_sized_session() {
   local tokens="$1"
   script_claude <<FAKE
 #!/usr/bin/env bash
+$SCRIPT_DELIVERS
 echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
 echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":$tokens,"output_tokens":5}},"session_id":"s"}'
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.05}'
@@ -471,6 +489,10 @@ FAKE
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
+# Delivering, because the assertion below is that this iteration was resolved and
+# not merely left alone: a session that writes nothing resolves nothing since [35],
+# and the test would then be green with the deadline firing.
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"system","subtype":"init","session_id":"s"}'
 i=0
 while [ $i -lt 2 ]; do

@@ -17,6 +17,14 @@
 #              a red gate — a fresh session is exactly what a hung one needs —
 #              and never re-sliced: nothing here measured the slice. Escalated
 #              under a name of its own, because no gate ever judged it.
+#   nothing-   the session answered, and the gate saw not one file change ([35]).
+#   delivered  Retried like a red gate: a fresh session is the plausible answer,
+#              and nothing here measured the slice either, so it is never
+#              re-sliced. Escalated under a name of its own for the reason
+#              `timeout` has one — nothing was judged — plus one this class alone
+#              carries: there is nothing to *read*. The `failed/<ticket>` branch
+#              is not written on this path, because it would hold a tree
+#              identical to the one the session was handed.
 #
 # A session that wrote the tracker is reported apart (`tracker-write`) and
 # handled as a red gate: it is the same kind of failure — something in the
@@ -61,6 +69,14 @@ failures_classify() {
     # took, and spend a second session doing it.
     session-stalled | session-timeout)
       printf 'timeout\n'
+      ;;
+    # Deliberately not gate-red either, and for the mirror of the reason above: a
+    # red check is evidence that something was judged and found wrong, and this
+    # says nothing was judged at all. The two would be told apart by nothing
+    # downstream — same retry budget, same escalation reason — and a human sent to
+    # read a verdict on a session that wrote nothing has been misrouted ([26]).
+    nothing-delivered)
+      printf 'nothing-delivered\n'
       ;;
     gate-red | tracker-write)
       if [ "$scope_class" = contract ]; then
@@ -116,6 +132,16 @@ failures_handle() {
         # `failed/<ticket>` branch is written either way, and on this path it is
         # the only thing there is to read.
         [ "$class" != timeout ] || reason=session-timeout
+        # And the third one, which is the same statement with nothing left to
+        # read at all ([35]). The note is the routing: the question to put to a
+        # human here is not "why is this code wrong" — no code was written — but
+        # "why does this ticket make a session do nothing".
+        if [ "$class" = nothing-delivered ]; then
+          reason=nothing-delivered
+          printf 'Every attempt on this ticket (%s of %s) ended with a session that answered and changed no file the gate can see. Nothing was judged: there is no red check to read, no lens verdict, and no `failed/%s` branch — it would hold the tree the session was handed. What is left is `run.log` and the ticket itself, so the question is why this ticket makes a session do nothing: a criterion nothing can act on, work that is already done, a prompt that arrived truncated.\n' \
+            "${count:-unknown}" "${RETRY_N:-2}" "$ticket" |
+            tracker_append_note "$ticket" || true
+        fi
       fi
       ;;
   esac
@@ -124,7 +150,13 @@ failures_handle() {
   # the session actually did once the rollback has run. Never fatal — a git that
   # refuses to write a forensic branch (a ref named `failed` already in the way,
   # a lock a crashed git left behind) must not take the run down with it.
-  if [ -n "$reason" ]; then
+  #
+  # Not written for a session that delivered nothing, and that is a decision
+  # rather than an optimisation ([35]): the tree it would carry is the tree the
+  # session started from, so the branch would be a forensic artefact of nothing,
+  # offered to a human as the thing to go and read. The note above says where to
+  # look instead.
+  if [ -n "$reason" ] && [ "$class" != nothing-delivered ]; then
     failures_preserve_attempt "$ticket" "$pre" "$tree" || true
   fi
 

@@ -53,6 +53,13 @@
 #                           the durable commit act on exactly what was approved.
 #                           Taken before the fan and filled in before it, so a
 #                           branch — a subshell — inherits it ([29]).
+#   RALPH_GATE_NOTHING_DELIVERED
+#                           1 when the gate refused before judging anything: this
+#                           iteration changed no file it can see, so there is
+#                           nothing to commit and nothing to review ([35]). A
+#                           failure of its own, not a red check — nothing was
+#                           judged, and a human sent to read a verdict has been
+#                           misrouted
 
 gate__log() {
   printf 'ralph: gate: %s\n' "$*"
@@ -889,6 +896,49 @@ gate_changed_files() {
   git diff-tree -r --name-only "$base" "$now" 2>/dev/null | gate__drop_bookkeeping
 }
 
+# Whether this iteration delivered anything at all: true when the gate can see
+# that not one file changed between the tree the session was handed and the tree
+# it is about to judge.
+#
+# The deterministic question none of the three objective branches asks ([35]).
+# `tests` and `typecheck` are the project's own commands and answer about the
+# tree, not about the change; the scope-guard judges an *overflow*, so an empty
+# diff satisfies it by construction — there is nothing sticking out. Until [35]
+# the only thing asking it was `lenses_review`, once per lens, as a side effect of
+# a judge refusing to judge nothing: a deterministic guarantee filed inside the
+# subjective tier, which went out with the tier whenever `LENSES` was empty or no
+# lens was triggered. A session that answered without writing a line then took its
+# ticket off the frontier for good, `Failures:` dropped with the claim ([26]) and
+# nothing anywhere remembering that nobody had done anything.
+#
+# Asked on the very list `failures_make_durable` commits — `base` against the
+# judged tree — and that is the whole of the placement. "Did the session write
+# something" and "is what this gate approved non-empty" are one question asked at
+# two ends of the chain, and only the second also catches an iteration whose work
+# was already in its own baseline. One computation, one meaning.
+#
+# Fifth reader of a value with two empty answers, and it says which one it is
+# ([34]): `gate_changed_files` hands back nothing both when nothing changed and
+# when it could not look, and only the first is "nothing was delivered". On the
+# second this refuses to conclude — and it does not go red on its own either,
+# because the branch that already reds on exactly that is the scope-guard, which
+# is handed the same unreadable tree and says so in words a human can act on. A
+# "nothing to deliver" computed on a tree nobody could read would be this ticket's
+# own false delivered, obtained through the door next to it.
+#
+# It is written the way `gate__scope_guard` writes its own refusal, and for both
+# of its reasons: an empty `now` is refused rather than recomputed, because
+# `gate_changed_files` takes a snapshot of its own when it is not given one and
+# that would answer about a different tree from the one every branch is judged on
+# ([29]).
+gate__nothing_delivered() {
+  local base="$1" now="$2" changed
+  if [ -z "$now" ] || ! changed="$(gate_changed_files "$base" "$now")"; then
+    return 1
+  fi
+  [ -z "$changed" ]
+}
+
 # Put every path back to the state a tree object records, and print the ones that
 # were put back, one per line.
 #
@@ -1401,7 +1451,7 @@ gate__report() {
 # green, and that is the only thing that resolves a ticket.
 gate_run() {
   local ticket="$1" base="${2:-}"
-  local dir names='' pids='' rc=0
+  local dir names='' pids='' rc=0 finding
 
   # Cleared before the first thing that can fail, so a gate that refuses to start
   # never leaves the previous iteration's tree standing for the rollback to act on.
@@ -1410,6 +1460,7 @@ gate_run() {
   RALPH_GATE_SCOPE_CLASS=""
   RALPH_GATE_IGNORE=""
   RALPH_GATE_TREE=""
+  RALPH_GATE_NOTHING_DELIVERED=0
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
 
   # Before the tree, so that every branch runs in a repository whose visibility is
@@ -1435,34 +1486,62 @@ gate_run() {
   # and a branch that was never started leaves no verdict to count.
   RALPH_GATE_TREE="$(gate_tree_snapshot)" || RALPH_GATE_TREE=""
 
-  gate__start "$dir" tests bash -c "$TEST_CMD"
-  names="$names tests"
-  pids="$pids $!"
-
-  # "none" is a project declaring it has no type check. Not triggered, so not
-  # part of the verdict — and never counted as a pass.
-  if [ -n "${TYPECHECK_CMD:-}" ] && [ "$TYPECHECK_CMD" != none ]; then
-    gate__start "$dir" typecheck bash -c "$TYPECHECK_CMD"
-    names="$names typecheck"
+  # The one verdict this gate can return without starting anything, and it is
+  # returned here rather than counted as a fourth branch ([35]). Both trees are
+  # already in hand — taken before the fan since [29] — so a branch would pay a
+  # process for a string comparison, and would hand the aggregation a verdict that
+  # can be pronounced on the spot. What it saves is the rest of the gate: an
+  # iteration that delivered nothing is red whatever the project's suite would
+  # have answered, so running it, and then a `claude` per lens after it, buys
+  # nothing at all.
+  if gate__nothing_delivered "$base" "$RALPH_GATE_TREE"; then
+    RALPH_GATE_NOTHING_DELIVERED=1
+    RALPH_GATE_VERDICTS=" delivery=red"
+    RALPH_GATE_FAILED=" delivery"
+    rc=1
+    gate__log "$ticket: nothing was delivered: this iteration changed no file this gate can see, so there is nothing here to judge and nothing to commit"
+    # And what the frontier of that visibility did, which no branch is left to
+    # report on this path. `gate_ignore_frontier` has already put the rules back
+    # above; its findings normally travel on the scope-guard's output, and a
+    # session that moved an ignore rule *and* wrote nothing would otherwise leave
+    # the one line naming it unprinted ([30]: a zone nobody guards gets named
+    # every time round, not once in a document).
+    while IFS= read -r finding; do
+      [ -n "$finding" ] || continue
+      gate__log "$ticket: $finding"
+    done <<IGNORE
+${RALPH_GATE_IGNORE:-}
+IGNORE
+  else
+    gate__start "$dir" tests bash -c "$TEST_CMD"
+    names="$names tests"
     pids="$pids $!"
+
+    # "none" is a project declaring it has no type check. Not triggered, so not
+    # part of the verdict — and never counted as a pass.
+    if [ -n "${TYPECHECK_CMD:-}" ] && [ "$TYPECHECK_CMD" != none ]; then
+      gate__start "$dir" typecheck bash -c "$TYPECHECK_CMD"
+      names="$names typecheck"
+      pids="$pids $!"
+    fi
+
+    gate__start "$dir" scope \
+      gate__scope_guard "$ticket" "$base" "$RALPH_GATE_TREE" "$dir/scope.class"
+    names="$names scope"
+    pids="$pids $!"
+
+    gate__await "$dir" "$pids"
+    gate__aggregate "$dir" "$names" || rc=1
+
+    if [ -f "$dir/scope.class" ]; then
+      RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"
+    fi
+
+    # The judgement tier, and it is handed the objective verdict rather than
+    # deciding for itself: a phase that consulted `rc` from inside would have to
+    # know what this one means by it.
+    gate__lens_phase "$ticket" "$base" "$dir" "$rc" || rc=1
   fi
-
-  gate__start "$dir" scope \
-    gate__scope_guard "$ticket" "$base" "$RALPH_GATE_TREE" "$dir/scope.class"
-  names="$names scope"
-  pids="$pids $!"
-
-  gate__await "$dir" "$pids"
-  gate__aggregate "$dir" "$names" || rc=1
-
-  if [ -f "$dir/scope.class" ]; then
-    RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"
-  fi
-
-  # The judgement tier, and it is handed the objective verdict rather than
-  # deciding for itself: a phase that consulted `rc` from inside would have to
-  # know what this one means by it.
-  gate__lens_phase "$ticket" "$base" "$dir" "$rc" || rc=1
 
   RALPH_GATE_VERDICTS="${RALPH_GATE_VERDICTS# }"
   RALPH_GATE_FAILED="${RALPH_GATE_FAILED# }"

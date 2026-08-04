@@ -210,6 +210,10 @@ _À éviter_ : reset, nettoyage, revert (réservé à un commit inverse).
 Ce qu'une itération verte a produit, **commité** par la boucle avant l'itération suivante, en ne contenant que les chemins approuvés par le scope-guard. C'est ce qui rend le commit pré-spawn utilisable comme point de rollback : sans lui, un échec ultérieur emporterait tout ce que le run a déjà gaté vert.
 _À éviter_ : sauvegarde, snapshot (réservé aux objets tree du scope-guard).
 
+**Rien livré (`delivery=red`)**:
+Le verdict d'une itération dont le gate ne voit **changer aucun fichier** : rendu avant le fan, donc sans démarrer une seule branche, et rouge quoi qu'auraient dit les commandes du projet. Posé sur la liste même que le travail durable commite — « la session a-t-elle écrit » et « ce que ce gate approuve est-il non vide » sont le même calcul — donc il attrape aussi l'itération dont le travail était déjà dans son propre `base`. C'est le seul défaut du pack qui produisait un faux **livré** : le ticket quittait la frontière pour de bon, sans commit et sans que rien s'en souvienne. Une **mesure refusée** n'en est pas un : sur un arbre illisible ce contrôle ne conclut pas, il laisse le scope-guard refuser. Ce n'est pas un échec d'implémentation — rien n'a été jugé, donc pas de branche `failed/<ticket>` et une raison d'escalade à soi.
+_À éviter_ : diff vide (c'est la cause, pas le verdict), itération stérile (réservé au filet `STERILE_K`), gate rouge.
+
 **Claim**:
 La prise atomique d'un ticket (`Status: claimed` + propriétaire + horodatage) avant spawn, qui le retire de la frontière pour les pickers concurrents. Un claim dont le propriétaire est mort est **réclamé au balayage**, en tête de chaque itération, avant la lecture de la frontière — sans quoi un run tué emporte son ticket hors de la frontière pour toujours.
 _À éviter_ : lock (réservé aux verrous), réservation, assignation.
@@ -299,7 +303,7 @@ La 2ᵉ boucle bash, **HITL**, sœur de la ralph loop, qui **draine le puits `re
 _À éviter_ : ralph loop (réservé à l'AFK), boucle de review.
 
 **Raison d'escalade (`Escalation:`)**:
-La ligne posée sur un ticket au moment de l'escalader (`decision` / `too-big` / `failed-impl` / `spec-gap` / `sign-off`), jeu fermé, qui permet à la boucle humaine de router le ticket vers le bon traitement.
+La ligne posée sur un ticket au moment de l'escalader (`decision` / `too-big` / `failed-impl` / `spec-gap` / `sign-off` / `session-timeout` / `nothing-delivered`), jeu fermé, qui permet à la boucle humaine de router le ticket vers le bon traitement. Les deux dernières sont arrivées avec le pack et disent la même chose sous deux formes : **rien n'a été jugé**, donc `failed-impl` enverrait lire un verdict qui n'existe pas — la session a été coupée par un délai ([23]), ou elle a répondu sans rien changer dans l'arbre ([35]).
 _À éviter_ : cause, motif, label (réservé au triage).
 
 ### Les langues
