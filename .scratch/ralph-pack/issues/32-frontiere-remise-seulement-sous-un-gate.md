@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/failures.sh`, `.claude/lib/gate.sh`, `test/failures.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Une itération qui n'est jugée par aucun gate remet les règles du répertoire git comme une itération gatée, et le dit — il n'y a pas de gate là pour porter un finding, donc la ligne de journal est la seule trace qu'un humain aura. Les quatre classes de `failures_classify` sont couvertes nommément, pas seulement celle qui a servi à écrire le correctif.
-- [ ] La remise tombe une seule fois par itération quel que soit le chemin : un `gate_run` qui a déjà remis, suivi d'un `failures_handle`, ne doit pas produire deux findings ni deux lignes pour un seul déplacement.
-- [ ] Le test rejoue la sonde de ce ticket dans les deux moitiés — l'itération qui élargit et crashe, *puis* l'itération suivante qui écrit hors surface derrière la nouvelle règle. Une assertion sur la seule première moitié laisserait passer le correctif qui remet le fichier sans que personne ne vérifie qu'il compte.
-- [ ] La mutation vise ce que le correctif tient réellement : retirer l'appel doit faire rougir le test par la **seconde** itération devenue verte, pas par le contenu de `.git/info/exclude`.
-- [ ] La ligne « La frontière de visibilité de tous les contrôles » de `docs/frontiere-de-confiance.md` cesse de dire que les sources du répertoire git sont remises sans dire *sur quels chemins*.
+- [x] Une itération qui n'est jugée par aucun gate remet les règles du répertoire git comme une itération gatée, et le dit — il n'y a pas de gate là pour porter un finding, donc la ligne de journal est la seule trace qu'un humain aura. Les quatre classes de `failures_classify` sont couvertes nommément, pas seulement celle qui a servi à écrire le correctif.
+- [x] La remise tombe une seule fois par itération quel que soit le chemin : un `gate_run` qui a déjà remis, suivi d'un `failures_handle`, ne doit pas produire deux findings ni deux lignes pour un seul déplacement.
+- [x] Le test rejoue la sonde de ce ticket dans les deux moitiés — l'itération qui élargit et crashe, *puis* l'itération suivante qui écrit hors surface derrière la nouvelle règle. Une assertion sur la seule première moitié laisserait passer le correctif qui remet le fichier sans que personne ne vérifie qu'il compte.
+- [x] La mutation vise ce que le correctif tient réellement : retirer l'appel doit faire rougir le test par la **seconde** itération devenue verte, pas par le contenu de `.git/info/exclude`.
+- [x] La ligne « La frontière de visibilité de tous les contrôles » de `docs/frontiere-de-confiance.md` cesse de dire que les sources du répertoire git sont remises sans dire *sur quels chemins*.
 
 ## Comments
 
@@ -73,3 +73,38 @@
 - **Contrainte pour [10].** Le reçu d'audit hérite d'une ligne de journal supplémentaire sur les chemins d'échec (« la frontière a été remise, hors gate »), et elle n'a pas d'équivalent dans les verdicts : c'est la seule trace de l'événement.
 
 - **Contrainte posée par [35], livré le 04/08/2026 : `gate_run` a maintenant *deux* endroits où les findings de `gate_ignore_frontier` s'impriment.** Le chemin nominal les fait porter par la sortie du scope-guard ; le refus de livraison (`delivery=red`) rend son verdict **avant le fan**, donc sans scope-guard, et réimprime les findings ligne à ligne lui-même — sans quoi une session qui élargit `.git/info/exclude` et n'écrit rien derrière verrait sa règle remise en silence. Deux conséquences pour ce ticket : l'AC « la remise tombe une seule fois par itération » doit compter les **lignes** aussi, sur les trois chemins maintenant (gate nominal, refus de livraison, `failures_handle`) ; et le chemin qu'il faut sonder en priorité est celui d'une session qui élargit la frontière **puis crashe**, parce que c'est le seul où plus personne n'imprime quoi que ce soit.
+
+## Livraison — 04/08/2026
+
+- **Ce qui a été livré, en une phrase.** `failures_handle` remet la frontière d'ignore pour les deux classes que rien ne gate (`crash`, `timeout`), avant de snapshotter l'arbre qu'il va rollbacker, et le dit — plus une ligne de cause pour les `.gitignore` de l'arbre, que personne n'imprimait sur ces chemins.
+
+- **Le choix tranché, et c'est celui que le piège demandait de nommer : un appel conditionné à la classe, pas une remise idempotente.** Les six sorties de `failures_classify` ont chacune un appelant et un seul :
+
+  | classe | qui remet |
+  |---|---|
+  | `gate-red`, `contract`, `nothing-delivered` | `gate_run`, avant le fan |
+  | `too-big` | `failures_reslice`, **après** la session de planification — qui est elle-même une session non gatée, donc la remise doit tomber après elle pour couvrir ce qu'*elle* a déplacé |
+  | `crash`, `timeout` | `failures_handle` — ce ticket |
+
+  La raison de préférer le conditionnement : **la remise est déjà idempotente pour ce qu'elle remet**. Un second appel sur `.git/info/exclude` trouve le fichier revenu, `gate_ignore_moved` ne rend rien, et il n'imprime rien. Ce qu'un appel en trop double, ce n'est donc pas ce qu'il remet, c'est ce qu'il **ne peut pas** remettre — le fichier d'exclusion global, hors du dépôt, qui est signalé à chaque appel et pour toujours. Une remise « idempotente qui ne rapporte que ce qu'elle a changé » ne rapporterait alors *jamais* le cas global, c'est-à-dire supprimerait un finding de [30]. Un appelant par chemin est la seule forme qui garde les deux propriétés.
+
+- **La liste a été lue, pas devinée.** C'est la leçon que la passe du 03/08 avait tirée de [30] (« où est la liste des chemins, et est-ce que je l'ai lue ») : le `case` de `failures_classify` est la liste, elle est recopiée dans le commentaire au-dessus de l'appel avec le nom de qui couvre chaque classe. Un ticket qui ajoutera une classe verra la question posée à côté de sa ligne.
+
+- **Placement, et il porte trois choses à la fois.** L'appel est en tête de `failures_handle`, après la classification et **avant** `gate_tree_snapshot` : (1) l'arbre que le rollback compare est alors mesuré à travers les règles que le run a distribuées et non celles que la session a laissées ; (2) la ligne de cause sur les `.gitignore` de l'arbre est imprimée pendant qu'ils sont encore déplacés — le rollback qui suit les emporte ; (3) rien de ce que la remise écrit ne peut être imputé à la session, `.git/` n'étant dans aucun arbre.
+
+- **Deux phrasés pour une même liste, à dessein.** `gate__report_frontier` dit « this iteration was judged through the rules it was handed, the new ones apply from the next ». Sur un chemin sans gate c'est faux deux fois : rien n'a jugé, et le rollback reprend la règle. D'où `gate_moved_tree_rules`, public (second appelant ⇒ public, CLAUDE.md §6), qui rend la liste, et deux sites qui écrivent chacun la phrase dont ils peuvent répondre. Si le rollback refuse ensuite, il le crie lui-même et le run s'arrête ([34]) — une ligne contredite bruyamment deux lignes plus loin n'est pas le demi-mensonge de [29].
+
+- **Le test de comptage était vide, et c'est la trouvaille de la livraison.** L'AC 2 (« une seule fois quel que soit le chemin ») se teste mal : comme la remise de `.git/info/exclude` est idempotente, un appel branché sur *toutes* les classes ne produit aucune ligne en double et le compteur reste à 1. Écrit comme ça, le test aurait été vert avec et sans le conditionnement — un compteur mesurant une constante. Il ne devient réfutable qu'en faisant déplacer **les deux** sources par la même session : les `.gitignore` de l'arbre ne sont jamais remis (travail de projet, [30]), donc ce sont eux que deux locuteurs répètent. La mutation « the restore is bolted onto every class » rougit par cette ligne-là, et par la phrase `no gate judged this iteration` apparaissant sur une itération gatée. Corollaire ajouté à `docs/frontiere-de-confiance.md`.
+
+- **Sondes rejouées le 04/08/2026** (harnais jetable `test/probe-32.bats`, supprimé depuis) :
+
+  1. *Crash, les deux moitiés* — session 1 élargit `.git/info/exclude`, écrit `rogue/backdoor` hors surface et `exit 1` ; session 2 écrit `rogue/second` hors surface. Avant : itération 2 verte, `resolved`, `rogue/second` survit, zéro finding. Après : `moved the ignore frontier in .git/info/exclude … (put back)`, exclude propre, `wrote rogue/second, outside the declared write-surface`, `rogue/second` effacé, ticket `ready-for-human`. C'est le test « a session that crashed cannot leave the ignore frontier widened », dont les assertions sur la *seconde* itération viennent en premier (AC 4).
+  2. *Délai de [23], les deux moitiés* — `SESSION_STALL_TIMEOUT=2`, session 1 élargit puis dort. Même résultat : remise à l'itération 1, `scope=red` à l'itération 2, `rogue/second` effacé.
+  3. *`core.excludesFile` sur un crash* — la seconde source `dir`, que les tests de [30] ne couvraient que sous un gate : `git config --unset` la remet, la clé est vide après le run, le fichier écrit derrière est rollbacké.
+  4. *Crash **et** témoin détruit* — la session élargit, écrit hors surface, détruit le pin de `$TMPDIR` et sort 1. La remise ne dit rien (sans manifeste, `gate_ignore_moved` ne peut rien comparer) — et ce silence est couvert : `gate_tree_snapshot` refuse, le rollback refuse, `RALPH_ROLLBACK_FAILED` arrête le run avant l'itération suivante ([34]). Rien n'est blanchi, la frontière reste élargie, un humain repart d'un état connu. **Décision : ne pas ajouter de fail-closed ici** — le contrôle qui suit immédiatement en a un, en ajouter un second ne changerait que le mot imprimé.
+
+- **Ce qui reste, et c'est la même frontière un cran plus haut.** Un run **tué** (`kill -9`, coupure, OOM) ne passe par aucune des trois portes : son témoin meurt dans `$TMPDIR`, son élargissement reste, et le run *suivant* l'épingle comme la configuration du projet. Rien dans le pack ne peut le refermer — il faudrait un état qui survive au run, et le seul qui existe est le tracker, que la session écrit. Écrit dans le tableau, pas laissé au lecteur.
+
+- **Écarts de write-surface : aucun.** `CONTEXT.md` n'a pas bougé et n'avait pas à bouger : son entrée « règles épinglées » dit que les deux sources du répertoire git sont remises, sans jamais promettre sur quels chemins — elle était vraie avant et elle l'est encore. `loop.sh` non plus : `failures_handle` est déjà son point de passage pour tout ce qui n'est pas `resolved`.
+
+- **Contraintes écrites ailleurs :** [13] (trois appelants au lieu de deux, donc une course sur le répertoire git *commun* aussi large que l'itération) et [10] (deux lignes de journal sur les chemins d'échec, et le fait que les deux phrasés ne doivent pas être fusionnés dans le reçu).
