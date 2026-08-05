@@ -102,6 +102,41 @@ gate_preflight() {
   return "$rc"
 }
 
+# What earlier runs left in `$TMPDIR`, said once at the start of a run and never
+# removed here ([36]).
+#
+# This module makes both of the temporary *directories* the pack uses — the gate's
+# own, one per iteration, and the witness holding the pinned ignore rules ([30]) —
+# and both are cleaned up on every path an iteration can take. Every path except
+# one: a run that dies of violence takes none of them, so a `kill -9` leaves a gate
+# directory and a witness behind for good. Naming them is this module's business
+# because their names are; counting them at run start is the loop's.
+#
+# Older than a day, and that is the whole of the concurrency question: the pack
+# takes one lock per tree ([22]) and not one per machine, so another run of another
+# repository may perfectly well own a fresh `ralph-gate.*` right now. A directory
+# nobody has touched in twenty-four hours belongs to no run that is still going.
+#
+# It says and does not sweep, which is a decision and not an omission. The
+# opportunistic `find -mtime +7` the test harness runs on its own templates is the
+# obvious shape, and the component entitled to run it is the installer ([19]), the
+# only part of the pack that lives outside an iteration. And a warning for whoever
+# writes that: this is disk, nothing else. The witness of a killed run recovers no
+# state for anyone — the ignore frontier it was pinning is put back on the three
+# exits an iteration has ([32]) and on none of the ways a run is killed, so the
+# next run pins whatever the dead one left widened. That limit is structural and
+# written in docs/frontiere-de-confiance.md; a temporary file cannot carry it.
+gate_leftovers() {
+  local tmp="${TMPDIR:-/tmp}" n
+  n="$(find "$tmp" -maxdepth 1 \
+    \( -name 'ralph-gate.*' -o -name 'ralph-ignore.*' \) -mtime +0 2>/dev/null |
+    wc -l | tr -d ' ')"
+  [ -n "$n" ] && [ "$n" -gt 0 ] || return 1
+  printf '%s temporary director(ies) from earlier runs are still in %s: a run killed mid-iteration leaves one behind, and nothing here removes them\n' \
+    "$n" "$tmp"
+  return 0
+}
+
 # ── how a list of paths travels ──────────────────────────────────────────────
 #
 # **One entry per line, everywhere inside this pack.** A path may contain a space
@@ -1202,16 +1237,45 @@ gate__start() {
 # the run, which is a leak and not a deadlock. The session is the other case, and
 # it is the one that hangs: `claude` is an external binary the loop waits on
 # directly, with nothing between the signal and the process.
+#
+# Two checks now stand between the sleep and the signal, and neither is decoration
+# ([36]). A `kill -9` on the run left this in flight: half an hour later a process
+# nobody owned wrote its marker and walked a process tree, on numbers the system
+# had been free to hand out since — probed at eight seconds, and `proc_kill_tree`
+# descends, so it is a signal to a descendance and not to a process.
+#
+#   - the countdown gives up the moment the shell that armed it is gone, which is
+#     the whole of "a dead run has no deadline firing in its name" — see
+#     proc_countdown for why that is a parent link and not a pid;
+#   - and each target is fired at only if it still answers to the parent it
+#     answered to when this was armed. A branch that finished is reaped by bash,
+#     and a reaped pid is one the system may reissue while the run is still very
+#     much alive — so "is it alive" is not the question, "is it still the one I was
+#     aimed at" is.
+#
+# What is *not* conditional is the marker. The tempting shape is to give up as soon
+# as there is nothing left to kill, and it would lose the cause: `gate__aggregate`
+# reads this file to say "red (timed out)" rather than "red (no verdict)", and a
+# branch that overran is the case where both are true at once. The deadline expired
+# — that is a fact about this gate, not about which pids are still standing.
 gate__watchdog() {
   local limit="$1" marker="$2"
   shift 2
-  local waited=0 pid
-  while [ "$waited" -lt "$limit" ]; do
-    sleep 1
-    waited=$((waited + 1))
-  done
-  : >"$marker"
+  local pid parent aimed=''
+
   for pid in "$@"; do
+    parent="$(proc_parent_of "$pid")"
+    [ -n "$parent" ] || continue
+    aimed="$aimed $pid:$parent"
+  done
+
+  proc_countdown "$limit" || return 0
+
+  : >"$marker"
+  for pid in $aimed; do
+    parent="${pid#*:}"
+    pid="${pid%%:*}"
+    [ "$(proc_parent_of "$pid")" = "$parent" ] || continue
     proc_kill_tree "$pid"
   done
   return 0
