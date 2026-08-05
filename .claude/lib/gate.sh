@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # The gate, in two phases.
 #
-# **The objective phase.** Three deterministic checks decide whether an iteration
-# delivered: the project's test suite, its type check, and the scope-guard. The
+# **The objective phase.** Four deterministic checks decide whether an iteration
+# delivered: the project's test suite, its type check, the scope-guard, and the
+# language gate ([17], the only one of the four a project may switch off). The
 # loop runs them itself, so no model is ever asked whether its own work is good
 # enough — complaisance is not a failure mode a return code has.
 #
@@ -99,6 +100,12 @@ gate_preflight() {
     rc=1
   fi
 
+  # And the language gate's own three, for the same reason ([17]): a threshold
+  # that reads as zero, a `LANG_CHECK` misspelt into off, or a `LANG_ARTIFACT`
+  # nothing here has words for all produce a branch that passes everything while
+  # reporting green. Refused at the door rather than discovered in the morning.
+  lang_preflight || rc=1
+
   return "$rc"
 }
 
@@ -178,9 +185,17 @@ gate_authored_list() {
 #
 # Taken **literally**, and that is the difference with gate_in_surface, which
 # matches a list of globs a human wrote. This one reads lists of paths the pack
-# itself carries — the guarded paths, the sealed configuration — and a path is
-# not a pattern: `zone[1]` is a directory a project may really have, and a guard
-# that reads it as a character class guards `zone1` instead.
+# itself carries — the guarded paths, the sealed configuration, the paths the
+# language gate is told not to read ([17]) — and a path is not a pattern:
+# `zone[1]` is a directory a project may really have, and a guard that reads it
+# as a character class guards `zone1` instead.
+#
+# Public because it has a second module calling it, which is the rule this pack
+# keeps rather than a preference: a `__` with two callers is an interface whose
+# name lies. It was `gate__under_path` until [17] gave `LANG_EXEMPT_PATHS` the
+# same literal reading as `GUARDED_PATHS` — and a private copied into lang.sh
+# would have been the second definition of a splitting convention that has
+# already cost this pack one silent false green ([33]).
 #
 # The two readings cannot be mixed, and choosing was the second half of [33]. The
 # forcing in gate_tree_snapshot uses `:(literal)` pathspecs for the same reason,
@@ -190,7 +205,7 @@ gate_authored_list() {
 # says so, because the forcing matches nothing and the zone line then names
 # `vendor/` as a path this gate did not judge. Before, it guarded something and
 # the zone line stayed quiet about the paths it did not.
-gate__under_path() {
+gate_under_path() {
   local file="$1" path
   while IFS= read -r path; do
     path="${path%/}"
@@ -334,9 +349,9 @@ gate__sealed_config() {
 # A sealed directory covers what is under it, so `.claude/agents` seals the files
 # in it. Matched literally and not as a glob: the last entry of the list is a path
 # a run names through `RALPH_CONFIG`, and a seal that read it as a pattern would
-# seal a file nobody named. See gate__under_path.
+# seal a file nobody named. See gate_under_path.
 gate_is_sealed() {
-  gate__under_path "$1" "$(gate_sealed_paths)"
+  gate_under_path "$1" "$(gate_sealed_paths)"
 }
 
 # The paths the whole-tree snapshot takes by force. `.claude` by default — the
@@ -729,7 +744,7 @@ IGNORED
 gate__ignored_walk() {
   local file="$1" guarded="$2" hidden="$3" child
   if gate_is_bookkeeping "$file"; then return 0; fi
-  if gate__under_path "${file%/}" "$guarded"; then return 0; fi
+  if gate_under_path "${file%/}" "$guarded"; then return 0; fi
   case "
 $hidden
 " in
@@ -914,7 +929,7 @@ gate_tree_snapshot() {
     # `:(literal)` for the same reason one step further in: a git pathspec is a
     # pattern too, so a directory really named `zone[1]` would be taken as a
     # character class and the forcing would land on `zone1`. The listing that
-    # names what was not forced reads these paths literally (gate__under_path),
+    # names what was not forced reads these paths literally (gate_under_path),
     # and the two halves have to mean the same thing by a guarded path.
     while IFS= read -r path; do
       [ -n "$path" ] || continue
@@ -1341,6 +1356,34 @@ gate__report_changed() {
   return 0
 }
 
+# What the language gate covered, and what it did not ([17]). Same shape as the
+# three lines above and for the same reason: a check that judges *some* of what a
+# session wrote owes a human the size of the rest, every iteration, rather than a
+# sentence in a document nobody reads at three in the morning ([24]).
+#
+# Four numbers, and the last three are the ones that matter. A file with too
+# little prose to tell is not evidence and is not judged; a file whose name git
+# had to quote is one no consumer of a changed-file list can address at all
+# ([39]); a file under `LANG_EXEMPT_PATHS` is one the project told this gate to
+# skip — that key is the switch which could turn the whole check off without a
+# word, so what it takes out is counted where the coverage is announced and not
+# left to the config file.
+#
+# Off is announced too, and it is the `LENSES is empty` line one tier down: a
+# project may run without a language gate, and a run that does must not look like
+# a run whose prose was checked and found right.
+gate__report_lang() {
+  local ticket="$1" dir="$2"
+
+  if ! lang_enabled; then
+    gate__log "$ticket: the language gate is off (LANG_CHECK=off): nothing here checked what language this iteration wrote its prose in"
+    return 0
+  fi
+  [ -f "$dir/lang.zone" ] || return 0
+  gate__log "$ticket: $(cat "$dir/lang.zone")"
+  return 0
+}
+
 # One fan, from started to collected, with its own deadline.
 #
 # Extracted because there are two fans now and a second copy of the collection
@@ -1609,8 +1652,21 @@ IGNORE
     names="$names scope"
     pids="$pids $!"
 
+    # The fourth objective branch, and last in the fan on purpose: it is the
+    # cheapest of them, so the verdict string keeps reading `tests … typecheck …
+    # scope …` and nothing anchored on that prefix moves. Off is a decision a
+    # project is entitled to make ([17]), and one gate__report_lang says out loud
+    # every iteration rather than leaving a silent gap in the verdicts.
+    if lang_enabled; then
+      gate__start "$dir" lang \
+        lang_check "$ticket" "$base" "$RALPH_GATE_TREE" "$dir/lang.zone"
+      names="$names lang"
+      pids="$pids $!"
+    fi
+
     gate__await "$dir" "$pids"
     gate__aggregate "$dir" "$names" || rc=1
+    gate__report_lang "$ticket" "$dir"
 
     if [ -f "$dir/scope.class" ]; then
       RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"

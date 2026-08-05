@@ -259,19 +259,64 @@ LENS_DIFF_MAX_LINES="${LENS_DIFF_MAX_LINES:-4000}"
 
 # ── Languages ────────────────────────────────────────────────────────────────
 
-# Language spoken to the human. HITL only — never used by the AFK loop.
+# Language spoken to the human. HITL only — never used by the AFK loop, which is
+# not talking to anybody: no session this loop spawns is told this value.
 LANG_INTERACT="${LANG_INTERACT:-en}"
 
-# Language of durable written prose: docs, tracker, comments, commits, PRs.
-# Not the code itself, not this pack.
+# Language of durable written prose the agent writes: docs, comments, anything a
+# human reads later. Not the code itself, not this pack — and not a file that
+# already exists in another language, which an edit matches instead.
+#
+# This pack has word lists for: en fr es de it pt. A language it cannot score has
+# to be declared with LANG_CHECK=off below, rather than leaving a gate that
+# judges nothing and reports green.
 LANG_ARTIFACT="${LANG_ARTIFACT:-en}"
 
-# Objective language gate — FORCED CONFIRMATION: on | off.
-# Post-hoc, per-file, tolerant detection; doubles the soft CLAUDE.md rule.
+# The objective language gate — FORCED CONFIRMATION: on | off.
+#
+# A fourth branch of the objective phase, next to tests, typecheck and the
+# scope-guard: post-hoc, per file, tolerant. Red is retryable, so a session that
+# wrote its documentation in the wrong language gets a fresh one.
+#
+# `off` is a decision, and the run says so on every iteration — the prompt then
+# only *asks* for LANG_ARTIFACT and nothing keeps it. Anything other than `on` or
+# `off` is refused at startup: a typo must not be a way to switch a check off.
 LANG_CHECK="${LANG_CHECK:-on}"
 
-# Share of detected prose that must match LANG_ARTIFACT for a file to pass.
+# Share of the words the gate recognises in a file that must belong to the
+# expected language. Tolerant on purpose: a document quoting foreign terms, an
+# API name or a command line is still written in its own language. Below 0.6 the
+# gate stops distinguishing anything; 0 is refused at startup.
 LANG_CHECK_THRESHOLD="${LANG_CHECK_THRESHOLD:-0.80}"
+
+# How many recognisable words a file needs before the gate will judge it at all.
+# Under this it is counted as "could not tell" in the run log rather than judged:
+# a stub, a table of identifiers and a two-line note are evidence of nothing, and
+# reddening them would only teach a project to switch this off. Zero is refused
+# at startup — it would judge files with no recognisable word at all.
+LANG_CHECK_MIN_HITS="${LANG_CHECK_MIN_HITS:-12}"
+
+# Which files count as prose, as globs. The markdown family by default: a `.md`
+# is prose, a `.py` is code with prose in it. Comments inside source files are
+# deliberately not judged — see docs/frontiere-de-confiance.md for why, and for
+# what that leaves uncovered.
+#
+# Empty is refused at startup: it would leave the gate nothing to judge and
+# nothing to say about it, which is `LANG_CHECK=off` without the line that
+# announces it.
+LANG_PROSE_PATHS="${LANG_PROSE_PATHS:-*.md *.markdown *.mdx *.rst *.adoc}"
+
+# Prose the language gate does not read, **one path per line**, taken literally
+# (a path, not a glob — see GUARDED_PATHS). This pack's own files are here by
+# default: they ship in English into projects of any language.
+#
+# It is a switch like any other, so the run log counts what it took out on every
+# iteration: widening this to `.` would turn the gate off, and it would say so.
+# Several of them, the way GUARDED_PATHS above is written:
+#
+#   LANG_EXEMPT_PATHS='.claude
+#   vendor/upstream docs'
+LANG_EXEMPT_PATHS="${LANG_EXEMPT_PATHS-.claude}"
 
 # ── Noise caps ───────────────────────────────────────────────────────────────
 

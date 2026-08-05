@@ -66,6 +66,11 @@ loop_request_stop() {
 # Everything the session gets. It inherits no conversation, so the prompt has
 # to carry the task and say where to find the rest — the session rebuilds its
 # own context by reading the repository.
+#
+# The language rules come from lib/lang.sh rather than being typed here, and that
+# is the shape [17] wanted: the sentence a session is asked to follow and the
+# check that keeps it live in one file, so the prompt cannot go on promising a
+# guarantee the day the check moves. It says "checked" only where it is.
 loop_session_prompt() {
   local ticket="$1"
   cat <<PROMPT
@@ -88,7 +93,7 @@ Read what you need. Nothing was inherited from a previous session.
 ## Rules
 
 - Stay inside the ticket's declared write-surface.
-- Durable prose (docs, comments, commits) is written in ${LANG_ARTIFACT:-en}.
+$(lang_session_rules)
 - Do not change the ticket's status, and do not edit any ticket at all.
   The loop marks them, after the gate. Both are checked, not just asked: the
   tickets are snapshotted before this session starts, any edit is restored from

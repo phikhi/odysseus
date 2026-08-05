@@ -208,6 +208,8 @@ CLAIM=".claude/lib/claim.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
 LENSES_LIB=".claude/lib/lenses.sh"
+# Not `LANG`: that one is the locale every command in this script reads.
+LANGLIB=".claude/lib/lang.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
@@ -1055,7 +1057,7 @@ mutation "24 the zone nothing judged is never named" "$GATE" \
 # third exclusion and a descent. The entries follow the lines rather than the
 # function: DRIFTED here would mean the guarantee is no longer carried anywhere.
 mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
-  's/  if gate_is_bookkeeping "\$file"; then return 0; fi\n  if gate__under_path/  if gate__under_path/' \
+  's/  if gate_is_bookkeeping "\$file"; then return 0; fi\n  if gate_under_path/  if gate_under_path/' \
   test/gate.bats "own bookkeeping"
 
 # The lie in the other direction: naming a path the gate *did* judge. Held by the
@@ -1063,7 +1065,7 @@ mutation "24 the loop's own bookkeeping counts as an unjudged write" "$GATE" \
 # before — so the guarded case had to be a project whose only ignored path is a
 # guarded one, or the refutation would pass on the strength of another path.
 mutation "24 a guarded path is reported as unjudged too" "$GATE" \
-  's/  if gate__under_path "\$\{file%\/\}" "\$guarded"; then return 0; fi\n//' \
+  's/  if gate_under_path "\$\{file%\/\}" "\$guarded"; then return 0; fi\n//' \
   test/gate.bats "guarded path is caught"
 
 mutation "24 the rollback says nothing about what it left behind" "$FAILURES" \
@@ -1204,7 +1206,7 @@ mutation "33 the forcing hands git a pattern instead of a path" "$GATE" \
 # list of globs makes `zone[1]` mean `zone1` on one side of the mechanism and not
 # on the other.
 mutation "33 the guarded paths are read as globs again" "$GATE" \
-  's/^gate__under_path\(\) \{\n  local file="\$1" path/gate__under_path() {\n  gate_in_surface "\$1" "\$2"; return;\n  local file="\$1" path/m' \
+  's/^gate_under_path\(\) \{\n  local file="\$1" path/gate_under_path() {\n  gate_in_surface "\$1" "\$2"; return;\n  local file="\$1" path/m' \
   test/gate.bats "glob character guards itself"
 
 # And the surface, whose list was expanded against the working tree before it was
@@ -1700,6 +1702,150 @@ mutation "36 nothing names what earlier runs left in TMPDIR" "$LOOP" \
 mutation "36 a run beside this one is counted as a leak" "$GATE" \
   's/ -mtime \+0 2>\/dev\/null/ 2>\/dev\/null/' \
   test/gate.bats "left behind in TMPDIR"
+
+# ── [17] languages ───────────────────────────────────────────────────────────
+#
+# The rule "durable prose is written in LANG_ARTIFACT" lived in the session
+# prompt for thirty tickets with nothing keeping it, so almost every entry here
+# names a guarantee that used to be a sentence. Two shapes need care.
+#
+# The refusals — the three in the preflight and the fail-closed in the branch —
+# are ways of *not* passing, and a language gate that refused everything would
+# satisfy every one of them. Each has a twin below that removes the ability to
+# pass and names a green test, the rule [36] wrote down.
+#
+# And one guarantee is an **absence**: no session this loop spawns is told
+# LANG_INTERACT. There is no line to delete, so that mutation *inserts* the key
+# into the prompt and the test that must notice is a refutation.
+
+mutation "17 no branch of the gate looks at the language" "$GATE" \
+  's/    if lang_enabled; then\n      gate__start "\$dir" lang \\\n        lang_check "\$ticket" "\$base" "\$RALPH_GATE_TREE" "\$dir\/lang.zone"\n      names="\$names lang"\n      pids="\$pids \$!"\n    fi\n\n//' \
+  test/lang.bats "another language than LANG_ARTIFACT is red"
+
+mutation "17 the share of the expected language is not compared" "$LANGLIB" \
+  's/    \[ \$\(\(hits \* 100\)\) -lt \$\(\(pct \* total\)\) \] \|\| continue/    [ 1 = 0 ] || continue/' \
+  test/lang.bats "another language than LANG_ARTIFACT is red"
+
+mutation "17 nothing counts as a prose file" "$LANGLIB" \
+  's/  prose="\$\(lang_prose_paths\)"/  prose=""/' \
+  test/lang.bats "another language than LANG_ARTIFACT is red"
+
+# The twin of the three above: a branch that refuses everything satisfies them
+# all, so this one has to make a green iteration go red.
+mutation "17 the language branch refuses every iteration" "$LANGLIB" \
+  's/^lang_check\(\) \{/lang_check() { return 1;/m' \
+  test/lang.bats "quoted foreign terms and all"
+
+# An edit matches the file, not the config — the half a share against a config
+# key cannot express.
+mutation "17 an edit is judged against LANG_ARTIFACT, not against the file" "$LANGLIB" \
+  's/^lang__expected\(\) \{\n  local base="\$1" file="\$2" total hits dominant dhits/lang__expected() {\n  printf "%s artifact\\\\n" "\${LANG_ARTIFACT:-en}"; return 0;\n  local base="\$1" file="\$2" total hits dominant dhits/m' \
+  test/lang.bats "matches the language of the file"
+
+# And where that language is read from. A control whose input the controlled
+# writes is not a control: off the working tree, every file matches itself.
+#
+# The first shape of this entry read `HEAD:$file` and came back VACUOUS, which is
+# the finding rather than a mutation to fix: a session does not commit, so at gate
+# time HEAD carries exactly what the base tree does. What the controlled writes is
+# the *working tree*, and that is the only baseline that is not a baseline.
+mutation "17 the language of a file is read after the session, not before" "$LANGLIB" \
+  's/\$\(git cat-file -p "\$base:\$file" 2>\/dev\/null \| lang_measure/\$(cat "\$file" 2>\/dev\/null | lang_measure/' \
+  test/lang.bats "read from before the session"
+
+# [29] one branch further along: the suite is writing in the working tree while
+# this runs, so reading a file off disk returns a verdict nobody else is judging.
+mutation "17 the branch reads the working tree instead of the tree it judges" "$LANGLIB" \
+  's/\$\(git cat-file -p "\$now:\$file" 2>\/dev\/null \| lang_measure "\$expected"\)/\$(cat "\$file" 2>\/dev\/null | lang_measure "\$expected")/' \
+  test/lang.bats "not what the suite writes beside it"
+
+mutation "17 a file with too little prose is judged anyway" "$LANGLIB" \
+  's/    if \[ "\$\{total:-0\}" -lt "\$min" \]; then\n      undecided=\$\(\(undecided \+ 1\)\)\n      continue\n    fi\n//' \
+  test/lang.bats "too little prose is not judged"
+
+mutation "17 a word two languages claim votes for both" "$LANGLIB" \
+  's/          if \(f\[j\] in claim\) \{ if \(claim\[f\[j\]\] != f\[1\]\) claim\[f\[j\]\] = "" \}\n          else claim\[f\[j\]\] = f\[1\]/          claim[f[j]] = f[1]/' \
+  test/lang.bats "claim votes for neither"
+
+# The exemption, and the count that keeps it from being a silent off switch.
+mutation "17 the pack's own prose is judged against the project's language" "$LANGLIB" \
+  's/    if gate_under_path "\$file" "\$exempt"; then/    if false; then/' \
+  test/lang.bats "own files are exempt"
+
+mutation "17 what the exemption took out is not counted" "$LANGLIB" \
+  's/      skipped=\$\(\(skipped \+ 1\)\)\n//' \
+  test/lang.bats "own files are exempt"
+
+# A name git prints quoted is dropped by the prose glob as well, so removing the
+# count is enough to make it vanish in silence — which is the whole point of
+# counting it ([39]).
+mutation "17 a name nothing can address vanishes in silence" "$LANGLIB" \
+  's/      unaddressable=\$\(\(unaddressable \+ 1\)\)\n//' \
+  test/lang.bats "prints quoted is counted"
+
+mutation "17 the coverage line is never printed" "$GATE" \
+  's/^gate__report_lang\(\) \{/gate__report_lang() { return 0;/m' \
+  test/lang.bats "too little prose is not judged"
+
+mutation "17 a run with the gate off looks like a run that was checked" "$GATE" \
+  's/    gate__log "\$ticket: the language gate is off \(LANG_CHECK=off\): nothing here checked what language this iteration wrote its prose in"\n//' \
+  test/lang.bats "switch the gate off"
+
+# The fail-closed, and it is deliberately not the scope-guard's.
+mutation "17 a tree this branch cannot read is read as having no prose" "$LANGLIB" \
+  's/    printf .the language gate could not read the working tree — refusing to pass it\\n.\n    return 1/    return 0/' \
+  test/lang.bats "cannot read refuses to pass"
+
+# The preflight's three, each the switched-off-by-typo shape.
+mutation "17 a LANG_ARTIFACT with no word list starts the run anyway" "$LANGLIB" \
+  's/  if ! lang_known "\$\{LANG_ARTIFACT:-\}"; then/  if false; then/' \
+  test/lang.bats "no words for is refused"
+
+mutation "17 a LANG_CHECK that is neither on nor off is read as off" "$LANGLIB" \
+  's/  case "\$\{LANG_CHECK:-on\}" in\n    on \| off\) ;;/  case "on" in\n    on | off) ;;/' \
+  test/lang.bats "neither on nor off is refused"
+
+mutation "17 a threshold that is not a fraction is taken as it stands" "$LANGLIB" \
+  's/exit \(t ~ \/\^\(0\(\\\.\[0-9\]\+\)\?\|1\(\\\.0\+\)\?\|\\\.\[0-9\]\+\)\$\/ && t \+ 0 > 0\) \? 0 : 1/exit 0/' \
+  test/lang.bats "not a fraction is refused"
+
+mutation "17 an empty prose list leaves nothing to judge, in silence" "$LANGLIB" \
+  's/  if \[ -z "\$\(lang_prose_paths\)" \]; then/  if false; then/' \
+  test/lang.bats "silently leave nothing to judge"
+
+mutation "17 a floor of zero words divides by zero instead of judging" "$LANGLIB" \
+  's/    .. \| \*\[!0-9\]\* \| 0\)\n      printf .ralph: LANG_CHECK_MIN_HITS/    '"''"' | *[!0-9]*)\n      printf '"'"'ralph: LANG_CHECK_MIN_HITS/' \
+  test/lang.bats "silently leave nothing to judge"
+
+# And their twin: a preflight that refuses everything satisfies all five.
+mutation "17 the preflight refuses every project" "$LANGLIB" \
+  's/^lang_preflight\(\) \{/lang_preflight() { return 1;/m' \
+  test/lang.bats "quoted foreign terms and all"
+
+mutation "17 the preflight is never asked" "$GATE" \
+  's/  lang_preflight \|\| rc=1\n//' \
+  test/lang.bats "no words for is refused"
+
+# The rule handed to the session, and the wiring that hands it over.
+mutation "17 the session is told nothing about the language" "$LANGLIB" \
+  's/^lang_session_rules\(\) \{/lang_session_rules() { return 0;/m' \
+  test/lang.bats "prompt carries LANG_ARTIFACT"
+
+mutation "17 the loop stops asking for the rule" "$LOOP" \
+  's/^\$\(lang_session_rules\)\n//m' \
+  test/lang.bats "prompt carries LANG_ARTIFACT"
+
+# It says "checked" only where it is. A prompt that claims a guarantee nothing
+# keeps is the exact confusion this ticket was opened to remove.
+mutation "17 the prompt claims the rule is checked with the gate off" "$LANGLIB" \
+  's/  lang_enabled \|\| return 0\n  cat <<RULES\n  This one is checked/  cat <<RULES\n  This one is checked/' \
+  test/lang.bats "prompt carries LANG_ARTIFACT"
+
+# The absence. There is no line to remove, so this one puts the key in — and the
+# test that has to notice is a refutation.
+mutation "17 an AFK session is handed LANG_INTERACT" "$LANGLIB" \
+  's/  local artifact="\$\{LANG_ARTIFACT:-en\}"/  local artifact="\${LANG_ARTIFACT:-en} (speaking \${LANG_INTERACT:-en})"/' \
+  test/lang.bats "never told LANG_INTERACT"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
