@@ -463,6 +463,25 @@ pack_run_bg() {
   PACK_BG_PID=$!
 }
 
+# A shell that forks a `sleep` and stays alive, written to the shim state so that
+# a test can run it as the layer *between* a stand-in run and the process a
+# deadline aims at ([36]). Killing it takes the target's parent away without
+# touching the run, which is the only way a test can stage "this number no longer
+# names what I was aimed at": the real cause, a reissued pid, cannot be arranged on
+# demand. Its target's pid lands in `$SHIM_STATE/victim.pid`.
+#
+# Here rather than in one of the two files that use it — the gate's deadline and
+# the session's — because both ask the same thing of it, and a second copy would be
+# a second place for the staging to drift from what it is supposed to stage.
+write_middle_shell() {
+  cat >"$SHIM_STATE/middle.sh" <<'MIDDLE'
+#!/usr/bin/env bash
+sleep 30 &
+printf '%s\n' "$!" >"$RALPH_SHIM_STATE/victim.pid"
+wait
+MIDDLE
+}
+
 # Wait for a file to appear, so a test never races a background process.
 #
 # It counts *tries*, not seconds, and that is fine for what it is for — waiting on

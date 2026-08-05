@@ -74,3 +74,37 @@ teardown() {
   # — its verdicts are the `.rc` files — but the loop reads it as the session's own.
   assert_equal "$(cat "$SHIM_STATE/collected")" "143"
 }
+
+@test "a deadline gives up the moment the shell that armed it is gone" {
+  # The primitive under both deadlines of the pack ([36]). `wait` takes no timeout
+  # on bash 3.2, so a deadline is a process — and a process outlives whoever wanted
+  # it. The gate's watchdog was found writing its marker and walking a process tree
+  # after a `kill -9` on the run, on numbers the system reissues.
+  #
+  # What it watches is a parent link and not a pid, and this test is the reason that
+  # distinction is not academic: the stand-in run below is killed outright, and a
+  # run killed by a parent that never reaps it stays a zombie that answers `kill -0`
+  # exactly like a live process (probed 04/08/2026). Only the link tells the truth,
+  # because nothing can become our parent except init.
+  pack_run_bg '
+    ( rc=0
+      proc_countdown 60 || rc=$?
+      printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/countdown.rc" ) &
+    : >"$RALPH_SHIM_STATE/armed"
+    wait
+  '
+
+  wait_for_file "$SHIM_STATE/armed" 200 || fail "the stand-in run never armed a deadline"
+  kill -9 "$PACK_BG_PID"
+  wait "$PACK_BG_PID" 2>/dev/null || true
+  PACK_BG_PID=""
+
+  # Sixty seconds of deadline against a run that has just been killed: a countdown
+  # that comes back at all comes back because it noticed, not because it finished.
+  wait_for_file "$SHIM_STATE/countdown.rc" 200 ||
+    fail "the deadline was still counting for a run that no longer exists"
+  # 1 and not 0: "I did not serve my time" is what the callers read to mean "do not
+  # fire". A countdown that reported success here would arm the very kill it exists
+  # to withhold.
+  assert_equal "$(cat "$SHIM_STATE/countdown.rc")" "1"
+}

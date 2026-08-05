@@ -1650,6 +1650,57 @@ mutation "32 nothing names the tree rules a crashed session wrote" "$FAILURES" \
   's/  if moved="\$\(gate_moved_tree_rules\)"; then/  if false; then/' \
   test/failures.bats "named before it goes"
 
+# ── [36] a deadline that fires for a run that is gone ────────────────────────
+#
+# Every entry here has a twin that points the other way, and that is the shape of
+# the ticket rather than a habit: two of the three guarantees are ways of *not*
+# firing, so a correction that disarmed the deadline outright would satisfy them
+# both — and leave the suite green with the deadline gone, which is the false green
+# [28] paid for on a fake's sleep.
+
+mutation "36 a deadline fires for a run that is gone" "$GATE" \
+  's/  proc_countdown "\$limit" \|\| return 0\n//' \
+  test/gate.bats "run that armed it is gone"
+
+mutation "36 a countdown serves out a run that is gone" "$PROC" \
+  's/    \[ "\$\(proc_parent_of "\$self"\)" = "\$owner" \] \|\| return 1\n//' \
+  test/proc.bats "shell that armed it is gone"
+
+mutation "36 a deadline fires at a pid that changed hands" "$GATE" \
+  's/    \[ "\$\(proc_parent_of "\$pid"\)" = "\$parent" \] \|\| continue\n//' \
+  test/gate.bats "changed hands"
+
+# The other half of the same line, and the piège the ticket wrote down: a deadline
+# that gives up as soon as there is nothing left to kill loses the *cause*.
+# `gate__aggregate` reads this marker to say "red (timed out)" rather than "red (no
+# verdict)", and a branch that overran is where both are true at once.
+mutation "36 a deadline that fires at nobody loses the cause" "$GATE" \
+  's/  : >"\$marker"\n  for pid in \$aimed; do/  for pid in \$aimed; do/' \
+  test/gate.bats "changed hands"
+
+# And the disarming one. It has to name the test that proves the deadline still
+# *works*, because every other test of the pack is satisfied by a deadline that
+# never fires.
+mutation "36 no deadline ever serves its time" "$PROC" \
+  's/^proc_countdown\(\) \{/proc_countdown() { return 1;/m' \
+  test/gate.bats "run that armed it is there"
+
+mutation "36 the session's grace fires at a pid that changed hands" "$MONITOR" \
+  's/  \[ "\$\(proc_parent_of "\$pid"\)" = "\$parent" \] \|\| return 0\n//' \
+  test/smart-zone.bats "changed hands"
+
+# What the pack leaves outside the repository. The age condition is the entry that
+# would have been vacuous without a fresh directory in the fixture: the run reports
+# before it makes any temporary directory of its own, so with only stale ones
+# staged the count reads the same either way.
+mutation "36 nothing names what earlier runs left in TMPDIR" "$LOOP" \
+  's/  if leftovers="\$\(gate_leftovers\)"; then loop_log "\$leftovers"; fi\n//' \
+  test/gate.bats "left behind in TMPDIR"
+
+mutation "36 a run beside this one is counted as a leak" "$GATE" \
+  's/ -mtime \+0 2>\/dev\/null/ 2>\/dev\/null/' \
+  test/gate.bats "left behind in TMPDIR"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -194,6 +194,13 @@ loop_main() {
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
+  # What the runs before this one left outside the repository. Said here rather
+  # than in a document, for the reason every zone nobody guards is said out loud
+  # ([24]): a human reading the log in the morning sees it instead of having to
+  # remember it exists. Nothing here removes anything — see gate_leftovers.
+  local leftovers
+  if leftovers="$(gate_leftovers)"; then loop_log "$leftovers"; fi
+
   local iteration=0 sterile=0 ticket outfile base pre seen issues tree rc
   local turns cost tokens outcome tracker_written reclaimed rid rdisposition
   local RALPH_IGNORE_PIN='' RALPH_ROLLBACK_FAILED=0

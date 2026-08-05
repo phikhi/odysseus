@@ -1560,3 +1560,148 @@ FAKE
 # stays here is what the gate does with it — see test/loop-happy-path.bats for the
 # stop that lands mid-fan, and "the lens phase has a deadline of its own" in
 # test/lenses.bats for the branch the watchdog takes down.
+
+# ── the deadline fires for its own run, and at its own targets ───────────────
+#
+# Three tests for two halves, and the split is the point ([36]). A fix that made
+# the watchdog careful enough never to fire would leave every assertion of this
+# suite exactly as green as a fix that made it careful enough to fire only when it
+# should — which is the shape of the false green [28] paid for. So: it does not
+# fire once its run is gone, it does not fire at a pid that changed hands, and it
+# still fires when the run is there and a branch overruns.
+
+@test "the gate's deadline does not fire once the run that armed it is gone" {
+  # Probe A of [36], staged. `GATE_TIMEOUT=8`, `TEST_CMD='sleep 45'`, `kill -9` on
+  # the run as soon as the suite was in flight: nine seconds later a process nobody
+  # owned wrote `timed-out` into a directory nobody would ever clean and took down a
+  # process tree. At the shipped default that is half an hour later, and macOS
+  # reissues pids at 99999 — `proc_kill_tree` descends, so it is a signal to a
+  # descendance and not to a process.
+  pack_run_bg '
+    sleep 30 &
+    victim=$!
+    printf "%s\n" "$victim" >"$RALPH_SHIM_STATE/victim.pid"
+    gate__watchdog 2 "$RALPH_SHIM_STATE/timed-out" "$victim" &
+    : >"$RALPH_SHIM_STATE/armed"
+    wait
+  '
+
+  wait_for_file "$SHIM_STATE/armed" 200 || fail "the stand-in run never armed a deadline"
+  local victim
+  victim="$(cat "$SHIM_STATE/victim.pid")"
+
+  kill -9 "$PACK_BG_PID"
+  wait "$PACK_BG_PID" 2>/dev/null || true
+  PACK_BG_PID=""
+
+  # Two and a half times the deadline, so a watchdog that was merely slow is caught
+  # here rather than passing for one that gave up.
+  sleep 5
+
+  refute_file_exists "$SHIM_STATE/timed-out"
+  if ! kill -0 "$victim" 2>/dev/null; then
+    fail "an orphaned deadline took down a process tree on behalf of a run that no longer exists"
+  fi
+  kill -9 "$victim" 2>/dev/null || true
+}
+
+@test "the gate's deadline does not fire at a pid that changed hands" {
+  # The other half of "is this still what I was aimed at". A branch that finishes is
+  # reaped by bash, and a reaped pid is one the system may hand to somebody else
+  # while the run is alive and well — so the run being there is not enough, and
+  # `kill -0` on the target answers yes for the stranger too. What the deadline
+  # compares is the parent the target answered to when it was armed.
+  write_middle_shell
+
+  pack_run_bg '
+    bash "$RALPH_SHIM_STATE/middle.sh" &
+    mid=$!
+    while [ ! -f "$RALPH_SHIM_STATE/victim.pid" ]; do sleep 0.05; done
+    victim="$(cat "$RALPH_SHIM_STATE/victim.pid")"
+    gate__watchdog 3 "$RALPH_SHIM_STATE/timed-out" "$victim" &
+    sleep 1
+    kill -9 "$mid" || true
+    wait "$mid" 2>/dev/null || true
+    wait
+    : >"$RALPH_SHIM_STATE/run-done"
+  '
+
+  # Waited for on the *end of the deadline* and not on its marker, which is a
+  # correction the full `mutate.sh` run had to make: the marker is written before a
+  # single signal is sent, so reading the target's liveness when it appears reads it
+  # in the window where a fired shot has not landed yet. Under load that window is
+  # wide enough that this test stayed green with the check taken out — VACUOUS, and
+  # the test was measuring the machine rather than the pack. The stand-in run's
+  # `wait` returns only once the deadline process is done, so by here a shot would
+  # have been ordered.
+  wait_for_file "$SHIM_STATE/run-done" 600 ||
+    fail "the deadline never came back at all"
+  # The marker still lands, and losing it would cost the cause in the report —
+  # `gate__aggregate` reads this file to say "red (timed out)" rather than "red (no
+  # verdict)".
+  assert_file_exists "$SHIM_STATE/timed-out"
+
+  # Plus the delivery window: an ordered signal takes a moment to land, so aliveness
+  # is asserted over three seconds rather than at one instant.
+  local victim waited=0
+  victim="$(cat "$SHIM_STATE/victim.pid")"
+  while [ "$waited" -lt 30 ]; do
+    kill -0 "$victim" 2>/dev/null ||
+      fail "the deadline fired at a pid that no longer answered to the parent it was aimed through"
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -9 "$victim" 2>/dev/null || true
+}
+
+@test "the gate's deadline still fires while the run that armed it is there" {
+  # And the half that keeps the other two honest. Both checks above are ways of
+  # *not* firing, so a fix that disarmed the deadline outright would satisfy them
+  # both — and every other test of this suite, which is how a delay of a fake
+  # carried the mutation of another ticket ([28]).
+  pack_run_bg '
+    sleep 30 &
+    victim=$!
+    gate__watchdog 1 "$RALPH_SHIM_STATE/timed-out" "$victim" &
+    rc=0
+    wait "$victim" || rc=$?
+    printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/victim.rc"
+  '
+
+  wait_for_file "$SHIM_STATE/victim.rc" 400 ||
+    fail "the deadline never took down the branch it was aimed at"
+  # 143 and not 0: the branch was signalled rather than having reached the end of
+  # its own thirty seconds, which is what an assertion on liveness alone would let
+  # through if this test ever became slow enough.
+  assert_equal "$(cat "$SHIM_STATE/victim.rc")" "143"
+  assert_file_exists "$SHIM_STATE/timed-out"
+}
+
+# ── what the pack leaves outside the repository ──────────────────────────────
+
+@test "a run says what earlier runs left behind in TMPDIR" {
+  # The zone nobody guards, one directory further out ([24], [36]). Both temporary
+  # directories the pack makes are cleaned on every path an iteration can take and
+  # on none of the ways a run is killed, so a night ended with `kill -9` leaves them
+  # for good. Named at the start of a run rather than in a document, and not swept —
+  # the sweep belongs to the installer ([19]), the only part of the pack that lives
+  # outside an iteration.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  mkdir -p "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-gate.rightnow"
+  # Two of the three are older than a day, and the third is the reason the count is
+  # asserted rather than the line: the pack locks one tree and not one machine
+  # ([22]), so a run of another repository may own a fresh `ralph-gate.*` at this
+  # very moment. Without the third directory here, "2" would be a constant — the
+  # line would read the same with the age condition taken out ([32]).
+  touch -t 202001010000 "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun"
+
+  run_loop_own_tmp
+  assert_output_contains "2 temporary director(ies) from earlier runs are still in"
+  # Said, not swept.
+  [ -d "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" ] ||
+    fail "the run removed a leftover it is only supposed to name"
+}

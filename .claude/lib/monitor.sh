@@ -153,13 +153,34 @@ monitor__terminate() {
 # behind, and gives up the moment the session is gone — which is what makes the
 # ordinary case free: `session_spawn` kills this the instant the session is
 # collected, and a TERM that was honoured means that is immediately.
+#
+# Both halves of that sentence moved into `proc_countdown` in [36], where the
+# gate's watchdog answers the same requirement: a deadline may only fire while the
+# shell that armed it is still there to want the kill, and only at a target that
+# still answers to the parent it answered to when the deadline was armed.
+#
+# The gap between the two deadlines was never about care, and writing it down is
+# half of what [36] delivers. This one already gave up on a dead target, which
+# bounded how stale its pid could be to a second; the watchdog checked nothing at
+# all and slept for GATE_TIMEOUT, which is 1800 by default. Same fault, two orders
+# of magnitude apart — and the reason the same fix is worth its lines here is the
+# case this one cannot bound on its own: a run killed while the grace is running
+# leaves this holding a pid for up to SESSION_KILL_GRACE with nobody left to want
+# it dead.
+#
+# What that costs, written as a choice: a session that was sent a TERM in the
+# instant before its run was killed is no longer KILLed thirty seconds later, so it
+# stays alive, orphaned, spending subscription quota — which is exactly what
+# happens at every *other* instant a run is killed, there being no reaper in flight
+# then. The KILL was an accident of timing rather than a promise, and the trade for
+# keeping it would be a signal sent to a process tree on behalf of a run that no
+# longer exists.
 monitor__reaper() {
-  local pid="$1" grace="$2" waited=0
-  while [ "$waited" -lt "$grace" ]; do
-    sleep 1
-    kill -0 "$pid" 2>/dev/null || return 0
-    waited=$((waited + 1))
-  done
+  local pid="$1" grace="$2" parent
+  parent="$(proc_parent_of "$pid")"
+  [ -n "$parent" ] || return 0
+  proc_countdown "$grace" "$pid" || return 0
+  [ "$(proc_parent_of "$pid")" = "$parent" ] || return 0
   proc_kill_tree "$pid" KILL
   return 0
 }

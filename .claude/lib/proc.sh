@@ -21,6 +21,12 @@
 # not "anticipate one" — and [23] is that second caller: a session deadline has to
 # kill a `claude` and the tool processes under it, which is the same walk the
 # gate's deadline does over a hung test suite.
+#
+# The three that follow arrived by the same route in [36], and they answer one
+# question the two above cannot: *is there still anyone who wants this*. `wait`
+# takes no timeout on bash 3.2, so both deadlines of the pack are processes, and a
+# process outlives whoever armed it — the gate's watchdog was found writing its
+# marker and walking a process tree half an hour after a `kill -9` on the run.
 
 # Wait for a child all the way to its exit status, and hand that status back.
 #
@@ -105,5 +111,81 @@ proc_kill_tree() {
     proc_kill_tree "$child" "$signal"
   done
   kill -"$signal" "$pid" 2>/dev/null || true
+  return 0
+}
+
+# The pid of the shell running this, which bash 3.2 has no variable for — there is
+# no BASHPID before 4.0, `$$` is not updated in a subshell, and `$PPID` is not
+# either. Probed on 3.2.57 inside a `( … ) &` of a run: `$$` answers the run and
+# `$PPID` answers the terminal that started the run, so from a deadline process
+# neither of them means "me" and the one that looks right is the wrong one.
+#
+# What does work costs a fork: a command substitution forks from the current shell,
+# so the `$PPID` reported by the `sh` it execs is this shell.
+#
+# It answers through PROC_SELF instead of stdout, and that is load-bearing rather
+# than a style choice: `self="$(proc_self)"` would fork a subshell of its own and
+# report that subshell's pid instead of the caller's.
+proc_self() {
+  PROC_SELF="$(exec sh -c 'echo $PPID')"
+  return 0
+}
+
+# The parent a pid answers to right now; empty when there is no such process.
+#
+# This is the identity check the pack did not have. A pid is not an identity — the
+# system is free to hand the number to somebody else as soon as the process behind
+# it is reaped, and on macOS it wraps at 99999, which half an hour of a working
+# machine goes through. A *parent link* is one, because a process is never
+# reparented to anything except init: "still the same parent as when I was armed"
+# cannot be inherited along with the number.
+#
+# It also answers where `kill -0` lies. A run killed by a parent that never reaps
+# it stays a zombie, and a zombie answers `kill -0` exactly like a live process —
+# probed on 04/08/2026 with a parent that never waits: `kill -0` succeeds, `ps`
+# says state Z. A deadline that decided by the number alone would have gone on
+# believing in a run that had been dead for minutes.
+proc_parent_of() {
+  ps -o ppid= -p "$1" 2>/dev/null | awk 'NR == 1 { print $1 + 0 }'
+  return 0
+}
+
+# Serve a deadline: sleep up to <seconds>, and give up the moment there is nobody
+# left to serve it for. Returns 0 only if the whole time was served.
+#
+# In one-second steps, which the two deadlines had already settled on for their own
+# reason — killing a deadline that slept the whole span in one call would leave the
+# `sleep` behind as an orphan for the rest of it. What is new is what happens
+# between two steps.
+#
+# *Who* it serves is discovered rather than passed, and that is the point. The
+# shell that forks a deadline is the shell that wants the kill, so the deadline
+# watches its own parent link: unchanged means that shell is still there, and
+# changed can only mean it is gone, since nothing else can become our parent. The
+# alternative — being handed the run's pid and checking `kill -0` on it — fails in
+# both directions here: it lies on a zombie run (above), and it names the wrong
+# shell for a deadline armed from a gate branch, where `$$` is the run and the
+# process that spawned the session is the branch.
+#
+# The extra pids are the caller's own targets, checked with `kill -0` because
+# giving up early on them is an optimisation and not a guarantee — the guarantee is
+# the parent link above, and what the caller does before firing is its business.
+proc_countdown() {
+  local limit="$1" waited=0 pid self owner
+  shift
+
+  proc_self
+  self="$PROC_SELF"
+  owner="$(proc_parent_of "$self")"
+  [ -n "$owner" ] || return 1
+
+  while [ "$waited" -lt "$limit" ]; do
+    sleep 1
+    [ "$(proc_parent_of "$self")" = "$owner" ] || return 1
+    for pid in "$@"; do
+      kill -0 "$pid" 2>/dev/null || return 1
+    done
+    waited=$((waited + 1))
+  done
   return 0
 }

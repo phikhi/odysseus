@@ -460,6 +460,50 @@ FAKE
   refute_file_exists "$SHIM_STATE/session-ran-to-the-end"
 }
 
+@test "the session deadline's KILL does not fire at a pid that changed hands" {
+  # The session's half of [36]. This deadline already gave up on a target that was
+  # gone, which bounded how stale its pid could be to a second — the gate's watchdog
+  # checked nothing and slept for GATE_TIMEOUT, and that is the whole of the gap
+  # between the two. What both needed is the check that a pid alone cannot give: a
+  # target the system may have reissued answers `kill -0` for its new owner, and
+  # only the parent link says whether it is still the one this deadline was aimed
+  # at.
+  #
+  # The other half — a deadline that gives up when the shell that armed it is gone —
+  # lives in `proc_countdown` and is covered once, in test/proc.bats, since both
+  # deadlines now serve their time through it.
+  write_middle_shell
+
+  pack_run_bg '
+    bash "$RALPH_SHIM_STATE/middle.sh" &
+    mid=$!
+    while [ ! -f "$RALPH_SHIM_STATE/victim.pid" ]; do sleep 0.05; done
+    victim="$(cat "$RALPH_SHIM_STATE/victim.pid")"
+    ( monitor__reaper "$victim" 3
+      : >"$RALPH_SHIM_STATE/reaper-returned" ) &
+    sleep 1
+    kill -9 "$mid" || true
+    wait "$mid" 2>/dev/null || true
+    wait
+  '
+
+  wait_for_file "$SHIM_STATE/reaper-returned" 600 ||
+    fail "the reaper never came back: nothing bounds the grace"
+  # Over three seconds and not at one instant. The witness above says the reaper is
+  # done, so a KILL would already have been ordered by here — but ordering a signal
+  # and the target being gone are not the same moment, and the gate's twin of this
+  # test came back VACUOUS on a loaded machine for exactly that reason.
+  local victim waited=0
+  victim="$(cat "$SHIM_STATE/victim.pid")"
+  while [ "$waited" -lt 30 ]; do
+    kill -0 "$victim" 2>/dev/null ||
+      fail "the grace's KILL landed on a pid that no longer answered to the parent it was aimed through"
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -9 "$victim" 2>/dev/null || true
+}
+
 @test "a deadline of zero, or of nonsense, is no deadline at all" {
   # The reading GATE_TIMEOUT gives a missing deadline, and the one that lets a
   # project say "off" without inventing a huge number.
