@@ -574,12 +574,12 @@ gate_writing_suite() {
     printf "judged=%s\n" "$RALPH_GATE_TREE"'
   assert_success
 
-  # Three branches, each handed the same non-empty tree, and it is the tree the
-  # gate went on to report to the loop.
+  # Four branches since [17] added the language gate, each handed the same
+  # non-empty tree, and it is the tree the gate went on to report to the loop.
   local judged
   judged="${output#judged=}"
   [ -n "$judged" ] || fail "the gate judged no tree at all"
-  assert_equal "$(awk 'END { print NR }' "$SHIM_STATE/seen-by-branch")" "3"
+  assert_equal "$(awk 'END { print NR }' "$SHIM_STATE/seen-by-branch")" "4"
   assert_equal "$(sort -u "$SHIM_STATE/seen-by-branch")" "$judged"
 }
 

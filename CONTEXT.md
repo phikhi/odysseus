@@ -315,9 +315,9 @@ La langue dont l'agent parle à l'humain (grilling, rapports, boucle humaine). N
 _À éviter_ : langue par défaut, locale.
 
 **Langue des artefacts (`LANG_ARTIFACT`)**:
-La langue de toute prose durable que l'agent rédige dans le projet (docs, tracker, commentaires, commits, PR). Découplée de `LANG_INTERACT`. Ne couvre ni le code/identifiants (Standards) ni les fichiers du pack. **Vérifiée par un gate de langue objectif** (détection post-hoc au gate, lentille du registre [23]) — pas seulement par consigne.
+La langue de toute prose durable que l'agent rédige dans le projet (docs, commentaires, PR). Découplée de `LANG_INTERACT`. Ne couvre ni le code/identifiants (Standards) ni les fichiers du pack. **Vérifiée par le gate de langue** ([17]) — pas seulement par consigne, et la consigne du prompt ne dit « c'est vérifié » que là où elle l'est.
 _À éviter_ : langue du projet (ambigu), langue de doc.
 
 **Gate de langue**:
-Le check objectif post-hoc (patron scope-guard) qui vérifie que la prose rédigée d'une itération est bien dans la langue attendue du fichier (`LANG_ARTIFACT` pour un nouvel artefact, langue existante pour une édition). Tolérant (langue dominante, termes étrangers cités OK) ; échec → retry.
-_À éviter_ : lint de langue, consigne (elle, est molle).
+La quatrième branche de la phase objective ([17]) : elle relit, dans l'arbre que le gate juge, les **fichiers de prose** que l'itération a écrits et vérifie qu'ils sont dans la langue attendue — `LANG_ARTIFACT` pour un fichier neuf, **la langue du fichier avant la session** pour une édition. Tolérant : ce qui est comparé au seuil est la *part* des mots reconnus qui appartiennent à la langue attendue, donc un terme étranger cité ou une ligne de commande ne coûte rien, et un fichier trop court pour trancher n'est pas jugé mais **compté** dans le journal. Échec → retry. Ce qu'il ne juge pas est dit à chaque itération plutôt qu'une fois ici : ce que l'exemption a retiré, et le fait qu'il soit éteint.
+_À éviter_ : lint de langue (il ne parse rien), consigne (elle, est molle), lentille (un modèle n'est pas un check).
