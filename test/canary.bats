@@ -75,6 +75,16 @@ for target in $surface; do
   printf 'written by the session\n' >"$target"
 done
 
+# And a build artefact in the zone the project keeps out of git, which is what
+# any real session does — a compiler, a bundler, a test run. It is written here,
+# inside the iteration's own worktree, and not seeded in the tree the run was
+# started in: since [13] the two are different places, and only what an iteration
+# puts in the zone is a zone this iteration's gate can name. Without it, the
+# canary's three assertions about the unjudged zone were reading a run that had
+# nothing ignored to look at, which is the shape of a false green.
+mkdir -p .cache
+printf 'built by the session\n' >".cache/build-$n"
+
 echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
 
 case "$n" in

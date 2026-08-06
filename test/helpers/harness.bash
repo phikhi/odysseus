@@ -17,6 +17,8 @@
 #   harness_teardown               remove it (RALPH_KEEP_TMP=1 keeps it)
 #   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
 #   stamp_claim ID [OWNER] [ISO]   claim a ticket behind the pack's back
+#   $RALPH_SHIM_STATE/tracker-dir  (read by a fake) the real tracker's path
+#   $RALPH_SHIM_STATE/project-dir  (read by a fake) the tree the run started in
 #   set_config KEY VALUE           override a config key in ralph.config.sh
 #   config_default KEY             what the shipped example gives that key
 #   run_loop [args ...]            run the real loop.sh through `run`
@@ -86,6 +88,20 @@ harness_setup() {
 
   cp -R "$template/project" "$PROJECT_DIR"
   harness__install_shims
+
+  # Where the *real* tracker is, for a fake that means to write it.
+  #
+  # Since [13] a session's working directory is a throwaway worktree, so
+  # `.scratch/<feature>/issues/…` written relative to it lands in a copy nobody
+  # reads and nothing restores — a scenario staging "a session edits the tracker"
+  # would then assert against a guarantee it had not exercised. Four of them did.
+  # A determined session can find the tree the run was started in (`git worktree
+  # list` answers it); this file is how a fake does the same thing in one line.
+  printf '%s\n' "$TRACKER_DIR" >"$SHIM_STATE/tracker-dir"
+  # And the tree the run was started in, for the same reason: a fake that means
+  # to reach the run's own lock, index or git directory is reaching for the main
+  # tree, not for the worktree it happens to be standing in.
+  printf '%s\n' "$PROJECT_DIR" >"$SHIM_STATE/project-dir"
 
   if [ "$RALPH_TEST_FEATURE" != "$RALPH_TEMPLATE_FEATURE" ]; then
     mkdir -p "$TRACKER_DIR"

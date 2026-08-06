@@ -36,7 +36,73 @@ tracker__dispatch() {
     printf 'tracker: backend "%s" does not implement %s\n' "$backend" "$op" >&2
     return 3
   fi
+  case "$op" in
+    frontier | ids | read_ticket | field) ;;
+    *) tracker__note_write "${1:-}" ;;
+  esac
   "$fn" "$@"
+}
+
+# ── what the loop itself wrote, and when ─────────────────────────────────────
+#
+# The register [13] needed, and it is here rather than in the loop because this is
+# the one place every tracker write goes through — a second list kept beside the
+# call sites would be the [25] defect again, wrong the first time somebody adds an
+# operation.
+#
+# What it is for. `failures_protect_tracker` ([21]) compares two tree objects of
+# the whole tickets directory around one session and restores whatever moved. With
+# one iteration in flight that is exactly "what the session wrote"; with two, the
+# loop *legitimately* writes in `issues/` inside another iteration's window — a
+# sibling's claim, its retry counter, its marking — and the first iteration to come
+# back would restore them. Probed while delivering [13], and it is not theoretical:
+# two disjoint tickets ground in parallel came out with one resolved and the other
+# stuck `claimed`, its own marking undone by its neighbour's guard.
+#
+# So the guard is told which paths are **not the session's doing**, by id. It is
+# the same pattern as `gate_is_bookkeeping` — one definition of "this is the loop's
+# own work", read by the control that would otherwise judge it — applied to time
+# rather than to path.
+#
+# A file and not a variable, because the writers are different processes: the
+# pilot claims, an iteration marks, and each is a shell of its own. It lives in
+# `$TMPDIR` for the reason the ignore pin does ([30]): out of the tree, so no
+# write-surface reaches it and no `git clean` takes it. One `printf` of one short
+# line under `>>` is a single append and needs no lock.
+#
+# Everything but the four read operations counts as a write, derived from the list
+# rather than from the operations that happen to write today: an adapter that grows
+# an operation must not be able to slip past this by being forgotten ([31] — read
+# the list against its criterion, not against the cases that prompted it).
+tracker__note_write() {
+  local id="$1"
+  [ -n "$id" ] || return 0
+  [ -n "${RALPH_TRACKER_LOG:-}" ] || return 0
+  printf '%s\n' "$id" >>"$RALPH_TRACKER_LOG" 2>/dev/null || true
+  return 0
+}
+
+# Where the register stands now. An iteration takes this *before* it snapshots the
+# tickets, so anything appended between the two is excluded rather than missed:
+# over-excluding is a ticket the guard leaves alone, under-excluding is a
+# sibling's claim destroyed.
+tracker_write_mark() {
+  [ -n "${RALPH_TRACKER_LOG:-}" ] && [ -f "$RALPH_TRACKER_LOG" ] || {
+    printf '0\n'
+    return 0
+  }
+  awk 'END { print NR + 0 }' "$RALPH_TRACKER_LOG"
+}
+
+# The ids the loop wrote since that mark, space-fenced so a `case` can ask whether
+# one is in it.
+tracker_writes_since() {
+  local mark="${1:-0}"
+  [ -n "${RALPH_TRACKER_LOG:-}" ] && [ -f "$RALPH_TRACKER_LOG" ] || {
+    printf ' \n'
+    return 0
+  }
+  printf ' %s\n' "$(awk -v m="$mark" 'NR > m { printf "%s ", $0 }' "$RALPH_TRACKER_LOG")"
 }
 
 tracker_frontier() { tracker__dispatch frontier "$@"; }

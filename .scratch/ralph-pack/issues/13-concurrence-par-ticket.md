@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/concurrency.sh`, `test/concurrency.bats`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Chaque itération construit / teste / roll-back dans un worktree git isolé.
-- [ ] Deux tickets à write-surfaces **disjointes** s'exécutent en parallèle ; des write-surfaces qui se chevauchent (ou inconnues) sont **séquencées** (fail-safe) — mécanisme unifié avec le scope-guard d'[05].
-- [ ] Le parallélisme est borné par `MAX_PARALLEL` et throttlé par le budget agrégé ; fallback `=1` si le test est partagé.
-- [ ] L'intégration est **sérialisée** : les worktrees gatés sont repliés un-à-un sur la branche principale (couvre l'index LEARNINGS).
-- [ ] Le verrou de run est conservé (1 run pilote, N itérations).
+- [x] Chaque itération construit / teste / roll-back dans un worktree git isolé.
+- [x] Deux tickets à write-surfaces **disjointes** s'exécutent en parallèle ; des write-surfaces qui se chevauchent (ou inconnues) sont **séquencées** (fail-safe) — mécanisme unifié avec le scope-guard d'[05].
+- [x] Le parallélisme est borné par `MAX_PARALLEL` et throttlé par le budget agrégé ; fallback `=1` si le test est partagé.
+- [x] L'intégration est **sérialisée** : les worktrees gatés sont repliés un-à-un sur la branche principale (couvre l'index LEARNINGS).
+- [x] Le verrou de run est conservé (1 run pilote, N itérations).
 
 ## Comments
 
@@ -72,3 +72,63 @@
 - **Contrainte posée par [27], livré le 03/08/2026 : une écriture de plus dans le tracker partagé, et elle n'est pas atomique.** La quarantaine appelle `tracker_renumber` sur ce qu'une session a ajouté, et le backend local y fait un « lis le répertoire, choisis le premier numéro libre, renomme » sans garde. Deux itérations concurrentes qui quarantainent chacune un intrus au même moment peuvent viser le même numéro : la vérification `tracker_local__number_taken` réduit la fenêtre, elle ne la ferme pas — c'est exactement le motif que `tracker_local_claim` a déjà eu à régler, et il l'a fait par `state_guard_take`. À trancher ici : garde partagée sur la renumérotation, ou renumérotation sous le verrou du tracker. Et le rappel qui va avec, parce qu'il vaut pour tout ce ticket : le répertoire de tickets est commun à tous les worktrees liés, donc l'isolation par worktree ne referme rien de cette course.
 
 - **Note de [17], livré le 05/08/2026 : rien de bloquant, une seule chose à savoir.** Le gate a une quatrième branche objective (`lang`), démarrée comme les trois autres par `gate__start` et jugée sur `RALPH_GATE_TREE`. Elle ne lit que des objets git (`git cat-file -p "$tree:$path"`) et jamais l'arbre de travail, donc elle est indifférente à l'isolation que ce ticket apporte — c'est même la propriété qu'il faut préserver en déplaçant le fan dans un worktree : un `cat "$file"` y répondrait sur le mauvais arbre sans que rien ne rougisse.
+
+## Livré le 06/08/2026
+
+### Ce qui a été construit
+
+`loop_main` est devenu un **pilote** : il tient les verrous, balaye les claims, interroge le budget, choisit un ticket, prend le témoin d'ignore, claime, crée un worktree, et **forke** `loop__iterate` — tout ce qui va du claim au marquage. Le pilote ne juge rien et ne marque rien.
+
+- `.claude/lib/concurrency.sh` (nouveau) : le préflight, le plafond de slots, la disjonction, le cycle de vie d'un worktree, le provisionnement, et le repli sérialisé.
+- `.claude/loop.sh` : pilote + `loop__iterate` + `loop__reap` / `loop__finish` / `loop__start` / `loop__next_ticket`.
+- `.claude/lib/tracker.sh` : le registre des écritures du pack dans `issues/`.
+- `.claude/lib/claim.sh` : le balayage épargne les ids que ce run tient.
+- `.claude/lib/budget.sh` : `RALPH_BUDGET_HEADROOM`.
+- `.claude/lib/failures.sh`, `.claude/lib/gate.sh` : deux corrections d'arbre (plus bas).
+- `.claude/ralph.config.sh.example` : `WORKTREE_PROVISION`, et `MAX_PARALLEL` documenté comme un échange.
+- `test/concurrency.bats` (18 tests), `test/mutate.sh` (+30 entrées, 22 ré-ancrées).
+
+### Décisions prises, écrites plutôt que déduites
+
+1. **Chaque itération a un worktree, `MAX_PARALLEL=1` compris.** [34] demandait de trancher. Un seul chemin de code, pas deux : le second serait celui que personne ne fait tourner. Et [24] comme [29] désignent l'arbre jetable comme ce qui referme leur zone — ne le donner qu'au-dessus de 1 aurait voulu dire que l'installation livrée ne l'a jamais.
+2. **`RALPH_ROLLBACK_FAILED` garde son arrêt de run** ([34](b) demandait la décision). L'isolation referme bien le blanchiment — l'arbre est détruit — mais un rollback échoue pour des raisons qui ne sont pas locales à un arbre (`$TMPDIR` balayé, témoin détruit, snapshot qui refuse), et le frère d'à côté va toutes les rencontrer. L'arrêt draine les itérations en vol au lieu de sortir.
+3. **Le claim reste dans le pilote, avec `pid:$$`,** et le balayage est exempté **par id** via une liste en mémoire du pilote. Pas par `pid:$$` : un pid n'est pas une identité, et un claim laissé par un run mort sous un numéro qui nous a été réattribué se lirait comme le nôtre pour toujours — le backstop qui existe pour ça aurait été éteint par le correctif ([12].1 et [12].2 réglés par un seul mécanisme, ce que le ticket annonçait comme bon signe).
+4. **Le verrou d'arbre du pilote reste sur l'arbre principal**, et les worktrees d'itération n'en prennent pas. Ce qui les protège n'est pas un verrou mais le fait que personne n'en connaît le nom (`mktemp -d`). Un humain qui lance un `loop.sh` à la main dans l'arbre principal est toujours refusé ; dans un worktree d'itération, non — c'est la seconde des deux options du ticket, choisie parce que la vraie contention est la branche et qu'elle est gardée par un CAS.
+5. **La troisième voie de [21] est celle qui a été prise** : un registre des chemins de `issues/` que la boucle a elle-même écrits, exclu du delta de `failures_protect_tracker`. Il vit dans `$TMPDIR` (les écrivains sont des process différents) et il est alimenté depuis `tracker__dispatch`, seul endroit par où passent toutes les écritures.
+6. **`WORKTREE_PROVISION` copie, ne lie jamais.** Un lien symbolique remettrait les écritures d'une itération dans l'arbre principal — partagé, non jugé, non défait — c'est-à-dire exactement l'isolation qu'on paie.
+7. **L'étranglement budget est un débit, pas un prix.** [08] écrit que ce pack ne sait pas tarifer une itération ; rien ici ne convertit une marge en nombre d'itérations. Quand rien n'a été mesuré, le plafond tient et le run le dit une fois.
+8. **Le fan reste dans `loop.sh`.** `test/layering.bats` refuse qu'un lib appelle la boucle, et le corps d'itération *est* la boucle. `concurrency.sh` porte les primitives de politique, `loop.sh` la boucle qui s'en sert.
+
+### Deux défauts trouvés en livrant, tous deux par la suite
+
+- **Un faux livré, exactement de la famille que [35] refuse.** `failures_make_durable` échouait avec un `|| true` hérité de [07], dont le commentaire disait « le travail est dans l'arbre de toute façon ». C'était vrai dans l'arbre partagé et faux dans un arbre qu'on va détruire : un `main.lock` oublié par un git crashé aurait marqué **toute la frontière** `resolved` avec rien derrière, et rapporté `exit 0`. Le gate vert dont le travail n'atteint pas la branche est maintenant `not-integrated` : le ticket revient sans consommer de retry (rien de lui n'était faux) et le run s'arrête. `test/failures.bats "a commit git refuses stops the run rather than resolving nothing"` porte la garantie retournée.
+- **[21] et la concurrence étaient bien incompatibles**, comme le ticket l'annonçait, et le symptôme est arrivé au premier test parallèle : deux tickets disjoints, l'un `resolved`, l'autre coincé `claimed` — son propre marquage défait par le garde de son voisin. Refermé par la décision 5.
+
+### Sondes du 06/08/2026
+
+- `git rev-parse --git-dir` dans un worktree lié rend le répertoire privé ; `--git-common-dir` rend le commun. **Et `info/exclude` n'est lu que depuis le commun** : `gate__ignore_exclude_path` visait le mauvais fichier, donc le témoin de [30] n'aurait épinglé aucun exclude local et le snapshot serait reparti à travers ce qu'une session y écrit. Corrigé, avec sa mutation.
+- Deux worktrees détachés sur un même commit : acceptés. `update-ref <new> <old>` refuse quand la tip a bougé (CAS vérifié dans les deux sens). `worktree remove` refuse un arbre sale sans `--force`.
+- La suite a montré la seconde correction d'arbre : `gate__sealed_config` comparait `RALPH_CONFIG` au `git rev-parse --show-toplevel`, qui dans un worktree n'est pas l'arbre où le config vit — **le scellement de la configuration ne matchait plus rien, à chaque itération**. Résolu contre `ralph_project_root`, en `pwd -P` des deux côtés.
+- Un sous-shell `( … ) &` de bash 3.2 **ne déclenche pas** le trap EXIT hérité (sondé) : les verrous du pilote survivent donc à chaque itération. C'est ce qui rend le fork sûr, et ça n'appartient à aucune ligne du pack — garantie empruntée au shell, sondée et nommée, comme [28] l'a écrit pour SIGINT.
+
+### Ce qui reste ouvert, et à qui
+
+- **`MAX_PARALLEL > 1` ouvre une exposition qui n'existait pas** : une session vivante tourne pendant le gate d'une *autre* itération, donc tout ce que ce gate écrit dans `$TMPDIR` (les `.rc` de verdict, le marqueur `timed-out`, le témoin, le slot de résultat) est à portée d'elle. Ce n'est pas refermable ici — même famille que « ce qu'une session écrit hors du dépôt » — et c'est écrit dans le tableau. Deux choses bornent le pire : le ticket est **marqué par le process qui l'a mesuré**, et le canal de résultat ne porte que de la comptabilité. `MAX_PARALLEL=1` est la valeur livrée et rien de tout ça n'est ouvert à cette valeur.
+- **Le repli rejoué n'est pas retesté.** Deux itérations à surfaces disjointes peuvent être vertes chacune et leur combinaison n'être testée par personne. Pas de correctif borné ; ce qui le borne est la disjonction plus la suite de l'itération suivante, qui tourne sur l'arbre combiné.
+- **Le résidu du registre de [21]** : le pack écrit le ticket d'un frère pendant la fenêtre d'une itération, donc si *cette* session édite aussi ce ticket-là, son édition n'est pas défaite. Le ticket de l'itération elle-même est toujours protégé (le pack ne l'écrit pas pendant sa fenêtre), et un ticket qu'aucune itération ne tient l'est aussi. Ce qui reste est « une session édite le ticket qu'un frère est en train de broyer », borné par le fait que le frère le marque en dernier.
+- **La course sur `.git/info/exclude` et `core.excludesFile`** est élargie, pas créée : la remise a trois appelants depuis [32] et le répertoire git est commun. Aucun verrou dessus.
+- **`.git/info/attributes`** reste le troisième source de [37] — inchangé.
+- **Le balayage des worktrees laissés par un run tué** appartient à [19] : `concurrency_leftovers` les compte au démarrage, `gate_leftovers` compte leurs répertoires temporaires, rien ne les enlève.
+
+### Contraintes créées pour d'autres tickets
+
+- **[19]** hérite de trois choses : le balayage des worktrees enregistrés (`git worktree prune`) et des `ralph-worktree.*` / `ralph-slot.*` dans `$TMPDIR` ; le fait que `WORKTREE_PROVISION` est une clé qu'un installeur doit **demander** à un projet qui a un `.env` ou un `node_modules`, sans quoi son premier gate est rouge pour une raison qui n'a rien à voir avec le ticket ; et la confirmation forcée d'un `MAX_PARALLEL > 1`, qui est un échange écrit dans `docs/frontiere-de-confiance.md`.
+- **[10]** : le reçu d'audit doit pouvoir dire *où* une itération a tourné (le worktree), et ce que le pilote y a provisionné — c'est la zone que personne ne juge, et elle est maintenant nommée par itération dans `run.log`.
+- **[09]** : le successeur one-shot est armé par le pilote, pas par une itération. Le pilote draine avant de sortir, donc l'instant d'armement est après la dernière itération en vol.
+- **[16]** : la boucle humaine tourne dans l'arbre principal, qui n'est plus l'arbre d'aucune itération. Deux conséquences : elle peut tourner pendant un run AFK sans se marcher dessus côté arbre (le verrou d'arbre du pilote l'en empêche quand même, et c'est voulu), et ce qu'un humain a de non commité dans l'arbre principal n'est plus jamais jugé ni rollbacké par la boucle AFK.
+- **[06]** : `gate__contain_lens_writes` reste en place et n'est plus la seule chose qui empêche une écriture de lentille d'entrer dans le `base` de l'itération suivante — le worktree jetable le fait par construction. La phase et `--tools` restent nécessaires pour les deux raisons que le ticket écrit ; ce qui a changé est que le confinement n'est plus le dernier rempart.
+- **[11] / [15] / [18]** : tout ce qui ajoute une écriture dans `issues/` doit passer par `tracker__dispatch`, sans quoi le registre de la décision 5 ne la voit pas et un frère la défait.
+
+### Outil ajouté
+
+`bash test/mutate.sh -n` applique chaque édition et la restaure **sans lancer la suite** : DRIFTED et BROKEN en secondes au lieu de trois heures. Il ne dit rien de VACUOUS et ne doit jamais être rapporté comme un vert. Il existe parce que ce ticket a fait bouger 22 ancres, et que trouver ça en trois heures rend la chose honnête plus chère que la chose commode.

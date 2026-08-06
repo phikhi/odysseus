@@ -395,7 +395,7 @@ budget_wait_for_exit() {
   use_tickets 01-alpha
   set_config STERILE_K 1
   script_refused_session blocked five_hour "$(budget_soon 1)" \
-    'printf "rogue/\n" >>.git/info/exclude; mkdir -p rogue && printf "backdoor\n" >rogue/backdoor'
+    'printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"; mkdir -p rogue && printf "backdoor\n" >rogue/backdoor'
 
   run_loop
   assert_failure 4

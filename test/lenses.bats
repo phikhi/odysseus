@@ -166,7 +166,8 @@ case "$prompt" in
     ;;
   *)
     mkdir -p src/auth && printf 'written\n' >src/auth/token.txt
-    perl -pi -e 's/^\*\*Tags:\*\*.*$//' .scratch/demo/issues/01-tagged.md
+    perl -pi -e 's/^\*\*Tags:\*\*.*$//' \
+      "$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-tagged.md"
     ;;
 esac
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}\n'
@@ -664,7 +665,14 @@ SETTINGS
   # And the artefact really is still there — the honest half of the refusal. The
   # containment refuses before restoring, because a restore it cannot verify is
   # exactly what the branch above declines to claim.
-  assert_file_exists "$PROJECT_DIR/rogue/lens-artifact.txt"
+  # In the iteration's worktree, which is where the lens wrote it and where the
+  # restore did not reach: since [13] that tree is thrown away, so what a test can
+  # still assert from outside is that the refusal happened and that nothing of it
+  # was committed. Both halves of the honest refusal survive; only the artefact's
+  # afterlife does, and it was never the guarantee.
+  refute_file_exists "$PROJECT_DIR/rogue/lens-artifact.txt"
+  run git -C "$PROJECT_DIR" log --format='%s'
+  refute_output_contains "01-plain: iteration delivered"
 }
 
 @test "a gate whose lenses wrote nothing says nothing about it" {
