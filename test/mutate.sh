@@ -598,7 +598,7 @@ mutation "07 the durable commit is a write, not a compare-and-swap" "$FAILURES" 
   test/failures.bats "never overwrites a HEAD"
 
 mutation "07 a session's own tickets reach the frontier" "$LOOP" \
-  's/  failures_quarantine_strays "\$ticket" "\$seen" \|\| true\n//' \
+  's/  failures_quarantine_strays "\$ticket" "\$seen" "\$mark" \|\| true\n//' \
   test/failures.bats "own tickets"
 
 # The escalated id is `$final` and not `$stray` since [27]: what a session adds
@@ -610,7 +610,7 @@ mutation "07 a quarantined ticket is only logged, not taken off the frontier" "$
   test/failures.bats "own tickets"
 
 mutation "07 a plan is read even from a session that wrote the tracker" "$FAILURES" \
-  's/  if ! failures_quarantine_strays "\$ticket" "\$seen"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  's/  if ! failures_quarantine_strays "\$ticket" "\$seen" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
   test/failures.bats "whole plan refused"
 
 # Turned round by [13], and the label with it. [07] wrote "a git that refuses the
@@ -707,7 +707,7 @@ mutation "21 the tracker the session staged stays staged" "$FAILURES" \
   test/failures.bats "stay staged"
 
 mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" \
-  's/  if ! failures_protect_tracker "\$ticket" "\$issues"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  's/  if ! failures_protect_tracker "\$ticket" "\$issues" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
   test/failures.bats "edits the tracker has its whole plan"
 
 mutation "21 a session's own commit survives its green gate" "$FAILURES" \
@@ -2147,8 +2147,12 @@ mutation "13 the sweep is not told what is in flight" "$LOOP" \
   's/claim_reclaim_stale "\$\(loop__inflight_ids\)"/claim_reclaim_stale/' \
   test/concurrency.bats "does not reclaim a claim this run is holding"
 
+# The assignment moved into the shared reader when [42] gave the same definition
+# to the quarantine, so the anchor carries the line *after* it: the same
+# assignment now appears in both guards, and an anchor matching both would edit
+# the first and report VACUOUS about a healthy test.
 mutation "13 the tracker guard does not know what the loop wrote" "$FAILURES" \
-  's/  \[ -z "\$mark" \] \|\| ours="\$\(tracker_writes_since "\$mark"\)"\n//' \
+  's/  ours="\$\(failures__register_since "\$mark"\)"\n  idx=/  ours=" "\n  idx=/' \
   test/failures.bats "the loop wrote itself is left alone"
 
 # Both entries name the lib-level test and not the parallel run, and that is a
@@ -2230,6 +2234,37 @@ mutation "13 the sealed config is resolved against the worktree, not the project
 mutation "40 the register is handed to the session in its environment" "$LOOP" \
   's/  RALPH_TRACKER_LOG="\$\(mktemp/  export RALPH_TRACKER_LOG\n  RALPH_TRACKER_LOG="\$(mktemp/' \
   test/failures.bats "switch the guard off"
+
+# ── [42] the two guards over the tracker read that register ──────────────────
+
+# One entry per guard, because that is exactly what went wrong: the register had
+# one producer and one consumer, and each of the two unwired call sites breaks a
+# different scenario. An entry aimed at "the register exists" would have reported
+# `ok` for the state this ticket found.
+#
+# Both are aimed at a **defeated ticket** and never at a log line. The sibling's
+# marking undone is what the run pays for — a ticket delivered, committed, folded,
+# and then put back `claimed` under a pid nobody will release — while the line
+# saying the tracker was edited is a symptom the fix could route around.
+mutation "42 the re-slice hands its guard the register" "$FAILURES" \
+  's/  if ! failures_protect_tracker "\$ticket" "\$issues" "\$mark"; then/  if ! failures_protect_tracker "\$ticket" "\$issues"; then/' \
+  test/concurrency.bats "a re-slice beside a marking"
+
+# Anchored on the line *after* it: the same assignment appears in
+# `failures_protect_tracker`, and an anchor matching both would mutate the first
+# one and report VACUOUS about a test that is fine — the shape this file's header
+# warns about twice.
+mutation "42 the quarantine reads the register" "$FAILURES" \
+  's/  ours="\$\(failures__register_since "\$mark"\)"\n\n  # Renumbered before it is escalated/  ours=" "\n\n  # Renumbered before it is escalated/' \
+  test/concurrency.bats "children of a sibling's re-slice"
+
+# And the half of it that is not a call site: a creation is noted under the id it
+# produced rather than the slug it was handed. Note the slug and every reader is
+# comparing against a name no ticket carries — the guards go on reading a register
+# and go on being wrong, which is the failure mode this ticket is about.
+mutation "42 a creation is noted under the id it produced" "$TRACKER_IFACE" \
+  's/      \[ -z "\$out" \] \|\| printf .%s\\n. "\$out"\n      tracker__note_write "\$out"/      [ -z "\$out" ] || printf "%s\\n" "\$out"\n      tracker__note_write "\${1:-}"/' \
+  test/failures.bats "left alone by the quarantine"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
