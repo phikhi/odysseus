@@ -1219,6 +1219,15 @@ FAKE
   refute_output_contains "--continue"
   refute_output_contains "--resume"
 
+  # And it is not handed the loop's own register of tracker writes ([40]). This is
+  # the spawn a reader forgets when reasoning about that register: `failures_reslice`
+  # starts it from a subshell of the iteration, so it inherits the path with no
+  # export at all, and the export only ever added the name to `claude`'s
+  # environment. A planning session is also the one session whose output is thrown
+  # away wholesale, so an id it appended would outlive everything else about it.
+  run claude_call_env 2
+  refute_output_contains "RALPH_TRACKER_LOG"
+
   # Written where the loop said, which is not inside the repository.
   run cat "$SHIM_STATE/plan-path"
   case "$output" in
@@ -1444,6 +1453,56 @@ FAKE
   # And the work goes back with the attempt, like any other failed iteration.
   refute_file_exists "$PROJECT_DIR/src/alpha.txt"
   assert_file_contains "$(ticket_file 01-alpha)" "edited the tracker itself"
+}
+
+@test "a session cannot switch the guard off by writing the loop's own register" {
+  # The register [13] handed `failures_protect_tracker` is an interrupter: an id in
+  # it means "the loop wrote this file, leave it alone". It was exported, so the
+  # session was told where it lived — one `printf` of its own id and the guard walks
+  # past the ticket the session is about to rewrite ([40]).
+  #
+  # Staged whole rather than at the seam, because the tracker edit is not what
+  # makes this the second false *delivered* of this pack. What the edit buys is: a
+  # write-surface of `*`, so the scope-guard then approves a file the ticket never
+  # declared, and the iteration commits it and folds it onto the branch. An
+  # assertion on the ticket text alone would go green on a fix that left that half
+  # open.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  # The append is conditional on the name being *there*, so the scenario is
+  # byte-for-byte the same in both worlds and the environment is the only variable.
+  # That is what makes the paired witness meaningful: put the export back and this
+  # same fake buys the delivery.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+if [ -n "${RALPH_TRACKER_LOG:-}" ]; then
+  printf '01-alpha\n' >>"$RALPH_TRACKER_LOG"
+fi
+perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
+  "$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md"
+mkdir -p src rogue
+printf 'written\n' >src/alpha.txt
+printf 'written\n' >rogue/backdoor
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  # The guard saw the edit: an id a session wrote into the register does not read
+  # as an id the loop wrote.
+  assert_output_contains "the session edited the tracker"
+  assert_equal "$(ticket_field 01-alpha Write-surface)" '`src/alpha.txt`'
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_output_contains "scope=red"
+
+  # And nothing the widened surface would have bought reached the branch. On HEAD
+  # and not on the working tree: the delivery this closes committed *and* folded,
+  # so a tree-only assertion would have been green while the branch carried it.
+  run git -C "$PROJECT_DIR" ls-tree -r --name-only HEAD
+  refute_output_contains "rogue/backdoor"
+  refute_file_contains "$FEATURE_DIR/run.log" "resolved"
 }
 
 @test "a session cannot resolve a ticket it was not given" {

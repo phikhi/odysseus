@@ -64,11 +64,21 @@ tracker__dispatch() {
 # own work", read by the control that would otherwise judge it — applied to time
 # rather than to path.
 #
-# A file and not a variable, because the writers are different processes: the
-# pilot claims, an iteration marks, and each is a shell of its own. It lives in
-# `$TMPDIR` for the reason the ignore pin does ([30]): out of the tree, so no
-# write-surface reaches it and no `git clean` takes it. One `printf` of one short
-# line under `>>` is a single append and needs no lock.
+# A file and not a variable, because the writers are different shells: the pilot
+# claims, an iteration marks, and a value written in one is not visible in the
+# other. It lives in `$TMPDIR` for the reason the ignore pin does ([30]): out of
+# the tree, so no write-surface reaches it and no `git clean` takes it. One
+# `printf` of one short line under `>>` is a single append and needs no lock.
+#
+# The *name* of that file travels by plain shell inheritance and is never
+# exported, which is the correction [40] made to the sentence above. Both halves
+# are needed and they are not the same half: a file, because these shells cannot
+# see each other's variables; unexported, because every one of them is a
+# descendant of the pilot and none of them needs an environment entry to get the
+# path. The only process that an `export` ever reached was `claude` — and a
+# session that is told this path appends its own id and walks straight past
+# `failures_protect_tracker`. What keeps a secret is not where it lives but who
+# is told its name.
 #
 # Everything but the four read operations counts as a write, derived from the list
 # rather than from the operations that happen to write today: an adapter that grows

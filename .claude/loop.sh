@@ -696,9 +696,23 @@ loop_main() {
   # the pilot claims, an iteration marks — and it lives in `$TMPDIR` for the reason
   # the ignore pin does: out of the tree, so no write-surface reaches it. Leaked on
   # a kill like the pin and the gate's directory; `gate_leftovers` counts it.
+  #
+  # Never exported, and that one keyword is the whole of [40]. Every writer of this
+  # register is a *subshell of this shell* — an iteration is `loop__iterate … &`, a
+  # gate branch and a re-slice are subshells under it — and a subshell inherits a
+  # variable that was never exported. The only three processes this pack starts
+  # outside a subshell are `claude` and the project's own `TEST_CMD` and
+  # `TYPECHECK_CMD`, and none of them has any business with this file. So the
+  # export served no caller here, and it served the session: a name in `$TMPDIR`
+  # handed to `claude` in its environment is exactly as writable as a file in the
+  # tree, and it does not even have a write-surface to cross. One `printf` of its
+  # own id and `failures_protect_tracker` skips the ticket the session just
+  # rewrote — it restores nothing, says nothing, and the gate then reads the
+  # write-surface the session gave itself. Out of the tree was never the property
+  # that mattered; **who knows the name** is. Same treatment as `RALPH_IGNORE_PIN`
+  # ([30]), which is the same secret in the same directory, for the same reason.
   RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")" ||
     RALPH_TRACKER_LOG=''
-  export RALPH_TRACKER_LOG
 
   local iteration=0 sterile=0 ticket reclaimed rid rdisposition
   local budget_posture='' budget_paused=0 span pin
