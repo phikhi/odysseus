@@ -252,6 +252,19 @@ loop__iterate() {
   # off again, three frames away from where it matters.
   set -e
 
+  # And the other half of the posture: a signal must not tear an iteration down.
+  # It finishes, marks its ticket and writes its outcome — [25]'s promise, read
+  # where it now lives — while the pilot's own trap decides that nothing new
+  # starts. Trapped here rather than inherited, because a subshell resets the
+  # traps it caught and the default disposition of TERM is death: without this
+  # line, a `kill -TERM` addressed to the process group (or any signal that
+  # reaches a child rather than the pilot) takes the session and the gate branches
+  # down mid-iteration, which is exactly the teardown [25] and [28] exist to
+  # refuse. It is also what puts `proc_collect` back in the path it was written
+  # for: bash cuts `wait` short the instant a *trapped* signal arrives, so without
+  # a trap here the primitive is never the thing holding anything.
+  trap 'loop_log "$1: stop requested — finishing this iteration"' TERM INT
+
   # Not `cd || exit`: this is a subshell, and the pilot reads the outcome file.
   cd "$tree" || {
     printf '%s\n' iteration-lost >"$slot/outcome"
@@ -568,7 +581,13 @@ SLOTS
     [ "$block" = 1 ] || return 0
     [ "$found" = 0 ] || return 0
     [ -n "$LOOP_SLOTS" ] || return 0
-    sleep 0.2
+    # Guarded, and not out of habit: this shell runs with errexit on, so a `sleep`
+    # that comes back non-zero — a signal delivered to it rather than to the run —
+    # would take the pilot down here, in the one place it is holding iterations it
+    # has not collected yet. Probed while writing the stop test, which killed this
+    # very `sleep` by accident and got a run that exited 143 with two sessions
+    # still writing.
+    sleep 0.2 || true
   done
 }
 

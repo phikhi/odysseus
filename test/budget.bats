@@ -383,6 +383,11 @@ budget_wait_for_exit() {
   run_loop
   assert_failure 4
   assert_output_contains "given back with no retry consumed"
+  # The rollback really ran on this path, said by the rollback itself. Since [13]
+  # the tree it acts on is a worktree that is destroyed straight afterwards, so
+  # the file being gone from the tree the run was started in is true whether it
+  # ran or not — and the refutation below, on its own, stopped covering anything.
+  assert_output_contains "rolled back 1 path(s) the session touched"
   refute_file_exists "$PROJECT_DIR/src/half-written.txt"
 }
 

@@ -247,7 +247,11 @@ script_session_writing_prose() {
 
   {
     printf '#!/usr/bin/env bash\n'
-    printf 'cat >%s/docs/guide.md <<%s\n' "$PROJECT_DIR" "'PROSE'"
+    # Relative to wherever the suite runs, which since [13] is the iteration's own
+    # worktree — an absolute path into the tree the run was started in would
+    # rewrite a file this gate is not looking at, and the branch would read the
+    # right thing for the wrong reason.
+    printf 'cat >docs/guide.md <<%s\n' "'PROSE'"
     lang_english
     printf 'PROSE\n'
   } >"$RALPH_TEST_DIR/rewriter.sh"

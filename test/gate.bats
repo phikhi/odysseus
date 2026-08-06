@@ -235,10 +235,16 @@ FAKE
 
 @test "a session that stays inside its write-surface passes" {
   use_tickets 01-alpha
-  script_session_writing src/alpha.txt
+  # The loop's own writes are bookkeeping, not the session's doing, and must not
+  # trip the guard.
+  # The bookkeeping is written *inside the iteration's worktree* by the session,
+  # and that restaging is what [13] forced: the loop's own writes land in the tree
+  # the run was started in now, so the copy an iteration is judged on never sees
+  # them — and a check that had stopped filtering anything at all would have gone
+  # unnoticed. What the filter still holds is exactly this: a path under
+  # `.scratch/<feature>/` in the judged tree is not the session's doing.
+  script_session_writing src/alpha.txt .scratch/demo/run.log
 
-  # The loop's own writes land in the tracker and the journal while this runs;
-  # they are bookkeeping, not the session's doing, and must not trip the guard.
   run_loop
   assert_success
   assert_ticket_status 01-alpha resolved
@@ -691,7 +697,14 @@ ignore_paths() {
   use_tickets 01-alpha 02-beta
   ignore_paths '.scratch/*/run.log' '.scratch/*/.run.lock/' \
     '.scratch/*/.session.*.jsonl' 'cache/'
-  script_session_writing src/alpha.txt cache/payload
+  # The bookkeeping is written *inside the iteration's worktree* by the session,
+  # and that restaging is what [13] forced: the loop's own writes land in the tree
+  # the run was started in now, so the copy an iteration is judged on never sees
+  # them — and a check that had stopped filtering anything at all would have gone
+  # unnoticed. What the filter still holds is exactly this: a path under
+  # `.scratch/<feature>/` in the judged tree is not the session's doing.
+  script_session_writing src/alpha.txt cache/payload \
+    .scratch/demo/run.log .scratch/demo/.session.9.jsonl
 
   run_loop
   assert_success
@@ -971,12 +984,19 @@ FAKE
   printf 'before\n' >"$PROJECT_DIR/cache/payload"
   printf 'before\n' >"$PROJECT_DIR/localonly/note"
 
+  # The same two files inside the iteration's worktree, written by the session:
+  # since [13] the tree an iteration is judged on carries only what is committed,
+  # so the two seeded above are not in it and a pin that recorded no rules at all
+  # would have nothing extra to force. That is what the refutations below are
+  # supposed to catch, and without this they caught nothing.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
 printf 'lib/\n' >>.gitignore
-mkdir -p lib src
+mkdir -p lib src cache localonly
 printf 'rogue\n' >lib/rogue.sh
+printf 'before\n' >cache/payload
+printf 'before\n' >localonly/note
 printf 'written\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE

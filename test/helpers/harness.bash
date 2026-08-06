@@ -714,3 +714,17 @@ at_exit() {
 at_calls() {
   cat "$SHIM_STATE/at.calls" 2>/dev/null
 }
+
+# The shell an iteration runs in: a child of the pilot ([13]). A test that means
+# to reproduce "a signal reached the iteration, not just the run" — a Ctrl-C, a
+# `kill` addressed to the process group — has to aim at this one, because the
+# pilot's own children do not inherit its traps and never see a signal sent to it
+# alone. Empty when nothing is in flight.
+# Narrowed to the shells running the pack, and that narrowing is load-bearing: the
+# pilot's other children are its own `sleep`s, and a TERM delivered to one of them
+# takes the whole run down through `errexit` — which is a signal a test would then
+# be measuring instead of the one it meant to send.
+pack_iteration_pids() {
+  ps -A -o pid= -o ppid= -o command= 2>/dev/null |
+    awk -v p="${1:-$PACK_BG_PID}" '$2 == p && $0 ~ /loop\.sh/ { print $1 }'
+}

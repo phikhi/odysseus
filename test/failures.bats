@@ -544,7 +544,14 @@ FAKE
   # suite that writes a report and then goes red is any real suite.
   use_tickets 01-alpha
   set_config STERILE_K 1
-  set_config TEST_CMD 'mkdir -p build; printf report >build/coverage.xml; exit 1'
+  # The suite writes the loop's own bookkeeping as well as its report, and that
+  # second path is what keeps the filter honest: since [13] nothing else writes
+  # under `.scratch/<feature>/` in the tree an iteration is judged on, so a gate
+  # that had stopped dropping it would name it here and nowhere else.
+  set_config TEST_CMD 'mkdir -p build .scratch/demo
+printf report >build/coverage.xml
+printf line >>.scratch/demo/run.log
+exit 1'
   script_session_writing src/alpha.txt
 
   run_loop
@@ -958,6 +965,11 @@ FAKE
 
 @test "what a green gate approved is committed, and nothing else is" {
   use_tickets 01-alpha 02-beta
+  # A suite that writes after the tree it was judged on, which is any real suite —
+  # and since [13] the only thing that still separates "what the gate approved"
+  # from "everything in this tree": a worktree starts clean at the branch tip, so
+  # the two lists are identical unless something is written beside the session.
+  set_config TEST_CMD 'mkdir -p build; printf report >build/coverage.xml; exit 0'
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
@@ -982,6 +994,7 @@ FAKE
   assert_output_contains "src/beta.txt"
   refute_output_contains "src/alpha.txt"
   refute_output_contains ".scratch/"
+  refute_output_contains "build/coverage.xml"
 
   # Nothing of the two iterations is left uncommitted.
   assert_equal "$(worktree_dirt)" ""
