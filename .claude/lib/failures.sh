@@ -25,15 +25,16 @@
 #              carries: there is nothing to *read*. The `failed/<ticket>` branch
 #              is not written on this path, because it would hold a tree
 #              identical to the one the session was handed.
+#   budget     the subscription ran out under this session ([08]). Not a failed
+#              attempt at anything: the ticket goes back to the frontier with
+#              **no retry consumed**, no escalation and no forensic branch. The
+#              tree is still rolled back, and that half is the interesting one —
+#              see the note in failures_handle.
 #
 # A session that wrote the tracker is reported apart (`tracker-write`) and
 # handled as a red gate: it is the same kind of failure — something in the
 # repository is not what the loop asked for — and a fresh session can still
 # deliver the ticket.
-#
-# The budget pause is the fifth kind and it is not here yet: a non-zero exit has
-# to be tested "budget?" before it counts as a failure at all, which is the
-# budget ticket's classifier. It plugs into failures_classify.
 #
 # Every path through here rolls the repository back and every escalation leaves
 # a reason behind, because the two failures this pack cannot afford are a dirty
@@ -53,12 +54,21 @@ failures__log() {
 
 # ── what kind of failure this was ────────────────────────────────────────────
 
-# The loop knows three things: whether the session was cut short for context,
-# whether the gate went red, and how the scope-guard classified an overflow.
-# The budget classifier goes in front of the last case.
+# The loop knows four things: whether the session was cut short for context,
+# whether the subscription ran out under it, whether the gate went red, and how
+# the scope-guard classified an overflow.
 failures_classify() {
   local outcome="$1" scope_class="${2:-}"
   case "$outcome" in
+    # In front of the default case, which is where this used to land ([08]): a
+    # session refused for quota exits non-zero, and read off the exit code alone
+    # that is indistinguishable from a crash. It is not one — nothing was
+    # attempted — so it must not reach the counter below. Which question the loop
+    # asks first is decided there, and it matters: a reason the monitor took
+    # itself outranks one read out of the session's own stream ([23]).
+    budget-pause)
+      printf 'budget\n'
+      ;;
     over-soft-limit)
       printf 'too-big\n'
       ;;
@@ -162,7 +172,11 @@ failures_handle() {
   #                                          — a session that is never gated
   #                                          either, and the restore has to fall
   #                                          after it to cover what *it* moved.
-  #   crash, timeout                         nobody. That is this ticket.
+  #   crash, timeout, budget                 nobody. That is this ticket — and
+  #                                          `budget` joined the list in [08] by
+  #                                          reading it here rather than by
+  #                                          remembering it, which is the whole
+  #                                          method of [32].
   #
   # Conditioned on the class rather than made idempotent, and the choice is worth
   # writing down: what a second call would report twice is exactly what could not
@@ -175,7 +189,7 @@ failures_handle() {
   # and before the rollback itself, so the line about the tree's rules names them
   # while they are still there.
   case "$class" in
-    crash | timeout) failures__ignore_frontier "$ticket" ;;
+    crash | timeout | budget) failures__ignore_frontier "$ticket" ;;
   esac
 
   [ -n "$tree" ] || tree="$(gate_tree_snapshot)" || tree=""
@@ -196,6 +210,26 @@ failures_handle() {
     too-big)
       # Decided after the re-slice: only a split that cannot preserve the
       # acceptance criteria needs a human.
+      ;;
+    budget)
+      # No count, no reason, no forensic branch: nothing was attempted, so there
+      # is nothing to bill and nothing to read. `Failures:` is the ticket's retry
+      # budget since [26] and it has to keep meaning that — a night that ran out
+      # of subscription would otherwise escalate a whole frontier as failed
+      # implementations, each with a `failed/<ticket>` branch holding the tree
+      # its session was handed.
+      #
+      # What still happens on this path is the rollback below, and that is a
+      # decision this ticket took against its own comment ([07] wrote "a budget
+      # pause must not roll back"). A session refused mid-flight leaves half a
+      # file in the tree; leaving it there hands the *next* iteration a baseline
+      # it did not write, which is the laundering [34] stopped the run over. The
+      # ticket comes back to a frontier, not to a dirty tree.
+      #
+      # What bounds a session that forges this class — the in-band signal lives
+      # in a file it can write ([23]) — is not here: it is `STERILE_K` in the
+      # loop, which counts iterations that resolved nothing whatever they claimed
+      # to be.
       ;;
     *)
       count="$(tracker_bump_failures "$ticket")" || count=""
@@ -249,6 +283,12 @@ failures_handle() {
   if [ -n "$reason" ]; then
     tracker_mark_escalated "$ticket" "$reason"
     failures__log "$ticket: escalated to the human sink ($reason)"
+  elif [ "$class" = budget ]; then
+    # Given back, and said differently on purpose: "fresh retry (n of N)" would
+    # be a sentence about a counter this path never touched, which is exactly the
+    # kind of line a human reads in the morning and believes.
+    tracker_unclaim "$ticket"
+    failures__log "$ticket: given back with no retry consumed — the subscription ran out under this session, which is not an attempt at this ticket"
   else
     tracker_unclaim "$ticket"
     failures__log "$ticket: $class -> fresh retry ($count of ${RETRY_N:-2})"

@@ -14,6 +14,12 @@
 #   4  stopped by a guard: stop requested, iteration cap, sterile run, a lock
 #      this run no longer holds, or a rollback that could not put the tree back
 #   5  nothing to grind: the frontier was already empty when the run started
+#   6  the usage budget blocks this run: a weekly limit, or a session window
+#      whose reset this run must not sleep to ([08])
+#
+# 6 is deliberately not 4. Every other guard is a decision this run took about
+# itself; this one is a wall that lifts on its own at a known instant, which is
+# the difference a one-shot successor is scheduled on ([09]).
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
 # FEATURE points at the wrong tracker, or because every ticket is still in
@@ -153,6 +159,10 @@ loop_preflight() {
   fi
 
   gate_preflight || rc=1
+  # And the budget's own, here rather than inside the gate's: this one decides
+  # whether a session is spawned at all, so a value that switches it off in
+  # silence costs a subscription rather than a verdict ([08]).
+  budget_preflight || rc=1
   return "$rc"
 }
 
@@ -208,6 +218,7 @@ loop_main() {
 
   local iteration=0 sterile=0 ticket outfile base pre seen issues tree rc
   local turns cost tokens outcome tracker_written reclaimed rid rdisposition
+  local budget_posture='' budget_paused=0 span
   local RALPH_IGNORE_PIN='' RALPH_ROLLBACK_FAILED=0
 
   while :; do
@@ -262,6 +273,51 @@ loop_main() {
       done
     fi
 
+    # What is left of the subscription, asked before a ticket is claimed and
+    # never after ([08]). Before, because a run that paused holding a claim would
+    # sit on it past CLAIM_TTL and have it reclaimed from under itself — five
+    # hours of window against a ninety-minute backstop ([12]) — and because the
+    # only honest way to not spend a session is to not spawn it.
+    #
+    # It is asked with the last session's in-band posture, which is the cheapest
+    # correction there is: the event arrives in every stream, and a session that
+    # was told it is blocked is a reason to ask the endpoint again rather than
+    # believe a cache from before the wall.
+    if ! budget_check "$budget_posture"; then
+      if [ "${RALPH_BUDGET_WINDOW:-}" != five_hour ]; then
+        # A weekly limit is days out. Sleeping in-process for days is what the
+        # one-shot successor of [09] exists to replace, and until it lands the
+        # honest answer is a stop a human can read in the morning.
+        loop_log "the weekly usage limit blocks this run (${RALPH_BUDGET_WINDOW:-unknown}, said by the ${RALPH_BUDGET_SOURCE:-endpoint}) — stopping rather than holding a process open for days; a one-shot successor at the reset belongs to [09]"
+        loop_journal_append - budget-wall 0 0 0
+        exit 6
+      fi
+      if [ "$budget_paused" = 1 ]; then
+        # Twice in a row with no session in between: this run already slept to
+        # the reset this same signal named. Sleeping again on a signal that is
+        # not moving is how an AFK night is spent without a line to show for it.
+        loop_log "the session window still says blocked after a pause that ran all the way to its reset — stopping rather than waiting again on a signal that is not moving"
+        loop_journal_append - budget-wall 0 0 0
+        exit 4
+      fi
+      if ! span="$(budget_span "${RALPH_BUDGET_RESET:-}")"; then
+        loop_log "the session window is blocked and its reset is not an instant this run can wait for (${RALPH_BUDGET_RESET:-none}, cap ${BUDGET_MAX_PAUSE}s) — stopping rather than sleeping a span nobody measured"
+        loop_journal_append - budget-wall 0 0 0
+        exit 6
+      fi
+      loop_log "the session window is spent — pausing ${span}s until it resets, then carrying on"
+      loop_journal_append - budget-pause 0 0 0
+      budget_paused=1
+      # Spent with the pause: kept, it would answer "blocked" for the rest of the
+      # night every time the endpoint has nothing to say.
+      budget_posture=''
+      if ! budget_pause "$span"; then
+        loop_log "stopped on request during a budget pause after $iteration iterations"
+        exit 4
+      fi
+      continue
+    fi
+
     ticket="$(select_next_ticket)"
     if [ -z "$ticket" ]; then
       if [ "$iteration" -eq 0 ]; then
@@ -299,6 +355,8 @@ loop_main() {
     fi
 
     loop_log "iteration $iteration: $ticket"
+    # A session is about to run, so the next block is no longer "twice in a row".
+    budget_paused=0
     outfile="$(ralph_feature_dir)/.session.$$.jsonl"
     # Both taken before the spawn, and they are not the same snapshot. The tree
     # is the state this session inherited, and what the scope-guard measures it
@@ -320,6 +378,11 @@ loop_main() {
     turns="$(session_result_field "$outfile" num_turns)"
     cost="$(session_result_field "$outfile" total_cost_usd)"
     tokens="$(monitor_peak_tokens "$outfile")"
+    # Read here because the stream is deleted at the end of this iteration, and
+    # kept as three words rather than a file: what this says about the budget is
+    # read twice — once below to classify this iteration, once at the top of the
+    # next one to decide whether to spawn at all ([08]).
+    budget_posture="$(budget_stream_posture "$outfile")"
 
     # Before the gate reads a single field out of the tracker: the write-surface
     # it is about to judge against is a line in a file the session could just have
@@ -391,12 +454,38 @@ loop_main() {
       outcome=failed
     fi
 
+    # "Budget?" before "failure", which is this ticket's classifier ([08]). Asked
+    # of the two outcomes where **nothing was judged**, and of no other:
+    #
+    #   - a red gate is evidence that something was looked at and found wrong,
+    #     and a subscription running out afterwards does not take that evidence
+    #     away. Forgiving it would make a red gate free for any session willing
+    #     to write one line into its own stream.
+    #   - the soft limit and the two deadlines are facts this pack measured
+    #     itself. A reason read out of the session's own stream is a claim, and a
+    #     claim must not overwrite a measurement ([23]).
+    #
+    # It is asked of `nothing-delivered` as well as of a non-zero exit, which is
+    # wider than the acceptance criterion and deliberately so: a session refused
+    # for quota writes nothing, and [35] would bill that ticket a retry and send
+    # a human to work out "why does this ticket make a session do nothing". The
+    # answer would have been "the subscription was empty".
+    case "$outcome" in
+      failed | nothing-delivered)
+        if budget_refused "$budget_posture"; then
+          outcome=budget-pause
+          loop_log "$ticket: the session was refused for quota ($(printf '%s' "$budget_posture" | awk '{ print $2 }')) — not an attempt at this ticket"
+        fi
+        ;;
+    esac
+
     if [ "$outcome" != resolved ]; then
       # Typed failures: the tree goes back to where the session found it, and
       # what happens to the ticket depends on what kind of failure this was —
-      # re-slice, fresh retry, or straight to the human sink. The budget pause
-      # is the one type still missing, and it belongs to the budget ticket:
-      # a non-zero exit has to be tested "budget?" before it counts as failure.
+      # re-slice, fresh retry, straight to the human sink, or, since [08], a
+      # budget pause that gives the ticket back without spending one of its
+      # retries. The rollback happens on that path too, and that is a decision
+      # rather than an oversight: see failures_handle.
       failures_handle "$ticket" "$outcome" "$pre" "$base" "$tree"
       sterile=$((sterile + 1))
     fi

@@ -133,16 +133,62 @@ SESSION_TIMEOUT="${SESSION_TIMEOUT:-10800}"
 SESSION_KILL_GRACE="${SESSION_KILL_GRACE:-30}"
 
 # ── Usage budget ─────────────────────────────────────────────────────────────
+#
+# The loop watches what is left of the subscription and stops before it burns
+# it. Two sources: the usage endpoint, asked *before* each session so that a run
+# can decline to start one, and the `rate_limit_event` every session's stream
+# carries, which corrects the picture for free and classifies a session the API
+# refused. The endpoint decides whenever it answers.
+#
+# Watching it at all: on | off. `off` is a declaration and not an oversight —
+# the run says once, out loud, that nothing here will stop it before it spends
+# the weekly limit. Anything but on/off is refused at the preflight, because a
+# typo would read as off.
+BUDGET_CHECK="${BUDGET_CHECK:-on}"
 
 # Utilization ratios (0..1) at or above which the loop stops spawning.
 # Asymmetric on purpose: the 5h window refills soon, so burn it; the weekly
 # cap does not, so keep headroom for the human.
+#
+# What they are compared against is a window's utilization, never a count of
+# sessions — this pack cannot price an iteration in advance. Set them knowing
+# that one iteration is `1 + n` sessions, not one: two review lenses always, up
+# to five when a ticket is tagged or its write-surface meets SECURITY_PATHS /
+# VISIBLE_PATHS, and the most expensive iteration is the green one. A margin of
+# 5% of a session window is not obviously a margin of one iteration.
 THRESH_5H="${THRESH_5H:-0.95}"
 THRESH_WEEK="${THRESH_WEEK:-0.80}"
+
+# The weekly opus limit is only watched when MODEL names an opus: gating a haiku
+# night on a limit it does not spend would be a refusal nobody could act on.
 
 # User-Agent sent to GET /api/oauth/usage. MUST look like claude-code/<version>
 # or the endpoint answers persistent 429s. Refresh with `claude --version`.
 USAGE_UA="${USAGE_UA:-claude-code/2.1.220}"
+
+# The endpoint itself. Undocumented, hence a setting rather than a constant.
+USAGE_URL="${USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
+
+# A command printing the bearer token for that endpoint, or empty to send the
+# request without one. Empty is the shipped value on purpose: a credential store
+# is the user's business and its shape differs per platform — commonly
+# `~/.claude/.credentials.json` on Linux, the login keychain on macOS. Without a
+# token the endpoint answers nothing this pack can read, the run says so once,
+# and the budget is watched by the in-band signal alone — which only ever
+# arrives after a session has already started.
+# It is evaluated by the loop, so it is exactly as trusted as TEST_CMD.
+USAGE_TOKEN_CMD="${USAGE_TOKEN_CMD:-}"
+
+# Seconds an answer from the endpoint is reused for. Kept in the run's own
+# memory and never on disk — a cache file would be a file the judged session can
+# write. 0 asks on every iteration, which is what the endpoint answers 429 to.
+USAGE_CACHE_TTL="${USAGE_CACHE_TTL:-180}"
+
+# The longest the loop will sleep in one go, waiting for a window to reset.
+# A session window resets within five hours, so a reset further out than this is
+# a clock that is wrong, an endpoint that is wrong, or a stream a session wrote:
+# the run stops and says so rather than sleeping a span nobody measured.
+BUDGET_MAX_PAUSE="${BUDGET_MAX_PAUSE:-21600}"
 
 # ── Runaway guards & retries ─────────────────────────────────────────────────
 

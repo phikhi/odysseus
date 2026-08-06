@@ -52,12 +52,15 @@ PROBE
   # is a second hand-written list wearing a grep costume.
   keys="FEATURE MODEL TEST_CMD TYPECHECK_CMD GUARDED_PATHS SOFT_LIMIT_TOKENS \
 SESSION_STALL_TIMEOUT SESSION_TIMEOUT SESSION_KILL_GRACE \
-THRESH_5H THRESH_WEEK USAGE_UA ITER_CAP STERILE_K RETRY_N GATE_TIMEOUT \
+BUDGET_CHECK THRESH_5H THRESH_WEEK USAGE_UA USAGE_URL USAGE_TOKEN_CMD \
+USAGE_CACHE_TTL BUDGET_MAX_PAUSE \
+ITER_CAP STERILE_K RETRY_N GATE_TIMEOUT \
 HUMAN_CHECKPOINT_EVERY SCHEDULER WEEKLY_RESUME MAX_PARALLEL CLAIM_TTL \
 TRACKER_BACKEND WAIT_CI VISUAL_CMD VISUAL_REAL_ASSETS RUN_CMD \
 PLAYTHROUGH_REINJECT_MAX LENSES SECURITY_PATHS SECURITY_REFS FIDELITY_REFS \
 VISIBLE_PATHS LENS_DIFF_MAX_LINES \
-LANG_INTERACT LANG_ARTIFACT LANG_CHECK LANG_CHECK_THRESHOLD \
+LANG_INTERACT LANG_ARTIFACT LANG_CHECK LANG_CHECK_THRESHOLD LANG_CHECK_MIN_HITS \
+LANG_PROSE_PATHS LANG_EXEMPT_PATHS \
 LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
 
   # env -i: the example must stand on its own, with nothing inherited.
@@ -75,6 +78,21 @@ LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS"
   ' _ "$PACK_DIR/ralph.config.sh.example" "$keys"
   assert_success
   assert_output_contains "surface complete"
+
+  # And the direction the list above could not see, which is the one that keeps
+  # failing: a key added to the example that nobody added here. [17] shipped three
+  # (LANG_CHECK_MIN_HITS, LANG_PROSE_PATHS, LANG_EXEMPT_PATHS) and this test went
+  # on reporting a complete surface, exactly as [24] and [06] had before it — the
+  # comment above describes the defect and the assertion could not catch it. Two
+  # directions make the list an equality instead of a subset, so a key that exists
+  # in one place and not the other is a red test rather than a silence.
+  for declared in $(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/\1/p' \
+    "$PACK_DIR/ralph.config.sh.example"); do
+    case " $keys " in
+      *" $declared "*) ;;
+      *) fail "the example declares $declared, which this test's list does not name" ;;
+    esac
+  done
 }
 
 @test "the headless posture turns auto-compact off" {

@@ -46,8 +46,10 @@
 #   lens_call_argv NAME            argv that lens was spawned with
 #   stub_exit NAME CODE            exit code for `stub-cmd NAME`
 #   stub_call_count NAME           how many times it ran
-#   usage_respond JSON             body served for /api/oauth/usage
+#   usage_respond JSON [JSON ...]  body served for /api/oauth/usage; several
+#                                  bodies answer one call each, last one repeats
 #   usage_exit CODE                curl exit code
+#   curl_call_count                how many times the endpoint was asked
 #   at_exit CODE                   `at` exit code
 #   at_calls                       recorded `at` invocations
 #
@@ -659,8 +661,26 @@ stub_call_count() {
   fi
 }
 
+# What the usage endpoint answers. One body answers every call; several answer
+# one call each, in order, and the last one repeats — which is how a test drives
+# a run that pauses on a spent window and then finds it refilled.
 usage_respond() {
-  printf '%s' "$1" >"$SHIM_STATE/curl.body"
+  local i=0 body
+  for body in "$@"; do
+    i=$((i + 1))
+    printf '%s' "$body" >"$SHIM_STATE/curl.body.$i"
+  done
+  printf '%s' "${!#}" >"$SHIM_STATE/curl.body"
+}
+
+# How many times the endpoint was asked, counted from the slots the shim claimed.
+curl_call_count() {
+  local slot n=0
+  for slot in "$SHIM_STATE/curl.slots"/*; do
+    [ -d "$slot" ] || continue
+    n=$((n + 1))
+  done
+  printf '%s\n' "$n"
 }
 
 usage_exit() {
