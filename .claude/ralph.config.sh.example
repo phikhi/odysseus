@@ -224,7 +224,49 @@ WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
 
 # Max concurrent iterations. Keep 1 when the test suite shares state
 # (database, fixed ports, snapshot files).
+#
+# Every iteration runs in a throwaway git worktree of its own whatever this says,
+# and that is not an optimisation: the scope-guard, the rollback and the durable
+# commit are all repository-wide, so two sessions in one tree read each other's
+# work as their own overflow and undo each other. What this key adds on top is how
+# many of those trees may be alive at once.
+#
+# Two tickets only run together when their declared write-surfaces cannot meet;
+# anything overlapping — or a ticket that declares none — is sequenced. So raising
+# this buys nothing on a tracker whose tickets all touch the same directory.
+#
+# What it costs, beyond the subscription burning that much faster: above 1, a live
+# session runs at the same time as another iteration's gate, which puts that gate's
+# working files within reach of it. At 1 nothing is concurrent and nothing is
+# exposed. Read the MAX_PARALLEL line in docs/frontiere-de-confiance.md before
+# raising it — it is a trade, written down as one.
+#
+# 0, empty or non-numeric is refused at startup rather than read as 1: a value
+# nobody can read must not be a way to switch a setting off in silence.
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
+
+# What to copy into each iteration's worktree, **one path per line**, taken
+# literally (a path, not a glob — see GUARDED_PATHS).
+#
+# A fresh worktree carries what is committed and nothing else. That is the point
+# for a file an earlier session left lying around — a ticket can no longer go
+# green on one — and it is a problem for the `.env`, the `node_modules` or the
+# virtualenv this project's TEST_CMD legitimately needs. Name those here.
+#
+# Empty by default, and it has to be: whatever is named here lands in the tree a
+# session is judged in without any check in this pack ever seeing it, which is the
+# same blind spot GUARDED_PATHS exists to narrow, entered from the other side. The
+# run counts what it took on every iteration rather than leaving that to this file.
+#
+# Copied and never symlinked, whatever it costs. A link would put an iteration's
+# writes back in the main working tree — shared with every sibling, judged by no
+# scope-guard, undone by no rollback — which is exactly the isolation being paid
+# for. A project whose dependencies are too big to copy per iteration has a real
+# reason to keep MAX_PARALLEL at 1 and to name as little as it can.
+#
+#   WORKTREE_PROVISION='.env
+#   node_modules'
+WORKTREE_PROVISION="${WORKTREE_PROVISION-}"
 
 # Backstop, in seconds, after which a claim counts as dead — including when the
 # owning pid still answers. Pids get recycled, and a recycled one would keep a

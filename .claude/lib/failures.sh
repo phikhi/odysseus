@@ -474,8 +474,16 @@ failures__issues_path() {
 
 # The tickets as a git tree object. Taken twice, around the spawn: two identical
 # hashes is the whole of the normal case, and it costs one plumbing call.
+#
+# Read from the project root explicitly, because since [13] an iteration runs with
+# its working directory inside a throwaway worktree and `gate_tree_snapshot` is
+# relative to wherever it is called from. The tracker is the one piece of state
+# every iteration shares — it is the authority they coordinate through — so it has
+# to be the tree the run was started in and never the copy a worktree happens to
+# carry. Getting this wrong is silent: the guard would snapshot a stale copy, find
+# it unchanged, and vouch for a tracker nobody looked at.
 failures_tracker_tree() {
-  gate_tree_snapshot "$(failures__issues_path)"
+  (cd "$(ralph_project_root)" && gate_tree_snapshot "$(failures__issues_path)")
 }
 
 # Undo what the session wrote inside the tracker, and say that it did.
@@ -491,9 +499,15 @@ failures_tracker_tree() {
 # it did not. The loop reads that as an outcome of its own: a restored edit still
 # costs the attempt, because a session left free to try again would be starting
 # from a contract it partly authored. A guard that cannot see does not pass.
+#
+# Every git call here names the project root, for the reason failures_tracker_tree
+# does: the caller's working directory is a throwaway worktree since [13], and the
+# tracker lives in the tree the run was started in. A `checkout-index` run from the
+# worktree would restore the tickets into the copy that is about to be thrown away
+# and report that it had put them back.
 failures_protect_tracker() {
-  local ticket="$1" before="$2"
-  local dir after idx status path restored=0
+  local ticket="$1" before="$2" mark="${3:-}"
+  local dir after idx status path restored=0 root ours id
 
   if [ -z "$before" ]; then
     failures__log "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
@@ -506,10 +520,17 @@ failures_protect_tracker() {
   fi
   [ "$after" != "$before" ] || return 0
 
+  root="$(ralph_project_root)"
   dir="$(failures__issues_path)"
+  # What the *loop* wrote in here while this session was running, which is not the
+  # session's doing and must not be undone ([13] on [21]). Empty when no mark was
+  # handed over, which is a caller driving one iteration at a time — the shape this
+  # guard had before there was ever a sibling.
+  ours=" "
+  [ -z "$mark" ] || ours="$(tracker_writes_since "$mark")"
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")" || return 1
   rm -f "$idx"
-  if ! GIT_INDEX_FILE="$idx" git read-tree "$before" 2>/dev/null; then
+  if ! GIT_INDEX_FILE="$idx" git -C "$root" read-tree "$before" 2>/dev/null; then
     rm -f "$idx"
     failures__log "$ticket: cannot read the pre-session tracker — nothing was restored"
     return 1
@@ -520,6 +541,13 @@ failures_protect_tracker() {
   # away from restoring something outside the tracker.
   while IFS="$(printf '\t')" read -r status path; do
     [ -n "$path" ] || continue
+    # A ticket this run wrote itself inside the window: a sibling's claim, its
+    # retry counter, its marking. Skipped before the status is even looked at,
+    # because restoring it is how two iterations in flight destroy each other.
+    id="$(basename "$path" .md)"
+    case "$ours" in
+      *" $id "*) continue ;;
+    esac
     case "$status" in
       A)
         # Left where it is: a created ticket belongs to the quarantine, which
@@ -527,20 +555,20 @@ failures_protect_tracker() {
         # what it asked for.
         ;;
       *)
-        GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null ||
+        GIT_INDEX_FILE="$idx" git -C "$root" checkout-index -f -- "$path" 2>/dev/null ||
           failures__log "$ticket: could not restore $path"
         restored=$((restored + 1))
         ;;
     esac
   done <<TRACKER
-$(git diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)
+$(git -C "$root" diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)
 TRACKER
 
   rm -f "$idx"
   # Staged is not work in progress either, and the tracker has no business in the
   # target project's index. Scoped to the tickets, so nothing staged elsewhere
   # moves; a human who had staged a tracker edit before the run loses that much.
-  git reset -q -- "$dir" 2>/dev/null || true
+  git -C "$root" reset -q -- "$dir" 2>/dev/null || true
 
   # Additions only: that is the quarantine's business and not a failure of its own.
   [ "$restored" -gt 0 ] || return 0

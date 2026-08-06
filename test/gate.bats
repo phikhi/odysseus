@@ -235,10 +235,16 @@ FAKE
 
 @test "a session that stays inside its write-surface passes" {
   use_tickets 01-alpha
-  script_session_writing src/alpha.txt
+  # The loop's own writes are bookkeeping, not the session's doing, and must not
+  # trip the guard.
+  # The bookkeeping is written *inside the iteration's worktree* by the session,
+  # and that restaging is what [13] forced: the loop's own writes land in the tree
+  # the run was started in now, so the copy an iteration is judged on never sees
+  # them — and a check that had stopped filtering anything at all would have gone
+  # unnoticed. What the filter still holds is exactly this: a path under
+  # `.scratch/<feature>/` in the judged tree is not the session's doing.
+  script_session_writing src/alpha.txt .scratch/demo/run.log
 
-  # The loop's own writes land in the tracker and the journal while this runs;
-  # they are bookkeeping, not the session's doing, and must not trip the guard.
   run_loop
   assert_success
   assert_ticket_status 01-alpha resolved
@@ -528,12 +534,18 @@ gate_writing_suite() {
   assert_failure
 }
 
-@test "what the gate wrote while it judged is named, not left to be found" {
-  # The half the hoist does not close, and why this is a ticket and not a one-line
-  # fix. The artefact is still in the tree when the iteration ends, it is in
-  # neither of the two trees the rollback diffs, and git does not ignore it either
-  # — so [24]'s zone line has nothing to say about it. Deterministic and
+@test "what the gate wrote while it judged is named, and goes with the worktree" {
+  # The half the hoist did not close, and the half [13] closed by construction.
+  # [29] could only *name* the artefact: it was still in the tree when the
+  # iteration ended, in neither of the two trees the rollback diffs, and not
+  # ignored by git either — so [24]'s zone line had nothing to say about it, and
+  # the next iteration snapshotted it as its own baseline. Deterministic and
   # attributable is not the same thing as gone.
+  #
+  # Since [13] the iteration runs in a throwaway worktree, so the artefact is
+  # gone with it. Both halves are asserted, because the line is still owed: what
+  # the gate wrote is still unjudged while it is being judged, and a human reading
+  # the morning log has to see the zone rather than infer that it emptied itself.
   use_tickets 01-alpha
   gate_writing_suite 'mkdir -p build; printf report >build/coverage.xml; exit 0'
 
@@ -541,12 +553,14 @@ gate_writing_suite() {
   assert_success
   assert_output_contains \
     "this gate itself changed 1 path(s) after the tree it judged: build/coverage.xml"
-  assert_file_exists "$PROJECT_DIR/build/coverage.xml"
 
   # And it is named rather than committed: the durable commit takes what the gate
   # approved, which is the tree it judged and nothing a branch added afterwards.
   run git -C "$PROJECT_DIR" log --oneline -- build/coverage.xml
   assert_equal "$output" ""
+  # Nor does it reach the tree the run was started in, which is the whole of what
+  # isolation buys here: the next iteration cannot inherit it as its baseline.
+  refute_file_exists "$PROJECT_DIR/build/coverage.xml"
 }
 
 @test "a branch of this gate can read the tree it is being judged on" {
@@ -660,12 +674,19 @@ ignore_paths() {
   assert_success
 
   # The declared limit, pinned in both directions. The pack cannot see this file:
-  # the iteration is green and the file survives. What it must not do is stay
-  # quiet about the zone it did not look at.
+  # the iteration is green and nothing judged what was written there. What it must
+  # not do is stay quiet about the zone it did not look at.
   assert_ticket_status 01-alpha resolved
   assert_output_contains "nothing in this gate judged"
   assert_output_contains "cache/"
-  assert_file_exists "$PROJECT_DIR/cache/payload"
+
+  # And what [13] changed about the *second* half of that limit. The file used to
+  # survive into the tree the run was started in, which is what let the next
+  # iteration go green on it ([24]'s question 4). It now goes with the worktree —
+  # unjudged, and gone rather than inherited. Still not a promise that a project's
+  # ignored zone is safe: WORKTREE_PROVISION puts back exactly what a project asks
+  # for, and nothing here looks at that either.
+  refute_file_exists "$PROJECT_DIR/cache/payload"
 }
 
 @test "the loop's own bookkeeping is not named as an unjudged ignored path" {
@@ -676,7 +697,14 @@ ignore_paths() {
   use_tickets 01-alpha 02-beta
   ignore_paths '.scratch/*/run.log' '.scratch/*/.run.lock/' \
     '.scratch/*/.session.*.jsonl' 'cache/'
-  script_session_writing src/alpha.txt cache/payload
+  # The bookkeeping is written *inside the iteration's worktree* by the session,
+  # and that restaging is what [13] forced: the loop's own writes land in the tree
+  # the run was started in now, so the copy an iteration is judged on never sees
+  # them — and a check that had stopped filtering anything at all would have gone
+  # unnoticed. What the filter still holds is exactly this: a path under
+  # `.scratch/<feature>/` in the judged tree is not the session's doing.
+  script_session_writing src/alpha.txt cache/payload \
+    .scratch/demo/run.log .scratch/demo/.session.9.jsonl
 
   run_loop
   assert_success
@@ -821,14 +849,27 @@ FAKE
   assert_equal "$output" "0"
 }
 
-@test "a ticket green on what an earlier session left in the ignored zone is named" {
-  # Question 4 in its purest form, and the reason this zone is a ticket of its
-  # own: the defect is false in neither iteration taken alone. A suite that reads
+@test "a ticket cannot go green on what an earlier session left in the ignored zone" {
+  # Question 4 in its purest form, and the reason this zone was a ticket of its
+  # own: the defect was false in neither iteration taken alone. A suite that reads
   # an ignored file — an `.env`, a fixture cache, a test database, node_modules —
   # is any real suite.
+  #
+  # [24] could only name the zone on the iteration that benefited. [13] closes it
+  # by construction and this test was rewritten around that: a fresh worktree
+  # carries what is committed and nothing else, so the second iteration's suite
+  # does not find the first one's leftover and goes red instead of green. The
+  # assertion is the *refusal* and not the line, because the line was the best a
+  # pack that could not see the file could do.
+  #
+  # What it does not prove, and what would put the hole straight back: a project
+  # that names `cache/` in WORKTREE_PROVISION gets the leftover copied in on
+  # purpose. That is why the key is empty by default and why the run counts what
+  # it took on every iteration.
   use_tickets 01-alpha 02-beta
   ignore_paths 'cache/'
   set_config TEST_CMD 'test -e cache/unlock'
+  set_config STERILE_K 1
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
@@ -844,18 +885,22 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total
 FAKE
 
   run_loop
-  assert_success
+  assert_failure 4
 
-  # Both green, the second one only because of the first one's write, and the pack
-  # cannot tell. What it can do is say, on the iteration that benefited, that a
-  # zone went unjudged — the line a human reads before believing the second one.
+  # The first iteration is green on its own write, in its own tree. The second one
+  # does not inherit it: `test -e cache/unlock` fails, the gate is red, and the
+  # ticket goes back instead of leaving the frontier resolved on a file nobody
+  # judged. Before [13] both were `resolved` and the run reported a normal night.
   assert_ticket_status 01-alpha resolved
-  assert_ticket_status 02-beta resolved
+  assert_ticket_status 02-beta ready-for-agent
+  assert_output_contains "02-beta: tests=red"
+  # And the zone is still named on the iteration that wrote into it — closing the
+  # inheritance does not make the write judged.
   local named
-  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
+  named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | head -1)"
   case "$named" in
     *cache/*) ;;
-    *) fail "the inherited ignored file is not named on the second iteration: $named" ;;
+    *) fail "the ignored write is not named on the iteration that made it: $named" ;;
   esac
 }
 
@@ -882,7 +927,12 @@ FAKE
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
-printf 'rogue/\n' >>.git/info/exclude
+# A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
 mkdir -p rogue src
 printf 'backdoor\n' >rogue/backdoor
 printf 'written\n' >src/alpha.txt
@@ -934,12 +984,19 @@ FAKE
   printf 'before\n' >"$PROJECT_DIR/cache/payload"
   printf 'before\n' >"$PROJECT_DIR/localonly/note"
 
+  # The same two files inside the iteration's worktree, written by the session:
+  # since [13] the tree an iteration is judged on carries only what is committed,
+  # so the two seeded above are not in it and a pin that recorded no rules at all
+  # would have nothing extra to force. That is what the refutations below are
+  # supposed to catch, and without this they caught nothing.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
 printf 'lib/\n' >>.gitignore
-mkdir -p lib src
+mkdir -p lib src cache localonly
 printf 'rogue\n' >lib/rogue.sh
+printf 'before\n' >cache/payload
+printf 'before\n' >localonly/note
 printf 'written\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
@@ -1017,7 +1074,12 @@ FAKE
     *dist/*) ;;
     *) fail "the delivered rule was not honoured on the next iteration: $named" ;;
   esac
-  assert_file_exists "$PROJECT_DIR/dist/other"
+  # It is unjudged inside the iteration and gone with its worktree, which is the
+  # half [13] closed: [24] could only promise "nothing judged it and no rollback
+  # reaches it", and the file then became the next iteration's baseline. Both
+  # halves still hold *within* the iteration — the line above is what says so —
+  # and neither survives it.
+  refute_file_exists "$PROJECT_DIR/dist/other"
 }
 
 @test "core.excludesFile is put back, and what it hid is judged" {
@@ -1127,12 +1189,20 @@ FAKE
   mkdir -p "$PROJECT_DIR/cache" "$PROJECT_DIR/localonly"
   printf 'before\n' >"$PROJECT_DIR/cache/payload"
   printf 'before\n' >"$PROJECT_DIR/localonly/note"
-  script_session_writing src/alpha.txt
+  # The session writes into both zones *inside its own worktree*, and that is the
+  # restaging [13] forced: a fresh worktree carries what is committed and nothing
+  # else, so the two files above are not there to be named. The rules travel —
+  # `.gitignore` is committed and `info/exclude` lives in the common git directory
+  # — and what the zone line names is what this iteration put in the zone.
+  session_writes src/alpha.txt cache/payload localonly/note
 
   run_loop
   assert_success
   assert_ticket_status 01-alpha resolved
   refute_output_contains "moved the ignore frontier"
+  # And the run left the project's own ignored files alone: the iteration happened
+  # somewhere else entirely, so a build cache in the tree a human started the run
+  # in is neither judged nor touched.
   assert_file_contains "$PROJECT_DIR/cache/payload" "before"
   assert_file_contains "$PROJECT_DIR/localonly/note" "before"
 
@@ -1152,13 +1222,18 @@ FAKE
   # first run — was told nothing had judged `.scratch/`, while [21] snapshots the
   # tickets under it by force and restores them.
   use_tickets 01-alpha
-  mkdir -p "$PROJECT_DIR/.scratch/other-feature/issues"
-  printf 'another tracker\n' >"$PROJECT_DIR/.scratch/other-feature/issues/99-x.md"
   printf '.scratch/\n' >"$PROJECT_DIR/.gitignore"
   git -C "$PROJECT_DIR" add .gitignore
   git -C "$PROJECT_DIR" rm -r -q --cached .scratch
   git -C "$PROJECT_DIR" commit -q -m "test: a project that keeps its scratch out of git"
-  script_session_writing src/alpha.txt
+  # Both trackers are staged from inside the iteration's worktree since [13]: an
+  # ignored directory of the tree the run was started in does not travel, so the
+  # walk would have had nothing to fold and this test would have asserted an empty
+  # line against an empty line. The run's own feature directory is created too —
+  # without it `.scratch/` is wholly unjudged, folds into one entry, and the
+  # assertion below could not tell a walk that descends from one that does not.
+  session_writes src/alpha.txt \
+    .scratch/other-feature/issues/99-x.md .scratch/demo/issues/99-y.md
 
   run_loop
   assert_success
@@ -1258,7 +1333,12 @@ FAKE
   # nothing, so it survives and is named; the two guarded directories were taken
   # by force, so naming them would be the lie [24] refused in the other direction.
   output="$loop_output"
-  assert_file_exists "$PROJECT_DIR/my cache/payload"
+  # It is unjudged inside the iteration and gone with its worktree, which is the
+  # half [13] closed: [24] could only promise "nothing judged it and no rollback
+  # reaches it", and the file then became the next iteration's baseline. Both
+  # halves still hold *within* the iteration — the line above is what says so —
+  # and neither survives it.
+  refute_file_exists "$PROJECT_DIR/my cache/payload"
   local named
   named="$(printf '%s\n' "$loop_output" | grep 'nothing in this gate judged' | tail -1)"
   assert_equal "${named#*ignored path(s): }" "my cache/"
@@ -1298,7 +1378,12 @@ FAKE
   # named. A guard that globbed its own list would have these two the wrong way
   # round, and both assertions above would pass on the wrong directory.
   output="$loop_output"
-  assert_file_exists "$PROJECT_DIR/zone1/payload"
+  # It is unjudged inside the iteration and gone with its worktree, which is the
+  # half [13] closed: [24] could only promise "nothing judged it and no rollback
+  # reaches it", and the file then became the next iteration's baseline. Both
+  # halves still hold *within* the iteration — the line above is what says so —
+  # and neither survives it.
+  refute_file_exists "$PROJECT_DIR/zone1/payload"
   local named
   named="$(printf '%s\n' "$loop_output" | grep 'nothing in this gate judged' | tail -1)"
   assert_equal "${named#*ignored path(s): }" "zone1/"
@@ -1322,7 +1407,12 @@ FAKE
   run_loop
   assert_success
   assert_ticket_status 01-alpha resolved
-  assert_file_exists "$PROJECT_DIR/zone1/payload"
+  # It is unjudged inside the iteration and gone with its worktree, which is the
+  # half [13] closed: [24] could only promise "nothing judged it and no rollback
+  # reaches it", and the file then became the next iteration's baseline. Both
+  # halves still hold *within* the iteration — the line above is what says so —
+  # and neither survives it.
+  refute_file_exists "$PROJECT_DIR/zone1/payload"
 
   local named
   named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
@@ -1524,7 +1614,12 @@ OUT"
   assert_failure 4
   assert_output_contains "nothing was delivered"
   assert_ticket_status 01-alpha ready-for-agent
-  assert_file_exists "$PROJECT_DIR/cache/payload"
+  # It is unjudged inside the iteration and gone with its worktree, which is the
+  # half [13] closed: [24] could only promise "nothing judged it and no rollback
+  # reaches it", and the file then became the next iteration's baseline. Both
+  # halves still hold *within* the iteration — the line above is what says so —
+  # and neither survives it.
+  refute_file_exists "$PROJECT_DIR/cache/payload"
 }
 
 @test "a session that delivered nothing and moved the ignore frontier is still told so" {
@@ -1540,7 +1635,12 @@ OUT"
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
-printf 'rogue/\n' >>.git/info/exclude
+# A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 

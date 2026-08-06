@@ -310,7 +310,13 @@ FAKE
   assert_ticket_status 01-alpha ready-for-agent
 }
 
-@test "a rollback is not a reset --hard: work nobody in this run made stands" {
+@test "an iteration never touches work nobody in this run made" {
+  # This used to be "a rollback is not a reset --hard", and since [13] it proves
+  # something else — still true, and stronger. A human's uncommitted work is not
+  # spared by a narrow rollback any more; it is simply not in the tree the
+  # iteration runs in. What keeps the name is the lib-level test further down,
+  # where the width of the rollback is still visible.
+
   use_tickets 01-alpha
   set_config STERILE_K 1
 
@@ -345,6 +351,136 @@ FAKE
   assert_failure 4
   assert_file_contains "$PROJECT_DIR/CONTEXT.md" "Fixture context for the harness"
   assert_equal "$(worktree_dirt)" ""
+}
+
+# ── the rollback, driven as a lib ────────────────────────────────────────────
+#
+# Four mutations went VACUOUS here the day [13] landed, and they were right. An
+# iteration rolls back inside a worktree that is thrown away straight afterwards,
+# so a loop-level test that asserts `refute_file_exists "$PROJECT_DIR/…"` is
+# asserting something that is true whether the rollback ran or not — the tree the
+# run was started in never had the file. What those tests still prove is worth
+# keeping (the ticket, the retries, the lines the run printed); what they stopped
+# proving is proved here, on the primitive, in a tree where the effect is visible.
+#
+# Driven with no pre-session commit (`pre` empty), so HEAD is left alone: what is
+# under test is the tree half. The commit half has its own test above.
+
+# The state a failed session leaves, staged the way an agent interrupted mid-commit
+# leaves it, plus a file nobody in this run made. Prints the pre-session tree so a
+# test can hand it back.
+failures__stage_a_failed_session() {
+  pack_run '
+    cd "$(ralph_project_root)"
+    printf "human work\n" >untracked-by-nobody.txt
+    printf "%s\n" "$(gate_tree_snapshot)" >.base
+    mkdir -p src
+    printf "written\n" >src/added.txt
+    printf "edited\n" >>CONTEXT.md
+    rm -f README-fixture.txt
+    git add -A >/dev/null 2>&1
+    printf "%s\n" "$(gate_tree_snapshot)" >.now
+  '
+}
+
+@test "the rollback removes what the session added and brings back what it deleted" {
+  use_tickets 01-alpha
+  printf 'a file the run did not make\n' >"$PROJECT_DIR/README-fixture.txt"
+  harness__commit "test: a tracked file for the session to delete"
+
+  failures__stage_a_failed_session
+  assert_success
+  assert_file_exists "$PROJECT_DIR/src/added.txt"
+  refute_file_exists "$PROJECT_DIR/README-fixture.txt"
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+  assert_output_contains "rolled back"
+
+  refute_file_exists "$PROJECT_DIR/src/added.txt"
+  assert_file_contains "$PROJECT_DIR/README-fixture.txt" "a file the run did not make"
+  refute_file_contains "$PROJECT_DIR/CONTEXT.md" "edited"
+}
+
+@test "the rollback unstages what it put back, and only those paths" {
+  use_tickets 01-alpha
+  printf 'a file the run did not make\n' >"$PROJECT_DIR/README-fixture.txt"
+  harness__commit "test: a tracked file for the session to delete"
+
+  failures__stage_a_failed_session
+  assert_success
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+
+  # Undoing the files without unstaging them would leave the attempt sitting in
+  # the index, ready to ride along with the next commit.
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  refute_output_contains "src/added.txt"
+  refute_output_contains "CONTEXT.md"
+  refute_output_contains "README-fixture.txt"
+}
+
+@test "a rollback is not a reset --hard: work nobody in this run made stands" {
+  # The whole reason the rollback is exactly as wide as the session's diff. A
+  # `git reset --hard` plus `git clean -fd` is the obvious implementation and it
+  # takes a human's uncommitted work down with the failed attempt.
+  use_tickets 01-alpha
+  printf 'a file the run did not make\n' >"$PROJECT_DIR/README-fixture.txt"
+  harness__commit "test: a tracked file for the session to delete"
+
+  failures__stage_a_failed_session
+  assert_success
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+
+  # It was there before the session, it is not in the session's diff, and it is
+  # still there. `git clean -fd` would have taken it.
+  assert_file_contains "$PROJECT_DIR/untracked-by-nobody.txt" "human work"
+}
+
+@test "a ticket the loop wrote itself is left alone by the guard" {
+  # [21] restores every ticket that moved around a session, which is exactly right
+  # while one iteration is in flight and destroys a sibling's claim the moment two
+  # are ([13]). The loop keeps a register of the paths it wrote itself, and the
+  # guard skips them.
+  #
+  # Driven as a lib rather than through a parallel run, and that is the finding
+  # rather than convenience: through the loop the defect only shows when the pilot
+  # claims the sibling *after* the first iteration snapshotted the tickets, which
+  # is a handful of command substitutions apart and flips under load. Here the
+  # order is the test's to choose.
+  use_tickets 01-alpha 02-beta
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
+    export RALPH_TRACKER_LOG
+    before="$(failures_tracker_tree)"
+    mark="$(tracker_write_mark)"
+    # What the loop legitimately does inside another iteration'"'"'s window: it
+    # claims a sibling. And what a session does, which nothing may keep: it edits
+    # the ticket it was handed.
+    tracker_claim 02-beta "pid:$$"
+    perl -pi -e "s/^\\*\\*Write-surface:\\*\\* .*/**Write-surface:** \`*\`/" \
+      "$(ralph_feature_dir)/issues/01-alpha.md"
+    failures_protect_tracker 01-alpha "$before" "$mark" || printf "guard-refused\n"
+    rm -f "$RALPH_TRACKER_LOG"
+  '
+  assert_output_contains "guard-refused"
+
+  # The sibling'"'"'s claim stands: the loop wrote it, so it is not the session'"'"'s doing.
+  assert_ticket_status 02-beta claimed
+  # And the session's own edit is gone, which is what the guard is for.
+  assert_equal "$(ticket_field 01-alpha Write-surface)" '`src/alpha.txt`'
 }
 
 @test "a rollback never restores the tracker, whatever moved in it" {
@@ -394,7 +530,11 @@ FAKE
 
   assert_output_contains "this rollback could not undo"
   assert_output_contains "cache/"
-  assert_file_exists "$PROJECT_DIR/cache/payload"
+  # Named inside the iteration and gone with its worktree since [13]: the line
+  # above is the guarantee — a rollback that says "the tree is back" while an
+  # unenumerated set of paths is exempt — and what changed is only that the
+  # exemption no longer outlives the iteration that made it.
+  refute_file_exists "$PROJECT_DIR/cache/payload"
   # What it could see is undone, as before.
   refute_file_exists "$PROJECT_DIR/src/rogue.txt"
   refute_file_exists "$PROJECT_DIR/src/alpha.txt"
@@ -424,7 +564,11 @@ FAKE
   refute_output_contains "rolled back"
   assert_output_contains "this rollback could not undo"
   assert_output_contains "cache/"
-  assert_file_exists "$PROJECT_DIR/cache/payload"
+  # Named inside the iteration and gone with its worktree since [13]: the line
+  # above is the guarantee — a rollback that says "the tree is back" while an
+  # unenumerated set of paths is exempt — and what changed is only that the
+  # exemption no longer outlives the iteration that made it.
+  refute_file_exists "$PROJECT_DIR/cache/payload"
 }
 
 @test "the rollback names what the gate itself changed, and leaves it standing" {
@@ -436,7 +580,14 @@ FAKE
   # suite that writes a report and then goes red is any real suite.
   use_tickets 01-alpha
   set_config STERILE_K 1
-  set_config TEST_CMD 'mkdir -p build; printf report >build/coverage.xml; exit 1'
+  # The suite writes the loop's own bookkeeping as well as its report, and that
+  # second path is what keeps the filter honest: since [13] nothing else writes
+  # under `.scratch/<feature>/` in the tree an iteration is judged on, so a gate
+  # that had stopped dropping it would name it here and nowhere else.
+  set_config TEST_CMD 'mkdir -p build .scratch/demo
+printf report >build/coverage.xml
+printf line >>.scratch/demo/run.log
+exit 1'
   script_session_writing src/alpha.txt
 
   run_loop
@@ -444,7 +595,11 @@ FAKE
 
   assert_output_contains \
     "this rollback could not undo 1 path(s) the gate itself changed after the tree it judged: build/coverage.xml"
-  assert_file_exists "$PROJECT_DIR/build/coverage.xml"
+  # Named inside the iteration and gone with its worktree since [13]: the line
+  # above is the guarantee — a rollback that says "the tree is back" while an
+  # unenumerated set of paths is exempt — and what changed is only that the
+  # exemption no longer outlives the iteration that made it.
+  refute_file_exists "$PROJECT_DIR/build/coverage.xml"
   # What it could see is undone, as before.
   refute_file_exists "$PROJECT_DIR/src/alpha.txt"
 }
@@ -540,7 +695,7 @@ FAKE
   run_loop_own_tmp
   assert_failure 4
   assert_output_contains "cannot read the working tree — nothing was rolled back"
-  assert_output_contains "stopping rather than letting the next iteration inherit a tree nothing here can describe"
+  assert_output_contains "stopping rather than grinding on an instrument that is already closed"
 
   # And the announcement of what the gate itself left behind says which of the two
   # it is. This one is not red and must not become one — it is printed on green
@@ -551,7 +706,12 @@ FAKE
   # The out-of-surface write really is still there — that is what the run is
   # stopping *about*, and asserting the message alone would pass on a run that
   # stopped for any other reason.
-  assert_file_exists "$PROJECT_DIR/lib/rogue.sh"
+  # It went with the worktree, which is what [13] closed here: the laundering
+  # this stop exists to refuse cannot happen through an inherited tree any more.
+  # The stop is kept all the same, and loop.sh says why — a rollback fails for
+  # reasons that are not local to one tree, and the sibling beside it is about to
+  # meet all of them.
+  refute_file_exists "$PROJECT_DIR/lib/rogue.sh"
 
   # And the second ticket was never ground: one session, one iteration.
   assert_ticket_status 02-beta ready-for-agent
@@ -619,7 +779,12 @@ n=$((n + 1)); printf '%s\n' "$n" >"$RALPH_SHIM_STATE/seq"
 mkdir -p src rogue
 printf 'written\n' >src/alpha.txt
 if [ "$n" = 1 ]; then
-  printf 'rogue/\n' >>.git/info/exclude
+  # A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
   printf 'backdoor\n' >rogue/backdoor
   exit 1
 fi
@@ -665,7 +830,12 @@ OUT"
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
-printf 'rogue/\n' >>.git/info/exclude
+# A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
 mkdir -p rogue && printf 'backdoor\n' >rogue/backdoor
 echo '{"type":"system","subtype":"init","session_id":"s"}'
 echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read_input_tokens":9000,"output_tokens":5}}}'
@@ -705,7 +875,12 @@ FAKE
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
-printf 'rogue/\n' >>.git/info/exclude
+# A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
 printf 'lib/\n' >>.gitignore
 mkdir -p src && printf 'written\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
@@ -746,7 +921,12 @@ OUT"
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 cat >/dev/null
-printf 'rogue/\n' >>.git/info/exclude
+# A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -821,6 +1001,11 @@ FAKE
 
 @test "what a green gate approved is committed, and nothing else is" {
   use_tickets 01-alpha 02-beta
+  # A suite that writes after the tree it was judged on, which is any real suite —
+  # and since [13] the only thing that still separates "what the gate approved"
+  # from "everything in this tree": a worktree starts clean at the branch tip, so
+  # the two lists are identical unless something is written beside the session.
+  set_config TEST_CMD 'mkdir -p build; printf report >build/coverage.xml; exit 0'
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
@@ -845,6 +1030,7 @@ FAKE
   assert_output_contains "src/beta.txt"
   refute_output_contains "src/alpha.txt"
   refute_output_contains ".scratch/"
+  refute_output_contains "build/coverage.xml"
 
   # Nothing of the two iterations is left uncommitted.
   assert_equal "$(worktree_dirt)" ""
@@ -913,7 +1099,12 @@ FAKE
   refute_output_contains "session: committed everything"
 
   # And nothing of the loop's own state went with it, ever — not on this commit
-  # and not anywhere in the history the run produced.
+  # and not anywhere in the history the run produced. Cheaper to hold since [13]
+  # than the assertion suggests, and worth saying rather than quietly banking: the
+  # run journal, the lock and a session stream of any size live in the tree the run
+  # was started in, so a `git add -A` inside an iteration's worktree cannot reach
+  # them. What is still exercised here is the half that matters — the session's own
+  # commit is undone and the loop's is the one that carries the work.
   run git -C "$PROJECT_DIR" show --stat --format= HEAD
   assert_output_contains "src/alpha.txt"
   refute_output_contains ".scratch/"
@@ -1047,7 +1238,12 @@ FAKE
 
   script_too_big_then <<'FAKE'
 if [ "$n" = 2 ]; then
-    printf 'rogue/\n' >>.git/info/exclude
+    # A worktree answers `.git` with a *file*, so the naive `>>.git/info/exclude`
+# writes nothing at all and this scenario would stage nothing while reading as
+# green. The rule source git really reads is in the **common** git directory,
+# which is what a session in any working tree of this repository would find,
+# and what the pin looks at since [13].
+printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
     mkdir -p rogue && printf 'backdoor\n' >rogue/backdoor
     echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}'
     exit 0
@@ -1225,7 +1421,7 @@ FAKE
 mkdir -p src
 printf 'written\n' >src/alpha.txt
 printf '\n- [ ] and one criterion the discovery never wrote\n' \
-  >>.scratch/demo/issues/01-alpha.md
+  >>"$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -1273,7 +1469,7 @@ done
 
 if [ "$n" = 1 ]; then
   perl -pi -e 's/^\*\*Status:\*\* .*/**Status:** resolved/' \
-    .scratch/demo/issues/02-beta.md
+    "$(cat "$RALPH_SHIM_STATE/tracker-dir")/02-beta.md"
 fi
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
@@ -1298,9 +1494,9 @@ FAKE
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
-mkdir -p src .scratch/demo/issues
+mkdir -p src
 printf 'written\n' >src/alpha.txt
-cat >.scratch/demo/issues/50-self-served.md <<'TICKET'
+cat >"$(cat "$RALPH_SHIM_STATE/tracker-dir")/50-self-served.md" <<'TICKET'
 # 50 — Self served
 
 **Blocked by:** None
@@ -1349,7 +1545,8 @@ for target in $surface; do
 done
 
 if [ "$n" = 1 ]; then
-  mv .scratch/demo/issues/01-alpha.md .scratch/demo/issues/01-alpha-v2.md
+  d="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+  mv "$d/01-alpha.md" "$d/01-alpha-v2.md"
 fi
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
@@ -1387,7 +1584,7 @@ FAKE
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 prompt="$(cat)"
-mkdir -p src .scratch/demo/issues
+mkdir -p src
 # Its own ticket's surface, and not 01-alpha's twice: the second iteration would
 # otherwise be writing bytes that are already there, which delivers nothing since
 # [35] — and used to deliver a `resolved` for a session that had done nothing for
@@ -1396,7 +1593,7 @@ for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
   head -1 | tr -d '`\r' | tr ',' ' '); do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
 done
-cat >.scratch/demo/issues/01-self-served.md <<'TICKET'
+cat >"$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-self-served.md" <<'TICKET'
 # 01 — Self served
 
 **Blocked by:** None
@@ -1436,7 +1633,7 @@ FAKE
 #!/usr/bin/env bash
 mkdir -p src
 printf 'written\n' >src/alpha.txt
-rm -rf .scratch/demo/issues
+rm -rf "$(cat "$RALPH_SHIM_STATE/tracker-dir")"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -1471,7 +1668,7 @@ mkdir -p src
 printf 'written\n' >src/alpha.txt
 printf 'written\n' >src/rogue.txt
 perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
-  .scratch/demo/issues/01-alpha.md
+  "$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -1506,8 +1703,12 @@ FAKE
 mkdir -p src
 printf 'written\n' >src/alpha.txt
 perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
-  .scratch/demo/issues/01-alpha.md
-git add -A >/dev/null 2>&1
+  "$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md"
+# The *main* index, and it has to be named: a `git add` in the worktree stages
+# an index that goes with it, so the guarantee this test names — the tracker
+# never leaves in the target project's next commit — would be exercised by
+# nothing at all ([13]).
+git -C "$(cat "$RALPH_SHIM_STATE/project-dir")" add -A >/dev/null 2>&1
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -1538,7 +1739,7 @@ FAKE
   # a surface the planner just wrote is validated against nothing.
   script_too_big_then <<'FAKE'
 perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
-  .scratch/demo/issues/07-overlaps-alpha.md
+  "$(cat "$RALPH_SHIM_STATE/tracker-dir")/07-overlaps-alpha.md"
 plan="$(printf '%s' "$prompt" | sed -n 's/^Write the plan to \([^,]*\),.*/\1/p' | head -1)"
 cat >"$plan" <<'PLAN'
 --- ticket: everything | Everything, now that it is allowed ---
@@ -1572,9 +1773,9 @@ FAKE
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
-mkdir -p src .scratch/demo/issues
+mkdir -p src
 printf 'written\n' >src/alpha.txt
-cat >.scratch/demo/issues/50-self-served.md <<'TICKET'
+cat >"$(cat "$RALPH_SHIM_STATE/tracker-dir")/50-self-served.md" <<'TICKET'
 # 50 — Self served
 
 **Blocked by:** None
@@ -1613,8 +1814,7 @@ FAKE
   # A plan that is perfectly sound, alongside a ticket it published on its own.
   # Sound or not, the output of a session that wrote the tracker is not read.
   script_too_big_then <<'FAKE'
-mkdir -p .scratch/demo/issues
-cat >.scratch/demo/issues/50-self-served.md <<'TICKET'
+cat >"$(cat "$RALPH_SHIM_STATE/tracker-dir")/50-self-served.md" <<'TICKET'
 # 50 — Self served
 
 **Blocked by:** None
@@ -1672,7 +1872,7 @@ surface="$(printf '%s' "$prompt" |
 for target in $surface; do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
 done
-rm -rf .scratch/demo/.run.lock
+rm -rf "$(cat "$RALPH_SHIM_STATE/project-dir")/.scratch/demo/.run.lock"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -1703,7 +1903,7 @@ surface="$(printf '%s' "$prompt" |
 for target in $surface; do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
 done
-rm -rf .git/ralph.tree.lock
+rm -rf "$(cat "$RALPH_SHIM_STATE/project-dir")/.git/ralph.tree.lock"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -1748,34 +1948,59 @@ GITSHIM
   : >"$SHIM_STATE/race-armed"
 
   run_loop
-  assert_success
+  assert_failure 4
 
   # The iteration says it could not be made durable, rather than saying nothing.
   assert_output_contains "could not commit the iteration — it is not durable"
 
-  # And the other run's commit is still the tip: it was not overwritten.
-  run git -C "$PROJECT_DIR" log --format='%s' -1
-  assert_output_contains "another run committed here"
+  # What is asserted about the overwrite is what survives [13]: this commit is
+  # taken inside the iteration's worktree now, and that worktree is gone by the
+  # time a test can look at it — so "the other run's commit is still the tip" is
+  # not a question anything can be asked here any more. The refusal itself is the
+  # guarantee, and its evidence is that nothing of this iteration reached the
+  # history: with the old value dropped from `update-ref` the move is a plain
+  # write, it succeeds, and the loop's commit shows up below.
+  run git -C "$PROJECT_DIR" log --format='%s'
+  refute_output_contains "01-alpha: iteration delivered"
+  # The branch's own compare-and-swap — the one that now stands between two runs
+  # of this pack — is a different line and has a test of its own, in
+  # test/concurrency.bats.
+  assert_ticket_status 01-alpha ready-for-agent
 }
 
 # ── when git itself says no ──────────────────────────────────────────────────
 
-@test "a commit git refuses is a warning, not the end of the run" {
+@test "a commit git refuses stops the run rather than resolving nothing" {
+  # The guarantee this test names is the one [13] had to turn round, and it is
+  # worth reading as a finding rather than as an edit. [07] wrote "a git that
+  # refuses the commit is a warning, not the end of the run: the work is in the
+  # tree either way, and the precise rollback does not touch what it did not put
+  # there" — true while the iteration ran in the tree the run was started in, and
+  # false the moment it runs in a tree that is about to be destroyed. Left alone,
+  # a `main.lock` a crashed git forgot would have marked every ticket `resolved`
+  # with nothing at all behind it: a whole frontier drained, a clean `exit 0`, and
+  # not one line delivered. That is this pack's own definition of a false
+  # delivered ([35]), reached through the door next to it.
   use_tickets 01-alpha 02-beta
   script_honest_session
 
   # What a crashed git leaves behind. Every `update-ref` on the current branch
-  # fails from here on, so no iteration can be made durable.
+  # fails from here on, so no iteration can reach it.
   : >"$PROJECT_DIR/.git/refs/heads/main.lock"
 
   run_loop
-  assert_success
-  assert_output_contains "could not commit the iteration — it is not durable"
+  assert_failure 4
+  assert_output_contains "could not move the branch — this iteration is not on it"
+  assert_output_contains "the gate was green and the work did not reach the branch — stopping"
 
-  # Said out loud, and the night's work happens anyway.
-  assert_ticket_status 01-alpha resolved
-  assert_ticket_status 02-beta resolved
-  assert_file_contains "$PROJECT_DIR/src/alpha.txt" "written"
+  # The ticket goes back and pays nothing: the gate was green, so there is nothing
+  # wrong with it to bill — the same reasoning [08] applies to a session the
+  # subscription refused.
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(ticket_field 01-alpha Failures)" ""
+  # And the run stops instead of spending a session per ticket to rediscover it.
+  assert_ticket_status 02-beta ready-for-agent
+  assert_equal "$(claude_call_count)" "1"
 }
 
 @test "a branch git cannot name is a warning too, and the escalation still lands" {

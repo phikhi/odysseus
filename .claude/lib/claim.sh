@@ -186,12 +186,34 @@ claim_is_held() {
 # pack can ping is this module's. The record itself goes with it because the note
 # left on the ticket is the last place that claim is written down — `tracker_unclaim`
 # and `tracker_mark_escalated` both drop the field.
+#
+# The optional argument is the ids this run is holding right now, and it is what
+# makes the sweep safe once a run has more than one iteration in flight ([13]).
+# Two things went wrong without it, and they are one mechanism apart:
+#
+#   - a sibling's claim looks exactly like anybody else's from here. It is only
+#     safe today because a sequential run holds no claim at the moment it sweeps.
+#   - `CLAIM_TTL` would become a ceiling on how long a session may run. The
+#     backstop reclaims a claim older than the TTL *even when its owner answers* —
+#     that is its job, against a recycled pid — so a legitimate session past 90
+#     minutes would have its ticket taken from under it by its own run.
+#
+# Exempted by **id** and not by owner, which is the whole reason this is a list in
+# the run's memory rather than a `pid:$$` test. A pid is not an identity: a claim a
+# dead run left behind under a number the system has since handed to us would read
+# as ours for ever, and the backstop that exists for exactly that would have been
+# switched off by the fix. An id the run is holding is a fact only the run knows,
+# it is written nowhere a session can reach, and it disappears with the run — after
+# which the pid check and the TTL answer for those tickets again.
 claim_reclaim_stale() {
-  local id status record disposition
+  local held=" ${1:-} " id status record disposition
 
   for id in $(tracker_ids); do
     status="$(tracker_field "$id" Status)" || continue
     [ "$status" = claimed ] || continue
+    case "$held" in
+      *" $id "*) continue ;;
+    esac
     record="$(tracker_field "$id" Claimed)" || record=""
     claim_is_held "$record" && continue
 

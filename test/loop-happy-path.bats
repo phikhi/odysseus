@@ -190,9 +190,16 @@ teardown() {
   refute_output_contains "--resume"
 }
 
-@test "the session runs at the project root, whatever the caller's cwd" {
+@test "the session runs in an isolated worktree, whatever the caller's cwd" {
   use_tickets 01-alpha
 
+  # It used to be the project root, and since [13] it is a throwaway worktree of
+  # the same repository. Both halves are asserted, because only the pair says
+  # anything: a cwd that is not the caller's *and* not the tree the run was
+  # started in, holding the same commit. Asserting "not /" alone would pass for a
+  # session running in the main tree, which is the arrangement this ticket exists
+  # to remove.
+  #
   # The marker lands outside the repository on purpose: a fake that scribbled
   # anywhere in the project would be caught by the scope-guard, and this test is
   # about the working directory and not about the gate. What it does write inside
@@ -202,13 +209,24 @@ teardown() {
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 pwd >"$RALPH_SHIM_STATE/session-cwd"
+git rev-parse --git-common-dir >"$RALPH_SHIM_STATE/session-common-dir"
 mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
   run bash -c "cd / && bash '$PACK_DIR/loop.sh'"
   assert_success
-  assert_equal "$(cat "$SHIM_STATE/session-cwd")" "$PROJECT_DIR"
+
+  cwd="$(cat "$SHIM_STATE/session-cwd")"
+  [ "$cwd" != "/" ] || fail "the session inherited the caller's cwd"
+  [ "$cwd" != "$PROJECT_DIR" ] ||
+    fail "the session ran in the tree the run was started in, not in a worktree of its own"
+  # And it is a worktree of *this* repository and not some unrelated directory:
+  # the common git directory every linked worktree shares is the project's own.
+  case "$(cat "$SHIM_STATE/session-common-dir")" in
+    "$PROJECT_DIR"/.git | "$PROJECT_DIR"/.git/) ;;
+    *) fail "the session's worktree does not share this repository: $(cat "$SHIM_STATE/session-common-dir")" ;;
+  esac
 }
 
 # ── who marks, and when ──────────────────────────────────────────────────────
@@ -216,9 +234,16 @@ FAKE
 @test "the ticket is claimed while the session runs — never resolved by it" {
   use_tickets 01-alpha
 
+  # The tracker is named by an absolute path and not by `.scratch/demo/...`, and
+  # that is the whole of what [13] changed here: a session's working directory is
+  # a worktree now, so a relative path reads the *committed* copy of the tracker
+  # that worktree carries — which says `ready-for-agent` for ever and would have
+  # made this assertion measure a file nobody writes.
+  printf '%s\n' "$TRACKER_DIR" >"$SHIM_STATE/tracker-dir"
   script_claude <<'FAKE'
 #!/usr/bin/env bash
-sed -n 's/^\*\*Status:\*\* //p' .scratch/demo/issues/01-alpha.md |
+sed -n 's/^\*\*Status:\*\* //p' \
+  "$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md" |
   head -1 >"$RALPH_SHIM_STATE/status-during-session"
 mkdir -p src && printf 'alpha\n' >src/alpha.txt
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
@@ -379,6 +404,13 @@ sleep 3
 
   wait_for_file "$SHIM_STATE/gate-running" 200 ||
     fail "the gate never started its test branch"
+  # To the iteration as well as to the run, and that is what [13] changed about
+  # this scenario. An iteration is a child of the pilot now, and a child does not
+  # inherit a trap its parent installed — so a signal sent to the run alone never
+  # reaches the shell blocked collecting the gate's branches, and this test went on
+  # passing while proving only that branches finish when nobody interrupts them.
+  # What a human's Ctrl-C really does is reach both.
+  for _pid in $(pack_iteration_pids); do kill -TERM "$_pid" 2>/dev/null || true; done
   kill -TERM "$PACK_BG_PID"
 
   rc=0

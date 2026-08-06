@@ -39,11 +39,11 @@ Le fichier append-only, un par feature, qui capte l'observabilité d'un run — 
 _À éviter_ : log, trace, historique, état.
 
 **Verrou de run**:
-Le mécanisme grossier, un par feature, qui garantit qu'une seule ralph loop est active à la fois sur un même **tracker**. Il empêche le double-run accidentel sur une frontière ; ce n'est pas de la concurrence par-ticket (plusieurs itérations sur un même tracker), laissée hors sujet. Il ne garde que le tracker : ce qui garde l'arbre est le **verrou d'arbre**.
+Le mécanisme grossier, un par feature, qui garantit qu'une seule ralph loop est active à la fois sur un même **tracker**. Il empêche le double-run accidentel sur une frontière ; ce n'est pas de la concurrence par-ticket, qui est le fait du **run pilote** : un seul run tient le tracker, et c'est lui qui fait tourner N itérations. Il ne garde que le tracker : ce qui garde l'arbre est le **verrou d'arbre**.
 _À éviter_ : lock, mutex, sémaphore, claim, verrou de dépôt (le verrou d'arbre n'est pas par dépôt).
 
 **Verrou d'arbre**:
-Le second verrou, un par **arbre de travail**, qui garantit qu'une seule ralph loop touche un arbre à la fois — quelles que soient les features visées. Il existe parce que le snapshot du scope-guard, le rollback, le commit sur vert et `HEAD` sont tous à l'échelle du dépôt : deux runs sur deux features d'un même arbre s'imputent mutuellement leurs écritures et se rollbackent l'un l'autre. Il vit dans le répertoire git, hors d'atteinte d'un `git add -A`, d'un `git clean` ou d'un `rm -rf .scratch`. Un worktree lié ayant son propre répertoire git, il est déjà par arbre et non par dépôt : c'est ce qui rendra la concurrence possible quand chaque itération aura son **worktree d'itération**.
+Le second verrou, un par **arbre de travail**, qui garantit qu'une seule ralph loop touche un arbre à la fois — quelles que soient les features visées. Il existe parce que le snapshot du scope-guard, le rollback, le commit sur vert et `HEAD` sont tous à l'échelle du dépôt : deux runs sur deux features d'un même arbre s'imputent mutuellement leurs écritures et se rollbackent l'un l'autre. Il vit dans le répertoire git, hors d'atteinte d'un `git add -A`, d'un `git clean` ou d'un `rm -rf .scratch`. Un worktree lié ayant son propre répertoire git, il est déjà par arbre et non par dépôt : c'est ce qui a rendu la concurrence possible sans rien y changer ([13]). Depuis, le pilote garde ce verrou sur l'arbre où un humain l'a lancé et **aucune itération n'y tourne** ; ce qui protège un **worktree d'itération** n'est pas un verrou mais le fait que personne n'en connaît le nom, et la vraie exclusion est celle de la branche, tenue par un compare-and-swap sous le **garde d'intégration**.
 _À éviter_ : verrou de dépôt, verrou global, verrou de run (c'est l'autre, et il garde autre chose).
 
 ### L'unité de travail
@@ -219,11 +219,23 @@ La prise atomique d'un ticket (`Status: claimed` + propriétaire + horodatage) a
 _À éviter_ : lock (réservé aux verrous), réservation, assignation.
 
 **Worktree d'itération**:
-Le git worktree isolé dans lequel une itération construit, teste et roll-back, sans conflit avec les itérations parallèles. Ses commits sont repliés sur la branche principale par l'**intégration sérialisée**.
-_À éviter_ : branche, sandbox (réservé à l'exécution).
+Le git worktree jetable, détaché au tip de la branche, dans lequel une itération construit, teste et roll-back sans conflit avec ses voisines. **Chaque** itération en a un, `MAX_PARALLEL=1` compris : ce n'est pas une optimisation mais la condition de correction du scope-guard, du rollback et du commit sur vert, qui sont tous à l'échelle du dépôt. Il ne porte que ce qui est commité — ce qu'un projet a besoin d'y retrouver est le **provisionnement de worktree** — et il est détruit à la fin de l'itération, ce qui emporte avec lui la zone ignorée et ce que le gate a écrit en jugeant. Son commit est replié sur la branche par l'**intégration sérialisée**.
+_À éviter_ : branche, sandbox (réservé à l'exécution), copie de travail.
+
+**Provisionnement de worktree**:
+Ce que le pilote recopie dans un worktree d'itération avant de la lancer (`WORKTREE_PROVISION`) — le `.env`, le `node_modules`, le virtualenv qu'un `TEST_CMD` a besoin de trouver. Copié et jamais lié, un lien remettant les écritures de l'itération dans l'arbre commun. C'est une zone qu'aucun contrôle du pack ne voit, donc le run **compte** à chaque itération ce qu'il y a mis.
+_À éviter_ : seed, fixture, bootstrap.
+
+**Disjonction des write-surfaces**:
+Le prédicat qui décide si deux tickets peuvent tourner en même temps : leurs write-surfaces déclarées, comparées glob contre glob dans les deux sens par la primitive du scope-guard. Un chevauchement, ou une surface qu'on ne peut pas lire, **séquence** — c'est le sens sûr de l'approximation. C'est une déclaration et pas une mesure : deux surfaces disjointes peuvent toucher le même fichier si l'une déborde, et ce qui rattrape ça est le worktree d'itération, qui confine le débordement au lieu de le croiser.
+_À éviter_ : conflit, collision, verrou de fichier.
+
+**Garde d'intégration**:
+Le mutex, dans le répertoire git commun, sous lequel un repli a lieu. Il ordonne, il ne décide pas : ce qui empêche un repli d'écraser celui d'un voisin est le compare-and-swap sur la référence de branche, relu sous le garde.
+_À éviter_ : verrou d'arbre (c'en est un autre, et il garde autre chose).
 
 **Intégration sérialisée**:
-Le repli, **un à la fois**, des worktrees gatés sur la branche principale par la boucle (le build est parallèle, l'intégration est sérielle) ; couvre aussi la mise à jour de l'index de leçons.
+Le repli, **un à la fois**, des worktrees gatés sur la branche principale (le build est parallèle, l'intégration est sérielle) ; couvre aussi la mise à jour de l'index de leçons. Deux formes : un **fast-forward** quand la branche n'a pas bougé — c'est alors le commit exact que le commit sur vert a écrit, donc à `MAX_PARALLEL=1` l'historique est celui d'avant la concurrence — et un **rejeu** des seuls chemins approuvés par-dessus le nouveau tip quand un voisin est passé avant. Le prix du rejeu est assumé : ce qui atterrit n'a pas été testé contre ce que le voisin venait de poser. Un repli qui n'atteint pas la branche ne résout rien — le travail est dans un arbre qu'on va détruire — et arrête le run.
 _À éviter_ : merge, rebase, fusion.
 
 **Liveness du claim**:

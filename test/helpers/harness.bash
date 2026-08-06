@@ -17,6 +17,8 @@
 #   harness_teardown               remove it (RALPH_KEEP_TMP=1 keeps it)
 #   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
 #   stamp_claim ID [OWNER] [ISO]   claim a ticket behind the pack's back
+#   $RALPH_SHIM_STATE/tracker-dir  (read by a fake) the real tracker's path
+#   $RALPH_SHIM_STATE/project-dir  (read by a fake) the tree the run started in
 #   set_config KEY VALUE           override a config key in ralph.config.sh
 #   config_default KEY             what the shipped example gives that key
 #   run_loop [args ...]            run the real loop.sh through `run`
@@ -86,6 +88,20 @@ harness_setup() {
 
   cp -R "$template/project" "$PROJECT_DIR"
   harness__install_shims
+
+  # Where the *real* tracker is, for a fake that means to write it.
+  #
+  # Since [13] a session's working directory is a throwaway worktree, so
+  # `.scratch/<feature>/issues/…` written relative to it lands in a copy nobody
+  # reads and nothing restores — a scenario staging "a session edits the tracker"
+  # would then assert against a guarantee it had not exercised. Four of them did.
+  # A determined session can find the tree the run was started in (`git worktree
+  # list` answers it); this file is how a fake does the same thing in one line.
+  printf '%s\n' "$TRACKER_DIR" >"$SHIM_STATE/tracker-dir"
+  # And the tree the run was started in, for the same reason: a fake that means
+  # to reach the run's own lock, index or git directory is reaching for the main
+  # tree, not for the worktree it happens to be standing in.
+  printf '%s\n' "$PROJECT_DIR" >"$SHIM_STATE/project-dir"
 
   if [ "$RALPH_TEST_FEATURE" != "$RALPH_TEMPLATE_FEATURE" ]; then
     mkdir -p "$TRACKER_DIR"
@@ -697,4 +713,35 @@ at_exit() {
 
 at_calls() {
   cat "$SHIM_STATE/at.calls" 2>/dev/null
+}
+
+# The shell an iteration runs in: a child of the pilot ([13]). A test that means
+# to reproduce "a signal reached the iteration, not just the run" — a Ctrl-C, a
+# `kill` addressed to the process group — has to aim at this one, because the
+# pilot's own children do not inherit its traps and never see a signal sent to it
+# alone. Empty when nothing is in flight.
+# Narrowed to the shells running the pack, and that narrowing is load-bearing: the
+# pilot's other children are its own `sleep`s, and a TERM delivered to one of them
+# takes the whole run down through `errexit` — which is a signal a test would then
+# be measuring instead of the one it meant to send.
+# Whether a background run is still *running*, as opposed to still answering.
+#
+# `kill -0` is the wrong question and [36] wrote down why: a process that has
+# exited but has not been reaped by the shell that started it is a zombie, and a
+# zombie answers `kill -0` exactly like a live process. A test that asked the
+# number instead of the state watched a run that had been gone for ten seconds and
+# concluded it was draining.
+pack_still_running() {
+  local state
+  state="$(ps -o state= -p "${1:-$PACK_BG_PID}" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [ -n "$state" ] || return 1
+  case "$state" in
+    Z*) return 1 ;;
+  esac
+  return 0
+}
+
+pack_iteration_pids() {
+  ps -A -o pid= -o ppid= -o command= 2>/dev/null |
+    awk -v p="${1:-$PACK_BG_PID}" '$2 == p && $0 ~ /loop\.sh/ { print $1 }'
 }

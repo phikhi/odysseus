@@ -133,10 +133,19 @@ gate_preflight() {
 # exits an iteration has ([32]) and on none of the ways a run is killed, so the
 # next run pins whatever the dead one left widened. That limit is structural and
 # written in docs/frontiere-de-confiance.md; a temporary file cannot carry it.
+#
+# The list grew with [13] rather than gaining a second line of its own: an
+# iteration's worktree and the slot its outcome comes back through are the same
+# statement about the same directory, and two sentences saying "a killed run left
+# something in $TMPDIR" would be two things to keep in step. What the worktrees
+# cost *inside* the repository — a registration in the common git directory that
+# every later `git worktree` call carries — is a different fact and is said by
+# `concurrency_leftovers`.
 gate_leftovers() {
   local tmp="${TMPDIR:-/tmp}" n
   n="$(find "$tmp" -maxdepth 1 \
-    \( -name 'ralph-gate.*' -o -name 'ralph-ignore.*' \) -mtime +0 2>/dev/null |
+    \( -name 'ralph-gate.*' -o -name 'ralph-ignore.*' \
+    -o -name 'ralph-worktree.*' -o -name 'ralph-slot.*' \) -mtime +0 2>/dev/null |
     wc -l | tr -d ' ')"
   [ -n "$n" ] && [ "$n" -gt 0 ] || return 1
   printf '%s temporary director(ies) from earlier runs are still in %s: a run killed mid-iteration leaves one behind, and nothing here removes them\n' \
@@ -339,7 +348,14 @@ gate__sealed_config() {
   [ -n "$dir" ] || return 0
   config="$dir/$(basename "$config")"
 
-  root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  # The tree the *run* was started in, and not `git rev-parse --show-toplevel`.
+  # Since [13] this function runs with its working directory inside a throwaway
+  # worktree, whose toplevel is not where `RALPH_CONFIG` points — so the prefix
+  # test decided the config lived outside the repository and sealed nothing, on
+  # every iteration. A control failing open on the shape of a path is what this
+  # comment already warned about; the shape simply changed. Resolved with `pwd -P`
+  # for the reason above: both sides have to be physical or neither is.
+  root="$(cd "$(ralph_project_root)" 2>/dev/null && pwd -P)" || return 0
   [ -n "$root" ] || return 0
   case "$config" in
     "$root"/*) printf '%s\n' "${config#"$root"/}" ;;
@@ -465,9 +481,20 @@ gate__ignore_tree_rules() {
   git ls-files --cached --others --exclude-standard -- '*.gitignore' 2>/dev/null || true
 }
 
+# The **common** git directory and not this working tree's private one, which is
+# the same distinction `ralph_tree_lock_path` makes in the other direction ([22]).
+# A linked worktree answers `--git-dir` with `.git/worktrees/<name>/`, and git
+# reads no ignore rules from there: `info/` is one of the paths every worktree
+# shares, so the file that decides what a check can see is the common one.
+#
+# Probed on 06/08/2026, because reading it wrong is silent in exactly the way this
+# section exists to refuse: a rule written into the common `info/exclude` hides a
+# file inside a linked worktree, while a pin that had looked in the private
+# directory would have recorded no local excludes at all — and the snapshot would
+# then go on being taken through whatever a session had written there ([13]).
 gate__ignore_exclude_path() {
   local gitdir
-  gitdir="$(git rev-parse --git-dir 2>/dev/null)" || gitdir=""
+  gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
   [ -n "$gitdir" ] || return 0
   printf '%s/info/exclude\n' "$gitdir"
 }

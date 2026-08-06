@@ -206,6 +206,13 @@ FAKE
 
   wait_for_file "$SHIM_STATE/session-terminating" 200 ||
     fail "the monitor never terminated the oversized session"
+  # To the iteration as well as to the run, and that is what [13] changed about
+  # this scenario. An iteration is a child of the pilot now, and a child does not
+  # inherit a trap its parent installed — so a signal sent to the run alone never
+  # reaches the shell blocked collecting the gate's branches, and this test went on
+  # passing while proving only that branches finish when nobody interrupts them.
+  # What a human's Ctrl-C really does is reach both.
+  for _pid in $(pack_iteration_pids); do kill -TERM "$_pid" 2>/dev/null || true; done
   kill -TERM "$PACK_BG_PID"
 
   rc=0

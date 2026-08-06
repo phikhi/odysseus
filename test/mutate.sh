@@ -56,6 +56,10 @@
 #   bash test/mutate.sh                 every mutation
 #   bash test/mutate.sh -f scope        only those whose label matches
 #   bash test/mutate.sh -l              list them without running anything
+#   bash test/mutate.sh -n              apply each edit and restore it, without
+#                                       running the suite: reports DRIFTED and
+#                                       BROKEN in seconds instead of hours, and
+#                                       says nothing at all about VACUOUS
 #
 # Adding one, whenever a ticket delivers a guarantee: pick the single line that
 # carries it, write the edit that removes it, name the test that must notice.
@@ -77,6 +81,7 @@ cd "$ROOT" || exit 1
 BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ralph-mutate.XXXXXX")"
 FILTER=""
 LIST_ONLY=0
+DRY_RUN=0
 TOTAL=0
 BAD=0
 
@@ -155,6 +160,19 @@ mutation() {
       ;;
   esac
 
+  # The edit applied and the file still parses. Under `-n` that is the whole
+  # answer: DRIFTED and BROKEN are questions about *this* file, and only VACUOUS
+  # needs the suite. It exists because a ticket that moves code moves anchors, and
+  # finding that out costs three hours the other way round — a delay long enough
+  # that the honest thing to do at the end of a ticket stops being the cheap thing.
+  # It proves nothing about coverage and must never be reported as a green gate:
+  # what it rules out is an entry that would have reported DRIFTED anyway.
+  if [ "$DRY_RUN" = 1 ]; then
+    cp "$BACKUP_DIR/$key.bak" "$file"
+    printf 'applies  %s\n' "$label"
+    return 0
+  fi
+
   out="$(bash test/run.sh "$testfile" -f "$filter" 2>&1)"
   cp "$BACKUP_DIR/$key.bak" "$file"
 
@@ -185,6 +203,7 @@ while [ "$#" -gt 0 ]; do
       FILTER="${1:-}"
       ;;
     -l | --list) LIST_ONLY=1 ;;
+    -n | --dry-run) DRY_RUN=1 ;;
     -h | --help)
       sed -n '2,57p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -211,6 +230,7 @@ LENSES_LIB=".claude/lib/lenses.sh"
 # Not `LANG`: that one is the locale every command in this script reads.
 LANGLIB=".claude/lib/lang.sh"
 BUDGET=".claude/lib/budget.sh"
+CONCURRENCY=".claude/lib/concurrency.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
@@ -298,15 +318,15 @@ mutation "03 a tracker that does not exist is not checked" "$LOOP" \
 # Re-checked rather than path-substituted: what this removes is still the whole of
 # "the session's own exit code decides", which is what the test names.
 mutation "03 the session decides whether it succeeded" "$LOOP" \
-  's/    if \[ "\$rc" -eq 0 \] && \[ "\$\{RALPH_SOFT_LIMIT_HIT:-0\}" = 0 \] &&\n      \[ -z "\$\{RALPH_SESSION_TIMEOUT:-\}" \]; then/    if true; then/' \
+  's/  if \[ "\$rc" -eq 0 \] && \[ "\$\{RALPH_SOFT_LIMIT_HIT:-0\}" = 0 \] &&\n    \[ -z "\$\{RALPH_SESSION_TIMEOUT:-\}" \]; then/  if true; then/' \
   test/loop-happy-path.bats "a session that fails resolves nothing"
 
 mutation "03 the sterile counter never resets" "$LOOP" \
-  's/        sterile=0\n      else/        :\n      else/' \
+  's/    sterile=0\n  else\n    sterile=\$\(\(sterile \+ 1\)\)/    :\n  else\n    sterile=\$((sterile + 1))/' \
   test/loop-happy-path.bats "sterile counts consecutive"
 
 mutation "03 the iteration cap does not stop the run" "$LOOP" \
-  's/    if \[ "\$iteration" -ge "\$ITER_CAP" \]; then/    if false; then/' \
+  's/if \[ -z "\$stop_code" \] && \[ "\$iteration" -ge "\$ITER_CAP" \]; then/if false; then/' \
   test/loop-happy-path.bats "iteration cap"
 
 mutation "03 a stop request tears the iteration down" "$LOOP" \
@@ -413,11 +433,11 @@ mutation "05 an undeclared write-surface allows everything" "$GATE" \
   test/gate.bats "no write-surface may not write"
 
 mutation "05 the scope-guard baseline is the last commit" "$LOOP" \
-  's/    base="\$\(gate_tree_snapshot\)" \|\| base=""/    base="$(git rev-parse HEAD)"/' \
+  's/  base="\$\(gate_tree_snapshot\)" \|\| base=""/  base="$(git rev-parse HEAD)"/' \
   test/gate.bats "previous one left in the tree"
 
 mutation "05 a tree dirty before the run is charged to the ticket" "$LOOP" \
-  's/    base="\$\(gate_tree_snapshot\)" \|\| base=""/    base="$(git rev-parse HEAD)"/' \
+  's/  base="\$\(gate_tree_snapshot\)" \|\| base=""/  base="$(git rev-parse HEAD)"/' \
   test/gate.bats "already dirty when the run started"
 
 # Aimed at the function and not at its guard line, deliberately. Blanking the
@@ -449,22 +469,27 @@ mutation "05 the tree diff is not recursive" "$GATE" \
   test/gate.bats "new file outside"
 
 mutation "05 the gate verdict does not decide the marking" "$LOOP" \
-  's/      if gate_run "\$ticket" "\$base" && /      if { gate_run "\$ticket" "\$base" || true; } \&\& /' \
+  's/    if gate_run "\$ticket" "\$base" && /    if { gate_run "\$ticket" "\$base" || true; } \&\& /' \
   test/gate.bats "red test suite resolves nothing"
 
 mutation "05 a red gate is journalled as a plain failure" "$LOOP" \
-  's/        outcome=gate-red/        outcome=failed/' \
+  's/      outcome=gate-red\n/      outcome=failed\n/' \
   test/gate.bats "journalled as such"
 
 mutation "05 the scope class is never said out loud" "$LOOP" \
-  's/          loop_log "scope overflow on \$ticket: \$RALPH_GATE_SCOPE_CLASS"/          :/' \
+  's/        loop_log "scope overflow on \$ticket: \$RALPH_GATE_SCOPE_CLASS"/        :/' \
   test/gate.bats "named as drift"
 
 # ── [07] typed failures, rollback, durable green ─────────────────────────────
 
-mutation "07 nothing puts the tree back after a red gate" "$FAILURES" \
-  's/  failures_rollback "\$pre" "\$base" "\$tree" \|\| true\n//' \
-  test/canary.bats "absolved"
+# No entry for "nothing puts the tree back after a red gate" any more, and the
+# reason is worth reading rather than skipping. The canary still asserts the
+# property — three attempts, three red scope-guards, never a green bought by
+# having failed once — but since [13] it is held **twice**: the rollback undoes
+# the attempt, *and* the next attempt gets a worktree made from the branch tip
+# that never had it. Removing either line alone leaves the property standing, so
+# no single-line mutation can make that test red. A guarantee held redundantly is
+# not an uncovered one; what would be dishonest is an entry pretending otherwise.
 
 # The next three moved file in [06]: the restore loop they aim at is now
 # `gate_restore_tree` in gate.sh, because the containment of what a review lens
@@ -486,11 +511,11 @@ mutation "07 the rollback rewrites the loop's own bookkeeping" "$GATE" \
 
 mutation "07 a file the session added is not removed" "$GATE" \
   's/        rm -f "\$path"\n/        :\n/' \
-  test/failures.bats "stray write is undone"
+  test/failures.bats "removes what the session added"
 
 mutation "07 a file the session deleted is not restored" "$GATE" \
   's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          gate__log "could not restore \$path"/        :/' \
-  test/failures.bats "session deleted comes back"
+  test/failures.bats "brings back what it deleted"
 
 # The seam [06] introduced between the two: the rollback learns what it undid from
 # what the primitive printed, and it needs that list for the unstaging and for the
@@ -502,15 +527,19 @@ mutation "06 the rollback never learns what it put back" "$FAILURES" \
 
 mutation "07 what the session staged stays staged" "$FAILURES" \
   's/    git reset -q -- \$paths 2>\/dev\/null \|\| true/    :/' \
-  test/failures.bats "stray write is undone"
+  test/failures.bats "unstages what it put back"
 
 mutation "07 the commit a session made is left in the history" "$FAILURES" \
   's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if false; then/' \
   test/failures.bats "commit the session made"
 
-mutation "07 the rollback is a blanket reset --hard" "$FAILURES" \
-  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if git reset -q --hard "\$pre" 2>\/dev\/null \&\& git clean -qfd; then/' \
-  test/failures.bats "commit the session made"
+# Aimed at the *restore* and no longer at the commit half: the collateral a
+# blanket reset causes is a human's uncommitted work, and since [13] that work is
+# not in the tree an iteration touches at all. What is still exactly as wide as
+# the session's diff is `gate_restore_tree`, driven as a lib.
+mutation "07 the rollback is a blanket reset --hard" "$GATE" \
+  's/^gate_restore_tree\(\) \{/gate_restore_tree() { git reset -q --hard HEAD >\/dev\/null 2>\&1; git clean -qfd >\/dev\/null 2>\&1; printf "%s\\n" "reset"; return 0;/m' \
+  test/failures.bats "work nobody in this run made stands"
 
 mutation "07 a failure is not counted, so nothing is ever escalated" "$FAILURES" \
   's/      if \[ -z "\$count" \] \|\| \[ "\$count" -gt "\$\{RETRY_N:-2\}" \]; then/      if false; then/' \
@@ -553,7 +582,7 @@ mutation "07 the parent of a re-slice goes straight back to the frontier" "$FAIL
   test/failures.bats "is cut up"
 
 mutation "07 a green iteration is not made durable" "$LOOP" \
-  's/        failures_make_durable "\$ticket" "\$pre" "\$base" "\$\{RALPH_GATE_TREE:-\}" \|\| true\n//' \
+  's/      if failures_make_durable "\$ticket" "\$pre" "\$base" "\$\{RALPH_GATE_TREE:-\}"; then/      if true; then/' \
   test/failures.bats "never takes away what an earlier gate"
 
 mutation "07 the durable commit takes the whole tree, not what the gate approved" "$FAILURES" \
@@ -569,7 +598,7 @@ mutation "07 the durable commit is a write, not a compare-and-swap" "$FAILURES" 
   test/failures.bats "never overwrites a HEAD"
 
 mutation "07 a session's own tickets reach the frontier" "$LOOP" \
-  's/    failures_quarantine_strays "\$ticket" "\$seen" \|\| true\n//' \
+  's/  failures_quarantine_strays "\$ticket" "\$seen" \|\| true\n//' \
   test/failures.bats "own tickets"
 
 # The escalated id is `$final` and not `$stray` since [27]: what a session adds
@@ -584,13 +613,35 @@ mutation "07 a plan is read even from a session that wrote the tracker" "$FAILUR
   's/  if ! failures_quarantine_strays "\$ticket" "\$seen"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
   test/failures.bats "whole plan refused"
 
-mutation "07 a git that refuses the commit takes the run down" "$LOOP" \
-  's/"\$\{RALPH_GATE_TREE:-\}" \|\| true/"\${RALPH_GATE_TREE:-}"/' \
-  test/failures.bats "commit git refuses"
+# Turned round by [13], and the label with it. [07] wrote "a git that refuses the
+# commit is a warning, not the end of the run: the work is in the tree either
+# way" — true while the iteration ran in the tree the run was started in, false
+# the moment it runs in one about to be destroyed. So the mutation is now the old
+# behaviour, swallowing the refusal, and what must go red is the test that used
+# to assert it: without the stop, every ticket is marked `resolved` with nothing
+# at all behind it.
+#
+# Pointed at the compare-and-swap race and not at the `main.lock` test, which is
+# the one that reads the wrong way round now: a lock on `refs/heads/main` does not
+# stop an iteration committing its own detached HEAD, so there the durable commit
+# succeeds and it is the *fold* that refuses. Where this line really fails is the
+# race, and that test is where it belongs.
+mutation "07 a commit git refuses is swallowed and the ticket resolved anyway" "$LOOP" \
+  's/      if failures_make_durable "\$ticket" "\$pre" "\$base" "\$\{RALPH_GATE_TREE:-\}"; then/      if failures_make_durable "\$ticket" "\$pre" "\$base" "\${RALPH_GATE_TREE:-}" || true; then/' \
+  test/failures.bats "never overwrites a HEAD"
 
 mutation "07 a git that refuses the branch takes the run down" "$FAILURES" \
   's/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree"\n  fi/' \
   test/failures.bats "branch git cannot name"
+
+# The entry above tests a *pair*, and there is deliberately no second entry for
+# the other half. An iteration runs with errexit on — restored in loop__iterate
+# after [13] switched it off by accident, through the `||` of a caller three
+# frames up — and that posture is what makes the `|| true` above mean anything.
+# Remove the `|| true` and the iteration dies at the refused branch: red, as
+# above. Remove the posture instead and the `|| true` catches it: green, for a
+# reason that is correct. One line covers both, and an entry attacking the other
+# half would report VACUOUS about a guarantee that is held twice.
 
 mutation "07 a gate branch that hangs is left to hang" "$GATE" \
   's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
@@ -611,15 +662,15 @@ mutation "21 nothing guards the tracker from a session" "$FAILURES" \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 the tracker is only watched through its ids" "$LOOP" \
-  's/    failures_protect_tracker "\$ticket" "\$issues" \|\| tracker_written=1\n//' \
+  's/  failures_protect_tracker "\$ticket" "\$issues" "\$mark" \|\| tracker_written=1\n//' \
   test/failures.bats "not given"
 
 mutation "21 an edit to a ticket is not put back" "$FAILURES" \
-  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__log "\$ticket: could not restore \$path"/        :/' \
+  's/        GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__log "\$ticket: could not restore \$path"/        :/' \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 the write-surface is read after the session, not at spawn" "$LOOP" \
-  's/    issues="\$\(failures_tracker_tree\)" \|\| issues=""\n    rc=0\n    loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?/    rc=0\n    loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n    issues="\$(failures_tracker_tree)" || issues=""/' \
+  's/  issues="\$\(failures_tracker_tree\)" \|\| issues=""\n  rc=0\n  loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?/  rc=0\n  loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n  issues="\$(failures_tracker_tree)" || issues=""/' \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 an edited tracker still buys a green iteration" "$LOOP" \
@@ -627,7 +678,7 @@ mutation "21 an edited tracker still buys a green iteration" "$LOOP" \
   test/failures.bats "pays for the edit"
 
 mutation "21 an edited tracker is journalled as a plain red gate" "$LOOP" \
-  's/        \[ "\$tracker_written" = 0 \] \|\| outcome=tracker-write\n//' \
+  's/      \[ "\$tracker_written" = 0 \] \|\| outcome=tracker-write\n//' \
   test/failures.bats "pays for the edit"
 
 mutation "21 a ticket the session created is restored away, not quarantined" "$FAILURES" \
@@ -652,7 +703,7 @@ mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
   test/failures.bats "vouch for"
 
 mutation "21 the tracker the session staged stays staged" "$FAILURES" \
-  's/  git reset -q -- "\$dir" 2>\/dev\/null \|\| true\n//' \
+  's/  git -C "\$root" reset -q -- "\$dir" 2>\/dev\/null \|\| true\n//' \
   test/failures.bats "stay staged"
 
 mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" \
@@ -674,7 +725,7 @@ mutation "12 a claim outliving its owner is never reclaimed" "$CLAIM" \
 # for the wrong reason, and neither `bash -n` nor this file's own guards can see
 # the difference. The point is a run that never sweeps, not a run that crashes.
 mutation "12 the loop never sweeps the claims it inherited" "$LOOP" \
-  's/    reclaimed="\$\(claim_reclaim_stale\)"/    reclaimed=""/' \
+  's/    reclaimed="\$\(claim_reclaim_stale "\$\(loop__inflight_ids\)"\)"/    reclaimed=""/' \
   test/claim.bats "does not report an empty frontier"
 
 mutation "12 a dead owner still answers for its claim" "$CLAIM" \
@@ -732,7 +783,7 @@ mutation "12 the fixture's live claim is dead again" "$HARNESS" \
 # ── [12] the run lock a session can delete ───────────────────────────────────
 
 mutation "12 a run lock this run no longer holds goes unnoticed" "$LOOP" \
-  's/    if ! run_lock_is_ours; then\n      loop_log "the run lock is gone or not ours any more after \$iteration iterations — stopping rather than grinding beside another run"\n      exit 4\n    fi\n//' \
+  's/    if \[ -z "\$stop_code" \] && ! run_lock_is_ours; then\n      loop_log "the run lock is gone or not ours any more after \$iteration iterations — stopping rather than grinding beside another run"\n      stop_code=4\n    fi\n//' \
   test/failures.bats "lost its lock"
 
 mutation "12 a lock that was deleted still counts as ours" "$STATE" \
@@ -778,7 +829,7 @@ mutation "22 a run killed without releasing wedges the tree for good" "$STATE" \
   test/state.bats "working-tree lock whose holder died"
 
 mutation "22 a tree lock this run no longer holds goes unnoticed" "$LOOP" \
-  's/    if ! tree_lock_is_ours; then\n      loop_log "the working-tree lock is gone or not ours any more after \$iteration iterations — stopping rather than grinding beside another run"\n      exit 4\n    fi\n//' \
+  's/    if \[ -z "\$stop_code" \] && ! tree_lock_is_ours; then\n      loop_log "the working-tree lock is gone or not ours any more after \$iteration iterations — stopping rather than grinding beside another run"\n      stop_code=4\n    fi\n//' \
   test/failures.bats "lost the tree lock"
 
 mutation "22 a tree lock that was deleted still counts as ours" "$STATE" \
@@ -970,7 +1021,7 @@ mutation "23 the deadline goes straight to KILL" "$MONITOR" \
   test/smart-zone.bats "exiting cleanly"
 
 mutation "23 the loop reads a terminated session as a finished one" "$LOOP" \
-  's/ &&\n      \[ -z "\$\{RALPH_SESSION_TIMEOUT:-\}" \]//' \
+  's/ &&\n    \[ -z "\$\{RALPH_SESSION_TIMEOUT:-\}" \]//' \
   test/smart-zone.bats "exiting cleanly"
 
 # A hang is not evidence about the size of the slice. Classified as one, the loop
@@ -1269,7 +1320,7 @@ mutation "34 a rollback that read no tree does not say so to the loop" "$FAILURE
   test/failures.bats "stops the run instead of laundering"
 
 mutation "34 the loop grinds on after a rollback that could not act" "$LOOP" \
-  's/    if \[ "\$\{RALPH_ROLLBACK_FAILED:-0\}" = 1 \]; then/    if false; then/' \
+  's/  if \[ "\$\(cat "\$slot\/rollback-failed" 2>\/dev\/null \|\| echo 0\)" = 1 \]; then/  if false; then/' \
   test/failures.bats "stops the run instead of laundering"
 
 # The [33] reading, on the branch [33] had no caller to decide for. The tracker's
@@ -1313,7 +1364,7 @@ mutation "29 a scope-guard handed no tree recomputes one instead of refusing" "$
 
 mutation "29 the gate never says what it wrote while it judged" "$GATE" \
   's/^gate__report_changed\(\) \{/gate__report_changed() { return 0;/m' \
-  test/gate.bats "named, not left to be found"
+  test/gate.bats "goes with the worktree"
 
 # The two halves of this diff that the entries for [05] cover on the other one, and
 # they are here because that diff has its own callers now. A build writes into a
@@ -1321,7 +1372,7 @@ mutation "29 the gate never says what it wrote while it judged" "$GATE" \
 # root: a non-recursive diff would report `build` and read as covered.
 mutation "29 the diff of what the gate changed is not recursive" "$GATE" \
   's/git diff-tree -r --name-only "\$judged" "\$now"/git diff-tree --name-only "\$judged" "\$now"/' \
-  test/gate.bats "named, not left to be found"
+  test/gate.bats "goes with the worktree"
 
 mutation "29 the loop's own bookkeeping counts as a gate write" "$GATE" \
   's/"\$judged" "\$now" 2>\/dev\/null \| gate__drop_bookkeeping/"\$judged" "\$now" 2>\/dev\/null/' \
@@ -1596,7 +1647,7 @@ mutation "35 a frontier moved on this path is put back without a word" "$GATE" \
   test/gate.bats "moved the ignore frontier is still told so"
 
 mutation "35 the loop journals it as an ordinary red gate" "$LOOP" \
-  's/        \[ "\$\{RALPH_GATE_NOTHING_DELIVERED:-0\}" = 0 \] \|\| outcome=nothing-delivered\n//' \
+  's/      \[ "\$\{RALPH_GATE_NOTHING_DELIVERED:-0\}" = 0 \] \|\| outcome=nothing-delivered\n//' \
   test/gate.bats "answered and wrote nothing resolves nothing"
 
 # Renamed rather than deleted: the outcome then falls through to the `*)` arm and
@@ -1919,15 +1970,15 @@ mutation "08 the cache never expires" "$BUDGET" \
   test/budget.bats "a cache that expires"
 
 mutation "08 the classifier is never asked" "$LOOP" \
-  's/      failed \| nothing-delivered\)/      never-a-real-outcome)/' \
+  's/    failed \| nothing-delivered\)/    never-a-real-outcome)/' \
   test/budget.bats "not an attempt at the ticket"
 
 mutation "08 a red gate is forgiven for being hungry" "$LOOP" \
-  's/      failed \| nothing-delivered\)/      failed | nothing-delivered | gate-red)/' \
+  's/    failed \| nothing-delivered\)/    failed | nothing-delivered | gate-red)/' \
   test/budget.bats "not forgiven for being hungry"
 
 mutation "08 a session a deadline cut is read as a budget pause" "$LOOP" \
-  's/      failed \| nothing-delivered\)/      failed | nothing-delivered | session-stalled)/' \
+  's/    failed \| nothing-delivered\)/    failed | nothing-delivered | session-stalled)/' \
   test/budget.bats "whatever its stream says about quota"
 
 mutation "08 a refused session is billed a retry" "$FAILURES" \
@@ -2016,6 +2067,151 @@ mutation "08 a cache TTL nobody can read is taken as it stands" "$BUDGET" \
 mutation "08 a config key nobody listed goes unnoticed" "$EXAMPLE" \
   's/^BUDGET_CHECK=/BUDGET_UNLISTED="x"\nBUDGET_CHECK=/m' \
   test/smoke.bats "configuration surface"
+
+# ── [13] per-ticket concurrency ──────────────────────────────────────────────
+
+mutation "13 an iteration runs in the tree the run was started in" "$LOOP" \
+  's/^loop__iterate\(\) \{/loop__iterate() { set -- "\$1" "\$2" "\$(ralph_project_root)" "\$4";/m' \
+  test/loop-happy-path.bats "isolated worktree"
+
+# Anchored on the line above it, and that is the header's own warning read the
+# hard way: `  concurrency_worktree_drop "$tree"` also matches *inside* the
+# four-space copy on the error path, which comes first in the file — so the
+# mutation applied cleanly to a branch nothing takes and reported VACUOUS about
+# a test that was fine.
+mutation "13 the worktree is never given back" "$LOOP" \
+  's/  rm -rf "\$pin"\n  concurrency_worktree_drop "\$tree"\n/  rm -rf "\$pin"\n/' \
+  test/concurrency.bats "gives it back"
+
+mutation "13 the parallelism cap is ignored" "$LOOP" \
+  's/    if \[ "\$\(loop__inflight_count\)" -ge "\$CONCURRENCY_CAP" \]; then/    if false; then/' \
+  test/concurrency.bats "one after the other"
+
+mutation "13 MAX_PARALLEL means nothing" "$CONCURRENCY" \
+  's/^concurrency_cap\(\) \{/concurrency_cap() { CONCURRENCY_CAP=1; return 0;/m' \
+  test/concurrency.bats "ground at the same time"
+
+mutation "13 a nearly spent window buys the whole cap" "$CONCURRENCY" \
+  's/  slots=\$\(\(\(want \* head \+ 99\) \/ 100\)\)/  slots="\$want"/' \
+  test/concurrency.bats "buys fewer slots"
+
+mutation "13 nothing says the subscription is unmeasured" "$CONCURRENCY" \
+  's/    concurrency__say_once headroom \\\n      "no usage window was measured[^\n]*\n/    :\n/' \
+  test/concurrency.bats "buys fewer slots"
+
+mutation "13 two tickets never clash" "$CONCURRENCY" \
+  's/^concurrency_clashes\(\) \{/concurrency_clashes() { return 1;/m' \
+  test/concurrency.bats "sequenced, whatever MAX_PARALLEL"
+
+mutation "13 a ticket with no write-surface runs beside anything" "$CONCURRENCY" \
+  's/  mine="\$\(gate_write_surface "\$ticket"\)"\n  \[ -n "\$mine" \] \|\| return 0/  mine="\$(gate_write_surface "\$ticket")"/' \
+  test/concurrency.bats "in both directions"
+
+mutation "13 the surfaces are matched one way round only" "$CONCURRENCY" \
+  's/      gate_in_surface "\$theirs" "\$entry" && return 0\n//' \
+  test/concurrency.bats "in both directions"
+
+mutation "13 the fold is a write, not a compare-and-swap" "$CONCURRENCY" \
+  's/git update-ref -m "ralph: \$ticket" HEAD "\$commit" "\$tip" 2>\/dev\/null/git update-ref -m "ralph: \$ticket" HEAD "\$commit" 2>\/dev\/null/' \
+  test/concurrency.bats "never overwrites a branch tip"
+
+mutation "13 a fold nobody serialized" "$CONCURRENCY" \
+  's/^concurrency__wait_for_guard\(\) \{/concurrency__wait_for_guard() { return 1;/m' \
+  test/concurrency.bats "one commit each"
+
+mutation "13 a sibling's commit is replayed over instead of onto" "$CONCURRENCY" \
+  's/  if \[ "\$tip" = "\$start" \]; then/  if true; then/' \
+  test/concurrency.bats "one commit each"
+
+mutation "13 every fold rebuilds the commit instead of fast-forwarding" "$CONCURRENCY" \
+  's/  if \[ "\$tip" = "\$start" \]; then/  if false; then/' \
+  test/concurrency.bats "fast-forward onto the very commit"
+
+mutation "13 the tree the run was started in is left behind the branch" "$CONCURRENCY" \
+  's/  \[ "\$rc" = 0 \] && concurrency__refresh "\$changed"\n//' \
+  test/concurrency.bats "follows the branch"
+
+mutation "13 a green iteration that never reached the branch is resolved anyway" "$LOOP" \
+  's/      if \[ -n "\$commit" \] &&\n        concurrency_integrate "\$ticket" "\$start" "\$commit" "\$changed"; then/      if true; then/' \
+  test/concurrency.bats "never overwrites a branch tip"
+
+mutation "13 a fold that could not reach the branch does not stop the run" "$LOOP" \
+  's/  if \[ "\$outcome" = not-integrated \]; then\n    loop_log "\$ticket: the gate was green and the work did not reach the branch — stopping"\n    stop_code=4\n  fi\n//' \
+  test/failures.bats "stops the run rather than resolving nothing"
+
+mutation "13 the sweep reclaims the claims this run is holding" "$CLAIM" \
+  's/    case "\$held" in\n      \*" \$id "\*\) continue ;;\n    esac\n//' \
+  test/concurrency.bats "does not reclaim a claim this run is holding"
+
+mutation "13 the sweep is not told what is in flight" "$LOOP" \
+  's/claim_reclaim_stale "\$\(loop__inflight_ids\)"/claim_reclaim_stale/' \
+  test/concurrency.bats "does not reclaim a claim this run is holding"
+
+mutation "13 the tracker guard does not know what the loop wrote" "$FAILURES" \
+  's/  \[ -z "\$mark" \] \|\| ours="\$\(tracker_writes_since "\$mark"\)"\n//' \
+  test/failures.bats "the loop wrote itself is left alone"
+
+# Both entries name the lib-level test and not the parallel run, and that is a
+# lesson rather than a preference. Through the loop, the defect only shows when
+# the pilot claims the sibling *after* the first iteration has snapshotted the
+# tickets — a few command substitutions apart, and under the load of a full pass
+# the order flips. The property itself has nothing to do with timing: it is "a
+# path the loop wrote is not the session's doing", and it is stated where it can
+# be staged exactly.
+mutation "13 the loop records none of its own tracker writes" "$TRACKER_IFACE" \
+  's/^tracker__note_write\(\) \{/tracker__note_write() { return 0;/m' \
+  test/failures.bats "the loop wrote itself is left alone"
+
+# No entry for the *order* of those two lines (`mark` taken before the tickets are
+# snapshotted), and it is a deliberate hole rather than an oversight. Swapping
+# them only matters when the pilot claims a sibling in the microseconds between
+# them: over-excluding leaves a ticket alone, under-excluding destroys a claim.
+# Nothing can stand in that window on purpose — the same shape as the race
+# `proc_collect` documents and declines to close — so an entry here would be a
+# coin toss reported as coverage. The margin is written where it is taken.
+
+mutation "13 an iteration that died without a verdict keeps its ticket" "$LOOP" \
+  's/      tracker_unclaim "\$ticket"\n    fi\n    loop_log "\$ticket: the iteration died without a verdict/      :\n    fi\n    loop_log "\$ticket: the iteration died without a verdict/' \
+  test/concurrency.bats "dies without a verdict"
+
+mutation "13 a child that died hard is waited for for ever" "$LOOP" \
+  's/      if \[ -e "\$slot\/done" \] \|\| ! kill -0 "\$pid" 2>\/dev\/null; then/      if [ -e "\$slot\/done" ]; then/' \
+  test/concurrency.bats "dies without a verdict"
+
+# Aimed at the whole block and not at its `break`, and the difference is a lesson
+# about what this block does. While any iteration is in flight the pilot is inside
+# a blocking collection, so it never *reaches* here — what keeps the iterations is
+# `loop__reap 1`, and a mutation on the `break` is invisible by construction. What
+# this block decides is the other half: with a stop pending, nothing new is
+# scheduled. Removed, the run goes on claiming whatever became eligible and comes
+# back reporting a drained frontier.
+mutation "13 a stop schedules new work anyway" "$LOOP" \
+  's/    if \[ -n "\$stop_code" \]; then\n      \[ -n "\$LOOP_SLOTS" \] \|\| break\n      loop__reap 1\n      continue\n    fi/    if false; then\n      break\n    fi/' \
+  test/concurrency.bats "iterations in flight finish"
+
+mutation "13 nothing is provisioned into the worktree" "$CONCURRENCY" \
+  's/    cp -R "\$root\/\$path" "\$dir\/\$path" 2>\/dev\/null \|\| \{/    true || {/' \
+  test/concurrency.bats "copies what the project names"
+
+mutation "13 what the pilot provisioned is never said" "$LOOP" \
+  's/    loop_log "\$ticket: \$provisioned path\(s\) provisioned into this iteration.s worktree[^\n]*"\n/    :\n/' \
+  test/concurrency.bats "copies what the project names"
+
+mutation "13 a repository with no commit is ground anyway" "$CONCURRENCY" \
+  's/^concurrency_preflight\(\) \{/concurrency_preflight() { return 0;/m' \
+  test/concurrency.bats "no commit is refused"
+
+mutation "13 a MAX_PARALLEL nobody can read is read as one" "$CONCURRENCY" \
+  's/  case "\$\{MAX_PARALLEL:-1\}" in\n    .. \| \*\[!0-9\]\* \| 0\)/  case "\${MAX_PARALLEL:-1}" in\n    never-a-real-value)/' \
+  test/concurrency.bats "refused rather than read as 1"
+
+mutation "13 the local excludes are read from the worktree's private git dir" "$GATE" \
+  's/  gitdir="\$\(git rev-parse --git-common-dir 2>\/dev\/null\)" \|\| gitdir=""/  gitdir="$(git rev-parse --git-dir 2>\/dev\/null)" || gitdir=""/' \
+  test/gate.bats "widen the blind zone through .git/info/exclude"
+
+mutation "13 the sealed config is resolved against the worktree, not the project" "$GATE" \
+  's/  root="\$\(cd "\$\(ralph_project_root\)" 2>\/dev\/null && pwd -P\)" \|\| return 0/  root="$(git rev-parse --show-toplevel 2>\/dev\/null)" || return 0/' \
+  test/gate.bats "sealed under the name it carries"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

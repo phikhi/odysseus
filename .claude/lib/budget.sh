@@ -339,6 +339,13 @@ budget_refused() {
 #   RALPH_BUDGET_WINDOW   the window that blocks, when one does
 #   RALPH_BUDGET_RESET    its reset instant as an epoch, when it is readable
 #   RALPH_BUDGET_SOURCE   endpoint | stream | none
+#   RALPH_BUDGET_HEADROOM how much of the tightest measured window is left before
+#                         its threshold, as a percentage of that threshold — and
+#                         **empty when nothing was measured**, which is not zero
+#                         ([08]: a figure this pack cannot read is never read as
+#                         nothing left). Nothing in this module acts on it; it is
+#                         what lets [13] spend a nearly full window more slowly
+#                         instead of running MAX_PARALLEL iterations at it
 #
 # Variables rather than stdout, and that is load-bearing: `$(budget_check)` would
 # fork a subshell and the 180 s cache would die with it, so this run would ask the
@@ -349,12 +356,13 @@ budget_refused() {
 # answers "what should this run do now": sleeping to the session window's reset
 # would wake up into the same wall.
 budget_check() {
-  local posture="${1:-}" force=0 name pct reset thresh seen=0 missing=''
+  local posture="${1:-}" force=0 name pct reset thresh seen=0 missing='' left
 
   RALPH_BUDGET_STATE=off
   RALPH_BUDGET_WINDOW=''
   RALPH_BUDGET_RESET=''
   RALPH_BUDGET_SOURCE=none
+  RALPH_BUDGET_HEADROOM=''
 
   # Off is a declaration, and a run with no budget watch has to be
   # distinguishable from a run that measured one and found room ([24]: a zone
@@ -391,6 +399,24 @@ WINDOW
         five_hour) thresh="$(budget__pct "${THRESH_5H:-0.95}")" ;;
         *) thresh="$(budget__pct "${THRESH_WEEK:-0.80}")" ;;
       esac
+      # How much of this window is left before this project stops, as a share of
+      # the threshold rather than of the window: the run stops at THRESH, so what
+      # is spendable is the distance to it and not the distance to 100%. The
+      # tightest window wins — a weekly cap at 5% left is not made roomier by a
+      # session window that just reset. A threshold of zero would be a project
+      # that stops immediately, and it is left at no headroom rather than divided
+      # by.
+      #
+      # An `if` and not an `&&` chain: this file is sourced into a `set -e`
+      # script, so a chain whose last test is false takes the whole function down
+      # — and it would do it on the ordinary case, a window under its threshold.
+      left=0
+      if [ "$thresh" -gt 0 ] && [ "$pct" -lt "$thresh" ]; then
+        left=$(((thresh - pct) * 100 / thresh))
+      fi
+      if [ -z "$RALPH_BUDGET_HEADROOM" ] || [ "$left" -lt "$RALPH_BUDGET_HEADROOM" ]; then
+        RALPH_BUDGET_HEADROOM="$left"
+      fi
       [ "$pct" -ge "$thresh" ] || continue
       RALPH_BUDGET_STATE=blocked
       RALPH_BUDGET_WINDOW="$name"
