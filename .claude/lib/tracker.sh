@@ -32,15 +32,35 @@ tracker__dispatch() {
   shift
   local backend="${TRACKER_BACKEND:-local}"
   local fn="tracker_${backend}_${op}"
+  local out rc=0
   if ! declare -f "$fn" >/dev/null 2>&1; then
     printf 'tracker: backend "%s" does not implement %s\n' "$backend" "$op" >&2
     return 3
   fi
   case "$op" in
-    frontier | ids | read_ticket | field) ;;
-    *) tracker__note_write "${1:-}" ;;
+    frontier | ids | read_ticket | field)
+      "$fn" "$@"
+      ;;
+    open_ticket | renumber)
+      # The two operations whose *answer* is an id, and the register wants the id
+      # a guard will meet in `issues/` rather than the argument. `open_ticket`
+      # takes a slug, so noting the argument wrote a line naming no ticket at all
+      # — a nuisance while only the restore read the register ([13]), and wrong
+      # the moment the quarantine reads it ([42]): the one thing it asks is
+      # whether an id that appeared is the loop's own creation. `renumber` needs
+      # both, because it moves a file: the number that stopped existing and the
+      # one that now does.
+      [ "$op" = open_ticket ] || tracker__note_write "${1:-}"
+      out="$("$fn" "$@")" || rc=$?
+      [ -z "$out" ] || printf '%s\n' "$out"
+      tracker__note_write "$out"
+      return "$rc"
+      ;;
+    *)
+      tracker__note_write "${1:-}"
+      "$fn" "$@"
+      ;;
   esac
-  "$fn" "$@"
 }
 
 # ── what the loop itself wrote, and when ─────────────────────────────────────
@@ -63,6 +83,16 @@ tracker__dispatch() {
 # the same pattern as `gate_is_bookkeeping` — one definition of "this is the loop's
 # own work", read by the control that would otherwise judge it — applied to time
 # rather than to path.
+#
+# **Every guard over `issues/` reads this, and that took a second ticket** ([42]).
+# [13] wired the producer to one consumer: `failures_protect_tracker` as the loop
+# calls it, and neither `failures_quarantine_strays` nor the same guard as
+# `failures_reslice` calls it. Above `MAX_PARALLEL=1` the two undo each other — a
+# re-slice restores a sibling's marking, a sibling quarantines the tickets a
+# re-slice just created. The question a shared definition answers is never "where
+# is the source" but "who reads it, and who should have": the guards ask
+# `failures__register_since`, which asks here, and a third guard inherits the answer
+# instead of keeping a list beside it.
 #
 # A file and not a variable, because the writers are different shells: the pilot
 # claims, an iteration marks, and a value written in one is not visible in the

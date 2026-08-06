@@ -396,6 +396,36 @@ failures_tracker_snapshot() {
   printf ' %s' "$(tracker_ids | tr '\n' ' ')"
 }
 
+# ── what the loop itself wrote, for every guard here ─────────────────────────
+#
+# One definition of "this is not the judged session's doing", read by both guards
+# below and by whatever third guard comes after them. It is one call deep on
+# purpose: the answer lives in the dispatcher's register ([13]), where every
+# tracker write goes through, and a guard that kept its own list beside it would
+# be the [25] defect again — wrong the first time somebody adds a writer.
+#
+# An empty mark means "no register was taken", which is a caller driving one
+# iteration at a time: the shape these guards had before there was ever a sibling,
+# and the answer is the empty fence rather than a refusal.
+failures__register_since() {
+  local mark="${1:-}"
+  [ -n "$mark" ] || {
+    printf ' \n'
+    return 0
+  }
+  tracker_writes_since "$mark"
+}
+
+# Whether this id is in that fence. A function and not an inline `case` in each
+# guard: the fence's shape — leading and trailing space — is the register's
+# business, and a second copy of the pattern is a second place to get it wrong.
+failures__in_register() {
+  case "$2" in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
 # Ids that were not there before. Not "tickets the loop created": the loop's own
 # creations happen after this check, on purpose.
 failures__strays() {
@@ -415,9 +445,31 @@ failures__strays() {
 # non-zero when there was something to quarantine, so a caller that was reading
 # the session's output can stop reading it.
 failures_quarantine_strays() {
-  local ticket="$1" seen="$2" strays stray final renamed_to kept='' renamed=''
+  local ticket="$1" seen="$2" mark="${3:-}"
+  local strays stray final renamed_to kept='' renamed='' ours
   strays="$(failures__strays "$seen")"
   [ -n "$strays" ] || return 0
+
+  # What the *loop* created in here while this session was running, which is not
+  # the session's doing and must not be quarantined ([42]): a sibling's re-slice
+  # puts its children on the frontier, and an id that was not there when this
+  # session started looks exactly like a ticket a session gave itself.
+  #
+  # By id, and the reason it is enough is not that ids are a strong trace — they
+  # are not, and [13] says so. It is which entries can reach this comparison at
+  # all: a stray is an id the tracker did not hold at spawn, so a register entry
+  # can only match one by naming a ticket the loop *created* inside the window.
+  # Every other entry names a ticket that was already there, and a ticket that was
+  # already there is never a stray. That equivalence is why the dispatcher had to
+  # start noting the id `open_ticket` *returned* rather than the slug it was
+  # handed: a slug names no ticket, so a session that created `alpha-one.md` would
+  # have walked in behind the loop's own re-slice.
+  #
+  # Silent when it exempts, and that is a decision. The creation is already named
+  # by the iteration that made it (`too big -> re-sliced into ...`); a second line
+  # here would say "a sibling was busy" once per iteration in flight, on the
+  # normal path, and this log has to stay readable at 3am.
+  ours="$(failures__register_since "$mark")"
 
   # Renumbered before it is escalated, and that ordering is the whole of [27]:
   # what a session adds may carry a number another ticket already has — a renamed
@@ -429,6 +481,7 @@ failures_quarantine_strays() {
   # the one other tickets point at.
   while IFS= read -r stray; do
     [ -n "$stray" ] || continue
+    ! failures__in_register "$stray" "$ours" || continue
     final="$stray"
     # A refusal is said, never swallowed. Rendering the unchanged id when the
     # renumber could not run would hand back exactly the state being repaired,
@@ -448,6 +501,11 @@ failures_quarantine_strays() {
   done <<STRAYS
 $strays
 STRAYS
+
+  # Nothing left once the loop's own creations are out: there is no quarantine, no
+  # note naming a session that wrote nothing, and no non-zero to make a caller
+  # throw away what it was reading.
+  [ -n "$kept" ] || return 0
 
   printf 'The %s session wrote these tickets into the tracker itself: %s. Nothing validated their write-surface or their acceptance criteria, so they are waiting for a human instead of sitting on the frontier.%s\n' \
     "$ticket" "$(failures__join "$kept")" \
@@ -523,11 +581,9 @@ failures_protect_tracker() {
   root="$(ralph_project_root)"
   dir="$(failures__issues_path)"
   # What the *loop* wrote in here while this session was running, which is not the
-  # session's doing and must not be undone ([13] on [21]). Empty when no mark was
-  # handed over, which is a caller driving one iteration at a time — the shape this
-  # guard had before there was ever a sibling.
-  ours=" "
-  [ -z "$mark" ] || ours="$(tracker_writes_since "$mark")"
+  # session's doing and must not be undone ([13] on [21]) — the same definition the
+  # quarantine reads, from the same place ([42]).
+  ours="$(failures__register_since "$mark")"
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")" || return 1
   rm -f "$idx"
   if ! GIT_INDEX_FILE="$idx" git -C "$root" read-tree "$before" 2>/dev/null; then
@@ -545,9 +601,7 @@ failures_protect_tracker() {
     # retry counter, its marking. Skipped before the status is even looked at,
     # because restoring it is how two iterations in flight destroy each other.
     id="$(basename "$path" .md)"
-    case "$ours" in
-      *" $id "*) continue ;;
-    esac
+    ! failures__in_register "$id" "$ours" || continue
     case "$status" in
       A)
         # Left where it is: a created ticket belongs to the quarantine, which
@@ -890,7 +944,7 @@ failures_make_durable() {
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head seen issues prev_soft prev_timeout moved rc=0
+  local plan out base head seen issues mark prev_soft prev_timeout moved rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -901,6 +955,15 @@ failures_reslice() {
 
   base="$(gate_tree_snapshot)" || base=""
   head="$(git rev-parse HEAD 2>/dev/null)" || head=""
+  # Where the loop's own register stands, taken *before* both snapshots below
+  # ([42]). A planning session is a session and this window is a sibling's window
+  # too: what the loop writes in `issues/` while the planner thinks — a claim, a
+  # marking, the children of another re-slice — is not the planner's doing. First
+  # of the three, in that order, because over-excluding leaves a ticket alone and
+  # under-excluding destroys a sibling's marking: anything the loop appends
+  # between the register and a snapshot must fall inside the exemption rather than
+  # outside it.
+  mark="$(tracker_write_mark)"
   seen="$(failures_tracker_snapshot)"
   issues="$(failures_tracker_tree)" || issues=""
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
@@ -952,11 +1015,11 @@ failures_reslice() {
   # one. A session that writes the tracker has stepped past the only check that
   # cannot be redone afterwards, so the rest of what it produced is not worth
   # reading — whether it edited a ticket or created one.
-  if ! failures_protect_tracker "$ticket" "$issues"; then
+  if ! failures_protect_tracker "$ticket" "$issues" "$mark"; then
     rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
     return 1
   fi
-  if ! failures_quarantine_strays "$ticket" "$seen"; then
+  if ! failures_quarantine_strays "$ticket" "$seen" "$mark"; then
     rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
     return 1
   fi
