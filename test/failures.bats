@@ -447,6 +447,42 @@ failures__stage_a_failed_session() {
   assert_file_contains "$PROJECT_DIR/untracked-by-nobody.txt" "human work"
 }
 
+@test "a ticket the loop wrote itself is left alone by the guard" {
+  # [21] restores every ticket that moved around a session, which is exactly right
+  # while one iteration is in flight and destroys a sibling's claim the moment two
+  # are ([13]). The loop keeps a register of the paths it wrote itself, and the
+  # guard skips them.
+  #
+  # Driven as a lib rather than through a parallel run, and that is the finding
+  # rather than convenience: through the loop the defect only shows when the pilot
+  # claims the sibling *after* the first iteration snapshotted the tickets, which
+  # is a handful of command substitutions apart and flips under load. Here the
+  # order is the test's to choose.
+  use_tickets 01-alpha 02-beta
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
+    export RALPH_TRACKER_LOG
+    before="$(failures_tracker_tree)"
+    mark="$(tracker_write_mark)"
+    # What the loop legitimately does inside another iteration'"'"'s window: it
+    # claims a sibling. And what a session does, which nothing may keep: it edits
+    # the ticket it was handed.
+    tracker_claim 02-beta "pid:$$"
+    perl -pi -e "s/^\\*\\*Write-surface:\\*\\* .*/**Write-surface:** \`*\`/" \
+      "$(ralph_feature_dir)/issues/01-alpha.md"
+    failures_protect_tracker 01-alpha "$before" "$mark" || printf "guard-refused\n"
+    rm -f "$RALPH_TRACKER_LOG"
+  '
+  assert_output_contains "guard-refused"
+
+  # The sibling'"'"'s claim stands: the loop wrote it, so it is not the session'"'"'s doing.
+  assert_ticket_status 02-beta claimed
+  # And the session's own edit is gone, which is what the guard is for.
+  assert_equal "$(ticket_field 01-alpha Write-surface)" '`src/alpha.txt`'
+}
+
 @test "a rollback never restores the tracker, whatever moved in it" {
   use_tickets 01-alpha
 

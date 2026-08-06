@@ -132,3 +132,53 @@
 ### Outil ajouté
 
 `bash test/mutate.sh -n` applique chaque édition et la restaure **sans lancer la suite** : DRIFTED et BROKEN en secondes au lieu de trois heures. Il ne dit rien de VACUOUS et ne doit jamais être rapporté comme un vert. Il existe parce que ce ticket a fait bouger 22 ancres, et que trouver ça en trois heures rend la chose honnête plus chère que la chose commode.
+
+## Ce que le gate de mutation a trouvé, et qui n'était visible que là
+
+La suite était verte à 381 avant la première passe complète de `test/mutate.sh`. Celle-ci a rendu **30 entrées `not ok`** — deux `DRIFTED` (un test renommé) et vingt-huit `VACUOUS`. Aucune n'était un faux positif : l'isolation par worktree a rendu **inobservables depuis la boucle** des propriétés que ces tests prétendaient couvrir, et une suite verte le disait exactement comme un pack sain. C'est la raison d'être du fichier, et c'est la partie la plus longue de ce ticket.
+
+### La trouvaille de fond : `errexit` était éteint par accident
+
+Une entrée [07] qui couvrait une vraie garantie depuis un mois est revenue `VACUOUS` : retirer un `|| true` de `failures_handle` ne changeait plus rien. Cause : le pilote appelait `loop__start "$ticket" "$pin" || stop_code=4`, et **bash suspend `errexit` pour toute l'étendue dynamique d'une fonction invoquée dans une liste testée** — le fork qu'elle fait compris. Tous les `|| true` de la politique d'échec, chacun avec son commentaire expliquant ce qu'il achète, étaient devenus décoratifs sur le chemin d'itération.
+
+Rétabli plutôt que déclaré nouvelle norme : un lib qui rend non-zéro là où personne n'a écrit de garde est le cas dont personne ne sait rien, et la réponse sûre est de coûter l'itération — le ticket revient, le pilote dit qu'elle est morte sans verdict. `loop__start` rend donc son refus par `LOOP_START_REFUSED` : un statut testé rétablirait l'accident, trois cadres plus loin que l'endroit où ça compte.
+
+### Une itération retrappe TERM/INT
+
+Deuxième famille : [25] (×2) et [28] rapportaient `VACUOUS`. Un sous-shell remet au défaut les traps que son parent avait posés, et le défaut de TERM est la mort — donc un signal atteignant l'itération la **démantelait** au lieu de la laisser finir, ce que ces deux tickets existent pour refuser, et `proc_collect` n'était plus dans le chemin qui l'a fait écrire (bash n'écourte `wait` que pour un signal *trappé*). L'itération pose maintenant son propre trap. Effet de bord voulu : un `kill -TERM` au groupe entier — le cas que [28] déclarait indéfendable — laisse désormais chaque itération finir.
+
+Les deux tests visent maintenant l'itération autant que le run, par `pack_iteration_pids`.
+
+### Deux durcissements trouvés par ces sondes
+
+- **Le `sleep` du pilote est gardé.** Il tourne sous `errexit` : un signal délivré à lui plutôt qu'au run faisait sortir le pilote en 143 **en laissant ses itérations orphelines**, à l'endroit précis où il tient des enfants qu'il n'a pas collectés. Sondé par accident en écrivant le test de stop.
+- **L'aide de test ne vise que les shells du pack** : viser tous les enfants du pilote tuait ce `sleep`, donc un test aurait mesuré le signal qu'il envoyait par erreur plutôt que celui qu'il voulait.
+
+### Comment les vingt-huit ont été reprises
+
+Aucune n'a été retirée en silence. Trois formes :
+
+1. **Remise en scène** (la majorité). Le filtre de bookkeeping ne voyait plus rien parce que la boucle n'écrit plus dans l'arbre jugé → la session et le gate écrivent sous `.scratch/<feature>/` dans leur propre worktree. Le tracker n'était plus atteignable par un chemin relatif → les exploits visent le vrai tracker, par chemin absolu, comme le ferait une session déterminée. Le commit durable ne se distinguait plus de l'arbre entier (un worktree part propre) → la suite du test écrit après l'arbre jugé. Le témoin d'ignore n'avait plus de fichier préexistant à ne pas forcer → la session en crée. Le gate de langue lisait un fichier que la suite réécrivait ailleurs → la suite écrit relativement à son arbre.
+2. **Déplacement au niveau lib.** Le rollback n'est plus observable depuis la boucle : ce qu'une session ajoute, supprime, stage, et le travail d'un humain qu'un `reset --hard` emporterait sont maintenant pilotés directement sur `failures_rollback`, dans un arbre où l'effet se voit. Les tests de boucle gardent ce qu'ils peuvent encore prouver (le ticket, les retries, les lignes imprimées).
+3. **Retrait assumé, avec la raison écrite dans `test/mutate.sh`.** Deux entrées : « rien ne remet l'arbre après un gate rouge » et « le registre est lu après le snapshot ». La première parce que la propriété est désormais tenue **deux fois** — le rollback la défait *et* la tentative suivante reçoit un worktree neuf — donc aucune mutation d'une seule ligne ne peut faire rougir le test, et une entrée qui prétendrait le contraire serait le mensonge. La seconde parce que l'ordre des deux lignes ne compte que dans les microsecondes où le pilote claime un frère : rien ne peut se tenir dans cette fenêtre exprès, comme la course que `proc_collect` documente et renonce à fermer.
+
+### Ce qui reste rouge, et pourquoi ce n'est pas ce ticket
+
+`23 a TERM nobody answers hangs the run for ever` et `23 the grace is hard-coded` rapportent `VACUOUS` **en passe complète** et `ok` **en isolé** — mesuré dans les deux sens. C'est la sensibilité à la charge que le commentaire du test décrit déjà, et c'est [38]. Consigné là-bas, avec la forme du correctif que ce ticket a trouvée : remplacer le délai par un protocole de relâche, ce qui a guéri le test de stop de `test/concurrency.bats`, lequel avait exactement la même maladie.
+
+### Trois de plus, trouvées en réparant les trente
+
+La reprise a elle-même été passée au gate, et trois de ses entrées neuves sont revenues `VACUOUS`. Aucune n'était un bug du pack ; toutes disaient que le test mesurait autre chose que ce qu'il annonçait.
+
+- **Le bloc d'arrêt ne fait pas ce que son nom dit.** L'entrée « un stop démantèle les itérations en vol » ne pouvait pas rougir : tant qu'une itération est en vol, le pilote est *à l'intérieur* d'une collecte bloquante et n'atteint jamais ce bloc — ce qui tient les itérations est `loop__reap 1`, pas le bloc. Ce que le bloc décide est l'autre moitié : **avec un arrêt en attente, rien de nouveau n'est planifié**. L'entrée vise maintenant le bloc entier et le scénario porte un troisième ticket qui devient éligible pendant l'arrêt ; sans le bloc, le run le broie et rapporte une frontière drainée.
+- **Un zombie répond `kill -0` comme un vivant**, et c'est [36] qui me l'a repris dans mon propre test : le pilote sorti mais non récolté par le shell du test répondait encore, donc « il est encore en train de drainer » était vrai pendant dix secondes pour un run mort. `pack_still_running` demande l'*état* et pas le numéro.
+- **Une entrée qui attaque l'autre moitié d'une paire est un mensonge.** `errexit` allumé et le `|| true` qu'il protège tiennent la même garantie : retirer l'un rougit, retirer l'autre est rattrapé par le premier. Une seule entrée couvre la paire, et la seconde a été retirée avec sa raison écrite plutôt que laissée à prétendre.
+
+Et deux enseignements de méthode, valables au-delà de ce ticket :
+
+- **Un test qui ordonne deux choses par un délai mesure la machine.** Trois tests de ce ticket sont passés d'un `sleep` à un **protocole de relâche** — la session est tenue ouverte par un fichier que le test crée quand il a fini d'observer — et c'est ce qui les a rendus insensibles à la charge. Le même correctif est écrit dans [38] pour les deux entrées [23] qui restent instables.
+- **Une garantie dont la mise en scène dépend d'un ordre que rien ne contraint appartient au niveau lib.** Le registre des écritures du tracker ne montrait son défaut, à travers la boucle, que si le pilote claimait le frère *après* que la première itération avait snapshotté les tickets — quelques substitutions de commande d'écart, qui s'inversent sous charge. La propriété n'a rien à voir avec le temps ; elle est énoncée là où elle se met en scène exactement.
+
+### État final mesuré
+
+`bash test/run.sh` : **386 tests, 0 échec**, 6 skips opt-in (5 `RALPH_REAL_CLAUDE`, 1 `RALPH_REAL_USAGE`) — 363 avant ce ticket. `bash test/mutate.sh` : **355 entrées, 1 `not ok`**, et cette entrée est `23 a TERM nobody answers hangs the run for ever`, rejouée **3/3 `ok` en isolé** juste après. C'est la bascule de [38], documentée avant ce ticket et enrichie par lui de la forme du correctif.

@@ -634,13 +634,14 @@ mutation "07 a git that refuses the branch takes the run down" "$FAILURES" \
   's/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree"\n  fi/' \
   test/failures.bats "branch git cannot name"
 
-# And the posture the entry above rests on. An iteration runs with errexit *on* —
-# that is what makes every `|| true` in the failure policy mean something — and
-# [13] switched it off by accident for a month, through the `||` of a caller three
-# frames up. Turning it off here must cost the same test.
-mutation "13 an iteration runs without errexit, as it did by accident" "$LOOP" \
-  's/^  set -e$/  set +e/m' \
-  test/failures.bats "branch git cannot name"
+# The entry above tests a *pair*, and there is deliberately no second entry for
+# the other half. An iteration runs with errexit on — restored in loop__iterate
+# after [13] switched it off by accident, through the `||` of a caller three
+# frames up — and that posture is what makes the `|| true` above mean anything.
+# Remove the `|| true` and the iteration dies at the refused branch: red, as
+# above. Remove the posture instead and the `|| true` catches it: green, for a
+# reason that is correct. One line covers both, and an entry attacking the other
+# half would report VACUOUS about a guarantee that is held twice.
 
 mutation "07 a gate branch that hangs is left to hang" "$GATE" \
   's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
@@ -2148,11 +2149,18 @@ mutation "13 the sweep is not told what is in flight" "$LOOP" \
 
 mutation "13 the tracker guard does not know what the loop wrote" "$FAILURES" \
   's/  \[ -z "\$mark" \] \|\| ours="\$\(tracker_writes_since "\$mark"\)"\n//' \
-  test/concurrency.bats "ground at the same time"
+  test/failures.bats "the loop wrote itself is left alone"
 
+# Both entries name the lib-level test and not the parallel run, and that is a
+# lesson rather than a preference. Through the loop, the defect only shows when
+# the pilot claims the sibling *after* the first iteration has snapshotted the
+# tickets — a few command substitutions apart, and under the load of a full pass
+# the order flips. The property itself has nothing to do with timing: it is "a
+# path the loop wrote is not the session's doing", and it is stated where it can
+# be staged exactly.
 mutation "13 the loop records none of its own tracker writes" "$TRACKER_IFACE" \
   's/^tracker__note_write\(\) \{/tracker__note_write() { return 0;/m' \
-  test/concurrency.bats "ground at the same time"
+  test/failures.bats "the loop wrote itself is left alone"
 
 # No entry for the *order* of those two lines (`mark` taken before the tickets are
 # snapshotted), and it is a deliberate hole rather than an oversight. Swapping
@@ -2170,8 +2178,15 @@ mutation "13 a child that died hard is waited for for ever" "$LOOP" \
   's/      if \[ -e "\$slot\/done" \] \|\| ! kill -0 "\$pid" 2>\/dev\/null; then/      if [ -e "\$slot\/done" ]; then/' \
   test/concurrency.bats "dies without a verdict"
 
-mutation "13 a stop tears the iterations in flight down" "$LOOP" \
-  's/    if \[ -n "\$stop_code" \]; then\n      \[ -n "\$LOOP_SLOTS" \] \|\| break\n      loop__reap 1\n      continue\n    fi/    if [ -n "\$stop_code" ]; then\n      break\n    fi/' \
+# Aimed at the whole block and not at its `break`, and the difference is a lesson
+# about what this block does. While any iteration is in flight the pilot is inside
+# a blocking collection, so it never *reaches* here — what keeps the iterations is
+# `loop__reap 1`, and a mutation on the `break` is invisible by construction. What
+# this block decides is the other half: with a stop pending, nothing new is
+# scheduled. Removed, the run goes on claiming whatever became eligible and comes
+# back reporting a drained frontier.
+mutation "13 a stop schedules new work anyway" "$LOOP" \
+  's/    if \[ -n "\$stop_code" \]; then\n      \[ -n "\$LOOP_SLOTS" \] \|\| break\n      loop__reap 1\n      continue\n    fi/    if false; then\n      break\n    fi/' \
   test/concurrency.bats "iterations in flight finish"
 
 mutation "13 nothing is provisioned into the worktree" "$CONCURRENCY" \

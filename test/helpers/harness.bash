@@ -724,6 +724,23 @@ at_calls() {
 # pilot's other children are its own `sleep`s, and a TERM delivered to one of them
 # takes the whole run down through `errexit` — which is a signal a test would then
 # be measuring instead of the one it meant to send.
+# Whether a background run is still *running*, as opposed to still answering.
+#
+# `kill -0` is the wrong question and [36] wrote down why: a process that has
+# exited but has not been reaped by the shell that started it is a zombie, and a
+# zombie answers `kill -0` exactly like a live process. A test that asked the
+# number instead of the state watched a run that had been gone for ten seconds and
+# concluded it was draining.
+pack_still_running() {
+  local state
+  state="$(ps -o state= -p "${1:-$PACK_BG_PID}" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [ -n "$state" ] || return 1
+  case "$state" in
+    Z*) return 1 ;;
+  esac
+  return 0
+}
+
 pack_iteration_pids() {
   ps -A -o pid= -o ppid= -o command= 2>/dev/null |
     awk -v p="${1:-$PACK_BG_PID}" '$2 == p && $0 ~ /loop\.sh/ { print $1 }'

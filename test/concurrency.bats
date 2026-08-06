@@ -497,41 +497,41 @@ FAKE
   # a `claude` per slot writing into a stream this process is about to delete, and
   # spending quota until morning ([28]).
   #
-  # **Ordered by a release file and never by a delay**, and that is the finding
-  # rather than a precaution: written with a `sleep` in the session, this test was
-  # green *and* stayed green with the drain removed — under the load of a full
-  # mutation pass the orphaned sessions simply finished before the assertion ran,
-  # so what it measured was the machine. Here the sessions cannot finish until the
-  # test says so, so "the pilot is still alive after its TERM" is a fact about the
-  # pilot and about nothing else.
-  use_tickets 01-alpha 02-beta
+  # **The two sessions are deliberately asymmetric, and that is what makes the
+  # test able to fail.** Held open together, the pilot is blocked collecting them
+  # whatever it would have decided, so a run that tears its iterations down and one
+  # that waits for them are indistinguishable — the first version of this test was
+  # green either way and the mutation gate said so. Here 01 returns at once and 02
+  # is held: the collection comes back with one iteration still in flight, which is
+  # the only moment the decision is taken.
+  #
+  # And the hold is a file this test writes, never a delay: written with a `sleep`,
+  # what the assertion measures is how busy the machine was.
+  #
+  # 03 is on the frontier for the half of the promise a scenario can actually
+  # fail: a stop is a decision about what to **start**. It becomes eligible the
+  # moment 01 resolves, its surface is disjoint from 02's and there is a free slot
+  # — so a pilot that did not stop scheduling would grind it.
+  use_tickets 01-alpha 02-beta 03-blocked
   set_config MAX_PARALLEL 2
 
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 prompt="$(cat)"
 state="$RALPH_SHIM_STATE"
-mkdir -p "$state/live"
-mkdir "$state/live/$$"
-tries=600
-while [ "$tries" -gt 0 ]; do
-  n=0
-  for d in "$state/live"/*; do [ -d "$d" ] && n=$((n + 1)); done
-  [ "$n" -ge 2 ] && break
-  tries=$((tries - 1)); sleep 0.1
-done
-: >"$state/both-live"
-# Held here until the test releases it. A session that returned on a timer would
-# make the assertion below a race against the machine.
-tries=900
-while [ ! -e "$state/release" ] && [ "$tries" -gt 0 ]; do
-  tries=$((tries - 1)); sleep 0.1
-done
+case "$prompt" in
+  *'## Ticket: 02-beta'*)
+    : >"$state/held"
+    tries=900
+    while [ ! -e "$state/release" ] && [ "$tries" -gt 0 ]; do
+      tries=$((tries - 1)); sleep 0.1
+    done
+    ;;
+esac
 for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
   head -1 | tr -d '`\r' | tr ',' ' '); do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
 done
-rmdir "$state/live/$$"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -539,37 +539,54 @@ FAKE
   env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" \
     >"$RALPH_TEST_DIR/stop.out" 2>&1 &
   local pid=$! rc=0 waited=0
-  wait_for_file "$SHIM_STATE/both-live" 600 ||
-    fail "the two sessions never ran at the same time"
+
+  # 02 is in flight and held; 01 has been collected and journalled. The pilot is
+  # therefore about to take the decision this test is about.
+  wait_for_file "$SHIM_STATE/held" 600 || fail "02-beta never started"
+  waited=0
+  while ! grep -q '01-alpha' "$FEATURE_DIR/run.log" 2>/dev/null; do
+    [ "$waited" -lt 600 ] || fail "01-alpha never finished while 02-beta was held"
+    waited=$((waited + 1))
+    sleep 0.1
+  done
   kill -TERM "$pid"
 
-  # The pilot must still be there: its two iterations are held open, and a run
-  # that tore them down would already have exited. Given a moment, because the
-  # signal has to be delivered and handled.
-  sleep 1
-  kill -0 "$pid" 2>/dev/null ||
-    fail "the run exited on the signal instead of finishing the iterations in flight"
+  # It must **not** be able to come back while 02 is held, and that is asserted by
+  # waiting for an exit that has to time out. A pilot that drains cannot exit here
+  # whatever the load; one that breaks out exits as soon as it is scheduled.
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    pack_still_running "$pid" ||
+      fail "the run exited on the signal with an iteration still in flight"
+    waited=$((waited + 1))
+    sleep 0.1
+  done
 
   : >"$SHIM_STATE/release"
-  while kill -0 "$pid" 2>/dev/null; do
+  waited=0
+  while pack_still_running "$pid"; do
     [ "$waited" -lt 600 ] || break
     waited=$((waited + 1))
     sleep 0.1
   done
-  if kill -0 "$pid" 2>/dev/null; then
+  if pack_still_running "$pid"; then
     kill -9 "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
-    fail "the run never came back after its iterations were released"
+    fail "the run never came back after its iteration was released"
   fi
   wait "$pid" || rc=$?
 
   assert_equal "$rc" "4"
   run cat "$RALPH_TEST_DIR/stop.out"
   assert_output_contains "stop requested"
-  # Both were in flight when the signal arrived, and both were finished and
-  # marked rather than abandoned mid-session.
+  # The one that was in flight when the signal arrived was finished and marked
+  # rather than abandoned mid-session.
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 02-beta resolved
+  # And nothing new was started after it: two sessions, and the ticket that became
+  # eligible in the meantime is untouched.
+  assert_equal "$(claude_call_count)" "2"
+  assert_ticket_status 03-blocked ready-for-agent
 }
 
 @test "an iteration that dies without a verdict gives its ticket back" {
