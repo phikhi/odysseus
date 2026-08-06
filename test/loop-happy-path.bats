@@ -190,6 +190,51 @@ teardown() {
   refute_output_contains "--resume"
 }
 
+@test "no session is handed the loop's register of its own tracker writes" {
+  # [13] put that register in `$TMPDIR` so that no write-surface could reach it,
+  # and then exported it — so `session_spawn` handed `claude` the path, by name,
+  # in its environment. Out of the tree is not the property that protects it; who
+  # is told the name is ([40]).
+  #
+  # Asserted on the environment the shim recorded and not on the absence of an
+  # `export` in the source: what decides is what the spawn actually passed, and a
+  # keyword put back in a second place would walk past a source-reading test.
+  #
+  # A lens is switched on so both kinds of spawn a normal iteration makes are
+  # covered by one run. The re-slice session, the third kind, is asserted where it
+  # is staged (failures.bats).
+  use_tickets 01-alpha
+  set_config LENSES standards
+
+  run_loop
+  assert_success
+
+  # Not vacuous: a lens really did run, so its environment is among the ones
+  # checked below. Without this the loop would pass over delivery sessions alone.
+  assert_equal "$(lens_call_count standards)" "1"
+
+  n=1
+  seen=''
+  total="$(claude_call_count)"
+  [ "$total" -ge 2 ] || fail "expected a delivery session and a lens, got $total spawn(s)"
+  while [ "$n" -le "$total" ]; do
+    seen="$seen
+$(claude_call_env "$n")"
+    n=$((n + 1))
+  done
+  case "$seen" in
+    *RALPH_TRACKER_LOG*) fail "a spawn was handed the loop's tracker register:
+$seen" ;;
+  esac
+
+  # And the register still does its job on this side of the seam, which is what
+  # makes the fix free: an iteration is a subshell of the pilot and inherits an
+  # unexported variable. If it had stopped working, the guard would have restored
+  # the claim the pilot wrote and this iteration could not be green.
+  assert_ticket_status 01-alpha resolved
+  refute_output_contains "edited the tracker"
+}
+
 @test "the session runs in an isolated worktree, whatever the caller's cwd" {
   use_tickets 01-alpha
 

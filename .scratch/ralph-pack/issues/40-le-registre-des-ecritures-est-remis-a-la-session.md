@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/loop.sh`, `.claude/lib/tracker.sh`, `test/failures.bats`, `test/loop-happy-path.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Une session à qui l'on donne `RALPH_TRACKER_LOG` dans son environnement ne le trouve pas : la variable n'est pas dans l'environnement d'un `claude` spawné par `session_spawn`, ni pour une session de livraison, ni pour un re-slice, ni pour une lentille. Asserté sur l'environnement réellement passé (`claude_call_env`), pas sur l'absence d'un `export` dans le source.
-- [ ] Le registre continue de faire son office entre le pilote et une itération. L'`export` est **inutile** et c'est ce qui rend le correctif gratuit : une itération est un sous-shell (`loop__iterate … &`), et un sous-shell hérite des variables non exportées — exactement le traitement que [30] donne déjà à `RALPH_IGNORE_PIN`, qui n'est pas exporté et arrive quand même. Le test qui le tient est celui de [13] : deux itérations concurrentes, le marquage de l'une n'est pas défait par le garde de l'autre.
-- [ ] Le témoin appairé : la sonde ci-dessous relancée avec la variable rétablie dans l'environnement doit redevenir verte-et-fausse, sinon le test ne prouve rien sur l'environnement.
-- [ ] La mutation vise le passage de la variable à la session, pas le contenu du registre : remettre l'`export` doit faire rougir un test qui asserte sur le **tracker** (surface restaurée, itération non verte), pas seulement sur une liste d'environnement.
-- [ ] La ligne « Ne pas changer le `Status:` du ticket » et la ligne « Ne jamais stager ni commiter le tracker » de `docs/frontiere-de-confiance.md` disent ce qui tient la restauration **et** ce qui la désarme, plutôt que de renvoyer à [21] comme si rien n'avait bougé.
+- [x] Une session à qui l'on donne `RALPH_TRACKER_LOG` dans son environnement ne le trouve pas : la variable n'est pas dans l'environnement d'un `claude` spawné par `session_spawn`, ni pour une session de livraison, ni pour un re-slice, ni pour une lentille. Asserté sur l'environnement réellement passé (`claude_call_env`), pas sur l'absence d'un `export` dans le source.
+- [x] Le registre continue de faire son office entre le pilote et une itération. L'`export` est **inutile** et c'est ce qui rend le correctif gratuit : une itération est un sous-shell (`loop__iterate … &`), et un sous-shell hérite des variables non exportées — exactement le traitement que [30] donne déjà à `RALPH_IGNORE_PIN`, qui n'est pas exporté et arrive quand même. Le test qui le tient est celui de [13] : deux itérations concurrentes, le marquage de l'une n'est pas défait par le garde de l'autre.
+- [x] Le témoin appairé : la sonde ci-dessous relancée avec la variable rétablie dans l'environnement doit redevenir verte-et-fausse, sinon le test ne prouve rien sur l'environnement.
+- [x] La mutation vise le passage de la variable à la session, pas le contenu du registre : remettre l'`export` doit faire rougir un test qui asserte sur le **tracker** (surface restaurée, itération non verte), pas seulement sur une liste d'environnement.
+- [x] La ligne « Ne pas changer le `Status:` du ticket » et la ligne « Ne jamais stager ni commiter le tracker » de `docs/frontiere-de-confiance.md` disent ce qui tient la restauration **et** ce qui la désarme, plutôt que de renvoyer à [21] comme si rien n'avait bougé.
 
 ## Comments
 
@@ -65,5 +65,30 @@
 - **Contrainte pour [10].** Le reçu d'audit ne doit pas lire le registre pour dire « la boucle a écrit ces tickets » : c'est une source que ce ticket vient de rendre non-écrivable par la session, mais qui reste non authentifiée entre processus du run. Le reçu se construit sur ce que le pilote a mesuré, comme le marquage.
 
 - **Contrainte pour [19].** L'installeur ne doit pas ajouter `RALPH_TRACKER_LOG` à l'environnement d'un run, ni le documenter comme une clé de projet : ce n'est pas une clé, c'est un interne du run, et le nommer dans `ralph.config.sh.example` le remettrait à portée d'un `env`.
+
+- **Livré le 06/08/2026.** Le correctif est exactement ce que le ticket annonçait : la ligne `export RALPH_TRACKER_LOG` de `loop.sh` supprimée, rien d'autre au code. Ce qui a coûté du travail est le reste — prouver que le retrait ne casse rien, et écrire des tests qui remarquent son retour.
+
+  *Ce qui a été vérifié avant d'écrire.* Le `grep -n 'bash -c\|env \|exec '` prévu par le ticket rend quatre lignes, dont trois comptent : `session_spawn` (`claude`) et les deux `bash -c "$TEST_CMD"` / `bash -c "$TYPECHECK_CMD"` de `gate.sh` ; la quatrième est le `exec sh -c 'echo $PPID'` de `proc.sh:130`, qui ne lit rien. Tout le reste du pack qui écrit le registre est un sous-shell du pilote — `loop__iterate … &`, une branche de gate, un re-slice — et hérite du chemin sans `export`. Le correctif ne retire donc la variable à personne qui en ait besoin.
+
+  *Où les tests ont atterri, et pourquoi pas ailleurs.* Trois, et ils ne mesurent pas la même chose :
+
+  - `test/loop-happy-path.bats`, « no session is handed the loop's register of its own tracker writes » : un run avec `LENSES=standards`, puis l'environnement de **chaque** spawn enregistré. La lentille est allumée pour que le run couvre les deux sortes de spawn qu'une itération ordinaire fait, et `lens_call_count standards` est asserté d'abord pour que la boucle ne passe pas sur des sessions de livraison seules — sans cette ligne, l'assertion serait verte en ne regardant rien de neuf.
+  - `test/failures.bats`, « the planning session is fresh » : la troisième sorte de spawn, ajoutée à un run qui existait déjà plutôt que payée une seconde fois. C'est le spawn qu'on oublie en raisonnant sur le registre, et c'est aussi la seule session dont toute la sortie est jetée — un id qu'elle aurait appendu aurait survécu à tout le reste d'elle.
+  - `test/failures.bats`, « a session cannot switch the guard off by writing the loop's own register » : la sonde B du ticket jouée en entier, et **la cible de la mutation**.
+
+  *Pourquoi la mutation vise ce troisième-là.* Une entrée pointée sur la liste d'environnement rendrait `ok` pour un correctif qui aurait caché le nom ailleurs en laissant la livraison ouverte. Ce que l'`export` achète n'est pas une ligne d'`env`, c'est une `Write-surface:` de `*`, donc un fichier hors surface **commité et replié**. L'entrée est donc pointée sur le test qui asserte le ticket restauré et `rogue/backdoor` absent de **`HEAD`** — sur `HEAD` et pas sur l'arbre de travail, parce que le faux livré commitait *et* repliait : une assertion sur l'arbre seul serait restée verte.
+
+  *Le fake écrit la ligne sous condition*, `[ -n "${RALPH_TRACKER_LOG:-}" ]`, pour que le scénario soit identique dans les deux mondes et que l'environnement soit la seule variable. C'est ce qui rend le témoin appairé lisible : `export` rétabli, le même fake rend `committed 2 path(s)` / `folded onto the branch` / `-> resolved` / `exit 0`, mot pour mot la sonde B.
+
+- **Sonde d'après-coup — ce qui reste dans l'environnement d'une session.** Question 5 posée à l'envers, une fois le correctif en place : un run avec une lentille, puis tous les noms `RALPH*` de tous les spawns.
+
+  ```
+  RALPH_DIR
+  RALPH_SHIM_STATE
+  ```
+
+  `RALPH_SHIM_STATE` est au harnais de test, pas au pack. `RALPH_DIR` est le répertoire du pack, que la session peut lister de toute façon. Et surtout `RALPH_CONFIG` — le nom sous lequel [31] scelle la configuration du run — **n'est pas exporté** : une session ne reçoit pas non plus l'adresse de ce fichier-là. Aucun autre secret du run ne traverse la frontière.
+
+- **Piège laissé en place, et il est nommé plutôt que corrigé.** `harness__clear_env` ne désarme pas `RALPH_TRACKER_LOG` : sa liste est faite des clés de `ralph.config.sh.example` plus une poignée de noms écrits à la main, et celui-ci n'est dans aucune des deux. C'est inoffensif aujourd'hui *parce que* `loop.sh` assigne la variable sans condition, donc une valeur héritée du shell d'un développeur est écrasée. Ça cesse de l'être le jour où quelqu'un écrit `RALPH_TRACKER_LOG="${RALPH_TRACKER_LOG:-$(mktemp …)}"` — la forme que prend tout le reste de la configuration du pack — et le registre redevient nommable de l'extérieur. `test/helpers/harness.bash` n'est pas dans la write-surface de ce ticket ; la ligne est ici pour que ce ne soit pas une découverte.
 
 - **Qui perd la variable, et c'est la vérification qui rend le correctif sûr.** `grep -n 'bash -c\|env \|exec ' .claude/loop.sh .claude/lib/*.sh` rend trois processus lancés par le pack en dehors d'un sous-shell : `claude` (`session_spawn`), et les `bash -c "$TEST_CMD"` / `bash -c "$TYPECHECK_CMD"` des branches du gate. Aucun des trois n'a affaire au registre, et les deux derniers sont les commandes du projet cible — ce que [29] a déjà classé comme une zone que rien ne juge. Tout le reste du pack qui écrit dans le tracker vit dans un sous-shell du pilote et hérite donc de la variable sans `export`. Le correctif ne retire donc la variable à personne qui en ait besoin.

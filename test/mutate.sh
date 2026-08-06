@@ -2213,6 +2213,24 @@ mutation "13 the sealed config is resolved against the worktree, not the project
   's/  root="\$\(cd "\$\(ralph_project_root\)" 2>\/dev\/null && pwd -P\)" \|\| return 0/  root="$(git rev-parse --show-toplevel 2>\/dev\/null)" || return 0/' \
   test/gate.bats "sealed under the name it carries"
 
+# ── [40] the register of the loop's own tracker writes ───────────────────────
+
+# `export VAR` before the assignment is the same thing as after it, and it is the
+# form that gives this entry a unique anchor: `RALPH_TRACKER_LOG=''` carries a
+# quote the expression would have to fight, and the bare name appears in the
+# comment above it.
+#
+# Aimed at a test that asserts on the **tracker and the branch** — the ticket's
+# write-surface put back, `rogue/backdoor` absent from HEAD — and not at the one
+# that lists the environment. Both go red, and only one of them says what the
+# export costs: a session told this path buys itself a surface of `*`, and the
+# iteration commits and folds a file the ticket never declared. An entry aimed at
+# the environment listing would report `ok` for a fix that hid the name somewhere
+# else and left the delivery open.
+mutation "40 the register is handed to the session in its environment" "$LOOP" \
+  's/  RALPH_TRACKER_LOG="\$\(mktemp/  export RALPH_TRACKER_LOG\n  RALPH_TRACKER_LOG="\$(mktemp/' \
+  test/failures.bats "switch the guard off"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
