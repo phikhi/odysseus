@@ -210,6 +210,7 @@ FAILURES=".claude/lib/failures.sh"
 LENSES_LIB=".claude/lib/lenses.sh"
 # Not `LANG`: that one is the locale every command in this script reads.
 LANGLIB=".claude/lib/lang.sh"
+BUDGET=".claude/lib/budget.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
@@ -312,8 +313,13 @@ mutation "03 a stop request tears the iteration down" "$LOOP" \
   's/  trap .loop_request_stop. TERM INT\n//' \
   test/loop-happy-path.bats "graceful kill"
 
+# Anchored on the `else` above it since [08], and the reason is written at the top
+# of this file: a substitution without /g edits the *first* match. [08] added a
+# second `tracker_unclaim` — the budget class gives its ticket back too — three
+# lines higher, so this entry started removing that one instead and came back
+# VACUOUS against a test that was fine. Its own entry is with the [08] block.
 mutation "03 the ticket is not given back after a failure" "$FAILURES" \
-  's/    tracker_unclaim "\$ticket"\n//' \
+  's/  else\n    tracker_unclaim "\$ticket"\n/  else\n/' \
   test/loop-happy-path.bats "a session that fails resolves nothing"
 
 mutation "03 sessions are resumed instead of fresh" "$SESSION" \
@@ -1630,19 +1636,19 @@ mutation "35 the fake session delivers nothing by default" "$SHIM" \
 # that the two classes nothing gated get there at all.
 
 mutation "32 an iteration no gate judged keeps its widened frontier" "$FAILURES" \
-  's/    crash \| timeout\) failures__ignore_frontier "\$ticket" ;;/    crash | timeout) : ;;/' \
+  's/    crash \| timeout \| budget\) failures__ignore_frontier "\$ticket" ;;/    crash | timeout | budget) : ;;/' \
   test/failures.bats "crashed cannot leave the ignore frontier widened"
 
 # The correction placed on the path that happened to be probed — which is exactly
 # what [30] shipped, and why every class is named by a test of its own.
 mutation "32 only the class the probe used gets its frontier back" "$FAILURES" \
-  's/    crash \| timeout\) failures__ignore_frontier/    crash) failures__ignore_frontier/' \
+  's/    crash \| timeout \| budget\) failures__ignore_frontier/    crash) failures__ignore_frontier/' \
   test/failures.bats "cut short cannot leave it widened either"
 
 # And the other way the correction goes wrong: bolted onto every class, so the
 # paths a gate already handled speak twice about one movement.
 mutation "32 the restore is bolted onto every class, gated or not" "$FAILURES" \
-  's/    crash \| timeout\) failures__ignore_frontier/    *) failures__ignore_frontier/' \
+  's/    crash \| timeout \| budget\) failures__ignore_frontier/    *) failures__ignore_frontier/' \
   test/failures.bats "once, not twice"
 
 # The cause line behind [24]'s consequence, on the path where `gate__report_frontier`
@@ -1846,6 +1852,170 @@ mutation "17 the prompt claims the rule is checked with the gate off" "$LANGLIB"
 mutation "17 an AFK session is handed LANG_INTERACT" "$LANGLIB" \
   's/  local artifact="\$\{LANG_ARTIFACT:-en\}"/  local artifact="\${LANG_ARTIFACT:-en} (speaking \${LANG_INTERACT:-en})"/' \
   test/lang.bats "never told LANG_INTERACT"
+
+# ── [08] the usage budget ────────────────────────────────────────────────────
+#
+# Two shapes need care, and both were written down before the entries.
+#
+# The refusals — six in the preflight, the cap on a pause, the stop on a weekly
+# wall — are ways of *not* spawning, and a budget module that blocked everything
+# would satisfy every one of them. Each has a twin here that removes the ability
+# to block and names a test that has to stay green ([36]).
+#
+# And three guarantees are terminations: the cap on a pause, the rule that two
+# pauses in a row stop the run, and the stepped sleep a stop can interrupt.
+# Removed, they do not fail — they sleep. The tests that carry them bound
+# themselves, either by running the loop in the background with a deadline of
+# their own or by naming a span the mutated path has to sit through, so a
+# mutation that took the bound away comes back red instead of leaving this
+# script blocked on a planted defect ([25]).
+
+mutation "08 the budget never blocks a spawn" "$BUDGET" \
+  's/^budget_check\(\) \{/budget_check() { return 0;/m' \
+  test/budget.bats "a spent session window is waited out"
+
+mutation "08 the budget blocks every spawn" "$BUDGET" \
+  's/^budget_check\(\) \{/budget_check() { RALPH_BUDGET_STATE=blocked; RALPH_BUDGET_WINDOW=five_hour; RALPH_BUDGET_RESET=0; RALPH_BUDGET_SOURCE=endpoint; return 1;/m' \
+  test/budget.bats "under the thresholds"
+
+mutation "08 a window nothing could read counts as nothing used" "$BUDGET" \
+  's/  \[ -n "\$object" \] \|\| return 1/  [ -n "\$object" ] || { printf "0 0\\n"; return 0; }/' \
+  test/budget.bats "not read as zero"
+
+mutation "08 the utilisation is never compared to the threshold" "$BUDGET" \
+  's/      \[ "\$pct" -ge "\$thresh" \] \|\| continue/      [ 1 = 0 ] || continue/' \
+  test/budget.bats "a spent session window is waited out"
+
+mutation "08 the weekly limit is waited out like a session window" "$LOOP" \
+  's/      if \[ "\$\{RALPH_BUDGET_WINDOW:-\}" != five_hour \]; then/      if false; then/' \
+  test/budget.bats "a weekly limit stops the run"
+
+mutation "08 a reset beyond the cap is slept to anyway" "$BUDGET" \
+  's/  \[ "\$span" -le "\$\{BUDGET_MAX_PAUSE:-21600\}" \] \|\| return 1\n//' \
+  test/budget.bats "further out than the cap"
+
+mutation "08 a window still blocked after its reset is waited out again" "$LOOP" \
+  's/      if \[ "\$budget_paused" = 1 \]; then/      if false; then/' \
+  test/budget.bats "still blocked after its own reset"
+
+mutation "08 a pause holds the stop until the reset" "$BUDGET" \
+  's/    \[ "\$\{RALPH_STOP:-0\}" = 0 \] \|\| return 1\n//' \
+  test/budget.bats "honoured now, not at the reset"
+
+mutation "08 the cached answer survives the pause it preceded" "$BUDGET" \
+  's/      BUDGET__CACHE_BODY=..\n      BUDGET__CACHE_AT=0\n//' \
+  test/budget.bats "a spent session window is waited out"
+
+mutation "08 the endpoint is asked without a User-Agent" "$BUDGET" \
+  's/  else\n    curl -sS --max-time 10 \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n/  else\n    curl -sS --max-time 10 \\\n/' \
+  test/budget.bats "with its User-Agent"
+
+mutation "08 the answer is never cached" "$BUDGET" \
+  's/"\$\{USAGE_CACHE_TTL:-180\}"/0/' \
+  test/budget.bats "two iterations, one question"
+
+mutation "08 the cache never expires" "$BUDGET" \
+  's/"\$\{USAGE_CACHE_TTL:-180\}"/999999/' \
+  test/budget.bats "a cache that expires"
+
+mutation "08 the classifier is never asked" "$LOOP" \
+  's/      failed \| nothing-delivered\)/      never-a-real-outcome)/' \
+  test/budget.bats "not an attempt at the ticket"
+
+mutation "08 a red gate is forgiven for being hungry" "$LOOP" \
+  's/      failed \| nothing-delivered\)/      failed | nothing-delivered | gate-red)/' \
+  test/budget.bats "not forgiven for being hungry"
+
+mutation "08 a session a deadline cut is read as a budget pause" "$LOOP" \
+  's/      failed \| nothing-delivered\)/      failed | nothing-delivered | session-stalled)/' \
+  test/budget.bats "whatever its stream says about quota"
+
+mutation "08 a refused session is billed a retry" "$FAILURES" \
+  's/^    budget\)\n      # No count/    budget-never-matches)\n      # No count/m' \
+  test/budget.bats "not an attempt at the ticket"
+
+mutation "08 a refused ticket is left claimed" "$FAILURES" \
+  's/    tracker_unclaim "\$ticket"\n    failures__log "\$ticket: given back with no retry/    failures__log "\$ticket: given back with no retry/' \
+  test/budget.bats "not an attempt at the ticket"
+
+mutation "08 the disposition line says a retry was spent" "$FAILURES" \
+  's/  elif \[ "\$class" = budget \]; then/  elif false; then/' \
+  test/budget.bats "not an attempt at the ticket"
+
+mutation "08 a refused session keeps its writes for the next iteration to adopt" "$FAILURES" \
+  's/  failures_rollback "\$pre" "\$base" "\$tree" \|\| true/  [ "\$class" = budget ] || failures_rollback "\$pre" "\$base" "\$tree" || true/' \
+  test/budget.bats "does not leave half a file"
+
+mutation "08 a refused session keeps the ignore frontier it widened" "$FAILURES" \
+  's/    crash \| timeout \| budget\) failures__ignore_frontier/    crash | timeout) failures__ignore_frontier/' \
+  test/budget.bats "widened by a refused session"
+
+mutation "08 the in-band signal is never believed" "$BUDGET" \
+  's/^budget_refused\(\) \{/budget_refused() { return 1;/m' \
+  test/budget.bats "when the endpoint says nothing"
+
+mutation "08 every session looks refused" "$BUDGET" \
+  's/^budget_refused\(\) \{/budget_refused() { return 0;/m' \
+  test/budget.bats "still a crash"
+
+mutation "08 the opus limit gates a run that does not spend it" "$BUDGET" \
+  's/      if \[ "\$name" = seven_day_opus \] && ! budget__spends_opus; then/      if false; then/' \
+  test/budget.bats "only by a run that spends it"
+
+mutation "08 the opus limit is never watched" "$BUDGET" \
+  's/^budget__spends_opus\(\) \{/budget__spends_opus() { return 1;/m' \
+  test/budget.bats "stops a run that does spend it"
+
+mutation "08 a budget that is off is asked anyway" "$BUDGET" \
+  's/^budget_enabled\(\) \{/budget_enabled() { return 0;/m' \
+  test/budget.bats "run without a usage budget"
+
+mutation "08 the budget is off for every project" "$BUDGET" \
+  's/^budget_enabled\(\) \{/budget_enabled() { return 1;/m' \
+  test/budget.bats "a spent session window is waited out"
+
+mutation "08 what nobody watched is never said" "$BUDGET" \
+  's/^budget__say_once\(\) \{/budget__say_once() { return 0;/m' \
+  test/budget.bats "run without a usage budget"
+
+mutation "08 the preflight is never asked" "$LOOP" \
+  's/  budget_preflight \|\| rc=1\n//' \
+  test/budget.bats "neither on nor off is refused"
+
+mutation "08 the preflight refuses every project" "$BUDGET" \
+  's/^budget_preflight\(\) \{/budget_preflight() { return 1;/m' \
+  test/budget.bats "under the thresholds"
+
+mutation "08 a BUDGET_CHECK that is neither on nor off is read as off" "$BUDGET" \
+  's/  case "\$\{BUDGET_CHECK:-on\}" in\n    on \| off\) ;;/  case "on" in\n    on | off) ;;/' \
+  test/budget.bats "neither on nor off is refused"
+
+mutation "08 a threshold that is not a fraction is taken as it stands" "$BUDGET" \
+  's/  if ! budget__is_fraction "\$\{THRESH_5H:-\}"; then/  if false; then/' \
+  test/budget.bats "not a fraction is refused"
+
+mutation "08 an empty User-Agent starts a run that can only collect 429s" "$BUDGET" \
+  's/  if \[ -z "\$\{USAGE_UA:-\}" \]; then/  if false; then/' \
+  test/budget.bats "unmeasured in silence"
+
+mutation "08 an endpoint nobody named is asked anyway" "$BUDGET" \
+  's/  if \[ -z "\$\{USAGE_URL:-\}" \]; then/  if false; then/' \
+  test/budget.bats "unmeasured in silence"
+
+mutation "08 a cap of zero turns every window into a stopped run, in silence" "$BUDGET" \
+  's/  case "\$\{BUDGET_MAX_PAUSE:-\}" in/  case "21600" in/' \
+  test/budget.bats "unmeasured in silence"
+
+mutation "08 a cache TTL nobody can read is taken as it stands" "$BUDGET" \
+  's/  case "\$\{USAGE_CACHE_TTL:-\}" in/  case "180" in/' \
+  test/budget.bats "unmeasured in silence"
+
+# Not a guarantee of the pack but of the suite, and it is the finding this ticket
+# tripped over: the surface list only ever checked one of its two directions, so
+# three keys [17] added were missing from it and nothing noticed.
+mutation "08 a config key nobody listed goes unnoticed" "$EXAMPLE" \
+  's/^BUDGET_CHECK=/BUDGET_UNLISTED="x"\nBUDGET_CHECK=/m' \
+  test/smoke.bats "configuration surface"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

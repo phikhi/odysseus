@@ -4,9 +4,33 @@
 # Serves whatever `usage_respond` installed, honours `-o <file>`, records every
 # invocation (so a test can assert the User-Agent the endpoint demands), and
 # exits with whatever `usage_exit` asked for.
+#
+# One body per call when `usage_respond` was given several, which is what lets a
+# test drive a run *through* a wall: the budget gate asks again after it has
+# slept to a reset, and a shim that could only answer one thing could only ever
+# stage a run that pauses and stops. The last body given repeats for every call
+# after it, so the one-argument form is unchanged.
+#
+# The call number is claimed with `mkdir` rather than counted in a file. Nothing
+# in this pack calls curl concurrently today — the budget gate runs in the loop's
+# own shell — and a counter that is only correct while that stays true is the
+# fake `claude`'s old `cat + 1`, which was green and wrong ([06]).
 set -uo pipefail
 
 state="${RALPH_SHIM_STATE:?curl shim: RALPH_SHIM_STATE is not set}"
+
+mkdir -p "$state/curl.slots"
+n=0
+while :; do
+  n=$((n + 1))
+  if mkdir "$state/curl.slots/$n" 2>/dev/null; then
+    break
+  fi
+  [ "$n" -lt 10000 ] || {
+    printf 'curl shim: no free call slot\n' >&2
+    exit 97
+  }
+done
 
 {
   for arg in "$@"; do printf '%s ' "$arg"; done
@@ -21,7 +45,11 @@ for arg in "$@"; do
 done
 
 body=""
-[ -f "$state/curl.body" ] && body="$(cat "$state/curl.body")"
+if [ -f "$state/curl.body.$n" ]; then
+  body="$(cat "$state/curl.body.$n")"
+elif [ -f "$state/curl.body" ]; then
+  body="$(cat "$state/curl.body")"
+fi
 
 if [ -n "$out" ]; then
   printf '%s' "$body" >"$out"
