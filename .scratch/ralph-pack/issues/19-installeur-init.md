@@ -62,3 +62,7 @@
   3. **`MAX_PARALLEL > 1` est un échange et pas un réglage de performance.** Au-dessus de 1, une session vivante tourne pendant le gate d'une autre itération : ce que ce gate écrit dans `$TMPDIR` est à sa portée. C'est écrit dans `docs/frontiere-de-confiance.md`, et un installeur qui propose la clé doit renvoyer là plutôt que présenter un nombre.
 
   Et un préflight de plus a été ajouté, qu'un installeur doit satisfaire avant de rendre la main : **le dépôt doit avoir au moins un commit** — `git worktree add` ne fabrique pas un arbre à partir de rien, et découvrir ça à la première itération voudrait dire le découvrir avec un ticket déjà réclamé.
+
+- **Contraintes de la passe transversale du 06/08/2026.** Deux.
+  - `RALPH_TRACKER_LOG` n'est pas une clé de projet : c'est un interne de run, et le nommer dans `ralph.config.sh.example` ou l'ajouter à l'environnement d'un run le remettrait à portée d'un `env` dans une session ([40]).
+  - Le balayage appartient toujours à ce ticket, et il a une entrée de plus depuis [13] : les worktrees d'itération qu'un run tué laisse enregistrés dans le répertoire git commun (`concurrency_leftovers` les compte, ne les enlève pas), à côté des répertoires de gate et des témoins d'ignore de `$TMPDIR` que compte `gate_leftovers`.
