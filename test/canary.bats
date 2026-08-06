@@ -334,8 +334,14 @@ mkdir -p src
 printf 'written\n' >src/alpha.txt
 printf 'written\n' >src/rogue.txt
 printf 'written\n' >>CONTEXT.md
+# The *real* tracker, by absolute path. Since [13] a session's working directory
+# is a throwaway worktree, so `.scratch/demo/issues/...` reaches a committed copy
+# nobody reads and nothing restores — the exploit would stage nothing, the guard
+# would have nothing to put back, and this test would go green having proved that
+# a session cannot reach the tracker *through a relative path*. A determined one
+# finds the tree the run was started in; the mutation gate caught the difference.
 perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' \
-  .scratch/demo/issues/01-alpha.md
+  "$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 

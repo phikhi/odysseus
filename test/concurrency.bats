@@ -188,10 +188,20 @@ FAKE
   assert_output_contains "FREE"
   pack_run 'concurrency_clashes 07-overlaps-alpha "01-alpha" && echo CLASH || echo FREE'
   assert_output_contains "CLASH"
-  # And the other way round, because a surface is a glob on both sides: `src`
-  # against `src/auth/*` only matches one way, and approximating towards
-  # sequencing is the safe direction here.
-  pack_run 'concurrency_clashes 01-alpha "07-overlaps-alpha" && echo CLASH || echo FREE'
+  # And the direction the first pair cannot show, because a surface is a glob on
+  # both sides. `src` against `src/auth/*` matches **one way only**: as a pattern,
+  # `src` covers `src/auth/*`, while as a pattern `src/auth/*` covers nothing
+  # called `src`. So this pair clashes through the reverse test and through
+  # nothing else — with one of the two directions removed, the two tickets below
+  # would be scheduled together.
+  perl -pi -e 's|^\*\*Write-surface:\*\*.*|**Write-surface:** `src`|' \
+    "$(ticket_file 01-alpha)"
+  perl -pi -e 's|^\*\*Write-surface:\*\*.*|**Write-surface:** `src/auth/*`|' \
+    "$(ticket_file 02-beta)"
+  harness__commit "test: a pair that meets in one direction only"
+  pack_run 'gate_in_surface "src" "src/auth/*" && echo FORWARD || echo NO-FORWARD'
+  assert_output_contains "NO-FORWARD"
+  pack_run 'concurrency_clashes 01-alpha "02-beta" && echo CLASH || echo FREE'
   assert_output_contains "CLASH"
 
   # A surface this pack cannot read is a clash and not a pass: the whole
@@ -211,6 +221,23 @@ FAKE
   assert_success
 
   assert_equal "$(concurrency__peak)" "2"
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+}
+
+@test "MAX_PARALLEL=1 grinds two disjoint tickets one after the other" {
+  # The cap itself, on the pair that *could* run together: without it, two tickets
+  # nothing sequences would overlap. The clash predicate cannot carry this one —
+  # these two are disjoint — so it is the only test that can tell a cap that is
+  # read from a cap that is decoration.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 1
+  concurrency__barrier_session 30
+
+  run_loop_own_tmp
+  assert_success
+
+  assert_equal "$(concurrency__peak)" "1"
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 02-beta resolved
 }
@@ -430,23 +457,25 @@ GITSHIM
   use_tickets 01-alpha 02-beta
   set_config MAX_PARALLEL 2
   set_config CLAIM_TTL 1
-  concurrency__barrier_session 300
 
-  # Long enough that the sweep which follows the first iteration's return really
-  # is looking at a claim older than the TTL.
-  printf '%s\n' 3 >"$SHIM_STATE/barrier-tries"
+  # **Staggered by ticket and never by call order**, which is what makes the sweep
+  # land where it has to. Both sessions sleeping the same span finish together, so
+  # the sweep that follows the first one's return finds the second already marked
+  # and has nothing to spare — the test then stayed green with the exemption
+  # removed, which the mutation gate reported and which is the whole reason this
+  # fake reads the prompt instead of a counter.
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 prompt="$(cat)"
 state="$RALPH_SHIM_STATE"
-mkdir -p "$state/live"
-mkdir "$state/live/$$"
-sleep 3
+case "$prompt" in
+  *'## Ticket: 01-alpha'*) sleep 3 ;;
+  *) sleep 12 ;;
+esac
 for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
   head -1 | tr -d '`\r' | tr ',' ' '); do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
 done
-rmdir "$state/live/$$"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
@@ -467,17 +496,24 @@ FAKE
   # mean something once there is more than one. Exiting on the signal would leave
   # a `claude` per slot writing into a stream this process is about to delete, and
   # spending quota until morning ([28]).
+  #
+  # **Ordered by a release file and never by a delay**, and that is the finding
+  # rather than a precaution: written with a `sleep` in the session, this test was
+  # green *and* stayed green with the drain removed — under the load of a full
+  # mutation pass the orphaned sessions simply finished before the assertion ran,
+  # so what it measured was the machine. Here the sessions cannot finish until the
+  # test says so, so "the pilot is still alive after its TERM" is a fact about the
+  # pilot and about nothing else.
   use_tickets 01-alpha 02-beta
   set_config MAX_PARALLEL 2
 
-  printf '%s\n' 300 >"$SHIM_STATE/barrier-tries"
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 prompt="$(cat)"
 state="$RALPH_SHIM_STATE"
 mkdir -p "$state/live"
 mkdir "$state/live/$$"
-tries=300
+tries=600
 while [ "$tries" -gt 0 ]; do
   n=0
   for d in "$state/live"/*; do [ -d "$d" ] && n=$((n + 1)); done
@@ -485,7 +521,12 @@ while [ "$tries" -gt 0 ]; do
   tries=$((tries - 1)); sleep 0.1
 done
 : >"$state/both-live"
-sleep 2
+# Held here until the test releases it. A session that returned on a timer would
+# make the assertion below a race against the machine.
+tries=900
+while [ ! -e "$state/release" ] && [ "$tries" -gt 0 ]; do
+  tries=$((tries - 1)); sleep 0.1
+done
 for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
   head -1 | tr -d '`\r' | tr ',' ' '); do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
@@ -494,13 +535,32 @@ rmdir "$state/live/$$"
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
 FAKE
 
+  mkdir -p "$RALPH_TEST_DIR/tmp"
   env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" \
     >"$RALPH_TEST_DIR/stop.out" 2>&1 &
-  local pid=$!
-  mkdir -p "$RALPH_TEST_DIR/tmp"
-  wait_for_file "$SHIM_STATE/both-live" 400
+  local pid=$! rc=0 waited=0
+  wait_for_file "$SHIM_STATE/both-live" 600 ||
+    fail "the two sessions never ran at the same time"
   kill -TERM "$pid"
-  local rc=0
+
+  # The pilot must still be there: its two iterations are held open, and a run
+  # that tore them down would already have exited. Given a moment, because the
+  # signal has to be delivered and handled.
+  sleep 1
+  kill -0 "$pid" 2>/dev/null ||
+    fail "the run exited on the signal instead of finishing the iterations in flight"
+
+  : >"$SHIM_STATE/release"
+  while kill -0 "$pid" 2>/dev/null; do
+    [ "$waited" -lt 600 ] || break
+    waited=$((waited + 1))
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "the run never came back after its iterations were released"
+  fi
   wait "$pid" || rc=$?
 
   assert_equal "$rc" "4"

@@ -230,6 +230,28 @@ loop__iterate() {
   local tracker_written changed commit mark
   local RALPH_ROLLBACK_FAILED=0
 
+  # **An iteration runs with errexit on, and it says so here rather than trusting
+  # that it inherited it.** That is the posture the loop had before [13] — every
+  # `|| true` in the failure policy is written against it, and each of them says in
+  # its comment what it is buying — and this ticket switched it off by accident:
+  # the pilot calls `loop__start` in an `|| stop_code=4` list, and bash suspends
+  # errexit for the whole *dynamic extent* of a function invoked that way, the
+  # iteration it forks included. Found by the mutation gate rather than by reading:
+  # removing a `|| true` from `failures_handle` changed nothing at all, so an [07]
+  # entry that had covered a real guarantee for a month reported VACUOUS.
+  #
+  # Restored rather than declared the new normal, and the choice is the pack's own
+  # doctrine: an unguarded lib that returns non-zero is the case nobody knows
+  # anything about, and the safe answer there is to cost the iteration — the ticket
+  # comes back and the pilot says the iteration died without a verdict — not to
+  # carry on and mark something. Every failure that decides anything is tested
+  # explicitly below, so this only ever fires where nobody wrote a guard.
+  #
+  # `loop__start` therefore hands its refusal back through a variable instead of a
+  # return status: a caller that tests the status is a caller that switches this
+  # off again, three frames away from where it matters.
+  set -e
+
   # Not `cd || exit`: this is a subshell, and the pilot reads the outcome file.
   cd "$tree" || {
     printf '%s\n' iteration-lost >"$slot/outcome"
@@ -452,10 +474,16 @@ loop__inflight_count() {
 }
 
 # Claim a ticket, give it a tree of its own, and fork the iteration into it.
-# Non-zero means the run must stop; the ticket is given back first when there is
-# anything to give back.
+#
+# The refusal comes back in `LOOP_START_REFUSED` and never as a return status, and
+# that is load-bearing rather than a style: a caller writing `loop__start … ||
+# stop_code=4` suspends errexit for this function's whole dynamic extent — the
+# iteration forked below included — and an iteration without errexit is one where
+# every `|| true` in the failure policy has quietly stopped meaning anything. The
+# ticket is given back here when there is anything to give back.
 loop__start() {
   local ticket="$1" pin="$2" slot tree tip provisioned
+  LOOP_START_REFUSED=0
 
   if ! tracker_claim "$ticket" "pid:$$"; then
     loop_log "could not claim $ticket — someone else has it"
@@ -473,7 +501,8 @@ loop__start() {
     loop_log "no isolated worktree for $ticket — stopping rather than grinding in the tree this run was started in"
     tracker_unclaim "$ticket"
     rm -rf "$pin" "$tree"
-    return 1
+    LOOP_START_REFUSED=1
+    return 0
   fi
 
   provisioned="$(concurrency_provision "$tree")"
@@ -488,7 +517,8 @@ loop__start() {
     concurrency_worktree_drop "$tree"
     tracker_unclaim "$ticket"
     rm -rf "$pin"
-    return 1
+    LOOP_START_REFUSED=1
+    return 0
   }
 
   iteration=$((iteration + 1))
@@ -839,7 +869,10 @@ loop_main() {
     fi
     pin="$RALPH_IGNORE_PIN"
 
-    loop__start "$ticket" "$pin" || stop_code=4
+    # Not `loop__start … || stop_code=4`: testing the status here would switch
+    # errexit off inside the iteration this call forks. See loop__start.
+    loop__start "$ticket" "$pin"
+    [ "${LOOP_START_REFUSED:-0}" = 0 ] || stop_code=4
   done
 
   rm -f "${RALPH_TRACKER_LOG:-}"

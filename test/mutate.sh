@@ -482,9 +482,14 @@ mutation "05 the scope class is never said out loud" "$LOOP" \
 
 # ── [07] typed failures, rollback, durable green ─────────────────────────────
 
-mutation "07 nothing puts the tree back after a red gate" "$FAILURES" \
-  's/  failures_rollback "\$pre" "\$base" "\$tree" \|\| true\n//' \
-  test/canary.bats "absolved"
+# No entry for "nothing puts the tree back after a red gate" any more, and the
+# reason is worth reading rather than skipping. The canary still asserts the
+# property — three attempts, three red scope-guards, never a green bought by
+# having failed once — but since [13] it is held **twice**: the rollback undoes
+# the attempt, *and* the next attempt gets a worktree made from the branch tip
+# that never had it. Removing either line alone leaves the property standing, so
+# no single-line mutation can make that test red. A guarantee held redundantly is
+# not an uncovered one; what would be dishonest is an entry pretending otherwise.
 
 # The next three moved file in [06]: the restore loop they aim at is now
 # `gate_restore_tree` in gate.sh, because the containment of what a review lens
@@ -506,11 +511,11 @@ mutation "07 the rollback rewrites the loop's own bookkeeping" "$GATE" \
 
 mutation "07 a file the session added is not removed" "$GATE" \
   's/        rm -f "\$path"\n/        :\n/' \
-  test/failures.bats "stray write is undone"
+  test/failures.bats "removes what the session added"
 
 mutation "07 a file the session deleted is not restored" "$GATE" \
   's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          gate__log "could not restore \$path"/        :/' \
-  test/failures.bats "session deleted comes back"
+  test/failures.bats "brings back what it deleted"
 
 # The seam [06] introduced between the two: the rollback learns what it undid from
 # what the primitive printed, and it needs that list for the unstaging and for the
@@ -522,15 +527,19 @@ mutation "06 the rollback never learns what it put back" "$FAILURES" \
 
 mutation "07 what the session staged stays staged" "$FAILURES" \
   's/    git reset -q -- \$paths 2>\/dev\/null \|\| true/    :/' \
-  test/failures.bats "stray write is undone"
+  test/failures.bats "unstages what it put back"
 
 mutation "07 the commit a session made is left in the history" "$FAILURES" \
   's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if false; then/' \
   test/failures.bats "commit the session made"
 
-mutation "07 the rollback is a blanket reset --hard" "$FAILURES" \
-  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if git reset -q --hard "\$pre" 2>\/dev\/null \&\& git clean -qfd; then/' \
-  test/failures.bats "commit the session made"
+# Aimed at the *restore* and no longer at the commit half: the collateral a
+# blanket reset causes is a human's uncommitted work, and since [13] that work is
+# not in the tree an iteration touches at all. What is still exactly as wide as
+# the session's diff is `gate_restore_tree`, driven as a lib.
+mutation "07 the rollback is a blanket reset --hard" "$GATE" \
+  's/^gate_restore_tree\(\) \{/gate_restore_tree() { git reset -q --hard HEAD >\/dev\/null 2>\&1; git clean -qfd >\/dev\/null 2>\&1; printf "%s\\n" "reset"; return 0;/m' \
+  test/failures.bats "work nobody in this run made stands"
 
 mutation "07 a failure is not counted, so nothing is ever escalated" "$FAILURES" \
   's/      if \[ -z "\$count" \] \|\| \[ "\$count" -gt "\$\{RETRY_N:-2\}" \]; then/      if false; then/' \
@@ -611,12 +620,26 @@ mutation "07 a plan is read even from a session that wrote the tracker" "$FAILUR
 # behaviour, swallowing the refusal, and what must go red is the test that used
 # to assert it: without the stop, every ticket is marked `resolved` with nothing
 # at all behind it.
+#
+# Pointed at the compare-and-swap race and not at the `main.lock` test, which is
+# the one that reads the wrong way round now: a lock on `refs/heads/main` does not
+# stop an iteration committing its own detached HEAD, so there the durable commit
+# succeeds and it is the *fold* that refuses. Where this line really fails is the
+# race, and that test is where it belongs.
 mutation "07 a commit git refuses is swallowed and the ticket resolved anyway" "$LOOP" \
   's/      if failures_make_durable "\$ticket" "\$pre" "\$base" "\$\{RALPH_GATE_TREE:-\}"; then/      if failures_make_durable "\$ticket" "\$pre" "\$base" "\${RALPH_GATE_TREE:-}" || true; then/' \
-  test/failures.bats "stops the run rather than resolving nothing"
+  test/failures.bats "never overwrites a HEAD"
 
 mutation "07 a git that refuses the branch takes the run down" "$FAILURES" \
   's/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree"\n  fi/' \
+  test/failures.bats "branch git cannot name"
+
+# And the posture the entry above rests on. An iteration runs with errexit *on* —
+# that is what makes every `|| true` in the failure policy mean something — and
+# [13] switched it off by accident for a month, through the `||` of a caller three
+# frames up. Turning it off here must cost the same test.
+mutation "13 an iteration runs without errexit, as it did by accident" "$LOOP" \
+  's/^  set -e$/  set +e/m' \
   test/failures.bats "branch git cannot name"
 
 mutation "07 a gate branch that hangs is left to hang" "$GATE" \
@@ -2050,13 +2073,18 @@ mutation "13 an iteration runs in the tree the run was started in" "$LOOP" \
   's/^loop__iterate\(\) \{/loop__iterate() { set -- "\$1" "\$2" "\$(ralph_project_root)" "\$4";/m' \
   test/loop-happy-path.bats "isolated worktree"
 
+# Anchored on the line above it, and that is the header's own warning read the
+# hard way: `  concurrency_worktree_drop "$tree"` also matches *inside* the
+# four-space copy on the error path, which comes first in the file — so the
+# mutation applied cleanly to a branch nothing takes and reported VACUOUS about
+# a test that was fine.
 mutation "13 the worktree is never given back" "$LOOP" \
-  's/  concurrency_worktree_drop "\$tree"\n//' \
+  's/  rm -rf "\$pin"\n  concurrency_worktree_drop "\$tree"\n/  rm -rf "\$pin"\n/' \
   test/concurrency.bats "gives it back"
 
 mutation "13 the parallelism cap is ignored" "$LOOP" \
   's/    if \[ "\$\(loop__inflight_count\)" -ge "\$CONCURRENCY_CAP" \]; then/    if false; then/' \
-  test/concurrency.bats "sequenced, whatever MAX_PARALLEL"
+  test/concurrency.bats "one after the other"
 
 mutation "13 MAX_PARALLEL means nothing" "$CONCURRENCY" \
   's/^concurrency_cap\(\) \{/concurrency_cap() { CONCURRENCY_CAP=1; return 0;/m' \
@@ -2126,9 +2154,13 @@ mutation "13 the loop records none of its own tracker writes" "$TRACKER_IFACE" \
   's/^tracker__note_write\(\) \{/tracker__note_write() { return 0;/m' \
   test/concurrency.bats "ground at the same time"
 
-mutation "13 the register is read after the tickets are snapshotted" "$LOOP" \
-  's/  mark="\$\(tracker_write_mark\)"\n  issues="\$\(failures_tracker_tree\)" \|\| issues=""/  issues="\$(failures_tracker_tree)" || issues=""\n  mark="\$(tracker_write_mark)"/' \
-  test/concurrency.bats "ground at the same time"
+# No entry for the *order* of those two lines (`mark` taken before the tickets are
+# snapshotted), and it is a deliberate hole rather than an oversight. Swapping
+# them only matters when the pilot claims a sibling in the microseconds between
+# them: over-excluding leaves a ticket alone, under-excluding destroys a claim.
+# Nothing can stand in that window on purpose — the same shape as the race
+# `proc_collect` documents and declines to close — so an entry here would be a
+# coin toss reported as coverage. The margin is written where it is taken.
 
 mutation "13 an iteration that died without a verdict keeps its ticket" "$LOOP" \
   's/      tracker_unclaim "\$ticket"\n    fi\n    loop_log "\$ticket: the iteration died without a verdict/      :\n    fi\n    loop_log "\$ticket: the iteration died without a verdict/' \

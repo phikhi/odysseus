@@ -310,7 +310,13 @@ FAKE
   assert_ticket_status 01-alpha ready-for-agent
 }
 
-@test "a rollback is not a reset --hard: work nobody in this run made stands" {
+@test "an iteration never touches work nobody in this run made" {
+  # This used to be "a rollback is not a reset --hard", and since [13] it proves
+  # something else — still true, and stronger. A human's uncommitted work is not
+  # spared by a narrow rollback any more; it is simply not in the tree the
+  # iteration runs in. What keeps the name is the lib-level test further down,
+  # where the width of the rollback is still visible.
+
   use_tickets 01-alpha
   set_config STERILE_K 1
 
@@ -345,6 +351,100 @@ FAKE
   assert_failure 4
   assert_file_contains "$PROJECT_DIR/CONTEXT.md" "Fixture context for the harness"
   assert_equal "$(worktree_dirt)" ""
+}
+
+# ── the rollback, driven as a lib ────────────────────────────────────────────
+#
+# Four mutations went VACUOUS here the day [13] landed, and they were right. An
+# iteration rolls back inside a worktree that is thrown away straight afterwards,
+# so a loop-level test that asserts `refute_file_exists "$PROJECT_DIR/…"` is
+# asserting something that is true whether the rollback ran or not — the tree the
+# run was started in never had the file. What those tests still prove is worth
+# keeping (the ticket, the retries, the lines the run printed); what they stopped
+# proving is proved here, on the primitive, in a tree where the effect is visible.
+#
+# Driven with no pre-session commit (`pre` empty), so HEAD is left alone: what is
+# under test is the tree half. The commit half has its own test above.
+
+# The state a failed session leaves, staged the way an agent interrupted mid-commit
+# leaves it, plus a file nobody in this run made. Prints the pre-session tree so a
+# test can hand it back.
+failures__stage_a_failed_session() {
+  pack_run '
+    cd "$(ralph_project_root)"
+    printf "human work\n" >untracked-by-nobody.txt
+    printf "%s\n" "$(gate_tree_snapshot)" >.base
+    mkdir -p src
+    printf "written\n" >src/added.txt
+    printf "edited\n" >>CONTEXT.md
+    rm -f README-fixture.txt
+    git add -A >/dev/null 2>&1
+    printf "%s\n" "$(gate_tree_snapshot)" >.now
+  '
+}
+
+@test "the rollback removes what the session added and brings back what it deleted" {
+  use_tickets 01-alpha
+  printf 'a file the run did not make\n' >"$PROJECT_DIR/README-fixture.txt"
+  harness__commit "test: a tracked file for the session to delete"
+
+  failures__stage_a_failed_session
+  assert_success
+  assert_file_exists "$PROJECT_DIR/src/added.txt"
+  refute_file_exists "$PROJECT_DIR/README-fixture.txt"
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+  assert_output_contains "rolled back"
+
+  refute_file_exists "$PROJECT_DIR/src/added.txt"
+  assert_file_contains "$PROJECT_DIR/README-fixture.txt" "a file the run did not make"
+  refute_file_contains "$PROJECT_DIR/CONTEXT.md" "edited"
+}
+
+@test "the rollback unstages what it put back, and only those paths" {
+  use_tickets 01-alpha
+  printf 'a file the run did not make\n' >"$PROJECT_DIR/README-fixture.txt"
+  harness__commit "test: a tracked file for the session to delete"
+
+  failures__stage_a_failed_session
+  assert_success
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+
+  # Undoing the files without unstaging them would leave the attempt sitting in
+  # the index, ready to ride along with the next commit.
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  refute_output_contains "src/added.txt"
+  refute_output_contains "CONTEXT.md"
+  refute_output_contains "README-fixture.txt"
+}
+
+@test "a rollback is not a reset --hard: work nobody in this run made stands" {
+  # The whole reason the rollback is exactly as wide as the session's diff. A
+  # `git reset --hard` plus `git clean -fd` is the obvious implementation and it
+  # takes a human's uncommitted work down with the failed attempt.
+  use_tickets 01-alpha
+  printf 'a file the run did not make\n' >"$PROJECT_DIR/README-fixture.txt"
+  harness__commit "test: a tracked file for the session to delete"
+
+  failures__stage_a_failed_session
+  assert_success
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+
+  # It was there before the session, it is not in the session's diff, and it is
+  # still there. `git clean -fd` would have taken it.
+  assert_file_contains "$PROJECT_DIR/untracked-by-nobody.txt" "human work"
 }
 
 @test "a rollback never restores the tracker, whatever moved in it" {
