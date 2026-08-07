@@ -382,6 +382,55 @@ FAKE
   assert_output_contains "two=none"
 }
 
+@test "a lens the API refused is told apart from every other way of judging nothing" {
+  # The distinction the whole of [43] rests on, and all four shapes in one place
+  # because the guarantee is the *difference* between them. No verdict because the
+  # session never started is not the same as no verdict because the lens died, was
+  # cut for context, or answered prose — only the first of them looked at nothing,
+  # and only the first is not an attempt at the ticket.
+  local dir="$RALPH_TEST_DIR/streams"
+  local blocked allowed
+  blocked='{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","resetsAt":123,"rateLimitType":"five_hour"}}'
+  allowed='{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":123,"rateLimitType":"five_hour"}}'
+  mkdir -p "$dir"
+
+  # Refused: the event says blocked, and there is no verdict after it.
+  printf '%s\n' "$blocked" >"$dir/lens-refused.jsonl"
+  # Dead, killed for context, or talking prose: no verdict either, and nothing in
+  # the stream that says the subscription had anything to do with it.
+  printf '%s\n' "$allowed" >"$dir/lens-silent.jsonl"
+  # Told it is blocked — for the window after the one it is spending — and it
+  # answered all the same. That lens looked, and what it said stands.
+  printf '%s\n%s\n' "$blocked" '{"text":"RALPH-LENS-VERDICT: fail"}' \
+    >"$dir/lens-judged.jsonl"
+  # A branch whose session never wrote a byte: nothing to read either way.
+  : >"$dir/lens-empty.jsonl"
+
+  pack_run "for n in refused silent judged empty; do printf '%s=%s\\n' \"\$n\" \"\$(lenses_refused_posture $dir \$n || printf no)\"; done"
+  assert_success
+  assert_output_contains "refused=blocked five_hour 123"
+  assert_output_contains "silent=no"
+  assert_output_contains "judged=no"
+  assert_output_contains "empty=no"
+}
+
+@test "a lens the API refused is still a red branch" {
+  # The half [43] must not take away. The bill changes and the verdict does not:
+  # nothing judged this diff, so the gate cannot say it is good, the work is rolled
+  # back, and the ticket goes back to the frontier rather than forward.
+  set_config STERILE_K 1
+  lens_ticket 01-plain 'src/plain.txt'
+  session_writes
+  lens_refused standards
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "standards=red"
+  assert_output_contains "the standards lens judged nothing because the API refused its session (five_hour)"
+  assert_ticket_status 01-plain ready-for-agent
+  refute_file_exists "$PROJECT_DIR/src/plain.txt"
+}
+
 # ── the lens cannot write, and it is measured rather than asked ──────────────
 
 @test "a lens is spawned without the tools that write" {

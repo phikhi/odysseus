@@ -52,12 +52,19 @@
 # `docs/frontiere-de-confiance.md` carries the line that says so. What *is* held:
 # a lens that emits no verdict counts red, so silence cannot buy a pass, and the
 # read-only tool set means an injected instruction cannot make the judge write.
+#
+# Since [43] the branch is still red when the API refused the session, and only
+# the *bill* changes: `lenses_refused_posture` lets the gate say which of its red
+# lenses looked at nothing at all, and the loop gives such a ticket back without
+# charging a retry for it. The direction is the one the whole budget half is built
+# on — a signal read out of a stream may make a run more cautious and never less.
 
 # ── the registry ─────────────────────────────────────────────────────────────
 #
-# gate.sh reaches into this module through exactly two functions —
-# `lenses_triggered` and `lenses_review` — and this module reaches back only for
-# gate.sh's public readers of tree objects and write-surfaces. Keeping it to that
+# gate.sh reaches into this module through exactly three functions —
+# `lenses_triggered`, `lenses_review` and `lenses_refused_posture` — and this
+# module reaches back only for gate.sh's public readers of tree objects and
+# write-surfaces, plus budget.sh's two readers of a stream. Keeping it to that
 # is deliberate: the two files do refer to each other, and the only thing keeping
 # that from becoming a mesh is that the fan stays on one side and the registry on
 # the other. A lens that wanted to start a branch of its own has left the design.
@@ -280,6 +287,14 @@ lenses_posture() {
 # verdict, and an absent one counts red.
 LENSES_VERDICT_TOKEN='RALPH-LENS-VERDICT'
 
+# Where a lens's stream lives, in the gate's own temporary directory. One
+# definition and not two since [43], which gave that file a second reader: a
+# second spelling would drift, and the symptom would be a posture nobody could
+# find rather than an error.
+lenses__stream() {
+  printf '%s/lens-%s.jsonl\n' "$1" "$2"
+}
+
 # One lens, as a gate branch: findings on stdout, the verdict as the exit code.
 #
 # Red on anything that is not an explicit pass. A lens whose session crashed, was
@@ -288,8 +303,9 @@ LENSES_VERDICT_TOKEN='RALPH-LENS-VERDICT'
 # nobody wired up must not be indistinguishable from a gate everything passes.
 lenses_review() {
   local name="$1" ticket="$2" base="$3" tree="$4" dir="$5"
-  local promptfile="$dir/lens-$name.prompt" stream="$dir/lens-$name.jsonl"
+  local promptfile="$dir/lens-$name.prompt" stream
   local verdict rc=0
+  stream="$(lenses__stream "$dir" "$name")"
 
   if ! lenses__is_runnable "$name"; then
     printf 'no lens named %s: LENSES asks for a review nothing here can perform\n' \
@@ -349,6 +365,40 @@ lenses__verdict() {
     fail) printf 'fail\n' ;;
     *) printf 'none\n' ;;
   esac
+}
+
+# The posture of a lens that judged nothing **because the API refused its
+# session**, as `<status> <window> <reset>`, or nothing at all.
+#
+# Nothing is the answer for every other way a lens ends without a verdict: a
+# session that died, one killed for context, one `GATE_TIMEOUT` cut, one that
+# answered prose. Those judged nothing either, and they stay red and billed —
+# silence does not buy a green ([06]). What is different here is that nothing was
+# ever *looked at*: the session never started. That is exactly the criterion [08]
+# wrote for the delivery half — "only the issues where nothing was judged" — and
+# then wired to two outcomes only, because those were the two that existed when it
+# was written ([43], and [31] on a seal narrower than its own criterion).
+#
+# The verdict outranks the event, in that order and not the other way round: a
+# session can be told it is blocked for the window *after* the one it is spending
+# and still come back with `pass` or `fail`. That lens looked, and what it said
+# stands whatever its stream says about the subscription.
+#
+# Read by the gate, out of the stream in the gate's own temporary directory and
+# before it removes that directory. Deliberately not returned by `lenses_review`:
+# that runs in a gate branch, which is a subshell, so a variable set there dies
+# with the branch — the boundary `RALPH_SESSION_TIMEOUT` meets, and the one [23]
+# refused a file beside the stream for. Nothing new is written here either. The
+# stream is already there, and the caller is the shell that made the directory.
+lenses_refused_posture() {
+  local dir="$1" name="$2" stream posture
+  stream="$(lenses__stream "$dir" "$name")"
+  [ -f "$stream" ] || return 1
+  [ "$(lenses__verdict "$stream")" = none ] || return 1
+  posture="$(budget_stream_posture "$stream")"
+  budget_refused "$posture" || return 1
+  printf '%s\n' "$posture"
+  return 0
 }
 
 # What the lens said, for the branch's output — which is what a human reads in the

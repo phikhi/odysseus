@@ -443,6 +443,221 @@ budget_wait_for_exit() {
   assert_equal "$(ticket_field 01-alpha Failures)" "1"
 }
 
+# ── the other half of the iteration ──────────────────────────────────────────
+#
+# An iteration is `1 + n` sessions ([06]), and until [43] the classifier above was
+# wired to the one. A review lens the API refuses produces no verdict, so the
+# branch is red, so the outcome is `gate-red` — the one class the classifier
+# refuses to forgive, and rightly, for a red that means something was looked at.
+# A refused lens looked at nothing, which is the criterion the classifier was
+# written against and not an exception to it.
+
+@test "a review lens refused for quota costs the ticket what a refused delivery session costs" {
+  # The witness has to be paired, and in one test. The finding of [43] is not that
+  # a lens refusal is mishandled on its own — it is that the *same* event, in the
+  # two halves of one iteration, was priced two opposite ways. A test that asserted
+  # the lens half alone would go on passing if the delivery half regressed to meet
+  # it, and then the pack would be uniformly wrong instead of visibly inconsistent.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config RETRY_N 2
+  set_config LENSES standards
+  lens_refused standards blocked five_hour "$(budget_soon 1)"
+
+  # Half one: everything about this iteration is green except that the API never
+  # let the lens start. Three objective branches passed, the session wrote its
+  # declared surface — exactly the shape that used to escalate `failed-impl`.
+  run_loop
+  assert_failure 4
+  assert_output_contains "refused for quota (five_hour)"
+  assert_output_contains "given back with no retry consumed"
+  assert_output_contains "01-alpha -> budget-pause"
+  refute_output_contains "fresh retry"
+  refute_output_contains "failed-impl"
+  assert_ticket_status 01-alpha ready-for-agent
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+
+  # Half two: the same payload, in the delivery session's stream. This is the
+  # measurement the half above is compared against, and it must not have moved.
+  script_refused_session blocked five_hour "$(budget_soon 1)"
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "refused for quota (five_hour)"
+  assert_output_contains "given back with no retry consumed"
+  assert_output_contains "01-alpha -> budget-pause"
+  refute_output_contains "fresh retry"
+  refute_output_contains "failed-impl"
+  assert_ticket_status 01-alpha ready-for-agent
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+}
+
+@test "a lens the API refused does not cancel the red of a lens that judged" {
+  # The boundary, and it is what keeps the widened classifier from being the free
+  # red gate [08] refused. `spec` looked at the diff and said it is wrong; the API
+  # refusing `standards` beside it does not take that away. Without this, a single
+  # forged event in one lens's stream would buy back any red the gate could return.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config RETRY_N 2
+  set_config LENSES "standards spec"
+  lens_refused standards blocked five_hour "$(budget_soon 1)"
+  lens_verdict spec fail
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "01-alpha: gate-red -> fresh retry (1 of 2)"
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  refute_output_contains "given back with no retry consumed"
+}
+
+@test "a lens that judged nothing without being refused is still an attempt at the ticket" {
+  # The refutation the pair above needs: the classifier keys on the *reason* a
+  # verdict is missing and never on its absence. A lens that died, was killed for
+  # context or answered prose judged nothing either — and the API let it look, so
+  # the iteration is an attempt and the ticket pays for it ([06]: silence does not
+  # buy a green, and it does not buy a free retry either).
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config RETRY_N 2
+  set_config LENSES standards
+  lens_verdict standards silent
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "01-alpha: gate-red -> fresh retry (1 of 2)"
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  refute_output_contains "given back with no retry consumed"
+}
+
+@test "a refused lens does not buy a give-back when the tree could not be put back" {
+  # The third condition, and it is the [23] rule one layer up: a refusal this pack
+  # *measured* is not overwritten by a reason read out of a stream. The gate could
+  # not say what the lens phase left in the tree, which is a red no missing verdict
+  # explains — so the iteration is billed, whatever the API told the other branch.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config RETRY_N 2
+  set_config LENSES "standards spec"
+  lens_refused standards blocked five_hour "$(budget_soon 1)"
+  lens_closes_measurement spec
+
+  run_loop_own_tmp
+  assert_failure 4
+  assert_output_contains "could not read the tree after the review lenses"
+  assert_output_contains "01-alpha: gate-red -> fresh retry (1 of 2)"
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  refute_output_contains "given back with no retry consumed"
+}
+
+@test "a lens the gate's own deadline killed is not read as a refusal" {
+  # [23]'s rule, in the half of the iteration it was never asked about: a reason
+  # this pack measured itself is not overwritten by one read out of the stream of
+  # what it measured. The branch here emits a blocked event and then hangs — the
+  # gate is what stops it — and if its last line decided, anything able to arrange
+  # a hang past `GATE_TIMEOUT` would buy the same free give-back a refusal buys.
+  #
+  # Carries its own deadline, like every bound in this file: removed, the guarantee
+  # does not fail, it sleeps ([25]).
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config RETRY_N 2
+  set_config GATE_TIMEOUT 1
+  set_config LENSES standards
+  script_claude <<FAKE
+#!/usr/bin/env bash
+prompt="\$(cat)"
+case "\$prompt" in
+  *RALPH-LENS-VERDICT*)
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s"}'
+    printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","resetsAt":$(budget_soon 1),"rateLimitType":"five_hour"}}'
+    # Long enough to outlast the deadline this test gives the run, or the branch
+    # would come back on its own and this would be a test about a lens that
+    # answered nothing rather than about one the watchdog killed.
+    sleep 120
+    ;;
+  *)
+    mkdir -p src && printf 'written\n' >src/alpha.txt
+    ;;
+esac
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}\n'
+FAKE
+
+  local log="$RALPH_TEST_DIR/deadline-run.log" rc=0
+  bash "$PACK_DIR/loop.sh" >"$log" 2>&1 &
+  local loop_pid=$!
+  budget_wait_for_exit "$loop_pid" 90 || rc=$?
+  [ "$rc" != 99 ] || fail "the run never came back: nothing bounds a lens that hangs"
+  assert_equal "$rc" "4"
+
+  assert_file_contains "$log" "standards red (timed out after 1s)"
+  assert_file_contains "$log" "01-alpha: gate-red -> fresh retry (1 of 2)"
+  refute_file_contains "$log" "given back with no retry consumed"
+  refute_file_contains "$log" "the API refused its session"
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+}
+
+@test "a run whose lenses are refused stops on the budget instead of grinding the frontier" {
+  # The signal has to reach the pilot, and only the pilot may act on it: the
+  # iteration is the only thing that ever sees a lens's stream, and declining to
+  # spawn is the only honest way not to spend a session ([08]). The endpoint is
+  # unreadable here, which is the ordinary installation — no token — so the in-band
+  # posture is all this run has.
+  #
+  # Without it the arithmetic is the ticket: `RETRY_N` × `(1 + n)` sessions per
+  # ticket, against a wall, for every ticket on the frontier.
+  use_tickets 01-alpha 02-beta
+  set_config STERILE_K 4
+  set_config RETRY_N 2
+  set_config LENSES standards
+  usage_respond ''
+  lens_refused standards blocked seven_day "$(budget_soon 200)"
+
+  run_loop
+  assert_failure 6
+  assert_output_contains "the last session was told it is blocked (seven_day)"
+  assert_output_contains "the weekly usage limit blocks this run"
+  # One delivery session and one lens, and the second ticket was never started.
+  assert_equal "$(claude_call_count)" "2"
+  assert_ticket_status 02-beta ready-for-agent
+}
+
+@test "a widening the gate already read is not charged to the run twice" {
+  # The table in `failures_handle` says, by class, who has already put the ignore
+  # rules back — and `budget` is the one entry on it that is a *reason* rather than
+  # a kind of session. It arrives from an iteration whose gate never ran (a refused
+  # delivery session) and from one whose gate ran to the end: a session that wrote
+  # nothing ([08] via [35]) and, since [43], a review lens the API refused. Asking
+  # again on the second re-detects the one source no restore can undo, announces it
+  # twice, and records it in the run's register a second time — which at
+  # MAX_PARALLEL > 1 charges every iteration in flight for one widening twice
+  # ([41]). The class is the wrong question; whether anybody already looked is the
+  # right one.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  script_claude <<FAKE
+#!/usr/bin/env bash
+cat >/dev/null
+mkdir -p "\$HOME/.config/git"
+printf 'rogue/\n' >>"\$HOME/.config/git/ignore"
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+echo '{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","resetsAt":$(budget_soon 1),"rateLimitType":"five_hour"}}'
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  # The iteration this stages: nothing in the tree changed, and the subscription
+  # was empty, so the gate ran, refused the delivery, and the classifier gave the
+  # ticket back.
+  assert_output_contains "given back with no retry consumed"
+  assert_output_contains "outside the repository"
+  assert_equal \
+    "$(printf '%s\n' "$output" | grep -c 'outside the repository' | tr -d ' ')" "1"
+}
+
 @test "a session that delivered nothing on an empty subscription is not billed for it" {
   # The [35] interaction, and it is why "budget?" is asked of more than a non-zero
   # exit. A session the API refused writes nothing, so the delivery refusal fires
