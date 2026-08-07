@@ -62,6 +62,18 @@ loop_log() {
 
 RALPH_STOP=0
 
+# Every journal line this run wrote, in order. A variable of the pilot and never a
+# file: a file would be one the judged session can write, which is the whole
+# problem it exists to detect. See loop_journal_verify.
+RALPH_JOURNAL_WITNESS=''
+
+# How many lines the journal held before this run wrote anything. Filled at the top
+# of `loop_main`, before the preflight — which journals ([27]) — and never later:
+# the mutation gate is what taught this function where it has to be taken. Read on
+# the first append instead, it would already be past a line that went missing
+# before it, and the check below would balance.
+RALPH_JOURNAL_BASE=0
+
 loop_request_stop() {
   RALPH_STOP=1
   loop_log "stop requested — finishing the current iteration"
@@ -123,13 +135,92 @@ loop_spawn_session() {
 
 # ── the run journal ──────────────────────────────────────────────────────────
 
-# Append-only, one line per iteration, never read back to decide anything. The
-# tracker stays the only authority; a line lost to a crash costs nothing.
+# Append-only, one line per event of the run, never read back to decide anything.
+# The tracker stays the only authority; a line lost to a crash costs nothing.
+#
+# Not one line per *iteration*, and the difference has bitten every reader written
+# against it: the liveness sweep journals a ticket that changed hands ([12]), the
+# preflight journals a duplicate id before the locks are even taken ([27]), and the
+# budget wall journals a run that stopped without one. Counting lines is not
+# counting iterations, and summing costs is still summing costs.
+#
+# `action=` is the seventh field and it is [07]'s open question, answered here
+# ([10]). The outcome says what happened to the *iteration*; a reader of the
+# journal alone could not tell a red gate that was retried from a red gate that was
+# escalated, or a re-slice from either — those are the same word with three
+# different consequences for the ticket, and they are exactly what a human wants at
+# eight in the morning. Appended at the end so nothing that reads this file by
+# field position moves.
+#
+# What did **not** go in, and it is the other half of the decision: the zones
+# nothing judged ([24], [29], [30], [17]) have no field here. The count would fit
+# and the ten names would not, and a truncated list in a tabulated file is the kind
+# of half-truth this pack has a document about. They go to the receipt, which has
+# the room and is the surface a human actually reads them on.
 loop_journal_append() {
-  local ticket="$1" outcome="$2" turns="$3" cost="$4" tokens="$5"
-  printf '%s\t%s\t%s\tturns=%s\tcost=%s\ttokens=%s\n' \
+  local ticket="$1" outcome="$2" turns="$3" cost="$4" tokens="$5" action="${6:-none}"
+  local line journal
+  journal="$(ralph_feature_dir)/run.log"
+  line="$(printf '%s\t%s\t%s\tturns=%s\tcost=%s\ttokens=%s\taction=%s' \
     "$(ralph_now)" "$ticket" "$outcome" "${turns:-0}" "${cost:-0}" "${tokens:-0}" \
-    >>"$(ralph_feature_dir)/run.log"
+    "$action")"
+  printf '%s\n' "$line" >>"$journal"
+  # And the witness, which is the answer to the one thing [21] left open about this
+  # file. `run.log` lives under `.scratch/<feature>/`, which nothing in this pack
+  # guards and nothing can guard — the session's own stream is written there during
+  # the window being watched — so a session can rewrite the journal of the very run
+  # that is judging it. Moving the file out of reach was the other exit and it is
+  # the wrong one: this is the file a human opens in the morning, and a journal in
+  # `$TMPDIR` is a journal nobody reads.
+  #
+  # So the journal is not made tamper-proof, it is made **tamper-evident**: the run
+  # keeps its own copy of every line it wrote, in a variable of the pilot process —
+  # never a file, for the reason `budget_check`'s cache is never a file ([08]) —
+  # and says so at the end if the file no longer contains it. Detection and not
+  # prevention, which is the honest shape here: nothing can stop the write, and a
+  # rewritten journal that nobody notices is what makes the file unbelievable.
+  RALPH_JOURNAL_WITNESS="$RALPH_JOURNAL_WITNESS$line
+"
+}
+
+# Whether the journal still ends with what this run wrote, said once, at the end.
+#
+# The comparison is deliberately narrow, and its limits are stated rather than
+# implied. What it can vouch for is **this run's own block**: it starts where the
+# file stood when this run first wrote to it, it is exactly as long as the number
+# of lines this process appended, and it is those lines verbatim and in order. That
+# catches a rewrite, a truncation, an insertion between two of our lines, a line a
+# session appended after ours — and, because the length is checked and not only the
+# tail, a line of *ours* that never arrived. What it cannot vouch for is anything
+# above that block: lines from earlier runs are not this run's to remember, and a
+# session that edits those is invisible here.
+#
+# Two questions and not one, and the second is the one the mutation gate had to
+# teach this function. "The file ends with my lines" is satisfied by a file holding
+# one line of mine too many at the front — the tail slides — which is exactly what a
+# journal line written in a subshell looks like from here.
+#
+# It never changes what the run does. A journal is not an authority in this pack —
+# nothing reads it back to choose or to mark, which is the acceptance criterion —
+# so a rewritten one costs a reader and not a decision. What it earns is the right
+# to be believed when it is intact, and the loudest possible line when it is not,
+# with the run's own copy printed underneath: after this the file is the only copy
+# left, and if it is a lie the copy has to go somewhere.
+loop_journal_verify() {
+  local journal n total
+  [ -n "${RALPH_JOURNAL_WITNESS:-}" ] || return 0
+  journal="$(ralph_feature_dir)/run.log"
+  n="$(printf '%s' "$RALPH_JOURNAL_WITNESS" | awk 'END { print NR + 0 }')"
+  [ "$n" -gt 0 ] || return 0
+  total="$(awk 'END { print NR + 0 }' "$journal" 2>/dev/null || printf 0)"
+  if [ "$total" = "$((${RALPH_JOURNAL_BASE:-0} + n))" ] &&
+    [ "$(tail -n "$n" "$journal" 2>/dev/null || true)" = \
+      "$(printf '%s' "$RALPH_JOURNAL_WITNESS")" ]; then
+    return 0
+  fi
+  loop_log "the run journal does not hold exactly the $n line(s) this run wrote, where it wrote them: something rewrote $journal under it. Nothing here read that file to decide anything, so no ticket was marked on it — but do not believe it about this run. What this run wrote follows."
+  printf '%s' "$RALPH_JOURNAL_WITNESS" | sed 's/^/ralph: journal: /'
+  return 1
 }
 
 # ── the loop ─────────────────────────────────────────────────────────────────
@@ -166,6 +257,10 @@ loop_preflight() {
   # And what an isolated iteration needs before a ticket is claimed ([13]): a
   # commit to make a worktree from, and a MAX_PARALLEL that means something.
   concurrency_preflight || rc=1
+  # And the audit surface's own ([10]), for the reason every value in this
+  # preflight is here: a receipt that keeps nothing is the only copy of a review
+  # lens's findings, kept at zero.
+  receipt_preflight || rc=1
   return "$rc"
 }
 
@@ -208,6 +303,12 @@ loop__stand_down() {
   local ticket="$1" slot="$2"
   shift 2
   loop_log "$ticket: $*"
+  # No receipt on this path, and the workspace goes with the iteration. A receipt
+  # is a document about a ticket the loop finished with, and standing down is the
+  # opposite of finishing: nothing was committed, nothing folded, nothing marked
+  # ([44]). Writing one would put an audit artefact in the tree in the name of a
+  # run that no longer exists.
+  receipt_close
   printf '%s\n' pilot-gone >"$slot/outcome"
   : >"$slot/done"
   return 0
@@ -273,10 +374,15 @@ loop__orphaned() {
 # cannot give one refuses with nothing to unwind ([30]), and a worktree the pilot
 # did not create is one it could not clean up after a child that died hard.
 loop__iterate() {
-  local ticket="$1" slot="$2" tree="$3" start="$4"
+  local ticket="$1" slot="$2" tree="$3" start="$4" provisioned="${5:-0}"
   local outfile base pre seen issues rc turns cost tokens outcome
-  local tracker_written changed commit mark
+  local tracker_written changed commit mark emit attempt
   local RALPH_ROLLBACK_FAILED=0
+  # Declared here rather than left to the failure policy's own assignment, and the
+  # locality is the point: these belong to *this* iteration, and with two in flight
+  # a global would be one sibling reading the other's escalation ([10] on [13]).
+  local RALPH_FAILURE_ACTION=none RALPH_FAILURE_BRANCH=''
+  local RALPH_RECEIPT=''
 
   # **An iteration runs with errexit on, and it says so here rather than trusting
   # that it inherited it.** That is the posture the loop had before [13] — every
@@ -338,6 +444,22 @@ loop__iterate() {
     return 0
   fi
 
+  # The audit receipt's workspace, opened before anything is measured so that every
+  # line the gate and the failure policy say about what they could *not* judge lands
+  # in it as it is said ([10]). It lives in `$TMPDIR` under a `mktemp` name this
+  # shell never exports — the same secret as the ignore pin ([30]) and the tracker
+  # register ([40]) — because `claude` is spawned from this very shell, and a path
+  # handed to a session in its environment is as writable as a file in the tree.
+  #
+  # A workspace that cannot be made costs the receipt and never the iteration: an
+  # audit surface is what a human reads afterwards, and refusing to deliver work
+  # over it would trade the night for the paperwork.
+  receipt_open ||
+    loop_log "$ticket: no audit receipt for this iteration — could not make a workspace for one"
+  receipt_fact iteration "$(cat "$slot/n" 2>/dev/null || printf '?')"
+  receipt_fact worktree "$tree"
+  receipt_fact provisioned "$provisioned"
+
   outfile="$(ralph_feature_dir)/.session.$$.$(basename "$slot").jsonl"
   # `$$` is the pilot in every one of these shells — bash 3.2 has no BASHPID — so
   # the slot's name is what makes two concurrent streams two files. A single name
@@ -372,6 +494,10 @@ loop__iterate() {
   turns="$(session_result_field "$outfile" num_turns)"
   cost="$(session_result_field "$outfile" total_cost_usd)"
   tokens="$(monitor_peak_tokens "$outfile")"
+  receipt_fact base "$base"
+  receipt_fact turns "$turns"
+  receipt_fact cost "$cost"
+  receipt_fact tokens "$tokens"
   # Read here because the stream is deleted at the end of this iteration, and
   # kept as three words rather than a file: what this says about the budget is
   # read twice — once below to classify this iteration, once by the pilot before
@@ -395,6 +521,17 @@ loop__iterate() {
   # measure the contract as it stood when the session was spawned.
   tracker_written=0
   failures_protect_tracker "$ticket" "$issues" "$mark" || tracker_written=1
+
+  # Which attempt this is, read here and nowhere else ([10] on [26]). `Failures:` is
+  # a retry budget and `mark_resolved` clears it, so after the marking below the
+  # ticket can no longer say it was delivered on the third try. Read *after* the
+  # restore above, which is what makes it the loop's own number rather than one the
+  # session could have written into its own ticket — and sanitised before the
+  # arithmetic, because a field a human hand-edited is a string and `set -u` turns
+  # `$((abc + 1))` into a dead iteration.
+  attempt="$(tracker_field "$ticket" Failures 2>/dev/null || true)"
+  case "$attempt" in '' | *[!0-9]*) attempt=0 ;; esac
+  receipt_fact attempt "$((attempt + 1))"
 
   # Tickets the session gave itself never reach the frontier. Separate from the
   # gate's verdict on purpose: the gate judges the code, and this judges an
@@ -446,6 +583,13 @@ loop__iterate() {
         concurrency_integrate "$ticket" "$start" "$commit" "$changed"; then
         tracker_mark_resolved "$ticket"
         outcome=resolved
+        # The commit *this iteration wrote*, and deliberately not the branch tip
+        # read back afterwards ([13]). At MAX_PARALLEL=1 they are the same object;
+        # above it the fold may have replayed these paths onto a sibling's tip, and
+        # the tip a second later may be a third iteration's. An object name is
+        # exact and belongs to this ticket; a ref read after the guard was released
+        # is whatever the branch happens to be by then.
+        receipt_fact commit "$commit"
       else
         # Green, and nowhere: this worktree is about to be thrown away, so work
         # that did not reach the branch is work that never happened. The ticket
@@ -498,6 +642,15 @@ loop__iterate() {
   else
     outcome=failed
   fi
+
+  # Where the two branches above meet, which is the only place the verdicts can be
+  # recorded once ([10]). Empty is a value here and the receipt renders it as one:
+  # on the four routes where no gate ran there is nothing to recopy, and a blank
+  # verdict line read as "all green" is the misrouting [23] and [35] both warned
+  # about. The judged tree goes with them, so the receipt can name a diff.
+  receipt_fact verdicts "${RALPH_GATE_VERDICTS:-}"
+  receipt_fact failed "${RALPH_GATE_FAILED:-}"
+  receipt_fact tree "${RALPH_GATE_TREE:-}"
 
   # "Budget?" before "failure", which is [08]'s classifier. Asked of the outcomes
   # where **nothing was judged**, and of no other. That is the criterion, and it is
@@ -582,11 +735,45 @@ loop__iterate() {
       ;;
   esac
 
+  # The audit receipt, on the two iterations that *end* a ticket and on no other.
+  #
+  # Delivered, or handed to a human: those are the moments a ticket stops moving on
+  # its own, and they are the ones somebody reads asynchronously. A fresh retry is
+  # not one — the next iteration will produce the document, and a receipt per
+  # attempt would bury the one that matters under two that were superseded. A
+  # re-slice is not one either: the parent is blocked on children that do not exist
+  # yet, and the tickets say so.
+  #
+  # The trigger is the failure policy's *action* and never the outcome, and that is
+  # the whole of [07]'s open question ([10]): a red gate retried and a red gate
+  # escalated are the same outcome, and only one of them ends the ticket.
+  emit=0
+  [ "$outcome" != resolved ] || emit=1
+  case "${RALPH_FAILURE_ACTION:-none}" in escalated:*) emit=1 ;; esac
+  if [ "$emit" = 1 ]; then
+    receipt_fact outcome "$outcome"
+    receipt_fact action "${RALPH_FAILURE_ACTION:-none}"
+    receipt_fact failed-branch "${RALPH_FAILURE_BRANCH:-}"
+    if ! receipt_emit "$ticket" >/dev/null; then
+      # Never fatal, and the reason is the same one that makes the workspace
+      # optional: the iteration is over and its ticket is marked either way. What is
+      # lost is the review surface, so it is said rather than swallowed — a night
+      # with no receipts and no line explaining it reads as a night nobody reviewed.
+      loop_log "$ticket: the audit receipt could not be written — this iteration stands, and there is no asynchronous review surface for it"
+    fi
+  fi
+  receipt_close
+
   rm -f "$outfile" "$outfile.tokens"
   printf '%s\n' "${turns:-0}" >"$slot/turns"
   printf '%s\n' "${cost:-0}" >"$slot/cost"
   printf '%s\n' "${tokens:-0}" >"$slot/tokens"
   printf '%s\n' "${RALPH_ROLLBACK_FAILED:-0}" >"$slot/rollback-failed"
+  # What the failure policy did about the ticket, for the journal line the pilot
+  # writes. Bookkeeping and not a decision — the decision was taken here, by the
+  # process that measured it, and this only says which one it was ([13]'s rule for
+  # what may cross this channel).
+  printf '%s\n' "${RALPH_FAILURE_ACTION:-none}" >"$slot/action"
   printf '%s\n' "$outcome" >"$slot/outcome"
   # Last, and it is the pilot's proof that this iteration answered rather than
   # died. A pid alone cannot say it: bash reaps a background child on its own, so
@@ -685,7 +872,7 @@ loop__start() {
   # A session is about to run, so the budget's "twice in a row" is over.
   budget_paused=0
   RALPH_IGNORE_PIN="$pin"
-  loop__iterate "$ticket" "$slot" "$tree" "$tip" &
+  loop__iterate "$ticket" "$slot" "$tree" "$tip" "${provisioned:-0}" &
   LOOP_SLOTS="$LOOP_SLOTS$!	$ticket	$slot	$tree	$pin
 "
   return 0
@@ -779,7 +966,8 @@ loop__finish() {
   loop_journal_append "$ticket" "$outcome" \
     "$(cat "$slot/turns" 2>/dev/null || true)" \
     "$(cat "$slot/cost" 2>/dev/null || true)" \
-    "$(cat "$slot/tokens" 2>/dev/null || true)"
+    "$(cat "$slot/tokens" 2>/dev/null || true)" \
+    "$(cat "$slot/action" 2>/dev/null || true)"
   loop_log "iteration $(cat "$slot/n" 2>/dev/null || printf '?'): $ticket -> $outcome"
 
   # The pin dies with the iteration: the next one is entitled to the rules it is
@@ -816,6 +1004,16 @@ loop__finish() {
 
 loop_main() {
   cd "$(ralph_project_root)"
+
+  # Where this run's own block in the journal starts, taken before anything writes
+  # to it — the preflight journals a duplicate id before the locks are even taken
+  # ([27]), so a base read on the first append is already past whatever came with
+  # it. Guarded on FEATURE: a run without one has no journal, and is refused a line
+  # below. See loop_journal_verify for what the number is for.
+  if [ -n "${FEATURE:-}" ]; then
+    RALPH_JOURNAL_BASE="$(awk 'END { print NR + 0 }' \
+      "$(ralph_feature_dir)/run.log" 2>/dev/null || printf 0)"
+  fi
 
   loop_preflight || exit 2
 
@@ -962,11 +1160,20 @@ loop_main() {
     # the owner is this very run.
     reclaimed="$(claim_reclaim_stale "$(loop__inflight_ids)")"
     if [ -n "$reclaimed" ]; then
-      printf '%s\n' "$reclaimed" | while read -r rid rdisposition; do
+      # A heredoc and not a pipe, and the witness above is what makes that a rule
+      # rather than a preference ([10]): the right-hand side of a pipeline is a
+      # subshell, so the copy of the journal this run keeps would be appended to
+      # *there* and die with it. The lines would be in the file and not in the
+      # witness, and every run that reclaimed anything would end by accusing itself
+      # of a rewritten journal. `loop__finish` carries the same constraint for the
+      # run's counters, for the same reason one layer down.
+      while read -r rid rdisposition; do
         [ -n "$rid" ] || continue
         loop_log "reclaimed $rid from an owner that is gone -> $rdisposition"
         loop_journal_append "$rid" "reclaimed-$rdisposition" 0 0 0
-      done
+      done <<RECLAIMED
+$reclaimed
+RECLAIMED
     fi
 
     # No free slot: there is nothing to decide until one of them comes back.
@@ -1041,6 +1248,7 @@ loop_main() {
       fi
       rm -f "${RALPH_TRACKER_LOG:-}"
       rm -rf "${RALPH_IGNORE_COMMON:-}"
+      loop_journal_verify || true
       if [ "$iteration" -eq 0 ]; then
         loop_log "nothing to grind: the frontier was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
         exit 5
@@ -1084,6 +1292,11 @@ loop_main() {
 
   rm -f "${RALPH_TRACKER_LOG:-}"
   rm -rf "${RALPH_IGNORE_COMMON:-}"
+  # Last, after every iteration has been collected and journalled, and never a
+  # reason to change the exit code: a journal is not an authority in this pack, so
+  # a rewritten one costs a reader and not a decision ([10] on [21]). Turning it
+  # into a stop would hand a session a one-line way to end the night.
+  loop_journal_verify || true
   exit "${stop_code:-0}"
 }
 

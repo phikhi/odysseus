@@ -38,7 +38,16 @@ tracker__dispatch() {
     return 3
   fi
   case "$op" in
-    frontier | ids | read_ticket | field)
+    # The four reads, and the one write that is not a write *of a ticket* ([10]).
+    # The criterion this list is read against is not "does it touch the disk" but
+    # the question the register answers: did the loop itself write the ticket a
+    # guard over `issues/` is about to compare ([31] — derive the list from its
+    # criterion, not from the operations that happen to exist). `emit_receipt`
+    # writes a document *about* a ticket, under `receipts/`, which no snapshot of
+    # `issues/` will ever see; noting it would hand the restore and the quarantine
+    # an id to skip for a file they do not look at, and the skip would land on
+    # whichever sibling iteration was in flight at the time.
+    frontier | ids | read_ticket | field | emit_receipt)
       "$fn" "$@"
       ;;
     open_ticket | renumber)

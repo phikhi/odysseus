@@ -83,6 +83,26 @@ gate__log() {
   printf 'ralph: gate: %s\n' "$*"
 }
 
+# Said out loud *and* kept, for the lines that outlive the night ([10]).
+#
+# Two kinds of sentence go through here and no others: what this gate did **not**
+# judge — the ignored zone, the frontier a session moved, what the branches wrote
+# after the tree was taken, what the language gate skipped — and the admissions
+# that are not zeroes, where a measurement could not be taken at all ([34]). They
+# are the ones a human needs *after* a night rather than in a stdout that has
+# scrolled, and they are the ones a receipt cannot reconstruct afterwards: asking
+# the same questions again would walk the ignored zone a second time and, for the
+# frontier, would advance a register that is read once per iteration by design
+# ([41]).
+#
+# `receipt_note` is a no-op when no receipt is open, which is what lets this be
+# used unconditionally: the gate has its own tests, and a call site that had to ask
+# first would grow the question in six places and lose it in the seventh.
+gate__say() {
+  gate__log "$@"
+  receipt_note "$@"
+}
+
 # ── preflight ────────────────────────────────────────────────────────────────
 
 # Refuse to start rather than grind a whole frontier behind a gate that proves
@@ -1603,7 +1623,7 @@ gate__watchdog() {
 gate__report_unguarded() {
   local ticket="$1" zone
   if zone="$(gate_ignored_zone)"; then
-    gate__log "$ticket: nothing in this gate judged $zone"
+    gate__say "$ticket: nothing in this gate judged $zone"
   fi
   return 0
 }
@@ -1620,7 +1640,7 @@ gate__report_unguarded() {
 gate__report_frontier() {
   local ticket="$1" moved
   moved="$(gate_moved_tree_rules)" || return 0
-  gate__log "$ticket: this session moved the ignore frontier: $moved — this iteration was judged through the rules it was handed, the new ones apply from the next"
+  gate__say "$ticket: this session moved the ignore frontier: $moved — this iteration was judged through the rules it was handed, the new ones apply from the next"
   return 0
 }
 
@@ -1640,11 +1660,11 @@ gate__report_frontier() {
 gate__report_changed() {
   local ticket="$1" changed zone
   if ! changed="$(gate_unjudged_changes "$2")"; then
-    gate__log "$ticket: this gate could not check what it changed after the tree it judged — nothing here vouches for that zone"
+    gate__say "$ticket: this gate could not check what it changed after the tree it judged — nothing here vouches for that zone"
     return 0
   fi
   if zone="$(gate_zone_line "$changed" 'path(s) after the tree it judged')"; then
-    gate__log "$ticket: this gate itself changed $zone"
+    gate__say "$ticket: this gate itself changed $zone"
   fi
   return 0
 }
@@ -1669,11 +1689,11 @@ gate__report_lang() {
   local ticket="$1" dir="$2"
 
   if ! lang_enabled; then
-    gate__log "$ticket: the language gate is off (LANG_CHECK=off): nothing here checked what language this iteration wrote its prose in"
+    gate__say "$ticket: the language gate is off (LANG_CHECK=off): nothing here checked what language this iteration wrote its prose in"
     return 0
   fi
   [ -f "$dir/lang.zone" ] || return 0
-  gate__log "$ticket: $(cat "$dir/lang.zone")"
+  gate__say "$ticket: $(cat "$dir/lang.zone")"
   return 0
 }
 
@@ -1740,6 +1760,12 @@ gate__aggregate() {
       gate__log "$name red (no verdict)"
     fi
     gate__report "$dir/$name.out"
+    # And the whole of it, kept while this directory still exists ([10]). Twenty
+    # lines are enough to see which test broke in a log that scrolls; a review
+    # lens's findings are prose, this is the only copy — `gate_run` removes the
+    # directory, and with it the prompt and the stream ([06]) — and a session
+    # retried without them rewrites the same code and is reddened identically.
+    receipt_keep_branch "$name" "$dir/$name.out"
   done
   return "$rc"
 }
@@ -1773,15 +1799,15 @@ gate__lens_phase() {
   # without remembering which key was set.
   if [ -z "${lenses# }" ]; then
     if [ -z "$(lenses_enabled)" ]; then
-      gate__log "$ticket: no review lens ran (LENSES is empty): nothing here judged this work by anything but its own tests"
+      gate__say "$ticket: no review lens ran (LENSES is empty): nothing here judged this work by anything but its own tests"
     else
-      gate__log "$ticket: no review lens was triggered by this ticket"
+      gate__say "$ticket: no review lens was triggered by this ticket"
     fi
     return 0
   fi
 
   if [ "$objective_rc" != 0 ]; then
-    gate__log "$ticket: the review lenses did not run: the objective checks are already red ($RALPH_GATE_FAILED)"
+    gate__say "$ticket: the review lenses did not run: the objective checks are already red ($RALPH_GATE_FAILED)"
     return 0
   fi
 
@@ -1818,7 +1844,13 @@ gate__lens_phase() {
       if posture="$(lenses_refused_posture "$dir" "$name")"; then
         RALPH_GATE_QUOTA="$posture"
         refused="$refused $name"
-        gate__log "$ticket: the $name lens judged nothing because the API refused its session ($(printf '%s' "$posture" | awk '{ print $2 }')) — the branch is still red, and this iteration is not an attempt at the ticket"
+        # Said *and* kept, and this one is the reason [43] left work here ([10]):
+        # the outcome of a refused delivery session and of a refused lens is the
+        # same word, so a reader with only the outcome cannot tell which half of
+        # the iteration was refused. Recorded per lens, because
+        # `RALPH_GATE_QUOTA` keeps only the last posture — the pilot needs one
+        # window, a receipt that wants the list has to have been told.
+        gate__say "$ticket: the $name lens judged nothing because the API refused its session ($(printf '%s' "$posture" | awk '{ print $2 }')) — the branch is still red, and this iteration is not an attempt at the ticket"
       fi
     done
   fi
@@ -1886,17 +1918,17 @@ gate__contain_lens_writes() {
   local ticket="$1" pre="$2" changed left
 
   if [ -z "$pre" ]; then
-    gate__log "$ticket: could not read the tree before the review lenses — cannot say what they wrote, refusing to pass"
+    gate__say "$ticket: could not read the tree before the review lenses — cannot say what they wrote, refusing to pass"
     return 1
   fi
 
   if ! changed="$(gate_unjudged_changes "$pre")"; then
-    gate__log "$ticket: could not read the tree after the review lenses — cannot say what they wrote, refusing to pass"
+    gate__say "$ticket: could not read the tree after the review lenses — cannot say what they wrote, refusing to pass"
     return 1
   fi
   [ -n "$changed" ] || return 0
 
-  gate__log "$ticket: a review lens changed $(gate_zone_line "$changed" \
+  gate__say "$ticket: a review lens changed $(gate_zone_line "$changed" \
     'path(s) in the tree it was judging') — putting them back"
   gate_restore_tree "$pre" >/dev/null || true
 
@@ -1905,11 +1937,11 @@ gate__contain_lens_writes() {
   # measurement. One that refuses says nothing, which is not the same as saying
   # the tree is clean ([30] on `core.excludesFile`, one layer up).
   if ! left="$(gate_unjudged_changes "$pre")"; then
-    gate__log "$ticket: could not check what a review lens wrote was put back — refusing to pass this iteration"
+    gate__say "$ticket: could not check what a review lens wrote was put back — refusing to pass this iteration"
     return 1
   fi
   [ -n "$left" ] || return 0
-  gate__log "$ticket: could not undo $(gate_zone_line "$left" \
+  gate__say "$ticket: could not undo $(gate_zone_line "$left" \
     'path(s) a review lens wrote') — refusing to pass this iteration"
   return 1
 }
@@ -1985,7 +2017,7 @@ gate_run() {
     RALPH_GATE_VERDICTS=" delivery=red"
     RALPH_GATE_FAILED=" delivery"
     rc=1
-    gate__log "$ticket: nothing was delivered: this iteration changed no file this gate can see, so there is nothing here to judge and nothing to commit"
+    gate__say "$ticket: nothing was delivered: this iteration changed no file this gate can see, so there is nothing here to judge and nothing to commit"
     # And what the frontier of that visibility did, which no branch is left to
     # report on this path. `gate_ignore_frontier` has already put the rules back
     # above; its findings normally travel on the scope-guard's output, and a
@@ -1994,7 +2026,7 @@ gate_run() {
     # every time round, not once in a document).
     while IFS= read -r finding; do
       [ -n "$finding" ] || continue
-      gate__log "$ticket: $finding"
+      gate__say "$ticket: $finding"
     done <<IGNORE
 ${RALPH_GATE_IGNORE:-}
 IGNORE

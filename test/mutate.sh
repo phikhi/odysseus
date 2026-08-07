@@ -227,6 +227,7 @@ CLAIM=".claude/lib/claim.sh"
 STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
 LENSES_LIB=".claude/lib/lenses.sh"
+RECEIPT=".claude/lib/receipt.sh"
 # Not `LANG`: that one is the locale every command in this script reads.
 LANGLIB=".claude/lib/lang.sh"
 BUDGET=".claude/lib/budget.sh"
@@ -554,7 +555,7 @@ mutation "07 a contractual overflow is retried like any other failure" "$FAILURE
   test/failures.bats "without spending a retry"
 
 mutation "07 the attempt is not kept before the rollback undoes it" "$FAILURES" \
-  's/  if \[ -n "\$reason" \] && \[ "\$class" != nothing-delivered \]; then\n    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi\n//' \
+  's/  if \[ -n "\$reason" \] && \[ "\$class" != nothing-delivered \]; then\n    if failures_preserve_attempt "\$ticket" "\$pre" "\$tree"; then\n      RALPH_FAILURE_BRANCH="failed\/\$ticket"\n    fi\n  fi\n//' \
   test/failures.bats "keeps the attempt"
 
 mutation "07 the failed branch carries the loop's own bookkeeping" "$FAILURES" \
@@ -631,7 +632,7 @@ mutation "07 a commit git refuses is swallowed and the ticket resolved anyway" "
   test/failures.bats "never overwrites a HEAD"
 
 mutation "07 a git that refuses the branch takes the run down" "$FAILURES" \
-  's/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" \|\| true\n  fi/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree"\n  fi/' \
+  's/    if failures_preserve_attempt "\$ticket" "\$pre" "\$tree"; then\n      RALPH_FAILURE_BRANCH="failed\/\$ticket"\n    fi\n  fi/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree"\n  fi/' \
   test/failures.bats "branch git cannot name"
 
 # The entry above tests a *pair*, and there is deliberately no second entry for
@@ -1437,7 +1438,7 @@ mutation "06 a lens LENSES names but nothing can run is let through" "$GATE" \
   test/lenses.bats "stops the run at the door"
 
 mutation "06 switching the judgement tier off is silent" "$GATE" \
-  's/      gate__log "\$ticket: no review lens ran \(LENSES is empty\)[^\n]*\n/      :\n/' \
+  's/      gate__say "\$ticket: no review lens ran \(LENSES is empty\)[^\n]*\n/      :\n/' \
   test/lenses.bats "said out loud"
 
 # ── what a lens is judged on
@@ -1505,7 +1506,7 @@ mutation "06 a lens write that survived the undo passes anyway" "$GATE" \
   test/lenses.bats "cannot be undone refuses to pass"
 
 mutation "06 a containment that cannot see the tree shrugs" "$GATE" \
-  's/    gate__log "\$ticket: could not read the tree before the review lenses[^\n]*\n    return 1/    return 0/' \
+  's/    gate__say "\$ticket: could not read the tree before the review lenses[^\n]*\n    return 1/    return 0/' \
   test/lenses.bats "cannot be read before the lenses"
 
 # The stream is the mechanism's own write, and it lives under TMPDIR so that the
@@ -1649,7 +1650,7 @@ mutation "35 a measurement it could not take is read as nothing delivered" "$GAT
 # scope-guard is not started on this path. Without this loop a session that moved
 # an ignore rule and wrote nothing would have its move put back in silence ([30]).
 mutation "35 a frontier moved on this path is put back without a word" "$GATE" \
-  's/      gate__log "\$ticket: \$finding"/      :/' \
+  's/      gate__say "\$ticket: \$finding"/      :/' \
   test/gate.bats "moved the ignore frontier is still told so"
 
 mutation "35 the loop journals it as an ordinary red gate" "$LOOP" \
@@ -1859,7 +1860,7 @@ mutation "17 the coverage line is never printed" "$GATE" \
   test/lang.bats "too little prose is not judged"
 
 mutation "17 a run with the gate off looks like a run that was checked" "$GATE" \
-  's/    gate__log "\$ticket: the language gate is off \(LANG_CHECK=off\): nothing here checked what language this iteration wrote its prose in"\n//' \
+  's/    gate__say "\$ticket: the language gate is off \(LANG_CHECK=off\): nothing here checked what language this iteration wrote its prose in"\n//' \
   test/lang.bats "switch the gate off"
 
 # The fail-closed, and it is deliberately not the scope-guard's.
@@ -2000,7 +2001,7 @@ mutation "08 a refused session is billed a retry" "$FAILURES" \
   test/budget.bats "not an attempt at the ticket"
 
 mutation "08 a refused ticket is left claimed" "$FAILURES" \
-  's/    tracker_unclaim "\$ticket"\n    failures__log "\$ticket: given back with no retry/    failures__log "\$ticket: given back with no retry/' \
+  's/    tracker_unclaim "\$ticket"\n    RALPH_FAILURE_ACTION=given-back\n    failures__log "\$ticket: given back with no retry/    RALPH_FAILURE_ACTION=given-back\n    failures__log "\$ticket: given back with no retry/' \
   test/budget.bats "not an attempt at the ticket"
 
 mutation "08 the disposition line says a retry was spent" "$FAILURES" \
@@ -2507,6 +2508,130 @@ mutation "43 the pilot is never told a lens was refused" "$LOOP" \
 mutation "43 a widening a gate already read is charged again" "$FAILURES" \
   's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      failures__ignore_frontier "\$ticket"/' \
   test/budget.bats "not charged to the run twice"
+
+# ── [10] the audit receipt, and a journal worth reading ──────────────────────
+#
+# Two artefacts with two different standings, and most of these entries are about
+# the difference. The receipt is built from what the loop measured; the journal is
+# a file the judged session can rewrite, so what it earns is detection and never
+# authority. An entry that made the receipt read the journal is therefore a
+# mutation like any other here — it removes the guarantee by changing where a
+# number comes from, not by deleting a line.
+
+mutation "10 no receipt is written at all" "$RECEIPT" \
+  's/^receipt_emit\(\) \{/receipt_emit() { return 0;/m' \
+  test/receipt.bats "leaves an audit receipt naming its verdicts"
+
+mutation "10 every iteration writes one, superseded or not" "$LOOP" \
+  's/^  \[ "\$outcome" != resolved \] \|\| emit=1$/  emit=1/m' \
+  test/receipt.bats "only goes back to the frontier"
+
+mutation "10 an escalation ends the ticket without a document" "$LOOP" \
+  's/^  case "\$\{RALPH_FAILURE_ACTION:-none\}" in escalated:\*\) emit=1 ;; esac\n//m' \
+  test/receipt.bats "a fresh retry does not"
+
+# What the gate collected dies with the gate's own directory unless something
+# copies it out in time ([06]). The first entry removes the copy; the second
+# shrinks it back to what already scrolled past on stdout, which is the version
+# that looks like it works.
+mutation "10 a red branch's output dies with the gate" "$GATE" \
+  's/^    receipt_keep_branch "\$name" "\$dir\/\$name.out"\n//m' \
+  test/receipt.bats "survive the gate"
+
+mutation "10 the receipt keeps only what already scrolled past" "$RECEIPT" \
+  's/^    tail -"\$RECEIPT_MAX_LINES" "\$file"$/    tail -20 "\$file"/m' \
+  test/receipt.bats "outlives the gate that collected it"
+
+mutation "10 a truncated branch is quoted as if it were whole" "$RECEIPT" \
+  's/^    if \[ "\$total" -gt "\$RECEIPT_MAX_LINES" \]; then$/    if false; then/m' \
+  test/receipt.bats "counted rather than silently cut"
+
+# The zones nothing judged, said out loud during the night and kept only here.
+mutation "10 what the gate did not judge is said and not kept" "$GATE" \
+  's/^  receipt_note "\$@"\n//m' \
+  test/receipt.bats "zone nothing in the gate judged"
+
+# [43] where it can actually reach a document: a lens the API refused beside a
+# lens that answered `fail` is a billable gate, so the verdict line says red for a
+# branch that judged nothing.
+mutation "10 a refused lens reaches the receipt as a plain red" "$GATE" \
+  's/^        gate__say "\$ticket: the \$name lens judged nothing/        gate__log "\$ticket: the \$name lens judged nothing/m' \
+  test/receipt.bats "merely refused is named as such"
+
+mutation "10 the verdicts never reach the receipt" "$LOOP" \
+  's/^  receipt_fact verdicts "\$\{RALPH_GATE_VERDICTS:-\}"$/  receipt_fact verdicts ""/m' \
+  test/receipt.bats "naming its verdicts"
+
+mutation "10 an empty verdict line passes for a clean one" "$RECEIPT" \
+  's/^    printf .No gate ran on this iteration, so there is no verdict here\. An empty verdict line is not a green one\.\\n.$/    printf "\\n"/m' \
+  test/receipt.bats "instead of showing an empty verdict line"
+
+mutation "10 an absent branch reads as a passing one" "$RECEIPT" \
+  's/A branch that is \*\*absent\*\* above was not run/A branch above was run/' \
+  test/receipt.bats "naming its verdicts"
+
+mutation "10 the work is not even referenced" "$LOOP" \
+  's/receipt_fact commit "\$commit"/receipt_fact commit ""/' \
+  test/receipt.bats "references the work and never inlines it"
+
+# The decision this ticket exists to take ([21]). There is no line that implements
+# "does not read `run.log`", so the mutation is the one that makes it read it: the
+# receipt's numbers stop being what this process measured and become what the file
+# says — which, in the test named here, is what the session wrote into it.
+mutation "10 the receipt takes its numbers from the journal" "$LOOP" \
+  's/^  receipt_fact turns "\$turns"$/  receipt_fact turns "\$(tr "\\t" "\\n" < "\$(ralph_feature_dir)\/run.log" | sed -n s\/^turns=\/\/p | tail -1)"/m' \
+  test/receipt.bats "not built out of the run journal"
+
+# The key this ticket introduced, and the one value of it that empties the audit
+# surface without a word.
+mutation "10 a receipt that keeps no lines is accepted" "$LOOP" \
+  's/^  receipt_preflight \|\| rc=1\n//m' \
+  test/receipt.bats "keep no lines is refused at the door"
+
+mutation "10 a workspace shared by every iteration in flight" "$RECEIPT" \
+  's/^  dir="\$\(mktemp -d "\$\{TMPDIR:-\/tmp\}\/ralph-receipt.XXXXXX"\)" \|\| return 1$/  dir="\$\{TMPDIR:-\/tmp\}\/ralph-receipt.shared"; mkdir -p "\$dir" || return 1/m' \
+  test/receipt.bats "two receipts, each about its own ticket"
+
+mutation "10 the context figure is presented as a total" "$RECEIPT" \
+  's/the peak observed in the session/the total for the session/' \
+  test/receipt.bats "peak and never a total"
+
+mutation "10 the attempt is always the first one" "$LOOP" \
+  's/^  receipt_fact attempt "\$\(\(attempt \+ 1\)\)"$/  receipt_fact attempt 1/m' \
+  test/receipt.bats "survives the counter that gets cleared"
+
+mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
+  's/^    frontier \| ids \| read_ticket \| field \| emit_receipt\)$/    frontier | ids | read_ticket | field)/m' \
+  test/receipt.bats "not a write in the tracker"
+
+# The journal's own two halves. A rewritten one has to be named; an honest one has
+# to be left alone — and the second is not decoration, it is the trap the first
+# walked into. The reclaim lines were written from the right-hand side of a
+# pipeline, so the run's copy of them died in a subshell and every run that
+# reclaimed anything ended by accusing itself.
+mutation "10 a rewritten journal is never noticed" "$LOOP" \
+  's/^loop_journal_verify\(\) \{/loop_journal_verify() { return 0;/m' \
+  test/receipt.bats "rewritten under the run is named"
+
+mutation "10 the run's own lines are counted in a subshell" "$LOOP" \
+  's/^      while read -r rid rdisposition; do$/      printf "%s\\n" "\$reclaimed" | while read -r rid rdisposition; do/m' \
+  test/receipt.bats "does not accuse itself"
+
+# [07]'s open question, answered in one word: the outcome says what happened to the
+# iteration, this says what happened to the ticket.
+mutation "10 an escalation is not distinguishable from a retry" "$FAILURES" \
+  's/^    RALPH_FAILURE_ACTION="escalated:\$reason"\n//m' \
+  test/receipt.bats "what the loop then did about the ticket"
+
+mutation "10 a retry is not distinguishable from an escalation" "$FAILURES" \
+  's/^    RALPH_FAILURE_ACTION="retry:\$\{count:-\?\}\/\$\{RETRY_N:-2\}"\n//m' \
+  test/receipt.bats "what the loop then did about the ticket"
+
+# A `failed/<ticket>` ref a receipt promises has to be one git really wrote: the
+# call is `|| true`, so an escalation can land with nothing behind it.
+mutation "10 the forensic branch is promised rather than checked" "$FAILURES" \
+  's/^    if failures_preserve_attempt "\$ticket" "\$pre" "\$tree"; then\n      RALPH_FAILURE_BRANCH="failed\/\$ticket"\n    fi$/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" || true\n    RALPH_FAILURE_BRANCH="failed\/\$ticket"/m' \
+  test/receipt.bats "forensic branch git refused"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
