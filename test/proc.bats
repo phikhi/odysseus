@@ -108,3 +108,79 @@ teardown() {
   # to withhold.
   assert_equal "$(cat "$SHIM_STATE/countdown.rc")" "1"
 }
+
+@test "a deadline that cannot read a parent link refuses to serve its time" {
+  # The fail-closed half of the pair, and a deadline is the only caller that can
+  # reach it. A deadline *discovers* its owner — there is no other name for the
+  # shell that armed it — so a `ps` that answers nothing leaves it with no owner to
+  # watch, and a countdown that served its time on that would arm the very kill the
+  # link exists to withhold. An iteration cannot get here: it hands `$$` in, so a
+  # `ps` that says nothing is caught one line lower, by the link check itself.
+  mkdir -p "$SHIM_STATE/nops"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$SHIM_STATE/nops/ps"
+  chmod +x "$SHIM_STATE/nops/ps"
+
+  pack_run_bg '
+    PATH="$RALPH_SHIM_STATE/nops:$PATH"
+    rc=0
+    proc_countdown 60 || rc=$?
+    printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/nops.rc"
+  '
+
+  # Sixty seconds of deadline against ten of patience: an answer at all is an
+  # answer that refused rather than one that finished.
+  wait_for_file "$SHIM_STATE/nops.rc" 200 ||
+    fail "the deadline served its time with no owner to serve it for"
+  assert_equal "$(cat "$SHIM_STATE/nops.rc")" "1"
+}
+
+@test "an owner handed in is refused the moment the link no longer leads to it" {
+  # The same instrument asked by something bigger than a deadline ([44]). An
+  # iteration is a subshell of its pilot, and it has to keep asking "is the run
+  # that forked me still there" for as long as it holds anything durable.
+  #
+  # What is checked here is the half a deadline never needs: the owner is **handed
+  # in** rather than discovered. A deadline can only discover — there is no other
+  # name for the shell that armed it — but an iteration knows one, `$$` being the
+  # pilot in every subshell of a run. Discovery there would put init in the
+  # pilot's place for a pilot that died between the fork and the child's first
+  # line, and every refusal built on the link would then be armed against a shell
+  # that never dies.
+  #
+  # Both directions in one test on purpose: a refusal that also refused a live
+  # owner would pass a one-sided assertion and stop every iteration of every run.
+  pack_run_bg '
+    (
+      rc=0
+      proc_owner_take "$$" || rc=$?
+      printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/take.alive"
+      tries=600
+      while [ ! -e "$RALPH_SHIM_STATE/go" ] && [ "$tries" -gt 0 ]; do
+        tries=$((tries - 1))
+        sleep 0.1
+      done
+      rc=0
+      proc_owner_take "$$" || rc=$?
+      printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/take.dead"
+    ) &
+    : >"$RALPH_SHIM_STATE/forked"
+    wait
+  '
+
+  wait_for_file "$SHIM_STATE/take.alive" 200 ||
+    fail "the child never answered while its forker was alive"
+  assert_equal "$(cat "$SHIM_STATE/take.alive")" "0"
+
+  kill -9 "$PACK_BG_PID"
+  wait "$PACK_BG_PID" 2>/dev/null || true
+  # Cleared so the teardown does not aim at a number the system may have reissued;
+  # the child below ends on its own once it has answered.
+  PACK_BG_PID=""
+  : >"$SHIM_STATE/go"
+
+  wait_for_file "$SHIM_STATE/take.dead" 200 ||
+    fail "the child never answered after its forker was killed"
+  # 1 and not 0: the pid it was told to expect is no longer the parent it answers
+  # to, and nothing but init can have taken that place.
+  assert_equal "$(cat "$SHIM_STATE/take.dead")" "1"
+}

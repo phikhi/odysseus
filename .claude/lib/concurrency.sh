@@ -380,6 +380,19 @@ concurrency_integrate() {
   # kind of line [30] paid for on `core.excludesFile`: a control reporting its
   # intention instead of its result.
   [ -n "$commit" ] && [ "$commit" != "$start" ] || return 0
+
+  # And the fold's own refusal, which is not the caller's to make ([44]). This is
+  # the one point of no return an iteration reaches after a wait it does not
+  # control: `concurrency__wait_for_guard` can sit here for a minute while a
+  # sibling folds. `state_guard_take` recovers a guard from an owner that is gone,
+  # so an orphan asking for it would be *granted* it, in the name of a run that no
+  # longer exists — which is exactly what [22] refuses a second run, reached by
+  # killing the first. The compare-and-swap below stays the correctness; what is
+  # missing without this line is that an orphan may not even try.
+  if proc_owner_gone; then
+    concurrency__log "$ticket: the run that started this iteration is gone — not taking the integration guard, and not moving the branch"
+    return 1
+  fi
   root="$(ralph_project_root)"
 
   if ! guard="$(concurrency__integration_guard)"; then
