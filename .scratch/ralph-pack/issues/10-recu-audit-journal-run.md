@@ -4,14 +4,14 @@
 
 **Blocked by:** 05
 
-**Write-surface:** `.claude/lib/receipt.sh`, `test/receipt.bats`
+**Write-surface:** `.claude/lib/receipt.sh`, `.claude/loop.sh`, `.claude/lib/gate.sh`, `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`, `.claude/ralph.config.sh.example`, `test/receipt.bats`, `test/mutate.sh`, `test/smoke.bats`, `test/failures.bats`, `test/concurrency.bats` — plus les artefacts du dépôt (`CONTEXT.md`, `docs/frontiere-de-confiance.md`, les tickets)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Après une itération (`resolved` ou escalade finale), `emit_receipt` produit un reçu contenant : résumé + les 4 verdicts de gate + preuves + méta + **diff par référence** (jamais inliné).
-- [ ] En backend `local`, le reçu est un fichier sous `receipts/` ; l'interface permet à un backend distant de rendre le reçu comme PR.
-- [ ] Le journal de run est append-only, une ligne par itération (tâche, is_error, coût, tours, utilisation) et **n'est jamais relu** pour choisir/marquer.
-- [ ] Les 4 couches (journal / reçu / playthrough / LEARNINGS) sont des artefacts distincts, sans mélange.
+- [x] Après une itération (`resolved` ou escalade finale), `emit_receipt` produit un reçu contenant : résumé + les 4 verdicts de gate + preuves + méta + **diff par référence** (jamais inliné).
+- [x] En backend `local`, le reçu est un fichier sous `receipts/` ; l'interface permet à un backend distant de rendre le reçu comme PR.
+- [x] Le journal de run est append-only, une ligne par itération (tâche, is_error, coût, tours, utilisation) et **n'est jamais relu** pour choisir/marquer.
+- [x] Les 4 couches (journal / reçu / playthrough / LEARNINGS) sont des artefacts distincts, sans mélange.
 
 ## Comments
 
@@ -70,3 +70,65 @@
   - **L'outcome de journal est `budget-pause` des deux côtés** — session de livraison refusée et lentille refusée — et c'est voulu : même prix, même nom. Un reçu qui ne lirait que l'outcome ne saurait donc **pas** laquelle des deux moitiés de l'itération a été refusée. La seule chose qui le dit est la ligne du gate ci-dessus, dans `run.log`.
   - **`RALPH_GATE_QUOTA` ne porte que la dernière posture refusée** quand plusieurs lentilles le sont. Le pilote n'a besoin que d'une fenêtre et d'un reset ; un reçu qui voudrait la liste doit la reconstruire depuis les lignes du gate, une par lentille.
   - **Le verdict reste rouge sur cette issue.** `RALPH_GATE_VERDICTS` dit `standards=red` et `RALPH_GATE_FAILED` nomme la branche, alors que le ticket n'est **pas** facturé et n'a **pas** de branche `failed/<ticket>`. Un reçu qui déduit « rouge donc échec d'implémentation » du verdict seul se trompera exactement comme le journal se trompait avant [43].
+
+## Livré le 07/08/2026
+
+**Écart de write-surface, et il était annoncé.** La surface déclarée était `.claude/lib/receipt.sh` + `test/receipt.bats` ; elle était trop étroite de six fichiers et la raison est structurelle, pas un oubli du rédacteur : le reçu est bâti sur ce que la boucle **mesure**, donc il faut le brancher là où la mesure existe — le journal et l'émission dans `loop.sh`, les lignes de zone et la sortie des branches rouges dans `gate.sh`, l'action de la politique d'échec dans `failures.sh`, une exemption dans le dispatcher de `tracker.sh`, une clé dans l'exemple de config, et les deux gardes de tests (`test/smoke.bats` refuse une clé non listée, `test/mutate.sh` reçoit ses entrées) ; `CONTEXT.md` et `docs/frontiere-de-confiance.md` par-dessus, qui ne sont pas du pack mais que la definition of done exige. Un ticket dont la surface est « un module neuf » alors que sa matière première est produite par cinq modules existants est un ticket qui déborde par construction.
+
+### Les deux décisions d'architecture
+
+**1. Le reçu ne lit pas `run.log` — et le journal devient détectable au lieu de sortir de la zone ([21]).** Les deux sorties étaient sur la table. Sortir le journal de `.scratch/` est la sortie évidente et elle est mauvaise : c'est le fichier qu'un humain ouvre au matin, et un journal dans `$TMPDIR` est un journal que personne ne lit. Donc les deux moitiés :
+
+- Le **reçu** est assemblé dans le shell de l'itération à partir des variables de verdict du gate, de la sortie des branches copiée *pendant* le gate, et des objets git que la boucle a écrits. Le registre des écritures du tracker n'est pas une source non plus, pour la raison de la passe du 06/08 : trace non authentifiée, granularité un id.
+- Le **journal** garde un témoin en mémoire du pilote (`RALPH_JOURNAL_WITNESS`, jamais un fichier, jamais exporté) et `loop_journal_verify` compare en fin de run les N dernières lignes du fichier à ce bloc. Réécriture, troncature, insertion, ajout après nos lignes : les quatre déplacent le bloc et sont nommés, avec la copie du run imprimée dessous. Ce que ça ne couvre pas est écrit : les lignes des runs précédents. Et ça ne change **jamais** le code de sortie — le journal n'est une autorité pour rien, donc une réécriture coûte un lecteur ; en faire un arrêt donnerait à une session une ligne pour finir la nuit.
+
+**2. Le reçu ne déduit rien du verdict ([43]).** La contrainte disait « un reçu qui déduit rouge donc échec d'implémentation se trompera ». Le chemin par lequel elle mord n'est pas celui qu'on croit, et le trouver était la moitié du travail : un gate dont **toutes** les branches rouges sont des lentilles refusées est `budget-pause`, le ticket revient à la frontière sans retry, la boucle n'en a pas fini avec lui — **donc aucun reçu n'est écrit**. Le piège est hors de portée sur cette route. Il est atteignable sur une seule autre : le **gate mixte**, une lentille refusée à côté d'une lentille qui a répondu `fail`. Là le gate est facturable, le ticket escalade à son plafond, et la ligne de verdict dit bien `standards=red` pour une branche qui n'a rien jugé. Ce qui porte la différence dans le document est la phrase du gate elle-même (`gate__say`), pas une inférence du reçu — ce que [43] dit précisément qu'on ne peut pas inférer.
+
+  Conséquence : les faits `quota-half` / `quota-window` que la première version enregistrait dans le classifieur budget étaient **inatteignables** et ont été retirés. Une garantie qu'aucun test ne peut atteindre est une entrée de mutation VACUOUS en attente.
+
+### Les autres décisions, une par contrainte
+
+- **[07] : l'action de la politique d'échec entre dans le journal.** Septième champ, `action=`, en fin de ligne pour que rien qui lit par position ne bouge. `retry:2/3`, `escalated:failed-impl`, `re-sliced:03-x,04-y`, `given-back`, `none`. La même variable (`RALPH_FAILURE_ACTION`) sert de **déclencheur du reçu** : livrée ou escaladée, et pas retryée. Un mécanisme, deux consommateurs.
+- **[07] : le reçu référence les deux diffs qui existent** — `git show <commit>` et `git diff-tree -r <base> <tree>` pour une itération verte, `git log -p failed/<ticket>` pour une escalade. Jamais inliné : le test compte les lignes commençant par `+` et exige zéro. Le commit référencé est **celui que l'itération a écrit** et jamais un tip relu ensuite : au-dessus de `MAX_PARALLEL=1`, le repli a pu rejouer les chemins sur le commit d'un frère, et le tip une seconde plus tard est celui d'une troisième itération. Le prix est écrit dans le reçu : ce sont des **objets**, pas des refs, donc un `gc` peut les collecter une fois la branche passée devant — plus court que `RECEIPTS_RETENTION_DAYS`.
+- **[07] : les sessions de re-slice ne journalisent toujours pas.** Décision reconduite : ce ne sont pas des itérations, et leur donner une ligne ferait recompter les itérations à tout lecteur qui compte les lignes — le défaut que [12] a déjà introduit une fois. Leur coût reste compté nulle part ; propriétaire [08] si quelqu'un veut la facture d'un re-slice.
+- **[20] : `tokens=` est présenté comme un pic observé, jamais comme un total.** La phrase est en dur dans le renderer avec « Not a total, and not a bill », et c'est ce qu'une entrée de mutation retire.
+- **[26] : le numéro de tentative est lu avant le marquage.** `Failures:` + 1, lu **après** `failures_protect_tracker` — donc sur le contrat que la découverte a écrit et pas sur celui qu'une session s'est donné — et avant `tracker_mark_resolved` qui l'efface. Le champ est *supprimé* du ticket à la livraison (pas remis à `0`), ce que le test asserte par `ticket_has_field`. Sanitisé avant l'arithmétique : un champ édité à la main est une chaîne, et `set -u` transforme `$((abc + 1))` en itération morte.
+- **[24], [29], [30], [32], [34], [17], [13] : les zones et les aveux arrivent au reçu par `gate__say` / `failures__say`**, verbatim, dans l'ordre où elles ont été dites. Verbatim et pas reformulé : chaque phrase a été écrite là où le fait est connu, et la réécrire ici ferait un second auteur pour une seule affirmation. Elles ne sont **pas** entrées dans le journal — le compte tiendrait dans un champ et les dix noms non, et une liste tronquée dans un fichier tabulé est exactement la demi-vérité que ce dépôt documente.
+- **[13] : ce que le pilote provisionne** est passé à l'itération en cinquième argument et rendu dans la section « ce que rien ici n'a jugé ». Rendu et pas recopié d'une ligne de log : la provision a lieu avant le fork, dans le shell qui possède le worktree, donc il n'y a pas de phrase à citer.
+- **[12], [27] : les lignes qui ne sont pas des itérations** portent `action=none`, ce qui est honnête — aucune politique d'échec n'a tourné dessus — et le reçu ne les voit jamais, n'étant pas construit sur le journal.
+- **[23], [35] : les routes sans verdict** ont chacune leur paragraphe. `nothing-delivered` rend `delivery=red` seul (ni `tests=`, ni `typecheck=`, ni `scope=`) et **aucune** référence à lire — pas de `git diff-tree` d'un arbre contre lui-même, pas de branche `failed/`. Une session morte rend une ligne de verdict **vide**, et le reçu écrit « No gate ran on this iteration » plutôt que de laisser un blanc se lire comme « rien n'a été trouvé ».
+- **[21] : `tracker-write` n'est pas rendu comme un gate rouge.** Les trois branches peuvent être vertes ; le résumé le dit et n'écrit jamais « the gate was red ».
+- **[41] : le reçu ne repose pas la question de la frontière.** `gate__ignore_share` avance sa marque en lisant, donc redemander facturerait deux fois. Les lignes sont capturées au moment où le gate les dit, pas recalculées après lui.
+
+### Le piège que ce ticket a trouvé dans le pack
+
+`loop_journal_append` était appelé pour les reclaims depuis la **droite d'un pipeline** (`printf … | while read`), donc dans un sous-shell. Tant que le journal n'était qu'un fichier, ça ne se voyait pas ; le témoin, lui, est une variable — et tout run qui reclamait quelque chose se serait accusé lui-même d'un journal réécrit. Corrigé en heredoc, comme `loop__finish` le documente déjà pour les compteurs du run. **Le test jumeau (« un run honnête ne s'accuse pas, reclaims compris ») est ce qui tient ce correctif**, et son entrée de mutation remet le pipeline : sans elle, la garantie « le témoin ne crie pas au loup » n'était portée par rien.
+
+### Contrainte pour la suite : `emit_receipt` n'est pas une écriture de ticket
+
+Le dispatcher de `tracker.sh` notait toute opération hors des quatre lectures dans `RALPH_TRACKER_LOG`. `emit_receipt` écrit sous `receipts/`, qu'aucun garde d'`issues/` ne regarde : la noter donnait à la restauration et à la quarantaine un id à **sauter** pour un fichier qu'elles n'ouvrent pas, et le saut atterrissait sur l'itération sœur en vol au même instant. Le critère de la liste est donc redit dans le code : « la boucle a-t-elle écrit le ticket qu'un garde va comparer », pas « est-ce que ça touche le disque ». Un adaptateur qui ajoute une opération doit répondre à cette question-là.
+
+### Ce que la sonde du run réel a trouvé
+
+**Le reçu salit l'arbre principal, et deux tests l'ont dit avant moi.** `receipts/` est écrit par l'itération dans l'arbre où le run a été lancé — pas dans le worktree, qui est détruit à la fin — donc `git status` y voit un répertoire non suivi. « the tree the run was started in follows the branch » ([13]) et « what a green gate approved is committed, and nothing else is » ([07]) rougissent tous les deux sur `?? receipts/`. Les deux avaient **déjà** exactement une exception de cette classe, `.scratch/`, avec sa raison écrite : le bookkeeping durable de la boucle est sale ici par conception, et c'est [19] qui provisionne le `.gitignore`. `receipts/` est la même classe et l'exception est élargie **par nom** dans les deux tests — pas par un glob : tout autre chemin que le pack laisserait non suivi rougit encore, ce qui est le seul intérêt de ces deux assertions. Ce que ça ne rend pas gratuit est écrit dans [19] : un projet qui **commite** `receipts/` remet ses reçus à portée d'une write-surface.
+
+Ce n'est pas un ajustement de test pour faire passer un changement : la garantie que ces deux tests portent est « la branche et l'arbre sont d'accord, et un `git commit -a` du matin ne défait pas la nuit ». Un répertoire non suivi ne défait rien — `commit -a` n'ajoute pas d'untracked — là où `.scratch/`, déjà exclu, contient l'état de la boucle et est bien plus dangereux.
+
+**Et une clé introduite par ce ticket est passée au préflight.** `RECEIPT_MAX_LINES=0` — ou une valeur qui n'est pas un nombre, que `tail` refuse — garde zéro ligne : chaque reçu sort avec une section de findings vide, et une nuit de lentilles rouges ne laisse de trace **nulle part**, le gate ayant détruit les flux et vingt lignes ayant défilé. C'est la forme exacte que [17] refuse cinq fois et dont [31] a écrit la règle. Refusé à la porte plutôt que ramené au défaut : un run qui ignorerait silencieusement ce que la config demande serait un second mensonge par-dessus le premier.
+
+### Ce que le gate de mutation a trouvé, et que la suite verte ne disait pas
+
+Deux entrées sont revenues **VACUOUS** à la première passe réelle. Les deux étaient justes.
+
+**1. Le témoin de journal ne regardait que la fin du fichier.** L'entrée qui remet la boucle de reclaim à droite d'un pipeline est restée verte : le fichier contenait bien la ligne de reclaim, le témoin ne l'avait pas, mais la comparaison portait sur les **N dernières lignes** — or la ligne perdue était en **tête** du bloc, donc `tail -N` glissait d'un cran et retombait exactement sur le témoin. Une garantie qui dit « le fichier finit par mes lignes » est satisfaite par un fichier qui en porte une de trop devant. Le contrôle pose maintenant **deux** questions : le bloc a la bonne longueur (`total == base + N`) *et* c'est le bon contenu. Et `base` est pris **en tête de `loop_main`**, avant le préflight — un `base` pris paresseusement au premier append est déjà passé devant la ligne manquante, et la somme retombait juste : c'est la deuxième version de ce correctif, la première était encore VACUOUS.
+
+**2. Le `failed/<ticket>` promis n'était vérifié par aucun test.** L'entrée qui remet `|| true` plus un nom inconditionnel est restée verte parce que tous les tests de ce chemin ont un git qui dit oui. Ajouté : un projet portant déjà une branche `failed` ne peut pas avoir `failed/01-alpha`, git refuse la ref, l'escalade atterrit quand même — et le reçu ne doit pas envoyer un humain lire ce qui n'existe pas.
+
+Les deux VACUOUS attendus du dépôt (`23 a TERM nobody answers`, `23 the grace is hard-coded`, sur `smart-zone.bats -f "killed after the grace"`) sont revenus **`ok`** à cette passe : c'est l'alternance connue de ces deux entrées, pas un changement de ce ticket.
+
+### Ce qui reste ouvert, nommé plutôt que découvert
+
+- **Un reçu par ticket, écrasé.** `tracker_local_emit_receipt` écrit `receipts/<feature>/<id>.md`, donc un ticket escaladé puis réinjecté puis livré perd le document de son escalade. Le chemin appartient à l'adaptateur ([18]) et le cycle de réinjection à [11]/[16] : c'est là que se décide s'il faut versionner. Laissé tel quel ici parce que le dernier reçu est celui qui décrit l'état actuel du ticket, et parce que changer le chemin casserait `test/tracker-local.bats` sans qu'aucun ticket l'ait demandé.
+- **Le coût d'une session de re-slice n'est compté nulle part**, inchangé depuis [07] (voir ci-dessus).
+- **Les tentatives intermédiaires n'ont pas de document.** Une itération retryée ne laisse que sa ligne de journal ; les findings de sa lentille rouge sont dans le reçu de l'itération *finale* seulement si la même branche est encore rouge à ce moment-là. C'est le canal que [14] doit ouvrir s'il veut réinjecter une leçon **entre** deux tentatives du même ticket.
+- **`receipts/` n'est protégé par rien s'il est commité** — propriétaire [19], contrainte écrite là-bas.

@@ -414,3 +414,10 @@ LEARNINGS_INDEX_MAX="${LEARNINGS_INDEX_MAX:-40}"
 
 # Days an audit receipt is kept before pruning.
 RECEIPTS_RETENTION_DAYS="${RECEIPTS_RETENTION_DAYS:-30}"
+
+# How many lines of a red gate branch an audit receipt keeps, counted from the
+# end. A review lens's findings are prose and this receipt is the only copy — the
+# gate removes the stream and the prompt with its temporary directory — so this
+# has to be generous; a test suite that prints a megabyte is why it is not
+# unbounded. What gets dropped is always counted in the receipt itself.
+RECEIPT_MAX_LINES="${RECEIPT_MAX_LINES:-200}"

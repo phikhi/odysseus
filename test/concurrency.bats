@@ -745,8 +745,11 @@ GITSHIM
   assert_file_contains "$PROJECT_DIR/src/alpha.txt" "written"
   # Everything but the loop's own bookkeeping, which is dirty in this tree by
   # design and which [19] provisions a `.gitignore` for: the tracker is written on
-  # every claim and marking, and the journal is appended to.
-  run bash -c "git -C '$PROJECT_DIR' status --porcelain -- . ':(exclude).scratch'"
+  # every claim and marking, the journal is appended to, and since [10] an audit
+  # receipt lands under `receipts/` for every ticket the loop finished with. Both
+  # are excluded by name and nothing else is — a path the pack leaves untracked
+  # outside those two is still a failure here.
+  run bash -c "git -C '$PROJECT_DIR' status --porcelain -- . ':(exclude).scratch' ':(exclude)receipts'"
   assert_equal "$output" ""
 }
 

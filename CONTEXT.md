@@ -35,8 +35,8 @@ La réduction/résumé automatique du contexte d'une session (le *handoff* de co
 _À éviter_ : handoff, résumé de contexte, summarization.
 
 **Journal de run**:
-Le fichier append-only, un par feature, qui capte l'observabilité d'un run — par itération : la tâche, son issue (succès/échec), son coût, son nombre de tours, son horodatage. *Non autoritaire* : il n'est jamais lu pour choisir ni marquer une tâche ; le tracker reste la seule source de vérité. Une ligne manquante après un crash est sans conséquence.
-_À éviter_ : log, trace, historique, état.
+Le fichier append-only, un par feature, qui capte l'observabilité d'un run — par **événement du run** : la tâche, son issue, son coût, son nombre de tours, son horodatage, et ce que la boucle a ensuite fait du ticket (`action=`). Une ligne par événement et non par itération : un claim repris, un id ambigu vu au préflight et un mur de budget en produisent aussi, donc compter les lignes n'est pas compter les itérations. *Non autoritaire* : il n'est jamais lu pour choisir ni marquer une tâche ; le tracker reste la seule source de vérité, et une ligne manquante après un crash est sans conséquence. Il vit dans une zone qu'aucun contrôle du pack ne garde, donc une session peut le réécrire : ce qui le rend lisible n'est pas une protection mais un **témoin** — le pilote garde en mémoire les lignes qu'il a écrites et dit en fin de run si le fichier ne les porte plus.
+_À éviter_ : log, trace, historique, état, reçu (autre couche).
 
 **Verrou de run**:
 Le mécanisme grossier, un par feature, qui garantit qu'une seule ralph loop est active à la fois sur un même **tracker**. Il empêche le double-run accidentel sur une frontière ; ce n'est pas de la concurrence par-ticket, qui est le fait du **run pilote** : un seul run tient le tracker, et c'est lui qui fait tourner N itérations. Il ne garde que le tracker : ce qui garde l'arbre est le **verrou d'arbre**.
@@ -267,7 +267,7 @@ _À éviter_ : ordonnanceur, planificateur.
 _(Ajouté par le durcissement v2, ticket [18].)_
 
 **Reçu d'audit**:
-Le document par-itération (résumé + 4 verdicts de gate + preuves + méta + **diff par référence**) qui sert de **surface de relecture asynchrone** au propriétaire, sans flux PR obligatoire. Rendu par l'adaptateur de tracker : fichier `receipts/` en local, **la PR elle-même** en distant.
+Le document (résumé + verdicts de gate + preuves + méta + **diff par référence**) qui sert de **surface de relecture asynchrone** au propriétaire, sans flux PR obligatoire. Rendu par l'adaptateur de tracker : fichier `receipts/` en local, **la PR elle-même** en distant. Écrit pour les itérations qui **finissent** un ticket — livré, ou escaladé au puits humain — et pour aucune autre : une tentative retryée sera racontée par le document de la suivante. Assemblé par le process qui a mesuré l'itération, à partir des verdicts du gate, de la sortie des branches rouges copiée avant que le gate ne détruise son répertoire temporaire, et des objets git que la boucle a écrits — **jamais** à partir du journal de run, qu'une session peut réécrire.
 _À éviter_ : PR (c'en est une seulement en distant), log, journal (réservé au journal de run).
 
 **ADR en delivery**:

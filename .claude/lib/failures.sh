@@ -51,9 +51,33 @@
 #                           either way; the run is not, and the loop stops on it
 #                           rather than let the next iteration adopt whatever is
 #                           lying in the tree as the state it started from ([34]).
+#   RALPH_FAILURE_ACTION    what this policy did about the ticket, as one word and
+#                           its argument: `retry:2/3`, `escalated:failed-impl`,
+#                           `re-sliced:03-x,04-y`, `given-back`. The outcome says
+#                           what happened to the *iteration*; this says what
+#                           happened to the *ticket*, and no reader could derive
+#                           one from the other — a red gate retried and a red gate
+#                           escalated are the same outcome ([07] left that to [10],
+#                           which needs it twice: the journal carries it, and the
+#                           receipt exists only on the paths that end a ticket).
+#   RALPH_FAILURE_BRANCH    the `failed/<ticket>` ref, when one was really written.
+#                           Named rather than assumed: the branch is skipped by
+#                           design on `nothing-delivered` ([35]) and it can refuse
+#                           to be written, and a receipt that told a human to go and
+#                           read a ref that does not exist has misrouted them.
 
 failures__log() {
   printf 'ralph: %s\n' "$*"
+}
+
+# Said out loud *and* kept for the receipt ([10]), for the same two kinds of
+# sentence `gate__say` keeps one layer up: what this rollback could not reach, and
+# where it could not measure at all ([34]). On the paths where no gate ran ([32])
+# these lines are the only trace of the event there will ever be — there is no
+# verdict beside them and no branch output to fall back on.
+failures__say() {
+  failures__log "$@"
+  receipt_note "$@"
 }
 
 # ── what kind of failure this was ────────────────────────────────────────────
@@ -136,13 +160,13 @@ failures__ignore_frontier() {
   local ticket="$1" moved findings finding
 
   if moved="$(gate_moved_tree_rules)"; then
-    failures__log "$ticket: this session moved the ignore frontier: $moved — no gate judged this iteration, and those rules go back with the rest of what it wrote"
+    failures__say "$ticket: this session moved the ignore frontier: $moved — no gate judged this iteration, and those rules go back with the rest of what it wrote"
   fi
 
   findings="$(gate_ignore_frontier)" || true
   while IFS= read -r finding; do
     [ -n "$finding" ] || continue
-    failures__log "$ticket: $finding"
+    failures__say "$ticket: $finding"
   done <<FRONTIER
 $findings
 FRONTIER
@@ -158,6 +182,12 @@ FRONTIER
 failures_handle() {
   local ticket="$1" outcome="$2" pre="$3" base="$4" tree="${5:-}"
   local class count="" reason=""
+
+  # Cleared before the first thing that can fail, like the rollback flag below: an
+  # action left over from the previous iteration would be read by the journal and
+  # by the receipt as this one's ([10]).
+  RALPH_FAILURE_ACTION=none
+  RALPH_FAILURE_BRANCH=""
 
   class="$(failures_classify "$outcome" "${RALPH_GATE_SCOPE_CLASS:-}")"
 
@@ -284,8 +314,15 @@ failures_handle() {
   # session started from, so the branch would be a forensic artefact of nothing,
   # offered to a human as the thing to go and read. The note above says where to
   # look instead.
+  # Recorded on success only, and that is the point of naming it rather than
+  # deriving it from `$reason` ([10]): the call is `|| true`, so a ref this git
+  # refused to write — a `failed` ref already in the way, a lock a crashed git left
+  # — leaves an escalation with nothing behind it, and a receipt that promised the
+  # branch anyway would send a human to read something that is not there.
   if [ -n "$reason" ] && [ "$class" != nothing-delivered ]; then
-    failures_preserve_attempt "$ticket" "$pre" "$tree" || true
+    if failures_preserve_attempt "$ticket" "$pre" "$tree"; then
+      RALPH_FAILURE_BRANCH="failed/$ticket"
+    fi
   fi
 
   failures_rollback "$pre" "$base" "$tree" || true
@@ -295,20 +332,25 @@ failures_handle() {
       return 0
     fi
     reason=too-big
-    failures_preserve_attempt "$ticket" "$pre" "$tree" || true
+    if failures_preserve_attempt "$ticket" "$pre" "$tree"; then
+      RALPH_FAILURE_BRANCH="failed/$ticket"
+    fi
   fi
 
   if [ -n "$reason" ]; then
     tracker_mark_escalated "$ticket" "$reason"
+    RALPH_FAILURE_ACTION="escalated:$reason"
     failures__log "$ticket: escalated to the human sink ($reason)"
   elif [ "$class" = budget ]; then
     # Given back, and said differently on purpose: "fresh retry (n of N)" would
     # be a sentence about a counter this path never touched, which is exactly the
     # kind of line a human reads in the morning and believes.
     tracker_unclaim "$ticket"
+    RALPH_FAILURE_ACTION=given-back
     failures__log "$ticket: given back with no retry consumed — the subscription ran out under this session, which is not an attempt at this ticket"
   else
     tracker_unclaim "$ticket"
+    RALPH_FAILURE_ACTION="retry:${count:-?}/${RETRY_N:-2}"
     failures__log "$ticket: $class -> fresh retry ($count of ${RETRY_N:-2})"
   fi
   return 0
@@ -767,15 +809,15 @@ ROLLBACK
 failures__report_unrolled() {
   local tree="${1:-}" undone="${2:-}" zone changed
   if zone="$(gate_ignored_zone)"; then
-    failures__log "this rollback could not undo $zone"
+    failures__say "this rollback could not undo $zone"
   fi
   if ! changed="$(gate_unjudged_changes "$tree")"; then
-    failures__log "this rollback could not check what the gate itself changed after the tree it judged — nothing here vouches for that zone"
+    failures__say "this rollback could not check what the gate itself changed after the tree it judged — nothing here vouches for that zone"
     return 0
   fi
   if zone="$(gate_zone_line "$(failures__minus "$changed" "$undone")" \
     'path(s) the gate itself changed after the tree it judged')"; then
-    failures__log "this rollback could not undo $zone"
+    failures__say "this rollback could not undo $zone"
   fi
   return 0
 }
@@ -1113,6 +1155,7 @@ failures_reslice() {
   printf 'Too big for one session. Re-sliced into: %s. This ticket stays blocked on them and is re-attempted, and gated, once they are resolved.\n' \
     "$(printf '%s' "$children" | tr ' ' ',' | sed 's/,/, /g')" |
     tracker_append_note "$ticket" || true
+  RALPH_FAILURE_ACTION="re-sliced:$(printf '%s' "$children" | tr ' ' ',')"
   failures__log "$ticket: too big -> re-sliced into $children"
   return 0
 }

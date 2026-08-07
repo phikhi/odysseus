@@ -33,8 +33,18 @@ script_session_writing() {
 }
 
 # What the run left uncommitted, the loop's own tracker aside.
+# What the run left in the tree it was started in, minus the two directories that
+# are the loop's own durable artefacts and dirty here by design: `.scratch/` — the
+# tracker, written on every claim and marking, and the journal — and `receipts/`,
+# one audit document per ticket the loop finished with ([10]). Both are named
+# rather than globbed away: anything *else* the pack leaves untracked is still a
+# finding, which is the whole point of this helper. `receipts/` is written in this
+# tree and not in the iteration's worktree on purpose — a worktree is destroyed at
+# the end of the iteration — and, like the tracker, it is what [19]'s installer
+# provisions a `.gitignore` for. A project that commits it instead puts its own
+# audit trail inside reach of a write-surface; that decision is named in [19].
 worktree_dirt() {
-  git -C "$PROJECT_DIR" status --porcelain | grep -v '\.scratch/' || true
+  git -C "$PROJECT_DIR" status --porcelain | grep -Ev '\.scratch/|receipts/' || true
 }
 
 git_subjects() {
