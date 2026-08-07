@@ -283,6 +283,15 @@ loop__iterate() {
   # not a commit, and a session that commits its work moves the branch.
   base="$(gate_tree_snapshot)" || base=""
   pre="$(git rev-parse HEAD 2>/dev/null)" || pre=""
+  # Where the loop's own register of tracker writes stands, taken *before* both
+  # snapshots below and not after: anything the pilot appends between them is then
+  # excluded from the guards rather than missed, and over-excluding costs a ticket
+  # left alone where under-excluding costs a sibling's claim ([13]). Ahead of the
+  # id snapshot as well since [42], for the same reason one step further: a ticket
+  # a sibling creates between the two would be an id this iteration never saw and
+  # a register entry it does not cover, which is a quarantine on a ticket the loop
+  # itself wrote.
+  mark="$(tracker_write_mark)"
   # The tracker as it stands before the session. Neither the scope-guard nor
   # the rollback can see it — both hold it as the loop's own state — so what a
   # session writes there is the one write nothing else would catch. Two shapes,
@@ -290,11 +299,6 @@ loop__iterate() {
   # and a ticket file that moves is a session editing the very contract it is
   # about to be judged on.
   seen="$(failures_tracker_snapshot)"
-  # Where the loop's own register of tracker writes stands, taken *before* the
-  # snapshot below and not after: anything the pilot appends between the two is
-  # then excluded from the guard rather than missed, and over-excluding costs a
-  # ticket left alone where under-excluding costs a sibling's claim ([13]).
-  mark="$(tracker_write_mark)"
   issues="$(failures_tracker_tree)" || issues=""
   rc=0
   loop_spawn_session "$ticket" "$outfile" || rc=$?
@@ -317,8 +321,10 @@ loop__iterate() {
 
   # Tickets the session gave itself never reach the frontier. Separate from the
   # gate's verdict on purpose: the gate judges the code, and this judges an
-  # entry in the loop's own state that no check downstream would question.
-  failures_quarantine_strays "$ticket" "$seen" || true
+  # entry in the loop's own state that no check downstream would question. The
+  # register goes here too since [42]: at MAX_PARALLEL>1 an id that was not there
+  # at spawn is as likely to be a sibling re-slice's child as a session's doing.
+  failures_quarantine_strays "$ticket" "$seen" "$mark" || true
 
   outcome=""
   if [ "$rc" -eq 0 ] && [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 0 ] &&

@@ -489,6 +489,226 @@ FAKE
   assert_equal "$(claude_call_count)" "2"
 }
 
+# ── the two guards over the tracker, with siblings in flight ─────────────────
+#
+# Both guards over `issues/` decide what a session wrote by comparing the tracker
+# around one session, and both are wrong about a sibling: the loop legitimately
+# writes in there while somebody else's session runs. One register says which ids
+# are the loop's own ([13]), and until [42] one guard of the three call sites read
+# it — so a re-slice undid a sibling's marking and a sibling quarantined the
+# tickets a re-slice had just created.
+#
+# Each scenario is staged twice, and the sequential run is not a formality: it is
+# what says the parallel one was repaired by the register rather than by a run
+# that happened to be slower. And the overlap is observed, never assumed — the
+# session that has to still be running while the loop writes waits for that write
+# and records what it saw. In the parallel run it sees it; in the sequential one
+# the wait expires, or the write is already there when the session starts, and
+# that is the assertion.
+
+# 01-alpha is far over the soft limit and unresponsive, so the smart-zone net ends
+# it and the loop re-slices it; 02-beta is an ordinary session. `$1` names which of
+# the two waits for the loop to write the tracker — `planner` for the re-slice's
+# planning session, `02-beta` for the sibling — and `$2` how many tenths of a
+# second it may wait. Driven by prompt and never by a call counter, for the reason
+# the sweep test above gives.
+concurrency__reslice_world() {
+  printf '%s\n' "$1" >"$SHIM_STATE/waiter"
+  printf '%s\n' "$2" >"$SHIM_STATE/wait-tries"
+  printf '%s\n' "$TRACKER_DIR" >"$SHIM_STATE/tracker-dir"
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+state="$RALPH_SHIM_STATE"
+tracker="$(cat "$state/tracker-dir")"
+tries="$(cat "$state/wait-tries")"
+waiter="$(cat "$state/waiter")"
+
+sibling_marked() { grep -q '^\*\*Status:\*\* resolved' "$tracker/02-beta.md" 2>/dev/null; }
+children_created() { ls "$tracker"/*-alpha-two.md >/dev/null 2>&1; }
+
+# Waits for the loop to write the tracker, and records how long that took against
+# what it was allowed: `i tries`, so a test can tell "saw it" from "gave up".
+wait_for_the_loop() {
+  local i=0
+  while [ "$i" -lt "$tries" ]; do
+    "$@" && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  printf '%s %s\n' "$i" "$tries" >"$state/waited"
+}
+
+case "$prompt" in
+  *'split it into smaller tickets'*)
+    plan="$(printf '%s' "$prompt" | sed -n 's/^Write the plan to \([^,]*\),.*/\1/p' | head -1)"
+    [ "$waiter" = planner ] && wait_for_the_loop sibling_marked
+    cat >"$plan" <<'PLAN'
+--- ticket: alpha-one | The first half ---
+**What to build:** The first half of what was too big.
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+
+**Status:** ready-for-agent
+
+- [ ] the first half exists
+--- ticket: alpha-two | The second half ---
+**What to build:** The second half of what was too big.
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+
+**Status:** ready-for-agent
+
+- [ ] the second half exists
+PLAN
+    echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.01}'
+    exit 0
+    ;;
+  *'## Ticket: 01-alpha'*)
+    echo '{"type":"system","subtype":"init","session_id":"s"}'
+    echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read_input_tokens":9000,"output_tokens":5}}}'
+    i=0
+    while [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+    exit 0
+    ;;
+  *'## Ticket: 02-beta'*)
+    # Whether the re-slice had already happened when this session started: in a
+    # sequential run it has, which is exactly why that run cannot show the defect.
+    if children_created; then
+      printf 'yes\n' >"$state/children-at-entry"
+    else
+      printf 'no\n' >"$state/children-at-entry"
+    fi
+    [ "$waiter" = 02-beta ] && wait_for_the_loop children_created
+    ;;
+esac
+
+for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' '); do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+}
+
+# `i tries` out of the fake: it saw what it was waiting for, or it gave up.
+concurrency__saw_it() {
+  local waited
+  waited="$(cat "$SHIM_STATE/waited" 2>/dev/null || echo "")"
+  set -- $waited
+  [ "${1:-0}" -lt "${2:-0}" ] ||
+    fail "the session never saw the loop write the tracker (waited: ${waited:-nothing})"
+}
+
+concurrency__gave_up() {
+  local waited
+  waited="$(cat "$SHIM_STATE/waited" 2>/dev/null || echo "")"
+  set -- $waited
+  [ -n "${1:-}" ] && [ "$1" = "${2:-}" ] ||
+    fail "the wait was expected to expire, and did not (waited: ${waited:-nothing})"
+}
+
+@test "a re-slice beside a marking leaves the sibling resolved" {
+  # The re-slice's own guard was the caller [13] never handed the register to, so
+  # it read every ticket the loop had written during the planning session as the
+  # planner's doing. What that cost is the whole run: 02-beta is delivered,
+  # committed, folded — and then put back `claimed` under the pilot's pid, a claim
+  # nobody will ever release, while the re-slice is refused for an edit it never
+  # made and 01-alpha goes to the human sink instead of being split.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config ITER_CAP 2
+  concurrency__reslice_world planner 200
+
+  # Exit 4: the cap stopped the run, which is how these two scenarios stay short —
+  # the split itself is what they are about, not the grinding of its children.
+  run_loop_own_tmp
+  assert_failure 4
+  concurrency__saw_it
+
+  # The sibling's marking stands, and no claim outlived it.
+  assert_ticket_status 02-beta resolved
+  assert_equal "$(ticket_field 02-beta Claimed)" ""
+  # And the re-slice was not refused over it.
+  refute_output_contains "01-alpha: the session edited the tracker"
+  assert_output_contains "01-alpha: too big -> re-sliced into 03-alpha-one 04-alpha-two"
+  assert_ticket_status 03-alpha-one ready-for-agent
+}
+
+@test "the same two, sequenced, leave exactly the same tracker" {
+  # The witness [42] asks for: without it, a green parallel run says nothing about
+  # whether the register did anything. Same world, same fake, `MAX_PARALLEL=1` —
+  # and the short wait is the observation, not a timeout to be tuned: the planning
+  # session may not see a sibling marked, because there is no sibling in flight.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 1
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config ITER_CAP 2
+  concurrency__reslice_world planner 20
+
+  run_loop_own_tmp
+  assert_failure 4
+  concurrency__gave_up
+
+  assert_ticket_status 02-beta resolved
+  assert_equal "$(ticket_field 02-beta Claimed)" ""
+  refute_output_contains "01-alpha: the session edited the tracker"
+  assert_output_contains "01-alpha: too big -> re-sliced into 03-alpha-one 04-alpha-two"
+  assert_ticket_status 03-alpha-one ready-for-agent
+}
+
+@test "the children of a sibling's re-slice are not quarantined" {
+  # The other guard, and it never read the register at all: it compares ids, and
+  # the tickets a neighbouring re-slice creates are ids that were not there when
+  # this session started. Four tickets the loop wrote itself were escalated under
+  # a note naming a session that had not touched the tracker — and the escalation
+  # of the parent went with them.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config ITER_CAP 2
+  concurrency__reslice_world 02-beta 200
+
+  # Exit 4: the cap stopped the run, which is how these two scenarios stay short —
+  # the split itself is what they are about, not the grinding of its children.
+  run_loop_own_tmp
+  assert_failure 4
+  concurrency__saw_it
+  # The overlap this test needs is the other way round from the one above: the
+  # children were created *during* the sibling's session, not before it.
+  assert_equal "$(cat "$SHIM_STATE/children-at-entry")" "no"
+
+  assert_output_contains "01-alpha: too big -> re-sliced into 03-alpha-one 04-alpha-two"
+  refute_output_contains "wrote the tracker itself"
+  assert_ticket_status 03-alpha-one ready-for-agent
+  assert_ticket_status 04-alpha-two ready-for-agent
+  # And the note names only what that session really wrote, which is nothing.
+  refute_file_contains "$(ticket_file 02-beta)" "wrote these tickets into the tracker itself"
+}
+
+@test "the same re-slice, sequenced, puts its children on the frontier too" {
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 1
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config ITER_CAP 2
+  concurrency__reslice_world 02-beta 20
+
+  run_loop_own_tmp
+  assert_failure 4
+  # Sequenced: the split had already happened when the sibling's session started,
+  # so its window never covered a creation and no register was needed.
+  assert_equal "$(cat "$SHIM_STATE/children-at-entry")" "yes"
+
+  refute_output_contains "wrote the tracker itself"
+  assert_ticket_status 03-alpha-one ready-for-agent
+  assert_ticket_status 04-alpha-two ready-for-agent
+}
+
 # ── stopping with iterations in flight ───────────────────────────────────────
 
 @test "a stop request lets the iterations in flight finish" {

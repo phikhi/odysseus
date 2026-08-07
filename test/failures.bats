@@ -483,6 +483,70 @@ failures__stage_a_failed_session() {
   assert_equal "$(ticket_field 01-alpha Write-surface)" '`src/alpha.txt`'
 }
 
+@test "a ticket the loop created itself is left alone by the quarantine" {
+  # The second reader of that register, and it had none until [42]: the quarantine
+  # compares *ids*, so the children a sibling's re-slice creates are ids that were
+  # not there when this session started — indistinguishable, without the register,
+  # from a ticket a session gave itself.
+  #
+  # Driven as a lib for the reason the test above is: through the loop the two
+  # writes have to land inside one another's window, which is a matter of
+  # milliseconds; here the order is the test's to choose.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
+    mark="$(tracker_write_mark)"
+    seen="$(failures_tracker_snapshot)"
+    # What the loop legitimately does inside another iteration'"'"'s window: a
+    # sibling re-slice puts its children on the frontier.
+    printf "**Write-surface:** \`src/child.txt\`\n\n- [ ] it exists\n" |
+      tracker_open_ticket child "A child of a re-slice" >/dev/null
+    # And what a session does, which no register may excuse: it writes itself a
+    # ticket, with the surface it would like to be judged against.
+    printf "**Write-surface:** \`*\`\n\n**Status:** ready-for-agent\n" \
+      >"$(ralph_feature_dir)/issues/99-invented.md"
+    failures_quarantine_strays 01-alpha "$seen" "$mark" || printf "quarantined\n"
+    printf "register:%s\n" "$(tracker_writes_since "$mark")"
+    rm -f "$RALPH_TRACKER_LOG"
+  '
+  assert_output_contains "quarantined"
+
+  # The register names the ticket the creation *produced*, not the slug it was
+  # handed: a line reading `child` names no ticket, and every reader of this
+  # register asks about ids.
+  assert_output_contains "register: 02-child"
+
+  # The loop's own creation went to the frontier; the session's went to a human.
+  assert_ticket_status 02-child ready-for-agent
+  assert_ticket_status 99-invented ready-for-human
+  # And the note names only what that session really wrote.
+  assert_file_contains "$(ticket_file 01-alpha)" "99-invented"
+  refute_file_contains "$(ticket_file 01-alpha)" "02-child"
+}
+
+@test "without the register, the same two tickets are both quarantined" {
+  # The paired witness [42] asks for. Without it the test above says nothing about
+  # whether the exemption did anything: one guard call away, both tickets are
+  # strays and both are escalated — which is exactly what the loop did to its own
+  # re-slices before this ticket.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
+    seen="$(failures_tracker_snapshot)"
+    printf "**Write-surface:** \`src/child.txt\`\n\n- [ ] it exists\n" |
+      tracker_open_ticket child "A child of a re-slice" >/dev/null
+    printf "**Write-surface:** \`*\`\n\n**Status:** ready-for-agent\n" \
+      >"$(ralph_feature_dir)/issues/99-invented.md"
+    failures_quarantine_strays 01-alpha "$seen" || printf "quarantined\n"
+    rm -f "$RALPH_TRACKER_LOG"
+  '
+  assert_output_contains "quarantined"
+  assert_ticket_status 02-child ready-for-human
+  assert_ticket_status 99-invented ready-for-human
+}
+
 @test "a rollback never restores the tracker, whatever moved in it" {
   use_tickets 01-alpha
 
