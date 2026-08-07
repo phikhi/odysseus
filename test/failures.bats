@@ -881,6 +881,25 @@ FAKE
 $loop_output
 OUT"
   assert_equal "$output" "1"
+
+  # And *on the iteration that had no gate*, which is the whole of this ticket and
+  # which the assertions above stopped being able to tell since [41]. The shared
+  # sources are witnessed once per **run** now, so the next iteration no longer
+  # pins whatever the crashed session left: a run that had lost this restore would
+  # still put the file back and still print this very line — one iteration late,
+  # and billed to whichever ticket came next, which is [41]'s defect reached
+  # through this ticket's door. The order is what distinguishes the two, so the
+  # order is what is asserted.
+  local put_back started
+  put_back="$(printf '%s\n' "$loop_output" |
+    grep -n 'moved the ignore frontier in .git/info/exclude' | head -1 | cut -d: -f1)"
+  started="$(printf '%s\n' "$loop_output" |
+    grep -n 'iteration 2: 01-alpha' | head -1 | cut -d: -f1)"
+  if [ -z "$put_back" ] || [ -z "$started" ] || [ "$put_back" -ge "$started" ]; then
+    fail "the frontier was put back at line ${put_back:-none}, and iteration 2 started at line ${started:-none} — it has to be the crashed iteration that puts it back
+--- output ---
+$loop_output"
+  fi
 }
 
 @test "a session the loop cut short cannot leave it widened either" {

@@ -145,7 +145,8 @@ gate_leftovers() {
   local tmp="${TMPDIR:-/tmp}" n
   n="$(find "$tmp" -maxdepth 1 \
     \( -name 'ralph-gate.*' -o -name 'ralph-ignore.*' \
-    -o -name 'ralph-worktree.*' -o -name 'ralph-slot.*' \) -mtime +0 2>/dev/null |
+    -o -name 'ralph-worktree.*' -o -name 'ralph-slot.*' \
+    -o -name 'ralph-frontier.*' \) -mtime +0 2>/dev/null |
     wc -l | tr -d ' ')"
   [ -n "$n" ] && [ "$n" -gt 0 ] || return 1
   printf '%s temporary director(ies) from earlier runs are still in %s: a run killed mid-iteration leaves one behind, and nothing here removes them\n' \
@@ -409,6 +410,104 @@ gate_guarded_paths() {
 # tree; `.git/info/exclude` and `core.excludesFile`, in the git directory; and the
 # global excludes file, which lives outside the repository altogether.
 
+# ── two witnesses, because the sources are not all the same shape ────────────
+#
+# [30] gave every iteration one witness of its own, and [13] then put every
+# iteration in a worktree of its own. Those two facts do not compose, and that is
+# [41]: the `.gitignore` files of the tree really are per-worktree, but
+# `.git/info/exclude` and `core.excludesFile` live in the **common** git directory
+# and `~/.config/git/ignore` outside the repository altogether. Three sources
+# shared by every iteration in flight, pinned at three different instants.
+#
+# What that bought, probed on 06/08/2026 at `MAX_PARALLEL=2`: an iteration that
+# spawns *while* a sibling's session has the frontier widened pins the widened
+# frontier as its own baseline — so it goes blind behind a rule it never wrote,
+# and its own restore would then put the widening **back** over the sibling's
+# witness. And whichever gate looks first is the one charged, which is the
+# misattribution the rest of this section is about.
+#
+# So the common sources get a witness at the level they actually live at: one per
+# **run**, taken before the first session of the night, and every per-iteration pin
+# copies its non-tree half from it rather than from disk. Two consequences, both
+# wanted: the restore target is a fixed value no session ever gets to move, so two
+# restores in flight cannot fight, and a sibling that spawns mid-widening still
+# judges through the frontier the *run* was handed.
+#
+# The loop refuses to start without it, the way it refuses without a pin. The
+# fallback below — no witness, read the live sources — exists so `gate_*` stays
+# drivable outside a run, and never fires under `loop.sh`.
+gate_ignore_common() {
+  local dir file
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-frontier.XXXXXX")" || return 1
+  : >"$dir/exclude"
+  file="$(gate__ignore_exclude_path)"
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    cp "$file" "$dir/exclude" 2>/dev/null || true
+  fi
+  : >"$dir/global"
+  file="$(gate__ignore_global_path)"
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    cp "$file" "$dir/global" 2>/dev/null || true
+  fi
+  if ! { gate__ignore_manifest | awk -F'\t' '$1 != "tree"'; } >"$dir/manifest"; then
+    rm -rf "$dir"
+    return 1
+  fi
+  # The register of frontier movements this run has seen, and the only thing that
+  # survives a restore. See gate_ignore_frontier: a movement erased by the first
+  # gate to look would otherwise be invisible to every iteration behind it.
+  : >"$dir/ledger"
+  printf '%s\n' "$dir"
+}
+
+# One rule source into a witness: from the run's witness when there is one, from
+# the live file when there is not.
+gate__ignore_common_copy() {
+  local slot="$1" dest="$2" live="$3" common="${RALPH_IGNORE_COMMON:-}"
+  if [ -n "$common" ] && [ -f "$common/$slot" ]; then
+    cp "$common/$slot" "$dest" 2>/dev/null || true
+    return 0
+  fi
+  if [ -n "$live" ] && [ -f "$live" ]; then
+    cp "$live" "$dest" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# What one iteration's pin records: the tree rules as they stand right now, and
+# the common sources as the *run* was handed them.
+gate__ignore_pin_manifest() {
+  local common="${RALPH_IGNORE_COMMON:-}"
+  if [ -n "$common" ] && [ -f "$common/manifest" ]; then
+    { gate__ignore_manifest || true; } | awk -F'\t' '$1 == "tree"'
+    cat "$common/manifest"
+    return 0
+  fi
+  gate__ignore_manifest
+}
+
+# How many movements the run's register held when this pin was taken. What an
+# iteration is charged for is what appears in it after that mark.
+gate__ignore_ledger_len() {
+  local common="${RALPH_IGNORE_COMMON:-}"
+  if [ -n "$common" ] && [ -f "$common/ledger" ]; then
+    awk 'END { print NR + 0 }' "$common/ledger"
+    return 0
+  fi
+  printf '0\n'
+}
+
+# Where this iteration starts reading the register: the length its pin recorded at
+# spawn. One definition and two readers — the share below, and the fail-closed
+# check that a register never got *shorter* than it — because the same number
+# answers both, and two copies of it would drift the day one of them is corrected.
+gate__ignore_mark() {
+  local seen
+  seen="$(cat "${RALPH_IGNORE_PIN:-}/ledger-seen" 2>/dev/null || printf '0')"
+  case "$seen" in '' | *[!0-9]*) seen=0 ;; esac
+  printf '%s\n' "$seen"
+}
+
 # The rules as they stood, kept as a witness repository — a git directory of its
 # own carrying copies of every rule source and no project files at all. Printed as
 # a path; the loop holds it in RALPH_IGNORE_PIN for the length of one iteration
@@ -455,22 +554,29 @@ RULES
   # an empty one: the directory has to be made rather than assumed. Probed the hard
   # way — without it the copy failed, the pin recorded no local excludes, and the
   # snapshot went on being taken through whatever the session had written there.
+  #
+  # Both of these come from the run's witness when there is one ([41]): they are
+  # sources every iteration in flight shares, so a copy taken at *this* instant
+  # would record whatever a sibling's session had written a second earlier.
   mkdir -p "$rules/.git/info" || true
   : >"$rules/.git/info/exclude"
-  file="$(gate__ignore_exclude_path)"
-  [ -f "$file" ] && cp "$file" "$rules/.git/info/exclude" 2>/dev/null
+  gate__ignore_common_copy exclude "$rules/.git/info/exclude" \
+    "$(gate__ignore_exclude_path)"
   : >"$pin/global"
-  file="$(gate__ignore_global_path)"
-  [ -f "$file" ] && cp "$file" "$pin/global" 2>/dev/null
+  gate__ignore_common_copy global "$pin/global" "$(gate__ignore_global_path)"
   # Set locally, so the machine's own `core.excludesFile` — from the user's global
   # config or from the default `~/.config/git/ignore` — cannot leak into the
   # witness's answers. What the project's rules said about it is pinned above.
   git -C "$rules" config core.excludesFile "$pin/global" >/dev/null 2>&1 || true
 
-  if ! gate__ignore_manifest >"$pin/manifest"; then
+  if ! gate__ignore_pin_manifest >"$pin/manifest"; then
     rm -rf "$pin"
     return 1
   fi
+  # Where this iteration starts reading the run's register of movements. Taken
+  # here, in the pilot and before the iteration is forked, so that "recorded after
+  # my mark" is "recorded while I was in flight".
+  gate__ignore_ledger_len >"$pin/ledger-seen"
   printf '%s\n' "$pin"
 }
 
@@ -546,11 +652,31 @@ gate__digest() {
 # A pin that was set and cannot be read. Refused rather than ignored: the point of
 # the pin is that what the checks can see does not depend on what the session left
 # behind, so a missing one is a control that cannot see.
+#
+# The run's witness of the shared sources and its register of movements are held to
+# the same standard ([41]), and they have to be: they live in the same `$TMPDIR`
+# under the same kind of unguessable name, so a session that can reach one can
+# reach the other — and the fallbacks around them are "read the live sources",
+# which is a quiet return to the behaviour this ticket removed. Destroying the pin
+# stops the night; destroying these would have cost nothing.
 gate__ignore_pin_broken() {
-  local pin="${RALPH_IGNORE_PIN:-}"
+  local pin="${RALPH_IGNORE_PIN:-}" common="${RALPH_IGNORE_COMMON:-}" seen total
   [ -n "$pin" ] || return 1
-  [ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ] && return 1
-  return 0
+  [ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ] || return 0
+  [ -n "$common" ] || return 1
+  [ -f "$common/manifest" ] && [ -f "$common/exclude" ] && [ -f "$common/ledger" ] ||
+    return 0
+
+  # A register that got shorter is one somebody rewrote: it is append-only by
+  # construction, so a length below this iteration's own mark is not a state this
+  # pack can produce. What it does *not* catch is written down rather than implied
+  # — a truncation back to exactly an iteration's mark erases a movement that
+  # iteration had not read yet, and nothing here can tell that from a night in
+  # which nothing moved.
+  seen="$(gate__ignore_mark)"
+  total="$(awk 'END { print NR + 0 }' "$common/ledger")"
+  [ "$total" -lt "$seen" ] && return 0
+  return 1
 }
 
 # The rule sources that are not what the pin recorded — appeared, vanished or
@@ -613,9 +739,36 @@ gate__ignore_restore() {
   [ "$(gate__ignore_current "$name")" = "$pinned" ]
 }
 
-# The frontier this session moved, put back where the run can reach it, and
-# phrased as findings for the scope-guard to carry. Non-zero when it found
-# something, so `gate_run` can fill a variable and forget about it.
+# The frontier this run has seen move while this iteration was in flight, put back
+# where the run can reach it, and phrased as findings for the scope-guard to
+# carry. Non-zero when it found something, so `gate_run` can fill a variable and
+# forget about it.
+#
+# **Who is charged, and why it cannot be who wrote it** ([41]). This function used
+# to answer "has the frontier moved since *my* witness", which was the same
+# question as "who moved it" for exactly as long as one iteration lived at a time.
+# With two in flight it is a draw: the first gate to look finds the widening,
+# reports it, is rolled back and billed a retry, and puts the file back — so the
+# iteration whose session actually wrote it arrives at its own gate to find
+# nothing moved, and goes green, commits, resolves. Probed at `MAX_PARALLEL=2`;
+# the same pair at `MAX_PARALLEL=1` bills the author three times to escalation, so
+# it is the concurrency and not the scenario that moves the bill.
+#
+# There is no fix that attributes, and that is a property of the sources rather
+# than a gap in this code: `.git/info/exclude` is one file in the git directory
+# every worktree shares, so nothing observable says which of them wrote it. Of the
+# two honest exits, this is the one taken: **every iteration in flight when the
+# frontier moved is charged**. The movement goes into a register the restore does
+# not erase, and each iteration reads what was recorded after its own spawn. What
+# that does not hold is written down and said out loud in the findings: a sibling
+# that wrote nothing pays a retry, and at its last attempt an escalation, for a
+# file its session never opened.
+#
+# The exit not taken — serializing iterations as soon as a frontier moves — is
+# refused on its cost: a movement is only ever *detected* at a gate, so by then
+# both sessions have already run, and what serializing buys is the next iteration
+# rather than this one. It would also hand every session a one-line way to take
+# the run's concurrency away for the rest of the night.
 #
 # Three kinds, and the difference is the whole of the design:
 #
@@ -647,8 +800,37 @@ gate__ignore_restore() {
 # had brought it into play. Probed on 03/08/2026: the second finding named a file
 # no session had touched.
 gate_ignore_frontier() {
-  local kind name rc=0
+  local mine share took=0
   [ -n "${RALPH_IGNORE_PIN:-}" ] || return 0
+
+  # Under a guard in the common git directory, for the reason the fold takes one
+  # ([13]): the two `dir` sources are shared by every worktree, so two iterations
+  # detecting and restoring at once would each write over the other's attempt and
+  # each record a movement for one widening. Under it, the first one through puts
+  # the file back and the second finds nothing moved — which is what makes "the
+  # restore happens once" a fact rather than an intention.
+  #
+  # A guard that cannot be taken is not a reason to skip the restore: the target is
+  # a fixed value from the run's witness, so the worst an unguarded race costs is
+  # the same movement recorded twice, and skipping would cost the night. Released
+  # only if it was taken — `state_guard_release` matches on `$$`, which a subshell
+  # of the pilot shares with its siblings, so releasing a guard we never held would
+  # take it away from the iteration that does.
+  if concurrency_frontier_take; then took=1; fi
+  mine="$(gate__ignore_detect)" || true
+  gate__ignore_record "$mine" || true
+  if [ "$took" = 1 ]; then concurrency_frontier_release || true; fi
+
+  share="$(gate__ignore_share "$mine")" || true
+  [ -n "$share" ] || return 0
+  printf '%s\n' "$share"
+  return 1
+}
+
+# What moved since this iteration's witness, put back, and phrased. The detection
+# proper: everything above it is about who gets told.
+gate__ignore_detect() {
+  local kind name rc=0
 
   while IFS="$(printf '\t')" read -r kind name; do
     [ "$kind" = dir ] && [ -n "$name" ] || continue
@@ -670,6 +852,73 @@ INSIDE
 $( { gate_ignore_moved || true; } )
 OUTSIDE
   return "$rc"
+}
+
+# One movement into the run's register, tagged with the witness of the iteration
+# that saw it. The tag is the pin's path — a name in `$TMPDIR` no session is told,
+# the same secret the pin itself is ([40]) — and it is what lets the reader tell
+# "I found this" from "a sibling found this while I was in flight".
+#
+# Appended and never rewritten: the register is the one trace of a widening that
+# outlives the restore, so a writer that could shorten it would hand a session the
+# eraser this whole section exists to take away.
+gate__ignore_record() {
+  local findings="$1" common="${RALPH_IGNORE_COMMON:-}" line
+  [ -n "$common" ] && [ -f "$common/ledger" ] || return 0
+  [ -n "$findings" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s\t%s\n' "${RALPH_IGNORE_PIN:-}" "$line" >>"$common/ledger"
+  done <<RECORD
+$findings
+RECORD
+  return 0
+}
+
+# This iteration's share of the register: every movement recorded since its pin
+# was taken, whoever saw it. The mark is advanced as it reads, because one
+# iteration can ask twice — `gate_run` before the fan, and `failures_reslice`
+# after the planning session it spawns ([32]) — and the second ask is about what
+# moved since the first, not about the whole night.
+#
+# With no register — `gate_*` driven outside a run — an iteration is charged for
+# what it saw itself, which is what this did before [41].
+gate__ignore_share() {
+  local mine="$1" pin="${RALPH_IGNORE_PIN:-}" common="${RALPH_IGNORE_COMMON:-}"
+  local ledger seen total tag finding foreign=0
+
+  ledger="$common/ledger"
+  if [ -z "$common" ] || [ ! -f "$ledger" ]; then
+    # Spelled as an `if` rather than an `&&`, because this one is not protected by
+    # its caller the way the rest of this file is: an `&&` whose left half is false
+    # returns non-zero, and a caller that ever stops wrapping this in `|| true`
+    # would take the run down here on the ordinary case of nothing to report.
+    if [ -n "$mine" ]; then printf '%s\n' "$mine"; fi
+    return 0
+  fi
+
+  seen="$(gate__ignore_mark)"
+  total="$(awk 'END { print NR + 0 }' "$ledger")"
+  [ "$total" -gt "$seen" ] || return 0
+  printf '%s\n' "$total" >"$pin/ledger-seen" 2>/dev/null || true
+
+  while IFS="$(printf '\t')" read -r tag finding; do
+    [ -n "$finding" ] || continue
+    printf '%s\n' "$finding"
+    [ "$tag" = "$pin" ] || foreign=1
+  done <<LEDGER
+$(tail -n "+$((seen + 1))" "$ledger" 2>/dev/null || true)
+LEDGER
+
+  # And the line that says what nobody can be charged for. Printed only when a
+  # movement this iteration did not see itself lands in its share — so it never
+  # appears at `MAX_PARALLEL=1`, where the iteration that looks is the only one
+  # that could have written. It is a finding like the others and rides on the
+  # scope-guard's output: a bill nobody can contest has to be readable by the
+  # person who gets it.
+  [ "$foreign" = 0 ] || printf '%s\n' \
+    'the ignore frontier above moved while more than one iteration was in flight — those sources are shared by every worktree, so nothing here can tell which session wrote them and every iteration in flight is charged'
+  return 0
 }
 
 # The `.gitignore` files of the working tree this session moved, on one line, and

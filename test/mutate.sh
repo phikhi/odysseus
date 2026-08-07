@@ -1167,8 +1167,11 @@ mutation "30 the pin records none of the working tree's rules" "$GATE" \
 # And the same for the source that needs no write-surface. Separate entry because
 # separate copy: a pin that recorded the tree and not the git directory would red
 # every project whose human keeps local excludes.
+#
+# The anchor moved with [41], which routed that copy through the run's own witness
+# — the copy is still the guarantee, the line that carries it is a call now.
 mutation "30 the pin records nothing of .git/info/exclude" "$GATE" \
-  's/  \[ -f "\$file" \] && cp "\$file" "\$rules\/\.git\/info\/exclude" 2>\/dev\/null/  :/' \
+  's/  gate__ignore_common_copy exclude "\$rules\/\.git\/info\/exclude" \\\n    "\$\(gate__ignore_exclude_path\)"/  :/' \
   test/gate.bats "does not hide what it wrote behind it"
 
 # The half that keeps one red iteration from buying a whole night: without the
@@ -2344,6 +2347,106 @@ mutation "44 no shell can ever take an owner" "$PROC" \
 mutation "44 an owner that is already gone is taken all the same" "$PROC" \
   's/  if proc_owner_gone; then\n    return 1\n  fi\n  return 0\n\}/  return 0\n}/' \
   test/proc.bats "owner handed in is refused"
+
+# ── [41] the ignore frontier is billed to whoever looked first ───────────────
+#
+# Every entry here aims at the **attribution** and never at the restore. [30]
+# already covers "the file goes back" from four angles, and a fix that put the
+# file back while leaving the author green is exactly the fix this ticket refuses
+# — so a mutation that only broke the restore would report `ok` about a guarantee
+# nobody delivered here.
+
+# The register itself: the movement recorded by whichever gate looked first is
+# what every iteration behind it reads. Without it, an iteration is charged for
+# what it saw with its own eyes — which is the pack before this ticket, and the
+# author of the widening walks.
+mutation "41 a movement is not recorded for the iterations in flight" "$GATE" \
+  's/^gate__ignore_record\(\) \{/gate__ignore_record() { return 0;/m' \
+  test/concurrency.bats "charged to every iteration in flight"
+
+# The same hole from the reading side, and it is a separate entry because it is a
+# separate half: a run that records faithfully and then only ever reports what it
+# detected itself is the same false green.
+mutation "41 an iteration reads only what it saw itself" "$GATE" \
+  's/^gate__ignore_share\(\) \{/gate__ignore_share() { printf "%s\\\\n" "\$1"; return 0;/m' \
+  test/concurrency.bats "charged to every iteration in flight"
+
+# The mark. Reading the whole register instead of what landed after this
+# iteration's spawn bills every iteration of the night for a movement that was
+# over before it started — the overcharge in the other direction, and the witness
+# at MAX_PARALLEL=1 is where it shows.
+#
+# Aimed at the definition and not at either reader, and that is not a shortcut:
+# the first version of this entry anchored on the line that reads the mark, which
+# by then existed twice — it edited `gate__ignore_pin_broken` and reported VACUOUS
+# about a test that was fine. The two readers now share one definition, so the
+# anchor is unique by construction.
+mutation "41 the register is read from the beginning of the run" "$GATE" \
+  's/^gate__ignore_mark\(\) \{/gate__ignore_mark() { printf "0\\\\n"; return 0;/m' \
+  test/concurrency.bats "sequenced bills the session that wrote"
+
+# What nobody can be charged for, said out loud. A bill that cannot be contested
+# and is not explained is the half-truth this pack refuses everywhere else.
+mutation "41 nothing names what cannot be attributed" "$GATE" \
+  's/  \[ "\$foreign" = 0 \] \|\| printf/  [ 1 = 0 ] \&\& printf/' \
+  test/concurrency.bats "charged to every iteration in flight"
+
+# And that the line is a *consequence of concurrency* rather than decoration:
+# printed unconditionally it appears at MAX_PARALLEL=1, where the iteration that
+# looked is the only one that could have written.
+mutation "41 the unattributable line is printed whatever the run does" "$GATE" \
+  's/  \[ "\$foreign" = 0 \] \|\| printf/  [ 0 = 0 ] \&\& printf/' \
+  test/concurrency.bats "sequenced bills the session that wrote"
+
+# The run-level witness of the sources every worktree shares. Without it the pin
+# takes its baseline from disk, so an iteration that spawns mid-widening pins the
+# widening — and its own restore puts it back over its sibling's witness.
+mutation "41 the shared frontier is witnessed once per iteration again" "$GATE" \
+  's/^gate__ignore_common_copy\(\) \{\n  local slot="\$1" dest="\$2" live="\$3" common="\$\{RALPH_IGNORE_COMMON:-\}"/gate__ignore_common_copy() {\n  local slot="\$1" dest="\$2" live="\$3" common=""/m' \
+  test/gate.bats "while the frontier was widened"
+
+mutation "41 the pin's manifest reads the shared sources from disk" "$GATE" \
+  's/^gate__ignore_pin_manifest\(\) \{\n  local common="\$\{RALPH_IGNORE_COMMON:-\}"/gate__ignore_pin_manifest() {\n  local common=""/m' \
+  test/gate.bats "while the frontier was widened"
+
+# And the loop refusing to start without it, which is what keeps the fallback in
+# the library from being the shipped behaviour.
+mutation "41 a run with no witness of the shared frontier starts anyway" "$LOOP" \
+  's/  if ! RALPH_IGNORE_COMMON="\$\(gate_ignore_common\)"; then/  RALPH_IGNORE_COMMON="\$(gate_ignore_common)" || RALPH_IGNORE_COMMON=""\n  if false; then/' \
+  test/gate.bats "witness of the shared frontier"
+
+# The guard that orders the restore. Two iterations detecting and restoring at
+# once record one widening twice, so the same movement is billed twice to whoever
+# was in flight.
+mutation "41 the restore is not ordered between worktrees" "$GATE" \
+  's/  if concurrency_frontier_take; then took=1; fi/  :/' \
+  test/gate.bats "restore is taken under a guard"
+
+# And the guard released only when it was taken: `state_guard_release` matches on
+# `$$`, which every subshell of the pilot shares, so an iteration that timed out
+# waiting would take the guard away from the one holding it.
+mutation "41 a guard that was never taken is released all the same" "$GATE" \
+  's/  if \[ "\$took" = 1 \]; then concurrency_frontier_release \|\| true; fi/  concurrency_frontier_release || true/' \
+  test/gate.bats "released only by the iteration that took it"
+
+# The same edit as [32]'s first entry, judged by the other producer's test: what
+# [32] delivers is that a crashed iteration gets its frontier back at all, what
+# [41] delivers is that the movement reaches the *siblings* on that path too. One
+# entry per guarantee rather than one per line, the way the [33] pair is written.
+mutation "41 a crashed iteration's movement never reaches its siblings" "$FAILURES" \
+  's/    crash \| timeout \| budget\) failures__ignore_frontier "\$ticket" ;;/    crash | timeout | budget) : ;;/' \
+  test/concurrency.bats "no gate judges is still charged"
+
+# Fail-closed on the two things [41] added to `$TMPDIR`. Both had a fallback that
+# reads the live sources, so a session that destroyed either would have bought back
+# the pack before this ticket — quietly, where destroying the pin stops the night.
+mutation "41 a destroyed run witness reads as no witness at all" "$GATE" \
+  's/  \[ -f "\$common\/manifest" \] && \[ -f "\$common\/exclude" \] && \[ -f "\$common\/ledger" \] \|\|\n    return 0\n//' \
+  test/gate.bats "closes the control, like a destroyed pin"
+
+mutation "41 a register that got shorter is nobody's business" "$GATE" \
+  's/  \[ "\$total" -lt "\$seen" \] && return 0\n//' \
+  test/gate.bats "register of movements that got shorter"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
