@@ -42,6 +42,8 @@
 #   session_writes_nothing         a session that answers and writes nothing
 #   lens_verdict NAME pass|fail    what a review lens answers ('' = every lens)
 #   lens_writes NAME PATH ...      paths a lens writes in the tree it judges
+#   lens_refused NAME [STATUS ...] a lens the API refused: the in-band event, no
+#                                  verdict, non-zero exit
 #   lens_call_count NAME           how many times that lens was spawned
 #   lenses_that_ran                every lens that was spawned, sorted
 #   lens_call_stdin NAME           the prompt that lens was handed
@@ -607,6 +609,21 @@ lens_writes() {
   local name="$1"
   shift
   printf '%s\n' "$@" >"$SHIM_STATE/lens-$name.writes"
+}
+
+# A lens the API refused ([43]): its stream carries the in-band event, it says no
+# verdict at all, and it exits non-zero. The lens half of
+# `script_refused_session`, which can only stage the delivery session — and named
+# per lens, because the whole question is telling a refused branch apart from the
+# lens that judged beside it.
+#
+# `allowed` is a legal argument here and is the refutation the pair needs: the
+# same missing verdict with a stream that says nothing about quota is a lens that
+# died, and stays red and billed.
+lens_refused() {
+  local name="$1" status="${2:-blocked}" window="${3:-five_hour}" reset="${4:-0}"
+  printf '{"status":"%s","resetsAt":%s,"rateLimitType":"%s","isUsingOverage":false}\n' \
+    "$status" "$reset" "$window" >"$SHIM_STATE/lens-$name.refused"
 }
 
 # A lens that destroys the pinned ignore rules `gate_tree_snapshot` refuses

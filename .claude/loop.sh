@@ -499,16 +499,25 @@ loop__iterate() {
     outcome=failed
   fi
 
-  # "Budget?" before "failure", which is [08]'s classifier. Asked of the two
-  # outcomes where **nothing was judged**, and of no other:
+  # "Budget?" before "failure", which is [08]'s classifier. Asked of the outcomes
+  # where **nothing was judged**, and of no other. That is the criterion, and it is
+  # what this list is read against — not the set of outcomes that happened to exist
+  # when it was written ([31], applied to the budget by [43]):
   #
-  #   - a red gate is evidence that something was looked at and found wrong,
-  #     and a subscription running out afterwards does not take that evidence
-  #     away. Forgiving it would make a red gate free for any session willing
-  #     to write one line into its own stream.
   #   - the soft limit and the two deadlines are facts this pack measured
   #     itself. A reason read out of the session's own stream is a claim, and a
   #     claim must not overwrite a measurement ([23]).
+  #   - a red gate is evidence that something was looked at and found wrong,
+  #     and a subscription running out afterwards does not take that evidence
+  #     away. Forgiving it would make a red gate free for any session willing
+  #     to write one line into its own stream. **Unless the only thing that was
+  #     red is a lens the API never let start** — that branch looked at nothing,
+  #     which is the criterion above and not an exception to it. The gate decides
+  #     that, not this line: `RALPH_GATE_QUOTA_ONLY` is 1 only when every red
+  #     branch is such a lens and the tree it was handed came back intact ([43]).
+  #     A lens that answered `fail` beside a refused one keeps the gate billable,
+  #     and so does a tracker write, which the loop measured itself and which has
+  #     already taken the outcome away from `gate-red` by the time this runs.
   #
   # It is asked of `nothing-delivered` as well as of a non-zero exit, which is
   # wider than the acceptance criterion and deliberately so: a session refused
@@ -522,7 +531,28 @@ loop__iterate() {
         loop_log "$ticket: the session was refused for quota ($(awk '{ print $2 }' "$slot/posture" 2>/dev/null)) — not an attempt at this ticket"
       fi
       ;;
+    gate-red)
+      if [ "${RALPH_GATE_QUOTA_ONLY:-0}" = 1 ]; then
+        outcome=budget-pause
+        loop_log "$ticket: every red branch is a review lens the API refused for quota ($(printf '%s' "${RALPH_GATE_QUOTA:-}" | awk '{ print $2 }')) — nothing judged this iteration, so it is not an attempt at this ticket"
+      fi
+      ;;
   esac
+
+  # And what the pilot has to be told, whichever way that went. Its copy of the
+  # posture was taken from the delivery session's stream before the gate ran, so a
+  # lens refused after it is news the pilot does not have — and it is the pilot,
+  # not this iteration, that decides whether to pause or stop ([08]: the only
+  # honest way to not spend a session is to not spawn it).
+  #
+  # Never over a posture that already says refused: that one is the delivery
+  # session's own, this run's first measurement of the wall, and the pilot has an
+  # answer for it. The whole direction of this correction is one-way — it can add a
+  # reason to be careful and can never take one away.
+  if [ -n "${RALPH_GATE_QUOTA:-}" ] &&
+    ! budget_refused "$(cat "$slot/posture" 2>/dev/null || true)"; then
+    printf '%s\n' "$RALPH_GATE_QUOTA" >"$slot/posture"
+  fi
 
   case "$outcome" in
     resolved | not-integrated) ;;

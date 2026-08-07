@@ -196,6 +196,22 @@ fi
 if [ -n "$lens" ]; then
   mkdir -p "$state/claude.lenses"
   printf '%s\n' "$n" >>"$state/claude.lenses/$lens"
+
+  # A lens the API refused ([43]): the in-band event, no verdict, and a non-zero
+  # exit. Written here rather than through `script_claude` for the reason
+  # `lens-*.writes` is: a script replaces the whole fake, so a test that scripted a
+  # refused lens would lose the verdicts of the lenses beside it and would be
+  # measuring that instead. The stream stops at the event, which is what a session
+  # that never started emits — the delivery half of the same case is
+  # `script_refused_session` in test/budget.bats.
+  if [ -f "$state/lens-$lens.refused" ]; then
+    printf '{"type":"system","subtype":"init","session_id":"%s","model":"%s"}\n' \
+      "$session" "$model"
+    printf '{"type":"rate_limit_event","rate_limit_info":%s,"uuid":"uuid-%s-rate","session_id":"%s"}\n' \
+      "$(cat "$state/lens-$lens.refused")" "$n" "$session"
+    exit 1
+  fi
+
   verdict="$(cat "$state/lens-$lens.verdict" 2>/dev/null ||
     cat "$state/lens.verdict" 2>/dev/null || echo pass)"
 

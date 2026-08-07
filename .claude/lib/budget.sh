@@ -33,6 +33,14 @@
 # asked once per iteration, before a ticket is claimed, and that is the only
 # place in this pack where sleeping is safe.
 #
+# Not gated is not the same as not *read*, and [43] is the difference. A lens the
+# API refused judged nothing, so the two readers below are pointed at its stream
+# too — by `lenses_refused_posture`, in the gate, before the gate's temporary
+# directory goes. What comes back is a correction the pilot applies at the top of
+# the next iteration, exactly like the delivery session's, and a ticket the gate
+# went red on for that reason alone is given back without a retry charged. It
+# still is not a decision taken inside the iteration: nothing sleeps down there.
+#
 # **An iteration is `1 + n` sessions, not one** ([06]): two review lenses always,
 # up to five. This module cannot price that in advance — it compares utilisation
 # ratios, not tokens — so the honest thing is to say it where a project sets the
@@ -302,9 +310,11 @@ budget__field() {
 # `init` and a first thinking estimate — and nothing here depends on that position
 # ([20] found it moves).
 #
-# Read before the loop deletes the stream, and passed around as a string
-# afterwards: it is three words, and keeping the file alive to re-read them would
-# keep a session's own file alive to be re-read.
+# Read before the stream is deleted, and passed around as a string afterwards: it
+# is three words, and keeping the file alive to re-read them would keep a session's
+# own file alive to be re-read. Two callers since [43], one per half of an
+# iteration — the loop, on the delivery session's stream, and the gate, on a review
+# lens's — and both of them read it while the file is still theirs to read.
 budget_stream_posture() {
   local file="${1:-}" line
   [ -n "$file" ] && [ -f "$file" ] || return 0

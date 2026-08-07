@@ -25,11 +25,15 @@
 #              carries: there is nothing to *read*. The `failed/<ticket>` branch
 #              is not written on this path, because it would hold a tree
 #              identical to the one the session was handed.
-#   budget     the subscription ran out under this session ([08]). Not a failed
+#   budget     the subscription ran out under one of this iteration's sessions —
+#              the delivery session ([08]) or a review lens ([43]). Not a failed
 #              attempt at anything: the ticket goes back to the frontier with
 #              **no retry consumed**, no escalation and no forensic branch. The
 #              tree is still rolled back, and that half is the interesting one —
-#              see the note in failures_handle.
+#              see the note in failures_handle. The one class here that is a
+#              *reason* rather than a kind of session, which is why it is also the
+#              one whose row in the ignore-frontier table below had to be read as
+#              a fact instead of a name.
 #
 # A session that wrote the tracker is reported apart (`tracker-write`) and
 # handled as a red gate: it is the same kind of failure — something in the
@@ -178,6 +182,18 @@ failures_handle() {
   #                                          remembering it, which is the whole
   #                                          method of [32].
   #
+  # And the correction [43] had to make to that table, which was already wrong for
+  # one combination before it: the list is by *class*, and `budget` is the one
+  # class that is not a class of session. It is a reason, and the classifier puts
+  # it in front of whatever the outcome was — `nothing-delivered` since [08]/[35],
+  # and a review lens the API refused since [43]. Both of those come out of a gate
+  # that ran and restored, so on those two the row above is `budget` and the truth
+  # is "a gate did". Asking anyway re-detects the one source no restore can put
+  # back — the global excludes file, outside the repository — announces it a second
+  # time, records it in the run's register a second time, and charges every sibling
+  # in flight for one widening twice ([41]). So the question asked is the fact
+  # rather than the class: did anything already read this iteration's frontier.
+  #
   # Conditioned on the class rather than made idempotent, and the choice is worth
   # writing down: what a second call would report twice is exactly what could not
   # be put back — the global excludes file, outside the repository — so an
@@ -189,7 +205,9 @@ failures_handle() {
   # and before the rollback itself, so the line about the tree's rules names them
   # while they are still there.
   case "$class" in
-    crash | timeout | budget) failures__ignore_frontier "$ticket" ;;
+    crash | timeout | budget)
+      [ "${RALPH_GATE_FRONTIER_READ:-0}" = 1 ] || failures__ignore_frontier "$ticket"
+      ;;
   esac
 
   [ -n "$tree" ] || tree="$(gate_tree_snapshot)" || tree=""

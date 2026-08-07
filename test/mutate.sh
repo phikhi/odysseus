@@ -1474,7 +1474,7 @@ mutation "06 the first verdict in the stream decides, not the last" "$LENSES_LIB
   test/lenses.bats "last one in the stream"
 
 mutation "06 a red lens does not redden the gate" "$GATE" \
-  's/  gate__aggregate "\$dir" "\$lenses" \|\| rc=1/  gate__aggregate "\$dir" "\$lenses" || true/' \
+  's/  gate__aggregate "\$dir" "\$lenses" \|\| agg=1/  gate__aggregate "\$dir" "\$lenses" || true/' \
   test/lenses.bats "red lens makes the gate red"
 
 # ── the lens cannot write, prevention half
@@ -1511,8 +1511,11 @@ mutation "06 a containment that cannot see the tree shrugs" "$GATE" \
 # The stream is the mechanism's own write, and it lives under TMPDIR so that the
 # mechanism puts nothing in the repository. Moved into the tree, the containment
 # above notices it — which is what makes these two guarantees one story.
+# The path moved into `lenses__stream` with [43], which gave the stream a second
+# reader. Same guarantee, same test: the containment measures what a lens left in
+# the tree it was judging, and the mechanism's own file must not be in it.
 mutation "06 the lens stream is written into the tree it judges" "$LENSES_LIB" \
-  's/ stream="\$dir\/lens-\$name.jsonl"/ stream="lens-\$name.jsonl"/' \
+  's/  printf '"'"'%s\/lens-%s.jsonl\\n'"'"' "\$1" "\$2"/  printf '"'"'lens-%s.jsonl\\n'"'"' "\$2"/' \
   test/lenses.bats "wrote nothing says nothing"
 
 # ── the phase, and what it costs
@@ -1690,19 +1693,27 @@ mutation "35 the fake session delivers nothing by default" "$SHIM" \
 # that the two classes nothing gated get there at all.
 
 mutation "32 an iteration no gate judged keeps its widened frontier" "$FAILURES" \
-  's/    crash \| timeout \| budget\) failures__ignore_frontier "\$ticket" ;;/    crash | timeout | budget) : ;;/' \
+  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      :/' \
   test/failures.bats "crashed cannot leave the ignore frontier widened"
 
 # The correction placed on the path that happened to be probed — which is exactly
 # what [30] shipped, and why every class is named by a test of its own.
 mutation "32 only the class the probe used gets its frontier back" "$FAILURES" \
-  's/    crash \| timeout \| budget\) failures__ignore_frontier/    crash) failures__ignore_frontier/' \
+  's/^    crash \| timeout \| budget\)$/    crash)/m' \
   test/failures.bats "cut short cannot leave it widened either"
 
-# And the other way the correction goes wrong: bolted onto every class, so the
+# And the other way the correction goes wrong: bolted on unconditionally, so the
 # paths a gate already handled speak twice about one movement.
+#
+# The edit takes the whole `case` away and not just its class list, and that is
+# [43] rather than convenience: from that ticket on, "one caller per iteration" is
+# held by two things — the class list *and* the flag the gate raises once it has
+# read the frontier. Widening the list alone leaves the flag holding it, so the
+# mutation would apply cleanly and this test would stay green while nothing had
+# been removed. Diagnosed rather than rewritten: the guarantee has two owners now,
+# so the edit has to remove both.
 mutation "32 the restore is bolted onto every class, gated or not" "$FAILURES" \
-  's/    crash \| timeout \| budget\) failures__ignore_frontier/    *) failures__ignore_frontier/' \
+  's/  case "\$class" in\n    crash \| timeout \| budget\)\n      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"\n      ;;\n  esac/  failures__ignore_frontier "\$ticket"/' \
   test/failures.bats "once, not twice"
 
 # The cause line behind [24]'s consequence, on the path where `gate__report_frontier`
@@ -2001,7 +2012,7 @@ mutation "08 a refused session keeps its writes for the next iteration to adopt"
   test/budget.bats "does not leave half a file"
 
 mutation "08 a refused session keeps the ignore frontier it widened" "$FAILURES" \
-  's/    crash \| timeout \| budget\) failures__ignore_frontier/    crash | timeout) failures__ignore_frontier/' \
+  's/^    crash \| timeout \| budget\)$/    crash | timeout)/m' \
   test/budget.bats "widened by a refused session"
 
 mutation "08 the in-band signal is never believed" "$BUDGET" \
@@ -2434,7 +2445,7 @@ mutation "41 a guard that was never taken is released all the same" "$GATE" \
 # [41] delivers is that the movement reaches the *siblings* on that path too. One
 # entry per guarantee rather than one per line, the way the [33] pair is written.
 mutation "41 a crashed iteration's movement never reaches its siblings" "$FAILURES" \
-  's/    crash \| timeout \| budget\) failures__ignore_frontier "\$ticket" ;;/    crash | timeout | budget) : ;;/' \
+  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      :/' \
   test/concurrency.bats "no gate judges is still charged"
 
 # Fail-closed on the two things [41] added to `$TMPDIR`. Both had a fallback that
@@ -2447,6 +2458,55 @@ mutation "41 a destroyed run witness reads as no witness at all" "$GATE" \
 mutation "41 a register that got shorter is nobody's business" "$GATE" \
   's/  \[ "\$total" -lt "\$seen" \] && return 0\n//' \
   test/gate.bats "register of movements that got shorter"
+
+# ── [43] the other half of the iteration, priced ─────────────────────────────
+#
+# An iteration is `1 + n` sessions, and [08]'s classifier was wired to the one.
+# Everything here is about the *difference* a missing verdict can have as its
+# reason, so every entry below either makes the pack blind to a refusal or makes
+# it credulous about one — and the second direction is the dangerous one: this
+# signal comes out of a file a concurrent session can write, so what it may buy is
+# a give-back and never a green.
+
+mutation "43 a refused lens is never noticed" "$LENSES_LIB" \
+  's/^lenses_refused_posture\(\) \{/lenses_refused_posture() { return 1;/m' \
+  test/budget.bats "costs the ticket what a refused delivery session costs"
+
+mutation "43 a lens that answered is read as refused all the same" "$LENSES_LIB" \
+  's/  \[ "\$\(lenses__verdict "\$stream"\)" = none \] \|\| return 1\n//' \
+  test/lenses.bats "told apart from every other way"
+
+mutation "43 a stream that says nothing about quota is read as a refusal" "$LENSES_LIB" \
+  's/  budget_refused "\$posture" \|\| return 1\n//' \
+  test/budget.bats "without being refused is still an attempt"
+
+# The measurement the pack takes itself, against the claim it reads. Without the
+# marker, anything able to hang a lens past `GATE_TIMEOUT` with one blocked line in
+# its stream buys the give-back a real refusal buys.
+mutation "43 a lens the watchdog killed speaks through its last event" "$GATE" \
+  's/  if \[ ! -f "\$dir\/timed-out" \]; then/  if true; then/' \
+  test/budget.bats "deadline killed is not read as a refusal"
+
+mutation "43 a refused lens cancels the red of a lens that judged" "$GATE" \
+  's/    gate__all_in "\$RALPH_GATE_FAILED" "\$refused"; then/    true; then/' \
+  test/budget.bats "does not cancel the red of a lens that judged"
+
+mutation "43 a tree the gate could not put back is forgiven for being hungry" "$GATE" \
+  's/  if \[ "\$agg" = 1 \] && \[ "\$contained" = 0 \] && \[ -n "\$refused" \] &&/  if [ "\$agg" = 1 ] \&\& [ -n "\$refused" ] \&\&/' \
+  test/budget.bats "could not be put back"
+
+# The signal has to leave the iteration. It is read in a worktree that is about to
+# be destroyed, and the only process entitled to decline a spawn is the pilot.
+mutation "43 the pilot is never told a lens was refused" "$LOOP" \
+  's/  if \[ -n "\$\{RALPH_GATE_QUOTA:-\}" \] &&/  if false \&\&/' \
+  test/budget.bats "stops on the budget instead of grinding the frontier"
+
+# And the correction [43] had to make to a table that was already wrong for one
+# combination: `budget` is a reason, not a kind of session, so "who put the ignore
+# rules back" cannot be answered by its name.
+mutation "43 a widening a gate already read is charged again" "$FAILURES" \
+  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      failures__ignore_frontier "\$ticket"/' \
+  test/budget.bats "not charged to the run twice"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

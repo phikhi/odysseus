@@ -61,6 +61,23 @@
 #                           failure of its own, not a red check — nothing was
 #                           judged, and a human sent to read a verdict has been
 #                           misrouted
+#   RALPH_GATE_QUOTA        the in-band posture of the last review lens whose
+#                           session the API refused, as `<status> <window>
+#                           <reset>`, or empty. Read out of the lens's stream
+#                           before this module removes it ([43]); it is a
+#                           correction for the pilot's budget watch and may only
+#                           ever make the run more cautious
+#   RALPH_GATE_QUOTA_ONLY   1 when this gate is red and **every** red branch is a
+#                           lens the API refused before it could look. Not a green,
+#                           and never a forgiven red: the verdicts still say red,
+#                           and what it buys the ticket is a give-back with no
+#                           retry charged — the criterion [08] wrote and wired to
+#                           two outcomes only ([43])
+#   RALPH_GATE_FRONTIER_READ
+#                           1 once this gate has put the ignore rules back and read
+#                           this iteration's share of the movement register. The
+#                           failure policy asks again on the paths where nobody
+#                           did, and a second ask charges a widening twice ([41])
 
 gate__log() {
   printf 'ralph: gate: %s\n' "$*"
@@ -1746,7 +1763,7 @@ gate__aggregate() {
 # healthy test.
 gate__lens_phase() {
   local ticket="$1" base="$2" dir="$3" objective_rc="$4"
-  local lenses pids='' name pre rc=0
+  local lenses pids='' name pre rc=0 agg=0 contained=0 refused='' posture
 
   lenses="$(lenses_triggered "$ticket" | tr '\n' ' ')"
 
@@ -1781,9 +1798,69 @@ gate__lens_phase() {
   done
 
   gate__await "$dir" "$pids"
-  gate__aggregate "$dir" "$lenses" || rc=1
-  gate__contain_lens_writes "$ticket" "$pre" || rc=1
+  gate__aggregate "$dir" "$lenses" || agg=1
+
+  # Which of them judged nothing because the API refused the session, read here
+  # and nowhere else: the streams live under `$dir`, and `gate_run` removes it
+  # ([43]). A branch is a subshell, so this cannot be the branch's own answer.
+  #
+  # Not asked at all when this fan hit its deadline, and that is [23]'s rule one
+  # layer down: a reason this pack measured itself is not overwritten by one read
+  # out of the stream of what it measured. A lens the watchdog killed judged
+  # nothing either, and letting its last event speak would hand a free give-back to
+  # anything that can arrange to hang past `GATE_TIMEOUT` with a blocked line in
+  # the stream. The marker is this fan's own: an objective fan that timed out is
+  # red, and a red objective fan skips this phase before the tree is even
+  # snapshotted. A green fan that raced the watchdog reads as timed out here, which
+  # costs a give-back the ticket would have got — the cautious side.
+  if [ ! -f "$dir/timed-out" ]; then
+    for name in $lenses; do
+      if posture="$(lenses_refused_posture "$dir" "$name")"; then
+        RALPH_GATE_QUOTA="$posture"
+        refused="$refused $name"
+        gate__log "$ticket: the $name lens judged nothing because the API refused its session ($(printf '%s' "$posture" | awk '{ print $2 }')) — the branch is still red, and this iteration is not an attempt at the ticket"
+      fi
+    done
+  fi
+
+  gate__contain_lens_writes "$ticket" "$pre" || contained=1
+
+  # Red, and red for one reason only. Three conditions, and dropping any of them
+  # would hand a session something this signal must never buy ([43]):
+  #
+  #   agg = 1        there is a red to explain at all. A green gate is green, and
+  #                  nothing here may touch it.
+  #   contained = 0  the tree the lenses were handed is back where they found it.
+  #                  A write nobody could undo is a refusal this pack measured
+  #                  itself, and a claim read out of a stream does not overwrite a
+  #                  measurement ([23]).
+  #   every red is   the one that matters. A lens that answered `fail` looked and
+  #   a refused one  found something wrong, and a sibling lens the API refused
+  #                  beside it does not take that away. `RALPH_GATE_FAILED` holds
+  #                  only lens names here — this phase is skipped outright when an
+  #                  objective branch is red — so the comparison is exact.
+  if [ "$agg" = 1 ] && [ "$contained" = 0 ] && [ -n "$refused" ] &&
+    gate__all_in "$RALPH_GATE_FAILED" "$refused"; then
+    RALPH_GATE_QUOTA_ONLY=1
+  fi
+
+  [ "$agg" = 0 ] || rc=1
+  [ "$contained" = 0 ] || rc=1
   return "$rc"
+}
+
+# Whether every word of the first list appears in the second. Both are
+# space-delimited; an empty first list is vacuously true, which is why the caller
+# tests for a non-empty one before asking.
+gate__all_in() {
+  local have=" $2 " name
+  for name in $1; do
+    case "$have" in
+      *" $name "*) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
 }
 
 # What a lens wrote in the tree it was judging, put back.
@@ -1859,6 +1936,9 @@ gate_run() {
   RALPH_GATE_IGNORE=""
   RALPH_GATE_TREE=""
   RALPH_GATE_NOTHING_DELIVERED=0
+  RALPH_GATE_QUOTA=""
+  RALPH_GATE_QUOTA_ONLY=0
+  RALPH_GATE_FRONTIER_READ=0
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
 
   # Before the tree, so that every branch runs in a repository whose visibility is
@@ -1869,6 +1949,14 @@ gate_run() {
   # this one — without it, the widened frontier is what the next pin records, and a
   # single red iteration would have bought a whole night of blindness ([30]).
   RALPH_GATE_IGNORE="$(gate_ignore_frontier)" || true
+  # Said to whoever comes after, and it has one reader: the failure policy asks
+  # again on the paths where nobody restored, and reads that list off its own
+  # classification ([32]). Since [08] one class on that list — `budget` — can also
+  # arrive from an iteration whose gate ran (a delivery session that wrote nothing,
+  # and since [43] a review lens the API refused), and asking twice re-detects the
+  # one movement no restore can undo, records it in the run's register a second
+  # time, and charges every sibling in flight for it twice ([41]).
+  RALPH_GATE_FRONTIER_READ=1
 
   # The tree every branch is judged on, taken once and before a single branch is
   # started. Both halves are load-bearing. *Once*, so that the scope-guard, the
