@@ -102,6 +102,59 @@ git_subjects() {
   git -C "$PROJECT_DIR" log --format='%s'
 }
 
+# ── staging a run that is gone ([44]) ────────────────────────────────────────
+
+# A project suite that kills the run this iteration belongs to, and does not come
+# back until the parent link has actually changed.
+#
+# `$PPID` inside TEST_CMD is the gate branch, whose parent is the iteration, whose
+# parent is the pilot. Waiting on the *link* rather than on the pid is the whole
+# reliability of these tests: `kill -KILL` returns before its target is gone, and a
+# suite that returned straight away would leave the assertions measuring how busy
+# the machine was rather than what the iteration decided. It is also the only
+# window a test can put something inside — the gate is where a real run spends its
+# half hour.
+concurrency__kill_pilot_suite() {
+  cat >"$RALPH_TEST_DIR/kill-pilot.sh" <<'KILL'
+#!/usr/bin/env bash
+parent_of() { ps -o ppid= -p "${1:-0}" 2>/dev/null | awk 'NR == 1 { print $1 + 0 }'; }
+iter="$(parent_of "$PPID")"
+pilot="$(parent_of "$iter")"
+kill -KILL "$pilot" 2>/dev/null || true
+tries=400
+while [ "$(parent_of "$iter")" = "$pilot" ] && [ "$tries" -gt 0 ]; do
+  tries=$((tries - 1))
+  sleep 0.05
+done
+exit "${1:-0}"
+KILL
+  chmod +x "$RALPH_TEST_DIR/kill-pilot.sh"
+  set_config TEST_CMD "bash $RALPH_TEST_DIR/kill-pilot.sh ${1:-0}"
+}
+
+# Wait for an iteration whose pilot is gone to have finished, whichever way it
+# went. The slot marker and not a log line, because **both** ends of the decision
+# write it: an iteration that stands down and one that goes on to deliver both get
+# there, so removing a refusal fails these tests instead of hanging the mutation
+# gate in them ([25]). Nobody sweeps the slot either — that was the pilot's job.
+concurrency__await_orphan() {
+  local waited=0
+  until ls "$RALPH_TEST_DIR"/tmp/ralph-slot.*/done >/dev/null 2>&1; do
+    [ "$waited" -lt 900 ] || return 1
+    waited=$((waited + 1))
+    sleep 0.1
+  done
+  return 0
+}
+
+# The worktree a killed run left registered — the tree the durable commit of [07]
+# would have landed in.
+concurrency__orphan_worktree() {
+  git -C "$PROJECT_DIR" worktree list --porcelain |
+    awk -v pfx="$RALPH_TEST_DIR/tmp/ralph-worktree." \
+      '$1 == "worktree" && index($2, pfx) == 1 { print $2 }'
+}
+
 # A session that writes the paths it is given, and one that writes whatever its
 # ticket declared. Local copies rather than harness API, the way test/gate.bats
 # and test/failures.bats each keep their own: what a fake writes is the scenario
@@ -851,6 +904,234 @@ FAKE
   run cat "$RALPH_TEST_DIR/lost.out"
   assert_output_contains "the iteration died without a verdict — given back to the frontier"
   assert_ticket_status 01-alpha ready-for-agent
+}
+
+# ── a run that is gone ───────────────────────────────────────────────────────
+#
+# The other half of the pair above, and the one [25] and [28] are in tension with:
+# an iteration that finishes is the promise, an iteration that *delivers* for a run
+# that no longer exists is the defect. The line is between measuring and
+# delivering, and the two tests below are the witness pair the ticket asked for —
+# a `kill -KILL`, where nothing durable may happen, and an ordinary TERM (see "a
+# stop request lets the iterations in flight finish" above), where everything must.
+
+@test "an iteration whose run was killed delivers nothing" {
+  # Probe H of [44], staged rather than recounted. Before [13] an iteration *was*
+  # the pilot's own shell, so killing the run stopped everything the pack wrote.
+  # Since then it is a subshell that traps TERM and INT on purpose, and it carries
+  # the gate, the durable commit, the fold onto the branch and the marking —
+  # probed, twenty seconds after a `kill -KILL` on the run the ticket was
+  # `resolved`, the work was committed, `HEAD` had moved and `run.log` was empty,
+  # the journal being the pilot's own file.
+  #
+  # The session is held on a file rather than a delay, so what this measures is the
+  # decision and not the machine: the iteration is squarely between its fork and
+  # its first durable write when its run dies.
+  #
+  # A review lens is configured for the half of the guard that is not about the
+  # repository: it sits *ahead of the gate*, so an orphan spends no more of the
+  # subscription either. One `claude` is the whole of what a killed run costs —
+  # the session that was already in flight.
+  use_tickets 01-alpha
+  set_config LENSES standards
+  lens_verdict standards pass
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+state="$RALPH_SHIM_STATE"
+: >"$state/session.started"
+tries=900
+while [ ! -e "$state/release" ] && [ "$tries" -gt 0 ]; do
+  tries=$((tries - 1)); sleep 0.1
+done
+for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' '); do
+  mkdir -p "$(dirname "$target")" && printf 'alpha\n' >"$target"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  local head_before
+  head_before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
+  env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" \
+    >"$RALPH_TEST_DIR/killed.out" 2>&1 &
+  local pid=$!
+  wait_for_file "$SHIM_STATE/session.started" 600 || fail "the session never started"
+
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  # If this is false the scenario never happened and everything below would prove
+  # something else: a run that had already given the ticket back.
+  assert_ticket_status 01-alpha claimed
+  : >"$SHIM_STATE/release"
+
+  concurrency__await_orphan || fail "the orphaned iteration never came back"
+
+  # Nothing durable: not the branch, not the tracker. The claim is left exactly
+  # where the kill left it — giving it back would itself be a write, into a tracker
+  # the next run may already be reclaiming from.
+  assert_equal "$(git -C "$PROJECT_DIR" rev-parse HEAD)" "$head_before"
+  assert_ticket_status 01-alpha claimed
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+  assert_equal "$(claude_call_count)" "1"
+  run cat "$RALPH_TEST_DIR/killed.out"
+  assert_output_contains "the run that forked this iteration is gone"
+
+  # And what it left behind is counted by the run that comes next rather than
+  # silent: a worktree a killed run never removed stays registered in the common
+  # git directory ([13]), and the claim goes back to the frontier through the
+  # liveness sweep ([12]) exactly as it did before [13] forked anything.
+  rm -f "$SHIM_STATE/claude.script"
+  run env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh"
+  assert_success
+  assert_output_contains "iteration worktree(s) of earlier runs are still registered"
+  assert_output_contains "reclaimed 01-alpha from an owner that is gone"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a run that dies during the gate leaves no commit, not even in the doomed worktree" {
+  # The third guard, and why a check at the entry and one after the session are not
+  # enough: between them lies the gate, which is where a real iteration spends its
+  # half hour. What comes after it is every point of no return this ticket names —
+  # the durable commit, the fold, the marking — so the question is asked once more
+  # before the first of the three.
+  #
+  # The observable is the commit itself and not a line about it, and it has to be
+  # read *inside the worktree*: that is where [07]'s commit lands, and nobody
+  # destroyed that tree because destroying it was the pilot's job. A guard placed
+  # one line lower would leave this commit written.
+  use_tickets 01-alpha
+  script_session_writing src/alpha.txt
+  concurrency__kill_pilot_suite 0
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+
+  local head_before wt
+  head_before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+  env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" \
+    >"$RALPH_TEST_DIR/gate-killed.out" 2>&1 &
+  wait "$!" 2>/dev/null || true
+  concurrency__await_orphan || fail "the orphaned iteration never came back"
+
+  wt="$(concurrency__orphan_worktree)"
+  [ -n "$wt" ] || fail "the killed run left no iteration worktree to look in"
+  assert_equal "$(git -C "$wt" rev-parse HEAD)" "$head_before"
+  assert_equal "$(git -C "$PROJECT_DIR" rev-parse HEAD)" "$head_before"
+  assert_ticket_status 01-alpha claimed
+}
+
+@test "a red gate for a run that is gone bills the ticket nothing" {
+  # The same window, on the other side of the verdict — and it is the side a
+  # killed run actually takes, its session dying with it. This path writes more
+  # than the green one and further afield: it bumps `Failures:`, it can escalate to
+  # the human sink, it writes a `failed/<ticket>` ref in the *common* git directory
+  # which no worktree throws away, and a re-slice would create tickets and spawn a
+  # session of its own. It is also what made `claim.bats` intermittent: the orphan
+  # wrote `01-alpha.md` inside the window the next run was watching, and [21]'s
+  # guard read that as the work of its own session.
+  use_tickets 01-alpha
+  script_session_writing src/alpha.txt
+  concurrency__kill_pilot_suite 1
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+
+  env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" \
+    >"$RALPH_TEST_DIR/red-killed.out" 2>&1 &
+  wait "$!" 2>/dev/null || true
+  concurrency__await_orphan || fail "the orphaned iteration never came back"
+
+  # Nothing was billed and nothing was filed: the ticket is exactly where the kill
+  # left it, which is what lets the next run's sweep decide what it costs.
+  assert_ticket_status 01-alpha claimed
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+  run bash -c "git -C '$PROJECT_DIR' for-each-ref --format='%(refname)' refs/heads/failed"
+  assert_equal "$output" ""
+}
+
+@test "the fold refuses on its own account when the run died during the gate" {
+  # The window the loop's own guards cannot cover, and why the refusal is also in
+  # `concurrency_integrate` ([44]). The guard before the durable commit passed with
+  # a live pilot; what comes after it is a wait this iteration does not control —
+  # `concurrency__wait_for_guard` sits for up to a minute while a sibling folds —
+  # and `state_guard_take` recovers a guard from an owner that is gone, so an
+  # orphan asking for it would be *granted* it.
+  #
+  # Staged on the first `update-ref` of the iteration, which is [07]'s commit
+  # inside the worktree: the pilot is killed exactly there, so the only thing left
+  # between the orphan and the branch is the fold's own question. The shim then
+  # waits for the parent link to actually change — a `kill -KILL` returns before
+  # its target is gone, and this test would otherwise be measuring the scheduler.
+  use_tickets 01-alpha
+
+  cat >"$SHIM_BIN/git" <<'GITSHIM'
+#!/usr/bin/env bash
+real() { PATH="${PATH#"$RALPH_SHIM_BIN":}" command git "$@"; }
+if [ "$1" = update-ref ]; then
+  n="$(cat "$RALPH_SHIM_STATE/updaterefs" 2>/dev/null || echo 0)"
+  n=$((n + 1))
+  printf '%s\n' "$n" >"$RALPH_SHIM_STATE/updaterefs"
+  if [ "$n" = 1 ]; then
+    pilot="$(cat "$RALPH_SHIM_STATE/pilot.pid")"
+    kill -KILL "$pilot" 2>/dev/null || true
+    tries=400
+    while [ "$(ps -o ppid= -p "$PPID" 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')" = "$pilot" ] &&
+      [ "$tries" -gt 0 ]; do
+      tries=$((tries - 1))
+      sleep 0.05
+    done
+  fi
+fi
+real "$@"
+GITSHIM
+  chmod +x "$SHIM_BIN/git"
+  export RALPH_SHIM_BIN="$SHIM_BIN"
+
+  script_session_writing src/alpha.txt
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  local head_before
+  head_before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
+  env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/loop.sh" \
+    >"$RALPH_TEST_DIR/fold.out" 2>&1 &
+  local pid=$!
+  printf '%s\n' "$pid" >"$SHIM_STATE/pilot.pid"
+  wait "$pid" 2>/dev/null || true
+
+  concurrency__await_orphan || fail "the orphaned iteration never came back"
+
+  run cat "$RALPH_TEST_DIR/fold.out"
+  assert_output_contains "not taking the integration guard, and not moving the branch"
+  # The durable commit did happen — inside a worktree about to be destroyed, which
+  # is why it is not a point of no return. The branch is where it was.
+  assert_equal "$(git -C "$PROJECT_DIR" rev-parse HEAD)" "$head_before"
+  assert_ticket_status 01-alpha claimed
+}
+
+@test "an iteration that cannot name its run spawns no session at all" {
+  # The fail-closed half, and the only one a test can stage without racing a
+  # window microseconds wide. `proc_owner_take` reads a parent link through `ps`;
+  # a shell that gets no answer cannot say which run forked it, and therefore
+  # cannot say later whether that run is still there.
+  #
+  # It stands down **before the spawn**, which is what this asserts: the guard sits
+  # ahead of the four snapshots and of the session, so a run that cannot be seen
+  # costs no subscription. And the pilot — alive here, which is the whole
+  # difference from the test above — hears about it: the ticket goes back and the
+  # run stops rather than forking another iteration into the same blindness.
+  use_tickets 01-alpha
+  mkdir -p "$RALPH_TEST_DIR/nops"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$RALPH_TEST_DIR/nops/ps"
+  chmod +x "$RALPH_TEST_DIR/nops/ps"
+
+  run env PATH="$RALPH_TEST_DIR/nops:$PATH" bash "$PACK_DIR/loop.sh"
+  assert_failure 4
+  assert_output_contains "cannot tell which run forked it"
+  assert_output_contains "given back, and stopping"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(claude_call_count)" "0"
 }
 
 # ── the preflight ────────────────────────────────────────────────────────────

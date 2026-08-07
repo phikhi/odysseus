@@ -1722,7 +1722,7 @@ mutation "36 a deadline fires for a run that is gone" "$GATE" \
   test/gate.bats "run that armed it is gone"
 
 mutation "36 a countdown serves out a run that is gone" "$PROC" \
-  's/    \[ "\$\(proc_parent_of "\$self"\)" = "\$owner" \] \|\| return 1\n//' \
+  's/    if proc_owner_gone; then return 1; fi\n//' \
   test/proc.bats "shell that armed it is gone"
 
 mutation "36 a deadline fires at a pid that changed hands" "$GATE" \
@@ -2265,6 +2265,85 @@ mutation "42 the quarantine reads the register" "$FAILURES" \
 mutation "42 a creation is noted under the id it produced" "$TRACKER_IFACE" \
   's/      \[ -z "\$out" \] \|\| printf .%s\\n. "\$out"\n      tracker__note_write "\$out"/      [ -z "\$out" ] || printf "%s\\n" "\$out"\n      tracker__note_write "\${1:-}"/' \
   test/failures.bats "left alone by the quarantine"
+
+# ── [44] a run that is gone, and an iteration that goes on delivering ────────
+#
+# Every entry here comes in a pair, the way [36]'s do and for a sharper reason.
+# What this ticket adds is a *refusal*, and a correction that refused everything
+# would satisfy every entry aimed at the refusal while taking back exactly what
+# [25] and [28] paid for — "the current iteration finishes". So each entry that
+# removes the refusal has a twin that removes the capacity to act, and every twin
+# names a test that proves an iteration still finishes when its run is merely
+# *asked* to stop.
+#
+# The four aimed at `loop.sh` past the first pair are about **where** the question
+# is asked, which is the ticket rather than a detail: one check at the entry leaves
+# the whole window of the session and of the gate, and each of the four sites below
+# is the far end of a window nothing else covers.
+
+mutation "44 an iteration never records which run forked it" "$LOOP" \
+  's/  if ! proc_owner_take "\$\$"; then/  if ! true; then/' \
+  test/concurrency.bats "run was killed"
+
+mutation "44 an iteration stands down whatever its run is doing" "$LOOP" \
+  's/  if ! proc_owner_take "\$\$"; then/  if ! false; then/' \
+  test/concurrency.bats "grinds two disjoint tickets"
+
+mutation "44 the orphan question always answers no" "$LOOP" \
+  's/  proc_owner_gone \|\| return 1\n  loop__stand_down/  return 1\n  loop__stand_down/' \
+  test/concurrency.bats "run was killed"
+
+mutation "44 the orphan question always answers yes" "$LOOP" \
+  's/  proc_owner_gone \|\| return 1\n  loop__stand_down/  :\n  loop__stand_down/' \
+  test/concurrency.bats "iterations in flight finish"
+
+# Anchored on the line that follows each one: the four call sites are the same
+# three lines, so an anchor on the interesting token would edit the first of them
+# and report VACUOUS about a test that is fine — the shape this file's header warns
+# about twice.
+mutation "44 nothing is asked between the session and the gate" "$LOOP" \
+  's/  if loop__orphaned "\$ticket" "\$slot"; then\n    return 0\n  fi\n\n  # Before the gate reads/  # Before the gate reads/' \
+  test/concurrency.bats "run was killed"
+
+mutation "44 nothing is asked between the gate and the commit" "$LOOP" \
+  's/      if loop__orphaned "\$ticket" "\$slot"; then\n        return 0\n      fi\n      # Durable inside this worktree first/      # Durable inside this worktree first/' \
+  test/concurrency.bats "dies during the gate"
+
+mutation "44 nothing is asked between the gate and the failure policy" "$LOOP" \
+  's/      if loop__orphaned "\$ticket" "\$slot"; then\n        return 0\n      fi\n      failures_handle/      failures_handle/' \
+  test/concurrency.bats "bills the ticket nothing"
+
+mutation "44 an orphan gives back a claim it no longer owns" "$LOOP" \
+  's/        if loop__orphaned "\$ticket" "\$slot"; then\n          return 0\n        fi\n        tracker_unclaim/        tracker_unclaim/' \
+  test/concurrency.bats "refuses on its own account"
+
+# And the one refusal that is not the caller's to make: the fold waits on a guard
+# `state_guard_take` would hand to an orphan, in the name of a run that is gone.
+mutation "44 the fold takes the guard for a run that is gone" "$CONCURRENCY" \
+  's/  if proc_owner_gone; then\n/  if false; then\n/' \
+  test/concurrency.bats "refuses on its own account"
+
+mutation "44 the fold refuses whatever the run is doing" "$CONCURRENCY" \
+  's/  if proc_owner_gone; then\n/  if true; then\n/' \
+  test/concurrency.bats "fast-forward onto the very commit"
+
+# The primitive under all of it. The first is the fail-closed half, and its test
+# is a *deadline* rather than an iteration — an iteration hands `$$` in, so an
+# unreadable link is caught one line lower by the link check itself, and this entry
+# reported VACUOUS against the iteration test that looked like the obvious one. The
+# second is the half that makes an owner handed in worth handing in: without it, a
+# pilot that died between the fork and the child's first line is accepted as owner.
+mutation "44 an owner nobody can read is taken all the same" "$PROC" \
+  's/  \[ -n "\$PROC_OWNER" \] && \[ "\$PROC_OWNER" != 0 \] \|\| return 1\n//' \
+  test/proc.bats "cannot read a parent link"
+
+mutation "44 no shell can ever take an owner" "$PROC" \
+  's/^proc_owner_take\(\) \{/proc_owner_take() { return 1;/m' \
+  test/concurrency.bats "grinds two disjoint tickets"
+
+mutation "44 an owner that is already gone is taken all the same" "$PROC" \
+  's/  if proc_owner_gone; then\n    return 1\n  fi\n  return 0\n\}/  return 0\n}/' \
+  test/proc.bats "owner handed in is refused"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
