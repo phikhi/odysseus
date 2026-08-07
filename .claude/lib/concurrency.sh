@@ -342,6 +342,47 @@ concurrency__integration_guard() {
   printf '%s/ralph.integrate.lock\n' "$dir"
 }
 
+# ── ordering what every iteration shares ─────────────────────────────────────
+
+# The guard the ignore frontier's restore is taken under ([41]). Same directory
+# and same argument as the fold's, one layer down: `.git/info/exclude` and
+# `core.excludesFile` are *in* the common git directory, so a guard anywhere else
+# would order nothing at all. It is `gate.sh` that takes it — the guard belongs to
+# this module because the common directory does, and the decision of when to take
+# it belongs to the check that restores.
+#
+# Public where the fold's is private, and that is the second-caller rule rather
+# than an oversight: a guard with a caller in another module is an interface.
+concurrency_frontier_guard() {
+  local dir
+  dir="$(concurrency__common_dir)" || return 1
+  printf '%s/ralph.frontier.lock\n' "$dir"
+}
+
+# Bounded much shorter than the fold's, and the difference is not a tuning: the
+# fold *must* be exclusive to be correct — it is a compare-and-swap on a ref — so
+# it is worth a minute of waiting. This one is not correctness. What it restores is
+# a fixed value read from the run's own witness, so two unguarded restores write
+# the same bytes; the guard buys one restore and one record where there would
+# otherwise be two of each. A wait long enough to stall a gate would buy nothing
+# and cost the iteration, so a caller that cannot have it goes ahead without it.
+concurrency_frontier_take() {
+  local guard tries=30
+  guard="$(concurrency_frontier_guard)" || return 1
+  while [ "$tries" -gt 0 ]; do
+    state_guard_take "$guard" "frontier guard" "${FEATURE:-unknown}" && return 0
+    tries=$((tries - 1))
+    sleep 0.1
+  done
+  return 1
+}
+
+concurrency_frontier_release() {
+  local guard
+  guard="$(concurrency_frontier_guard)" || return 0
+  state_guard_release "$guard"
+}
+
 # Fold one gated iteration onto the branch the run was started on, one at a time.
 #
 # Called with the commit the worktree was created at, the commit the durable

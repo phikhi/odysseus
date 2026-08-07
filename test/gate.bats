@@ -1179,6 +1179,123 @@ FAKE
   assert_file_contains "$HOME/.config/git/ignore" "rogue/"
 }
 
+# ── the sources every worktree shares ([41]) ─────────────────────────────────
+#
+# `.git/info/exclude` and `core.excludesFile` are not an iteration's own the way
+# its `.gitignore` files are: they live in the git directory every linked worktree
+# shares, so a witness taken per iteration is taken at the wrong level. What the
+# loop-level cases look like is in `test/concurrency.bats`; these are the pieces,
+# driven directly, because the piece that matters is not reachable through a run —
+# an iteration spawning in the exact instant a sibling's session has the frontier
+# widened is not something a scenario can arrange twice the same way.
+
+@test "a pin taken while the frontier was widened records what the run was handed" {
+  # The poisoned baseline, and it is worse than a missed finding: an iteration that
+  # pinned the widening goes blind behind a rule it never wrote, and its own restore
+  # then puts that rule **back** over the witness of the sibling that had it right.
+  use_tickets 01-alpha
+  printf 'localonly/\n' >>"$PROJECT_DIR/.git/info/exclude"
+  cp "$PROJECT_DIR/.git/info/exclude" "$RALPH_TEST_DIR/exclude.before"
+
+  pack_run '
+    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    gate_ignore_frontier || true
+    rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+  assert_success
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+
+  # Back to the byte, human's own rule included: the pin answered for the run and
+  # not for the instant it was taken.
+  run diff "$RALPH_TEST_DIR/exclude.before" "$PROJECT_DIR/.git/info/exclude"
+  assert_success
+}
+
+@test "without the run's witness the same pin adopts the widening" {
+  # The refutation, and without it the test above could be passing on a restore
+  # that happens to work rather than on the level the witness is taken at. Same
+  # sequence with no run witness — which is the pack before [41] — and the widening
+  # becomes this iteration's own baseline: nothing moved, nothing said, nothing put
+  # back.
+  use_tickets 01-alpha
+  printf 'localonly/\n' >>"$PROJECT_DIR/.git/info/exclude"
+
+  pack_run '
+    printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    gate_ignore_frontier || true
+    rm -rf "$RALPH_IGNORE_PIN"'
+  assert_success
+  refute_output_contains "moved the ignore frontier"
+  assert_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+}
+
+@test "the restore is taken under a guard in the common git directory" {
+  # Where the fold's guard is, and for the same reason: the file being restored is
+  # in the directory every worktree shares, so a guard anywhere else would order
+  # nothing. Staged through a *stale* guard rather than a live one — the takeover
+  # says so out loud, which makes "this path takes the guard" an observation
+  # instead of an inference, and it costs no waiting.
+  use_tickets 01-alpha
+  local guard="$PROJECT_DIR/.git/ralph.frontier.lock"
+  mkdir -p "$guard"
+  printf '999999\n' >"$guard/pid"
+
+  pack_run '
+    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    gate_ignore_frontier || true
+    rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+  assert_success
+  assert_output_contains "taking over a stale frontier guard (pid 999999)"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+
+  # And given back, so the next iteration is not left waiting on a guard whose
+  # holder finished.
+  [ ! -d "$guard" ] || fail "the frontier guard was kept after the restore"
+}
+
+@test "a frontier guard it could not take is released only by the iteration that took it" {
+  # `state_guard_release` matches on `$$`, and every iteration of one run is a
+  # subshell of the same pilot — so they all share it. An iteration that waited out
+  # its turn and released anyway would take the guard away from the sibling that is
+  # holding it, which is worse than never guarding at all.
+  #
+  # The sibling is staged as this very shell for that reason: it is what a subshell
+  # of the same pilot looks like from the guard's side. The wait below is expected
+  # to expire, and the restore is expected to happen all the same — a guard that
+  # cannot be taken is not a reason to leave the frontier widened for the night.
+  use_tickets 01-alpha
+
+  pack_run '
+    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    guard="$(concurrency_frontier_guard)"
+    state_guard_take "$guard" "a sibling of this iteration" test
+    gate_ignore_frontier || true
+    if [ -d "$guard" ]; then printf "GUARD-STILL-HELD\n"; else printf "GUARD-GONE\n"; fi
+    rm -rf "$guard" "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+  assert_success
+  assert_output_contains "GUARD-STILL-HELD"
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+}
+
+@test "a run with no witness of the shared frontier refuses to start" {
+  # The fallback in the library — read the live sources when no run witnessed them
+  # — is what keeps `gate_*` drivable outside a run, and it must never be what the
+  # loop ships: without a witness the run is back to billing whichever iteration
+  # looked first for a file it never opened.
+  use_tickets 01-alpha
+  run env TMPDIR=/nonexistent/ralph-no-tmp bash "$PACK_DIR/loop.sh"
+  assert_failure 4
+  assert_output_contains "refusing to grind a frontier whose movements nothing could attribute"
+}
+
 @test "ignore rules that were already there cost nothing and are still named" {
   # The direction that matters most, and [31] is where this pack learned to look
   # for it: the common case is not an attack. A human's local excludes and a
@@ -1467,6 +1584,53 @@ FAKE
     [0-9a-f][0-9a-f]*) ;;
     *) fail "a readable pin should still yield a tree object: $output" ;;
   esac
+}
+
+@test "a run witness a session destroyed closes the control, like a destroyed pin" {
+  # [41] put two more things in `$TMPDIR`: the witness of the sources every
+  # worktree shares, and the register of what has moved. Both are reachable by
+  # exactly the session that can reach the pin — and both had a fallback that reads
+  # the live sources, which is a quiet return to the pack before [41]. Destroying
+  # the pin costs the night; destroying these had to cost the same.
+  use_tickets 01-alpha
+
+  pack_run '
+    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    rm -rf "$RALPH_IGNORE_COMMON"
+    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN"'
+  assert_failure
+  assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
+
+  # The refutation, without which the assertion above could be passing on any error
+  # at all: the same call with both witnesses in place hands back a tree object.
+  pack_run '
+    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+  assert_success
+  case "$output" in
+    [0-9a-f][0-9a-f]*) ;;
+    *) fail "two readable witnesses should still yield a tree object: $output" ;;
+  esac
+}
+
+@test "a register of movements that got shorter closes the control too" {
+  # The register is append-only by construction, so a length below an iteration's
+  # own mark is not a state this pack can produce — it is a rewrite, and the one
+  # rewrite that would pay: erasing a movement a sibling recorded lets the session
+  # that made it walk. What this does *not* catch is in the code and in
+  # `docs/frontiere-de-confiance.md`: a truncation back to exactly the mark.
+  use_tickets 01-alpha
+
+  pack_run '
+    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    printf "some-pin\ta movement a sibling recorded\n" >>"$RALPH_IGNORE_COMMON/ledger"
+    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    : >"$RALPH_IGNORE_COMMON/ledger"
+    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+  assert_failure
+  assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
 }
 
 # ── an iteration that delivered nothing ──────────────────────────────────────

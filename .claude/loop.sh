@@ -838,6 +838,25 @@ loop_main() {
   RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")" ||
     RALPH_TRACKER_LOG=''
 
+  # The frontier sources every iteration *shares*, witnessed once for the whole run
+  # ([41]). The per-iteration pin below is the right level for the `.gitignore`
+  # files of a worktree and the wrong one for `.git/info/exclude`, which lives in
+  # the git directory all the worktrees share: with two iterations in flight, the
+  # one that spawns while a sibling's session has the frontier widened would pin
+  # the widening as its own baseline. Same treatment as the pin and the register
+  # above — a name in `$TMPDIR` this shell holds and never exports, so no session
+  # is told it exists ([40]).
+  #
+  # Refused rather than worked around, for the same reason the pin is: without it
+  # the run is back to charging whichever iteration looked first for a file it
+  # never opened, and a bill nobody can contest is worse than a run that did not
+  # start.
+  if ! RALPH_IGNORE_COMMON="$(gate_ignore_common)"; then
+    loop_log "cannot witness this repository's shared ignore frontier — refusing to grind a frontier whose movements nothing could attribute"
+    rm -f "${RALPH_TRACKER_LOG:-}"
+    exit 4
+  fi
+
   local iteration=0 sterile=0 ticket reclaimed rid rdisposition
   local budget_posture='' budget_paused=0 span pin
   local stop_code=''
@@ -991,6 +1010,7 @@ loop_main() {
         continue
       fi
       rm -f "${RALPH_TRACKER_LOG:-}"
+      rm -rf "${RALPH_IGNORE_COMMON:-}"
       if [ "$iteration" -eq 0 ]; then
         loop_log "nothing to grind: the frontier was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
         exit 5
@@ -1033,6 +1053,7 @@ loop_main() {
   done
 
   rm -f "${RALPH_TRACKER_LOG:-}"
+  rm -rf "${RALPH_IGNORE_COMMON:-}"
   exit "${stop_code:-0}"
 }
 

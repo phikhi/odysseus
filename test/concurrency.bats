@@ -347,6 +347,256 @@ FAKE
   assert_equal "$(concurrency__peak_pins)" "2"
 }
 
+# ── the frontier every worktree shares ([41]) ────────────────────────────────
+#
+# `.git/info/exclude` is one file in the common git directory, so it is *not* an
+# iteration's own the way its `.gitignore` files are. One session widens it and
+# every iteration in flight is judged through the widening — and, before this
+# ticket, the first gate to look was the one billed for it, which is almost never
+# the one that wrote it.
+#
+# **The order of the two gates is staged and never timed.** A `sleep` long enough
+# to order two gates measures the machine rather than the pack. What orders these
+# is an observation: the session that must be gated last waits until the frontier
+# has actually been put back, which cannot happen before the other iteration's gate
+# has run its restore. The wait is bounded and its bound is part of the guarantee.
+concurrency__frontier_session() {
+  printf '%s\n' "${1:-alpha}" >"$SHIM_STATE/frontier-last"
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+state="$RALPH_SHIM_STATE"
+me="$$"
+
+case "$prompt" in
+  *01-alpha*) who=alpha; target=src/alpha.txt ;;
+  *) who=beta; target=src/beta.txt ;;
+esac
+
+exclude="$(git rev-parse --git-common-dir)/info/exclude"
+# The widening, in the **common** git directory: a worktree answers `.git` with a
+# file, so the naive `>>.git/info/exclude` would write nothing at all and this
+# whole scenario would stage nothing while reading as green.
+[ "$who" = alpha ] && printf 'rogue/\n' >>"$exclude"
+# And nothing else out of surface, which is the difference between this pair and
+# the `gate.bats` cases: the only thing that can turn either of these red is the
+# frontier itself. A stray file here would buy the red the assertions below are
+# supposed to be measuring.
+mkdir -p src
+printf 'written\n' >"$target"
+
+# Both sessions alive at once, observed and not assumed: without this the pair
+# could be ground one after the other and every assertion below would still hold
+# for the wrong reason.
+mkdir -p "$state/live"
+mkdir "$state/live/$me"
+tries=300
+peak=0
+while :; do
+  n=0
+  for d in "$state/live"/*; do
+    [ -d "$d" ] && n=$((n + 1))
+  done
+  [ "$n" -gt "$peak" ] && peak="$n"
+  [ "$n" -ge 2 ] && break
+  [ "$tries" -gt 0 ] || break
+  tries=$((tries - 1))
+  sleep 0.1
+done
+printf '%s 0\n' "$peak" >"$state/peak.$me"
+rmdir "$state/live/$me"
+
+# And which of the two gates falls first. The one named here comes back only once
+# the frontier is back where the run found it — which is the other iteration's
+# gate having restored it, and nothing else in this pack writes that file.
+if [ "$who" = "$(cat "$state/frontier-last")" ]; then
+  tries=600
+  while [ "$tries" -gt 0 ]; do
+    grep -q 'rogue/' "$exclude" || break
+    tries=$((tries - 1))
+    sleep 0.1
+  done
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+}
+
+# What the journal says became of one ticket, which is where an outcome is
+# recorded rather than deduced from a status a later iteration can overwrite.
+concurrency__outcomes() {
+  awk -F'\t' -v id="$1" '$2 == id { print $3 }' "$FEATURE_DIR/run.log"
+}
+
+@test "a frontier moved by one iteration is charged to every iteration in flight" {
+  # The probe of 06/08/2026, and it used to end with `01-alpha` resolved on a
+  # widening its own session had written: `02-beta` was gated while the widening
+  # was alive, took the finding, was rolled back and billed a retry, and put the
+  # file back — so the author's gate found nothing moved.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  # Exactly two iterations and no retry of either, so what the tracker holds at the
+  # end is what these two were billed and not what a third attempt added.
+  set_config ITER_CAP 2
+  printf 'localonly/\n' >>"$PROJECT_DIR/.git/info/exclude"
+  # What the run is handed, kept byte for byte: the assertion at the end is that
+  # this is what it gives back, which a line count could not tell from a restore
+  # that appended the human's rules twice.
+  cp "$PROJECT_DIR/.git/info/exclude" "$RALPH_TEST_DIR/exclude.before"
+  concurrency__frontier_session alpha
+
+  run_loop_own_tmp
+  assert_failure 4
+  assert_equal "$(concurrency__peak)" "2"
+
+  # The author is billed. That is the whole ticket: before it, this line was
+  # `resolved` and the retry was on the sibling alone.
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  assert_equal "$(concurrency__outcomes 01-alpha)" "gate-red"
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # And the sibling is billed too, which is the cost this exit pays rather than a
+  # defect: nothing observable says which worktree wrote a file in the git
+  # directory they share, so the honest answer is that everyone in flight pays.
+  assert_equal "$(ticket_field 02-beta Failures)" "1"
+  assert_equal "$(concurrency__outcomes 02-beta)" "gate-red"
+
+  # Said out loud in the findings, where the person reading the bill will see it.
+  assert_output_contains "nothing here can tell which session wrote them and every iteration in flight is charged"
+
+  # The restore happened once and landed on what the run was handed: the human's
+  # own local rule is still there and the widening is not. A restore that appended,
+  # or one that a second iteration re-applied over its sibling's witness, fails
+  # here rather than in the morning.
+  assert_file_contains "$PROJECT_DIR/.git/info/exclude" "localonly/"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+  run diff "$RALPH_TEST_DIR/exclude.before" "$PROJECT_DIR/.git/info/exclude"
+  assert_success
+}
+
+@test "the bill does not depend on which of the two gates falls first" {
+  # The same pair with the order reversed: the author is gated first, so it is the
+  # author that detects and restores, and the sibling that reads the movement off
+  # the register afterwards. Both are billed either way — a fix that only worked
+  # when the sibling looked first would pass the test above and fail here.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  set_config ITER_CAP 2
+  concurrency__frontier_session beta
+
+  run_loop_own_tmp
+  assert_failure 4
+  assert_equal "$(concurrency__peak)" "2"
+
+  assert_equal "$(ticket_field 01-alpha Failures)" "1"
+  assert_equal "$(ticket_field 02-beta Failures)" "1"
+  assert_equal "$(concurrency__outcomes 01-alpha)" "gate-red"
+  assert_equal "$(concurrency__outcomes 02-beta)" "gate-red"
+  assert_output_contains "nothing here can tell which session wrote them and every iteration in flight is charged"
+}
+
+@test "a frontier moved on a path no gate judges is still charged to the siblings" {
+  # [32] gave the restore three callers, and only one of them is `gate_run`: a
+  # session that crashes and one that runs out of time are put back by
+  # `failures_handle`, and a re-slice's planning session by `failures_reslice`.
+  # All three go through `gate_ignore_frontier`, so all three record — but "by
+  # construction" is an inference until one of them is staged, and the crash path
+  # is the one with no scope-guard to carry a finding at all.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  set_config ITER_CAP 2
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+state="$RALPH_SHIM_STATE"
+me="$$"
+exclude="$(git rev-parse --git-common-dir)/info/exclude"
+mkdir -p src
+
+mkdir -p "$state/live"
+mkdir "$state/live/$me"
+tries=300
+peak=0
+while :; do
+  n=0
+  for d in "$state/live"/*; do
+    [ -d "$d" ] && n=$((n + 1))
+  done
+  [ "$n" -gt "$peak" ] && peak="$n"
+  [ "$n" -ge 2 ] && break
+  [ "$tries" -gt 0 ] || break
+  tries=$((tries - 1))
+  sleep 0.1
+done
+printf '%s 0\n' "$peak" >"$state/peak.$me"
+rmdir "$state/live/$me"
+
+case "$prompt" in
+  *01-alpha*)
+    # Widen, then die without a verdict: no gate runs on this iteration at all.
+    printf 'rogue/\n' >>"$exclude"
+    exit 1
+    ;;
+esac
+printf 'written\n' >src/beta.txt
+# Gated after the failure policy has put the frontier back, which is what orders
+# these two without timing either of them.
+tries=600
+while [ "$tries" -gt 0 ]; do
+  grep -q 'rogue/' "$exclude" || break
+  tries=$((tries - 1))
+  sleep 0.1
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_failure 4
+  assert_equal "$(concurrency__peak)" "2"
+
+  # The crash path says it, having no scope-guard to say it for it.
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  # And the sibling, gated afterwards, is billed for it all the same.
+  assert_equal "$(ticket_field 02-beta Failures)" "1"
+  assert_output_contains "nothing here can tell which session wrote them and every iteration in flight is charged"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+}
+
+@test "the same pair sequenced bills the session that wrote, and nobody else" {
+  # The paired witness, and without it the two tests above prove nothing about
+  # concurrency: they would read the same on a pack that billed every iteration
+  # for every movement, always. At `MAX_PARALLEL=1` there is only ever one
+  # iteration in flight, so attribution is certain — the author is billed three
+  # times to escalation, the sibling is billed nothing, and the line about what
+  # nobody can be charged for must not appear at all.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 1
+  set_config STERILE_K 9
+  # The barrier would expire twice over here — these two never overlap — so the
+  # sessions are the plain kind and the ordering knob is moot.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+mkdir -p src
+case "$prompt" in
+  *01-alpha*)
+    printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
+    printf 'written\n' >src/alpha.txt
+    ;;
+  *) printf 'written\n' >src/beta.txt ;;
+esac
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_success
+
+  assert_ticket_status 01-alpha ready-for-human
+  assert_equal "$(ticket_field 01-alpha Escalation)" "failed-impl"
+  assert_equal "$(ticket_field 01-alpha Failures)" "3"
+  assert_ticket_status 02-beta resolved
+  refute_output_contains "every iteration in flight is charged"
+}
+
 @test "WORKTREE_PROVISION copies what the project names, and the run counts it" {
   use_tickets 01-alpha
   set_config WORKTREE_PROVISION '.env'
