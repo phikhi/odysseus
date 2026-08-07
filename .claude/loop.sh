@@ -196,6 +196,54 @@ FINDINGS
 
 # ── one iteration ────────────────────────────────────────────────────────────
 
+# What an iteration does instead of delivering, once it knows the run it belongs
+# to is gone: it stops, having written nothing that run could not take back.
+#
+# The outcome goes in the slot all the same. When the pilot really is gone nobody
+# will ever read it — that is the point — but the *other* way into this function is
+# a shell that could not tell who forked it at all, and there the pilot is alive
+# and reading. One writer, two readers, and `loop__finish` decides what to do about
+# the second.
+loop__stand_down() {
+  local ticket="$1" slot="$2"
+  shift 2
+  loop_log "$ticket: $*"
+  printf '%s\n' pilot-gone >"$slot/outcome"
+  : >"$slot/done"
+  return 0
+}
+
+# The question every point of no return in an iteration has to ask ([44]).
+#
+# Since [13] an iteration is a subshell that traps TERM and INT *on purpose* —
+# "the current iteration finishes" is what [25] and [28] paid for — and it carries
+# everything that decides: the tracker restore, the quarantine, the durable commit,
+# the fold onto the branch, the marking. The pilot carries only what watches. So a
+# `kill -KILL` on the run stopped being a stop: probed, twenty seconds after the
+# run died the ticket was `resolved`, the work was committed, the branch had moved,
+# the worktree was still registered and `run.log` — the pilot's own file — was
+# empty. The loop had delivered in the name of a run that did not exist.
+#
+# **The line is between measuring and delivering, and not between finishing and
+# stopping**, which is what keeps [25] and [28] intact: a run stopped by an
+# ordinary TERM still has its pilot, so nothing here fires and the iterations in
+# flight finish and mark exactly as they did. What fires is a pilot that is *gone*,
+# and past that point there is nobody left to read a verdict anyway.
+#
+# Nothing is given back either, and that is a decision rather than an omission. The
+# claim is left exactly where the kill left it, and the liveness sweep of [12]
+# hands it to the next run — which is what happened before [13] and what
+# `claim.bats` has always asserted. An orphan that unclaimed would be a second
+# writer in the tracker beside the run that has already reclaimed the ticket, which
+# is the "flaky" half of that very test.
+loop__orphaned() {
+  local ticket="$1" slot="$2"
+  proc_owner_gone || return 1
+  loop__stand_down "$ticket" "$slot" \
+    "the run that forked this iteration is gone — stopping here, with nothing committed, nothing folded, nothing marked and nothing given back"
+  return 0
+}
+
 # Everything between a claimed ticket and a marked one, run as a process of its
 # own with its working directory inside a worktree of its own ([13]).
 #
@@ -272,6 +320,24 @@ loop__iterate() {
     return 0
   }
 
+  # **Whose iteration this is, taken before anything else** ([44]). `$$` is the
+  # pilot in every one of these shells, so it is handed in rather than discovered:
+  # a pilot that died between the fork above and this line would otherwise be
+  # replaced by init, silently, and every refusal below would then be armed against
+  # a shell that never dies. This is also the first of the guards in time — it sits
+  # ahead of the four snapshots and of the spawn, so a run that is already gone
+  # costs no session at all.
+  #
+  # Refusing when it cannot be taken is the fail-closed half, and it is the one
+  # place where the pilot is alive and hears about it: a shell that cannot say
+  # which run forked it cannot say either whether that run is still there, and an
+  # iteration that cannot tell must not be the one to commit, fold and mark.
+  if ! proc_owner_take "$$"; then
+    loop__stand_down "$ticket" "$slot" \
+      "this iteration cannot tell which run forked it — refusing to spawn a session for a run it cannot see"
+    return 0
+  fi
+
   outfile="$(ralph_feature_dir)/.session.$$.$(basename "$slot").jsonl"
   # `$$` is the pilot in every one of these shells — bash 3.2 has no BASHPID — so
   # the slot's name is what makes two concurrent streams two files. A single name
@@ -312,6 +378,17 @@ loop__iterate() {
   # it schedules the next one ([08]).
   budget_stream_posture "$outfile" >"$slot/posture"
 
+  # **The second guard, and the one the probe of [44] lands on.** A session is the
+  # longest thing an iteration waits for, so this is where a killed run is normally
+  # noticed — and it is placed here rather than one line further down because
+  # everything below writes something the run could not take back: the tracker
+  # restore and the quarantine write tickets in the tree the run was started in,
+  # and the gate spawns lens sessions against a subscription. Everything *above* it
+  # is measurement, in a worktree about to be thrown away.
+  if loop__orphaned "$ticket" "$slot"; then
+    return 0
+  fi
+
   # Before the gate reads a single field out of the tracker: the write-surface
   # it is about to judge against is a line in a file the session could just have
   # rewritten to `*`. Putting the tickets back first is what makes the guard
@@ -334,6 +411,16 @@ loop__iterate() {
     # session that edited it has to pay for the attempt — otherwise it retries
     # from a contract it partly wrote, which is the hole being closed.
     if gate_run "$ticket" "$base" && [ "$tracker_written" = 0 ]; then
+      # **The third guard, and the reason a check at the entry would not do.** The
+      # gate is the other long wait of an iteration — GATE_TIMEOUT is 1800 s by
+      # default — and what follows it is every point of no return this ticket
+      # names: the commit, the fold, the mark. Asked once here rather than three
+      # times, because the three are contiguous; the fold asks again on its own
+      # account, since it is the one that then waits on a guard it does not control
+      # (see concurrency_integrate).
+      if loop__orphaned "$ticket" "$slot"; then
+        return 0
+      fi
       # Durable inside this worktree first, then folded onto the branch under a
       # guard nobody else holds. Two steps and not one, and the split is what
       # keeps a sequential run's history exactly what it was: at MAX_PARALLEL=1
@@ -367,6 +454,13 @@ loop__iterate() {
         # next one too and every iteration costs a session ([07] on a HEAD this
         # run does not recognise).
         outcome=not-integrated
+        # Unless the reason the fold refused is that this run is gone, in which
+        # case giving the ticket back is itself a write into a tracker somebody
+        # else may already be reclaiming from. The claim stays where the kill left
+        # it and the sweep of [12] frees it ([44]).
+        if loop__orphaned "$ticket" "$slot"; then
+          return 0
+        fi
         tracker_unclaim "$ticket"
       fi
     else
@@ -444,6 +538,16 @@ loop__iterate() {
       # not redundant: `failures_preserve_attempt` reads the tree it rolls back,
       # the re-slice needs a tree its planning session can work in, and a
       # rollback that refuses is what raises the flag below.
+      #
+      # And the fourth guard, on the other side of the same gate window ([44]).
+      # This path writes as much as the green one and further afield: it bumps
+      # `Failures:`, it escalates, it writes a `failed/<ticket>` ref in the common
+      # git directory, and a re-slice creates tickets and spawns a session of its
+      # own. It is also the path a killed run actually takes — the session dies
+      # with it — which is what made `claim.bats` intermittent.
+      if loop__orphaned "$ticket" "$slot"; then
+        return 0
+      fi
       failures_handle "$ticket" "$outcome" "$pre" "$base" "${RALPH_GATE_TREE:-}"
       ;;
   esac
@@ -617,6 +721,20 @@ loop__finish() {
       tracker_unclaim "$ticket"
     fi
     loop_log "$ticket: the iteration died without a verdict — given back to the frontier"
+  fi
+
+  # An iteration that stood down rather than act for a run that was gone ([44]).
+  # Reading it here means the pilot is *not* gone, so this is the other half of
+  # that refusal: a shell that could not tell which run forked it. The ticket goes
+  # back — nothing judged it — and the run stops, because an iteration that cannot
+  # see its own run is a closed instrument and the next one would be forked by this
+  # same shell into the same blindness.
+  if [ "$outcome" = pilot-gone ]; then
+    if [ "$(tracker_field "$ticket" Status 2>/dev/null || true)" = claimed ]; then
+      tracker_unclaim "$ticket"
+    fi
+    loop_log "$ticket: the iteration could not tell which run forked it — given back, and stopping rather than forking another one into the same blindness"
+    stop_code=4
   fi
 
   posture="$(cat "$slot/posture" 2>/dev/null || true)"
