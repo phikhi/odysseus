@@ -22,11 +22,21 @@
 # kill a `claude` and the tool processes under it, which is the same walk the
 # gate's deadline does over a hung test suite.
 #
-# The three that follow arrived by the same route in [36], and they answer one
+# The rest arrived by the same route in [36] and [44], and they answer one
 # question the two above cannot: *is there still anyone who wants this*. `wait`
 # takes no timeout on bash 3.2, so both deadlines of the pack are processes, and a
 # process outlives whoever armed it — the gate's watchdog was found writing its
 # marker and walking a process tree half an hour after a `kill -9` on the run.
+#
+# [44] is the same question asked of something bigger than a deadline. Since [13]
+# an *iteration* is a subshell too, it traps TERM and INT on purpose ([25], [28]),
+# and it carries everything that decides: the durable commit, the fold onto the
+# branch, the marking of the ticket. So a `kill -KILL` on the pilot no longer stops
+# the part of the pack that writes — probed, twenty seconds after the run died the
+# ticket was `resolved`, the branch had moved and `run.log` was empty. The
+# instrument is the one below and deliberately not a second one; what differs is
+# only *when* it is asked. A countdown asks every second, an iteration asks at each
+# point it is about to do something nobody could take back.
 
 # Wait for a child all the way to its exit status, and hand that status back.
 #
@@ -150,6 +160,55 @@ proc_parent_of() {
   return 0
 }
 
+# Remember which shell this one answers to, so that a piece of work long enough to
+# outlive it can ask later whether it is still there. Sets PROC_OWNER, the pid, and
+# PROC_OWNED, this shell's own — non-zero when neither can be read, which is a
+# caller that has to refuse rather than assume.
+#
+# The owner may be **handed in**, and the difference between the two forms is the
+# difference between the two callers. A deadline is forked by whoever wants the
+# kill and can only *discover* it, there being no other name for that shell. An
+# iteration knows one: `$$` is the pilot in every subshell of a run — bash 3.2 has
+# no BASHPID — so it can say which shell it expects to answer to, and a pilot that
+# died between the fork and this line is then refused instead of being replaced,
+# silently, by init. Discovery there would record the wrong owner and believe in it
+# for the rest of the night.
+proc_owner_take() {
+  proc_self
+  PROC_OWNED="$PROC_SELF"
+  [ -n "$PROC_OWNED" ] || return 1
+  PROC_OWNER="${1:-$(proc_parent_of "$PROC_OWNED")}"
+  [ -n "$PROC_OWNER" ] && [ "$PROC_OWNER" != 0 ] || return 1
+  if proc_owner_gone; then
+    return 1
+  fi
+  return 0
+}
+
+# Whether that shell has gone. A changed parent link has exactly one meaning —
+# nothing but init can become our parent — which is why this is a link and never a
+# `kill -0` on a number: a zombie answers the number like a live process, and a
+# reaped number is one the system may hand to somebody else.
+#
+# An owner nobody recorded is nobody to lose, so an unset PROC_OWNER answers "not
+# gone": this pair is a question about a shell that took itself, and a caller that
+# never took one is not being watched over. That is a door a correction could walk
+# through — drop the `proc_owner_take` and every refusal built on this evaporates
+# in silence — which is why the [44] mutations come in pairs, one removing the
+# refusal and its twin removing the capacity to act.
+# Written as an `if` rather than as `[ … ] && return 1`, and that is the loop's own
+# lesson about errexit rather than a taste: an AND-list whose left half is false is
+# a failing command, so the second form would take a caller down the day somebody
+# calls this outside a condition. Every caller today is in one; the next one may
+# not be.
+proc_owner_gone() {
+  [ -n "${PROC_OWNER:-}" ] || return 1
+  if [ "$(proc_parent_of "${PROC_OWNED:-0}")" = "$PROC_OWNER" ]; then
+    return 1
+  fi
+  return 0
+}
+
 # Serve a deadline: sleep up to <seconds>, and give up the moment there is nobody
 # left to serve it for. Returns 0 only if the whole time was served.
 #
@@ -167,21 +226,24 @@ proc_parent_of() {
 # shell for a deadline armed from a gate branch, where `$$` is the run and the
 # process that spawned the session is the branch.
 #
+# The pair above is where that lives since [44] gave it a second caller, and the
+# two variables are declared `local` here rather than left global on purpose: this
+# is always forked, so nothing would notice today, and a future caller that forgot
+# to fork would otherwise overwrite the owner its own iteration recorded.
+#
 # The extra pids are the caller's own targets, checked with `kill -0` because
 # giving up early on them is an optimisation and not a guarantee — the guarantee is
 # the parent link above, and what the caller does before firing is its business.
 proc_countdown() {
-  local limit="$1" waited=0 pid self owner
+  local limit="$1" waited=0 pid
+  local PROC_OWNER='' PROC_OWNED=''
   shift
 
-  proc_self
-  self="$PROC_SELF"
-  owner="$(proc_parent_of "$self")"
-  [ -n "$owner" ] || return 1
+  proc_owner_take || return 1
 
   while [ "$waited" -lt "$limit" ]; do
     sleep 1
-    [ "$(proc_parent_of "$self")" = "$owner" ] || return 1
+    if proc_owner_gone; then return 1; fi
     for pid in "$@"; do
       kill -0 "$pid" 2>/dev/null || return 1
     done
