@@ -606,6 +606,15 @@ loop__iterate() {
           return 0
         fi
         tracker_unclaim "$ticket"
+        # Said in the vocabulary the failure policy already owns, because it is
+        # the same thing it does on a budget pause: unclaimed, no retry charged
+        # ([45]). This route never reaches `failures_handle` — the case below
+        # exempts it with `resolved` — so nothing else was going to fill this in,
+        # and `action=none` on the journal line of an iteration that *did* give a
+        # ticket back is the kind of sentence a human believes in the morning.
+        # One variable, three consumers: the journal, the receipt, and the trigger
+        # that decides a receipt is owed at all.
+        RALPH_FAILURE_ACTION=given-back
       fi
     else
       outcome=gate-red
@@ -747,9 +756,34 @@ loop__iterate() {
   # The trigger is the failure policy's *action* and never the outcome, and that is
   # the whole of [07]'s open question ([10]): a red gate retried and a red gate
   # escalated are the same outcome, and only one of them ends the ticket.
+  # And the criterion behind those two, re-read rather than remembered ([45],
+  # [31]). "The moments a ticket stops moving on its own" was transcribed as
+  # `resolved` plus an escalation because those were the two that existed; two
+  # more answer yes and were left out. Both are iterations after which **no later
+  # one is coming**, and both leave a fact that no later iteration can rediscover
+  # — which is what separates them from a fresh retry, and from the sterile stop,
+  # where every iteration had its chance at a document and the ticket is intact:
+  #
+  #   not-integrated  the gate was green, the work was committed inside a worktree
+  #                   this run then destroyed, and the run stops. No commit on any
+  #                   branch, no `failed/` ref, no change to the ticket: outside
+  #                   `run.log` — which the judged session can rewrite ([21]) —
+  #                   there was no trace of it at all.
+  #   a rollback that could not act
+  #                   the tree is not back where the session found it and the run
+  #                   stops over it ([34]). The ticket is usually on a fresh retry
+  #                   that will never be spent, so the escalation clause below
+  #                   misses it exactly when the admissions matter most.
   emit=0
   [ "$outcome" != resolved ] || emit=1
+  [ "$outcome" != not-integrated ] || emit=1
   case "${RALPH_FAILURE_ACTION:-none}" in escalated:*) emit=1 ;; esac
+  [ "${RALPH_ROLLBACK_FAILED:-0}" != 1 ] || emit=1
+  # And so that the meta line does not leave `retry:1/3` standing on its own for an
+  # iteration nothing is going to retry. The pilot is what stops, one layer up, but
+  # the flag it stops on is this shell's own measurement.
+  [ "${RALPH_ROLLBACK_FAILED:-0}" != 1 ] ||
+    receipt_fact run-stopped "the rollback could not put this iteration's tree back"
   if [ "$emit" = 1 ]; then
     receipt_fact outcome "$outcome"
     receipt_fact action "${RALPH_FAILURE_ACTION:-none}"

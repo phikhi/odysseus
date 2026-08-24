@@ -515,7 +515,7 @@ mutation "07 a file the session added is not removed" "$GATE" \
   test/failures.bats "removes what the session added"
 
 mutation "07 a file the session deleted is not restored" "$GATE" \
-  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          gate__log "could not restore \$path"/        :/' \
+  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          gate__gap "could not restore \$path"/        :/' \
   test/failures.bats "brings back what it deleted"
 
 # The seam [06] introduced between the two: the rollback learns what it undid from
@@ -652,8 +652,12 @@ mutation "07 the deadline is hard-coded" "$GATE" \
   's/      gate__watchdog "\$GATE_TIMEOUT"/      gate__watchdog 1800/' \
   test/failures.bats "hangs is red"
 
+# Re-anchored by [45], which moved this arm from `gate__log` to `gate__say` and
+# gave it a sentence: the guarantee is unchanged — a branch the deadline killed has
+# to be reported as one and not as a bare missing verdict — so the edit now takes
+# the question away instead of the line, and the arm falls through to `no verdict`.
 mutation "07 a timed-out branch is not reported as one" "$GATE" \
-  's/    elif \[ -f "\$dir\/timed-out" \]; then\n      gate__log "\$name red \(timed out after \$\{GATE_TIMEOUT\}s\)"\n//' \
+  's/^    elif \[ -f "\$dir\/timed-out" \]; then$/    elif false; then/m' \
   test/failures.bats "hangs is red"
 
 # ── [21] the tracker a session must not write ────────────────────────────────
@@ -667,7 +671,7 @@ mutation "21 the tracker is only watched through its ids" "$LOOP" \
   test/failures.bats "not given"
 
 mutation "21 an edit to a ticket is not put back" "$FAILURES" \
-  's/        GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__log "\$ticket: could not restore \$path"/        :/' \
+  's/        GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__gap "\$ticket: could not restore \$path"/        :/' \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 the write-surface is read after the session, not at spawn" "$LOOP" \
@@ -700,7 +704,7 @@ mutation "21 the tracker snapshot obeys the project's ignore rules" "$GATE" \
   test/failures.bats "scratch out of git"
 
 mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
-  's/    failures__log "\$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"\n    return 1/    return 0/' \
+  's/    failures__gap "\$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"\n    return 1/    return 0/' \
   test/failures.bats "vouch for"
 
 mutation "21 the tracker the session staged stays staged" "$FAILURES" \
@@ -1320,7 +1324,7 @@ mutation "34 the rollback's zone line reads a refusal as an empty zone" "$FAILUR
 # stops instead of letting the next iteration adopt the tree as its own baseline.
 # Two entries, because raising the flag and reading it are two places to lose it.
 mutation "34 a rollback that read no tree does not say so to the loop" "$FAILURES" \
-  's/    failures__log "cannot read the working tree — nothing was rolled back"\n    RALPH_ROLLBACK_FAILED=1\n/    failures__log "cannot read the working tree — nothing was rolled back"\n/' \
+  's/    failures__gap "cannot read the working tree — nothing was rolled back"\n    RALPH_ROLLBACK_FAILED=1\n/    failures__gap "cannot read the working tree — nothing was rolled back"\n/' \
   test/failures.bats "stops the run instead of laundering"
 
 mutation "34 the loop grinds on after a rollback that could not act" "$LOOP" \
@@ -2632,6 +2636,66 @@ mutation "10 a retry is not distinguishable from an escalation" "$FAILURES" \
 mutation "10 the forensic branch is promised rather than checked" "$FAILURES" \
   's/^    if failures_preserve_attempt "\$ticket" "\$pre" "\$tree"; then\n      RALPH_FAILURE_BRANCH="failed\/\$ticket"\n    fi$/    failures_preserve_attempt "\$ticket" "\$pre" "\$tree" || true\n    RALPH_FAILURE_BRANCH="failed\/\$ticket"/m' \
   test/receipt.bats "forensic branch git refused"
+
+# ── [45] the receipt's producers, read against its criterion ─────────────────
+#
+# [10] wired the sentences it had in front of it. The criterion in receipt.sh is
+# wider than that set — "what nothing judged, plus the admissions that are not
+# zeroes" — and four families answered yes to it with no channel at all. Each
+# entry below removes one channel rather than one sentence: that is the shape of
+# this ticket, and a mutation that deleted a phrase would be testing the phrase.
+
+# The route [10] named in an acceptance criterion and could not reach: it skips
+# `failures_handle`, so the action stays `none` and the escalation clause never
+# fires. The second entry is the other half of the same line — a ticket really was
+# given back, and the journal said nobody did anything.
+mutation "45 a green gate whose work vanished leaves no document" "$LOOP" \
+  's/^  \[ "\$outcome" != not-integrated \] \|\| emit=1\n//m' \
+  test/receipt.bats "never reached the branch leaves a document"
+
+mutation "45 an iteration that gave a ticket back says nobody did" "$LOOP" \
+  's/^        RALPH_FAILURE_ACTION=given-back\n//m' \
+  test/receipt.bats "never reached the branch leaves a document"
+
+# [43] one door down. Only an exit code is a verdict; the other two arms are the
+# branch saying nothing at all, and the receipt is the only place that can last —
+# a killed branch's output file is empty, so the findings cannot carry it either.
+mutation "45 the deadline that killed a branch is stdout only" "$GATE" \
+  's/^      gate__say "\$name red \(timed out after/      gate__log "\$name red (timed out after/m' \
+  test/receipt.bats "deadline killed says nothing ran"
+
+mutation "45 a branch that left no verdict is stdout only" "$GATE" \
+  's/^      gate__say "\$name red \(no verdict\)/      gate__log "\$name red (no verdict)/m' \
+  test/receipt.bats "left no verdict at all"
+
+# The refusal `receipt__verdicts` makes two functions up, made where it was
+# missing: a section that vanishes reads as an empty zone on exactly the routes
+# where nobody walked one.
+mutation "45 an unwalked zone is rendered as an empty one" "$RECEIPT" \
+  's/^  if \[ ! -s "\$RALPH_RECEIPT\/notes" \] && \[ -z "\$provisioned" \]; then$/  if false; then/m' \
+  test/receipt.bats "walked no zone"
+
+# The second channel, from both ends. The producer first — half of failures.sh
+# admitted things no document ever saw — then the renderer, without which the
+# admissions accumulate in the workspace and are thrown away with it.
+mutation "45 what the policy could not do never reaches the document" "$FAILURES" \
+  's/^  receipt_gap "\$@"\n//m' \
+  test/receipt.bats "rollback that could not act"
+
+mutation "45 the admissions are collected and never rendered" "$RECEIPT" \
+  's/^  receipt__gaps\n//m' \
+  test/receipt.bats "rollback that could not act"
+
+# And the trigger that gets a document written on the one route where the
+# admissions matter most: the run stops over this rollback, so the fresh retry the
+# policy just decided is one nothing will ever spend.
+mutation "45 a rollback that could not act ends the run with no document" "$LOOP" \
+  's/^  \[ "\$\{RALPH_ROLLBACK_FAILED:-0\}" != 1 \] \|\| emit=1\n//m' \
+  test/receipt.bats "rollback that could not act"
+
+mutation "45 a retry nothing will spend is presented as a plan" "$RECEIPT" \
+  's/^  stopped="\$\(receipt__fact run-stopped\)"$/  stopped=""/m' \
+  test/receipt.bats "rollback that could not act"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

@@ -80,6 +80,26 @@ failures__say() {
   receipt_note "$@"
 }
 
+# The other half of the same idea, and it is a different kind of sentence ([45]):
+# not a zone nobody looked at, but something this policy was going to do and did
+# not. The rollback that refused, the `failed/<ticket>` git would not write, the
+# ticket file that could not be restored, the split that never happened.
+#
+# Which of the two a line goes through is decided by the criterion and never by
+# the list of lines that existed when the channel was written — that mistake is
+# what [45] is: [10] wired the sentences it had in front of it, and half of this
+# file's admissions had no way to the document at all. A receipt sends a human to
+# read `failed/<ticket>`; the five reasons git may not have written it were on
+# stdout and nowhere else.
+#
+# What stays on `failures__log` is everything that reports what *did* happen — the
+# rollback that worked, the branch that was written, the escalation itself. Those
+# are in the receipt already, as facts rather than as prose.
+failures__gap() {
+  failures__log "$@"
+  receipt_gap "$@"
+}
+
 # ── what kind of failure this was ────────────────────────────────────────────
 
 # The loop knows four things: whether the session was cut short for context,
@@ -547,7 +567,7 @@ failures_quarantine_strays() {
     # renumber could not run would hand back exactly the state being repaired,
     # in silence — a fix whose failure mode is the defect it fixes.
     if ! renamed_to="$(tracker_renumber "$stray")" || [ -z "$renamed_to" ]; then
-      failures__log "$ticket: could not give $stray a number of its own — if another ticket already carries it, no bare number will resolve until a human renames one"
+      failures__gap "$ticket: could not give $stray a number of its own — if another ticket already carries it, no bare number will resolve until a human renames one"
     else
       final="$renamed_to"
     fi
@@ -628,12 +648,12 @@ failures_protect_tracker() {
   local dir after idx status path restored=0 root ours id
 
   if [ -z "$before" ]; then
-    failures__log "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
+    failures__gap "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
     return 1
   fi
   after="$(failures_tracker_tree)" || after=""
   if [ -z "$after" ]; then
-    failures__log "$ticket: cannot read the tracker — refusing to pass it"
+    failures__gap "$ticket: cannot read the tracker — refusing to pass it"
     return 1
   fi
   [ "$after" != "$before" ] || return 0
@@ -648,7 +668,7 @@ failures_protect_tracker() {
   rm -f "$idx"
   if ! GIT_INDEX_FILE="$idx" git -C "$root" read-tree "$before" 2>/dev/null; then
     rm -f "$idx"
-    failures__log "$ticket: cannot read the pre-session tracker — nothing was restored"
+    failures__gap "$ticket: cannot read the pre-session tracker — nothing was restored"
     return 1
   fi
 
@@ -670,7 +690,7 @@ failures_protect_tracker() {
         ;;
       *)
         GIT_INDEX_FILE="$idx" git -C "$root" checkout-index -f -- "$path" 2>/dev/null ||
-          failures__log "$ticket: could not restore $path"
+          failures__gap "$ticket: could not restore $path"
         restored=$((restored + 1))
         ;;
     esac
@@ -734,13 +754,13 @@ failures_rollback() {
   local head restored path paths='' undone=0
 
   if [ -z "$base" ]; then
-    failures__log "no pre-session snapshot — refusing to guess what to roll back"
+    failures__gap "no pre-session snapshot — refusing to guess what to roll back"
     RALPH_ROLLBACK_FAILED=1
     return 1
   fi
   [ -n "$tree" ] || tree="$(gate_tree_snapshot)" || tree=""
   if [ -z "$tree" ]; then
-    failures__log "cannot read the working tree — nothing was rolled back"
+    failures__gap "cannot read the working tree — nothing was rolled back"
     RALPH_ROLLBACK_FAILED=1
     return 1
   fi
@@ -750,7 +770,7 @@ failures_rollback() {
     if git reset -q --mixed "$pre" 2>/dev/null; then
       failures__log "rolled back the commit the session made"
     else
-      failures__log "could not move HEAD back to $pre"
+      failures__gap "could not move HEAD back to $pre"
     fi
   fi
 
@@ -759,7 +779,7 @@ failures_rollback() {
   # here is the part that is policy rather than plumbing: moving HEAD, above;
   # unstaging and counting, below; and saying what could not be reached at all.
   if ! restored="$(gate_restore_tree "$base" "$tree")"; then
-    failures__log "cannot read the pre-session snapshot — nothing was rolled back"
+    failures__gap "cannot read the pre-session snapshot — nothing was rolled back"
     RALPH_ROLLBACK_FAILED=1
     return 1
   fi
@@ -852,7 +872,7 @@ failures_preserve_attempt() {
   local idx clean commit branch="failed/$1"
 
   if [ -z "$tree" ]; then
-    failures__log "$ticket: nothing readable to keep on $branch"
+    failures__gap "$ticket: nothing readable to keep on $branch"
     return 1
   fi
 
@@ -860,7 +880,7 @@ failures_preserve_attempt() {
   rm -f "$idx"
   if ! GIT_INDEX_FILE="$idx" git read-tree "$tree" 2>/dev/null; then
     rm -f "$idx"
-    failures__log "$ticket: could not read the attempt — $branch not written"
+    failures__gap "$ticket: could not read the attempt — $branch not written"
     return 1
   fi
   # -f because the tracker on disk has moved on since this tree was taken — the
@@ -871,7 +891,7 @@ failures_preserve_attempt() {
   clean="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || clean=""
   rm -f "$idx"
   [ -n "$clean" ] || {
-    failures__log "$ticket: could not write the attempt — $branch not written"
+    failures__gap "$ticket: could not write the attempt — $branch not written"
     return 1
   }
 
@@ -883,14 +903,14 @@ failures_preserve_attempt() {
       -m "ralph: failed attempt on $ticket" 2>/dev/null)" || commit=""
   fi
   [ -n "$commit" ] || {
-    failures__log "$ticket: could not commit the attempt — $branch not written"
+    failures__gap "$ticket: could not commit the attempt — $branch not written"
     return 1
   }
 
   if git update-ref "refs/heads/$branch" "$commit" 2>/dev/null; then
     failures__log "$ticket: the attempt is kept on branch $branch"
   else
-    failures__log "$ticket: could not write branch $branch"
+    failures__gap "$ticket: could not write branch $branch"
     return 1
   fi
   return 0
@@ -917,7 +937,7 @@ failures_make_durable() {
   local changed idx head newtree commit
 
   if [ -z "$base" ]; then
-    failures__log "$ticket: no pre-session snapshot — nothing made durable"
+    failures__gap "$ticket: no pre-session snapshot — nothing made durable"
     return 1
   fi
   changed="$(gate_changed_files "$base" "$tree")" || changed=""
@@ -935,7 +955,7 @@ failures_make_durable() {
       failures__log "$ticket: the session committed its own work — rebuilding it from what the gate approved"
       head="$pre"
     else
-      failures__log "$ticket: could not move HEAD back to $pre — the session's own commit stands"
+      failures__gap "$ticket: could not move HEAD back to $pre — the session's own commit stands"
     fi
   fi
 
@@ -950,7 +970,7 @@ failures_make_durable() {
   rm -f "$idx"
 
   if [ -z "$newtree" ]; then
-    failures__log "$ticket: could not stage the iteration — it is not committed"
+    failures__gap "$ticket: could not stage the iteration — it is not committed"
     return 1
   fi
   # Nothing to record: everything the gate approved is already in HEAD. Reached
@@ -977,7 +997,7 @@ failures_make_durable() {
   # to do about a HEAD it does not recognise.
   if [ -z "$commit" ] ||
     ! git update-ref -m "ralph: $ticket" HEAD "$commit" "$head" 2>/dev/null; then
-    failures__log "$ticket: could not commit the iteration — it is not durable"
+    failures__gap "$ticket: could not commit the iteration — it is not durable"
     return 1
   fi
 
@@ -1033,7 +1053,7 @@ failures_reslice() {
   session_spawn "$plan.prompt" "$out" || rc=$?
   if [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
     rc=1
-    failures__log "$ticket: the re-slice session crossed the soft limit too"
+    failures__gap "$ticket: the re-slice session crossed the soft limit too"
   fi
   # The same refusal for the two deadlines of [23], and it carries more here than
   # it looks. A planning session the monitor cut short comes back a *success* —
@@ -1043,7 +1063,7 @@ failures_reslice() {
   # back, the tracker being outside the rollback's reach on purpose.
   if [ -n "${RALPH_SESSION_TIMEOUT:-}" ]; then
     rc=1
-    failures__log "$ticket: the re-slice session ran out of time too (${RALPH_SESSION_TIMEOUT})"
+    failures__gap "$ticket: the re-slice session ran out of time too (${RALPH_SESSION_TIMEOUT})"
   fi
   RALPH_SOFT_LIMIT_HIT="$prev_soft"
   RALPH_SESSION_TIMEOUT="$prev_timeout"
@@ -1058,7 +1078,7 @@ failures_reslice() {
   # inside this function: `base` above is a snapshot that may have been refused, and
   # `|| base=""` is exactly what the rollback's first refusal is written for.
   if ! failures_rollback "$head" "$base" '' >/dev/null 2>&1; then
-    failures__log "$ticket: the re-slice session's writes could not be rolled back — they are still in the tree"
+    failures__gap "$ticket: the re-slice session's writes could not be rolled back — they are still in the tree"
   fi
 
   # And the frontier of what any of that can see, which no rollback reaches:
@@ -1068,7 +1088,7 @@ failures_reslice() {
   # the rules back and the *next* iteration would pin the widened ones. Said out
   # loud rather than quietly undone: there is no gate on this path to carry a
   # finding, so the log line is the only trace a human gets.
-  moved="$(gate_ignore_frontier)" || failures__log \
+  moved="$(gate_ignore_frontier)" || failures__say \
     "$ticket: the re-slice session moved the ignore frontier — $(printf '%s' "$moved" | tr '\n' ';')"
 
   # And the plan is refused whole if it wrote the tracker instead of returning
@@ -1085,7 +1105,7 @@ failures_reslice() {
   fi
 
   if [ "$rc" != 0 ] || [ ! -s "$plan" ]; then
-    failures__log "$ticket: no re-slice plan came back"
+    failures__gap "$ticket: no re-slice plan came back"
     rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
     return 1
   fi
@@ -1093,7 +1113,7 @@ failures_reslice() {
   headers="$(grep -n '^--- ticket:' "$plan" || true)"
   total="$(printf '%s' "$headers" | grep -c . || true)"
   if [ "${total:-0}" -lt 2 ]; then
-    failures__log "$ticket: the plan does not split anything ($total ticket(s))"
+    failures__gap "$ticket: the plan does not split anything ($total ticket(s))"
     rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
     return 1
   fi
@@ -1119,7 +1139,7 @@ failures_reslice() {
     title="$(failures__plan_title "$header")"
     child="$(printf '%s\n' "$body" | tracker_open_ticket "$slug" "$title")" || child=""
     if [ -z "$child" ]; then
-      failures__log "$ticket: could not create the ticket for '$slug'"
+      failures__gap "$ticket: could not create the ticket for '$slug'"
       incomplete=1
       continue
     fi
@@ -1131,7 +1151,7 @@ failures_reslice() {
 
   children="${children# }"
   if [ -z "$children" ]; then
-    failures__log "$ticket: the re-slice created nothing"
+    failures__gap "$ticket: the re-slice created nothing"
     return 1
   fi
 
@@ -1142,7 +1162,7 @@ failures_reslice() {
   if [ -n "$incomplete" ]; then
     printf 'Re-slice incomplete: only %s could be created out of the planned split. This ticket keeps its acceptance criteria.\n' \
       "$children" | tracker_append_note "$ticket" || true
-    failures__log "$ticket: the split is incomplete — leaving it to a human"
+    failures__gap "$ticket: the split is incomplete — leaving it to a human"
     return 1
   fi
 
@@ -1179,13 +1199,13 @@ failures__plan_is_sound() {
     title="$(failures__plan_title "$header")"
 
     if [ -z "$slug" ] || [ -z "$title" ]; then
-      failures__log "$ticket: a planned ticket has no slug or no title"
+      failures__gap "$ticket: a planned ticket has no slug or no title"
       return 1
     fi
     case "$body" in
       *'- [ ]'*) ;;
       *)
-        failures__log "$ticket: planned ticket '$slug' carries no acceptance criteria"
+        failures__gap "$ticket: planned ticket '$slug' carries no acceptance criteria"
         return 1
         ;;
     esac
@@ -1194,12 +1214,12 @@ failures__plan_is_sound() {
       sed -n 's/^\*\*Write-surface:\*\*[[:space:]]*//p; s/^Write-surface:[[:space:]]*//p' |
       head -1 | tr -d '`,' | awk '{ $1 = $1; print }')"
     if [ -z "$child_surface" ]; then
-      failures__log "$ticket: planned ticket '$slug' declares no write-surface"
+      failures__gap "$ticket: planned ticket '$slug' declares no write-surface"
       return 1
     fi
     for pattern in $child_surface; do
       if ! gate_in_surface "${pattern%/}" "$surface"; then
-        failures__log "$ticket: planned ticket '$slug' would write $pattern, outside the write-surface being split"
+        failures__gap "$ticket: planned ticket '$slug' would write $pattern, outside the write-surface being split"
         return 1
       fi
     done

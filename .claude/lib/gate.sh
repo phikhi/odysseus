@@ -103,6 +103,16 @@ gate__say() {
   receipt_note "$@"
 }
 
+# The third kind, and it is not a zone ([45]): something this gate was going to do
+# and could not. A path it failed to put back is not a corner of the repository
+# nobody looked at, it is a promise — "the tree is as the lenses found it" — that
+# came back short, and a reader acts on it differently. Same no-op discipline as
+# above.
+gate__gap() {
+  gate__log "$@"
+  receipt_gap "$@"
+}
+
 # ── preflight ────────────────────────────────────────────────────────────────
 
 # Refuse to start rather than grind a whole frontier behind a gate that proves
@@ -1363,7 +1373,7 @@ gate_restore_tree() {
         ;;
       *)
         GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null ||
-          gate__log "could not restore $path"
+          gate__gap "could not restore $path"
         ;;
     esac
     printf '%s\n' "$path"
@@ -1752,12 +1762,28 @@ gate__aggregate() {
     RALPH_GATE_VERDICTS="$RALPH_GATE_VERDICTS $name=red"
     RALPH_GATE_FAILED="$RALPH_GATE_FAILED $name"
     rc=1
+    # Which of the three it is decides where the sentence goes, and that is [45]
+    # rather than a formatting choice. An exit code is a **verdict**: something ran
+    # and came back wrong, its output is on the way to the findings below, and
+    # stdout is where a verdict belongs. The other two are the branch saying
+    # nothing at all — killed at the deadline, or gone without leaving one — which
+    # is the criterion `gate__say` is for, and the receipt is the only place it can
+    # last. Left on `gate__log`, they produced a document reading `tests=red` and
+    # `escalated:failed-impl` with no line anywhere saying that nothing had run:
+    # exactly the misrouting [43] fixed one door down, by the other cause.
+    #
+    # The branch output cannot carry it either, which is why the channel is the
+    # only fix: a killed branch's `.out` is empty, so `receipt_keep_branch` drops
+    # it and there is no findings section to read the absence off. The neighbouring
+    # case is healthy and must stay as it is — a lens that dies writes its own
+    # sentence into its `.out` and exits non-zero, so it arrives here as an exit
+    # code and reaches the receipt through the findings.
     if [ -n "$brc" ]; then
       gate__log "$name red (exit $brc)"
     elif [ -f "$dir/timed-out" ]; then
-      gate__log "$name red (timed out after ${GATE_TIMEOUT}s)"
+      gate__say "$name red (timed out after ${GATE_TIMEOUT}s): this branch was killed at the gate's own deadline, so it judged nothing — the verdict is red because no verdict came back, and not because anything was found wrong"
     else
-      gate__log "$name red (no verdict)"
+      gate__say "$name red (no verdict): this branch ended without leaving one, so it judged nothing — the verdict is red because no verdict came back, and not because anything was found wrong"
     fi
     gate__report "$dir/$name.out"
     # And the whole of it, kept while this directory still exists ([10]). Twenty

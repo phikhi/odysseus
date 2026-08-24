@@ -46,6 +46,7 @@
 #   receipt_open                 start a receipt for this iteration
 #   receipt_fact KEY VALUE...    record one fact (last write wins)
 #   receipt_note SENTENCE...     record one line the run said out loud
+#   receipt_gap SENTENCE...      record one thing that did not happen
 #   receipt_keep_branch NAME FILE   keep a red branch's output while it exists
 #   receipt_render TICKET        the document on stdout
 #   receipt_emit TICKET          render it and hand it to the tracker adapter
@@ -136,6 +137,30 @@ receipt__fact() {
 receipt_note() {
   [ -n "${RALPH_RECEIPT:-}" ] || return 0
   printf '%s\n' "$*" >>"$RALPH_RECEIPT/notes" 2>/dev/null || true
+  return 0
+}
+
+# One thing this pack was going to do and did not, or could not measure at all.
+#
+# A second channel and not a second spelling of the one above ([45]). The notes
+# are about **coverage** — the zones nothing walked — and they are on every
+# iteration, green ones included; these are about the pack's own actions failing,
+# they are rare, and what a human does about them is different: a tree that was
+# not put back, a `failed/<ticket>` git refused to write, a tracker file that
+# could not be restored. Buried in a list of ignored paths, the second kind reads
+# as more coverage bookkeeping. They get their own section for that reason alone.
+#
+# Verbatim like the notes, and for the same reason: each of these sentences was
+# written where the fact is known, and rephrasing one here would be a second
+# author for a single claim.
+#
+# The asymmetry with the notes is deliberate and is written in the renderer: an
+# empty note list has to confess, because nobody walking a zone is not the same as
+# an empty zone. An empty gap list is a list of **events** that did not occur, so
+# its absence says no such event was recorded — which is all it ever claimed.
+receipt_gap() {
+  [ -n "${RALPH_RECEIPT:-}" ] || return 0
+  printf '%s\n' "$*" >>"$RALPH_RECEIPT/gaps" 2>/dev/null || true
   return 0
 }
 
@@ -288,15 +313,38 @@ receipt__findings() {
   return 0
 }
 
+# What this iteration was going to do and did not ([45]). Absent when nothing was
+# recorded, which is the one thing this section is entitled to mean: these are
+# events, and no event of this kind was seen.
+receipt__gaps() {
+  [ -s "$RALPH_RECEIPT/gaps" ] || return 0
+  printf '## What did not happen\n\n'
+  printf 'Things this run set out to do and could not. None of them is a verdict on the code, and each of them means some other line of this document is narrower than it looks — a tree that is not back where the session found it, a reference that was promised and not written.\n\n'
+  sed 's/^/- /' "$RALPH_RECEIPT/gaps"
+  printf '\n'
+  return 0
+}
+
 # The zones this pack names on every iteration rather than once in a document, and
 # the admissions that are not zeroes ([34]). Reproduced verbatim: each of these
 # sentences was written where the fact is known, and rephrasing them here would be
 # a second author for one claim.
+#
+# Rendered even when there is nothing in it, which is [45] and the same refusal
+# `receipt__verdicts` makes two functions up. These sentences are written where
+# the fact is known — by the gate as it judges, by the rollback as it puts the tree
+# back — so an iteration where neither ran produces none of them, and a section
+# that simply vanished would read as "the zones were empty" on exactly the routes
+# where nobody looked at them.
 receipt__unjudged() {
   local provisioned
   provisioned="$(receipt__fact provisioned)"
   case "$provisioned" in '' | 0) provisioned='' ;; esac
-  [ -s "$RALPH_RECEIPT/notes" ] || [ -n "$provisioned" ] || return 0
+  if [ ! -s "$RALPH_RECEIPT/notes" ] && [ -z "$provisioned" ]; then
+    printf '## What nothing here judged\n\n'
+    printf 'Nothing here named a zone, and that is a statement about this iteration and not about the repository. The sentences that go here are written as the fact becomes known — the gate names what it did not judge, the rollback names what it could not undo — so an iteration neither of them reached produces none of them: the ignored paths, the ignore frontier and whatever was written after the tree was taken were never walked. An empty list here is not an empty zone.\n\n'
+    return 0
+  fi
   printf '## What nothing here judged\n\n'
   # Rendered rather than quoted, because this one is the pilot's fact and not a
   # sentence anybody said inside the iteration ([13]): the provisioning happens
@@ -310,10 +358,18 @@ receipt__unjudged() {
 }
 
 receipt__meta() {
-  local attempt tokens
+  local attempt tokens stopped
   printf '## Meta\n\n'
   printf -- '- outcome: `%s`\n' "$(receipt__fact outcome)"
   printf -- '- what the loop then did: %s\n' "$(receipt__fact action)"
+  # And whether anything will act on it, which the line above cannot say on its
+  # own ([45]). `retry:1/3` is an honest account of what the failure policy
+  # decided and a misleading one to read alone when the run stopped on this very
+  # iteration: no later iteration is coming to spend that retry.
+  stopped="$(receipt__fact run-stopped)"
+  [ -z "$stopped" ] ||
+    printf -- '- the run stops on this iteration: %s. Whatever the line above says would happen next, nothing in this run will do it.\n' \
+      "$stopped"
   attempt="$(receipt__fact attempt)"
   if [ -n "$attempt" ]; then
     printf -- '- attempt: %s. `Failures:` is a retry budget and not a history — it is cleared on delivery ([26]) — so this is the value the ticket carried when this session was spawned, read after the tracker was restored from its pre-session snapshot, plus one.\n' \
@@ -349,6 +405,10 @@ receipt_render() {
   receipt__evidence "$ticket"
   printf '\n'
   receipt__findings
+  # Before the zones and not after them ([45]): a promise this run could not keep
+  # is rare and actionable, the zone list is long and on every iteration, and the
+  # order of a document decides which of the two a human reads.
+  receipt__gaps
   receipt__unjudged
   receipt__meta
   printf '\n## Where this receipt comes from\n\n'
