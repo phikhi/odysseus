@@ -132,3 +132,14 @@ Les deux VACUOUS attendus du dépôt (`23 a TERM nobody answers`, `23 the grace 
 - **Le coût d'une session de re-slice n'est compté nulle part**, inchangé depuis [07] (voir ci-dessus).
 - **Les tentatives intermédiaires n'ont pas de document.** Une itération retryée ne laisse que sa ligne de journal ; les findings de sa lentille rouge sont dans le reçu de l'itération *finale* seulement si la même branche est encore rouge à ce moment-là. C'est le canal que [14] doit ouvrir s'il veut réinjecter une leçon **entre** deux tentatives du même ticket.
 - **`receipts/` n'est protégé par rien s'il est commité** — propriétaire [19], contrainte écrite là-bas.
+
+### Ce que ce ticket a laissé, trouvé par la passe du 07/08/2026 et livré par [45]
+
+Une seule racine, et c'est la règle de [31] non appliquée à ce ticket-là : **le lecteur a été câblé sur les producteurs qui existaient, pas sur le critère que `receipt.sh` écrit.** « Les phrases sur ce que *rien* n'a jugé, plus les aveux qui ne sont pas des zéros ([34]) » couvrait quatre familles de plus que `gate__say` et `failures__say` ne portaient.
+
+- **`not-integrated` n'écrivait aucun reçu**, alors que l'AC ci-dessus le nomme et que `receipt__summary` porte son paragraphe depuis le premier jour. La route saute `failures_handle`, donc `RALPH_FAILURE_ACTION` restait `none` et le déclencheur ne voyait ni `resolved` ni `escalated:*`. Prose morte, zéro test — `mutate.sh` ne pouvait rien attraper, une garantie qu'aucune édition ne peut casser n'étant portée par rien.
+- **Une branche tuée par `GATE_TIMEOUT` arrivait comme un rouge d'implémentation.** La raison passait par `gate__log`, et le `.out` d'une branche tuée est vide, donc `receipt_keep_branch` la sautait : ni ligne, ni findings. C'était la contrainte « une branche rouge sans verdict doit dire pourquoi » de la passe du 06/08, à moitié levée par [43] pour le quota et jamais pour le délai.
+- **La section des zones disparaissait au lieu d'avouer** sur les routes sans gate, là où `receipt__verdicts` deux fonctions plus haut fait le refus symétrique.
+- **La moitié des aveux de `failures.sh` n'avait aucun canal** (`failures__log` seul), dont les cinq raisons pour lesquelles la branche `failed/<ticket>` que ce reçu envoie lire peut ne pas exister. Le mauvais routage était bien fermé ici (`RALPH_FAILURE_BRANCH` n'est posé qu'au succès) ; ce qui restait est que le repli de `receipt__evidence` — « nothing of the work itself » — se lit comme « il n'y avait rien à garder » là où git a refusé.
+
+Et une cinquième que le critère a sortie en le relisant : un **rollback qui n'a pas pu agir** arrête le run ([34]) sur une itération que la politique vient de mettre en retry, donc la clause d'escalade la manquait. L'échec le plus grave du pack ne produisait aucun document.

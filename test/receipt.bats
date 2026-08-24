@@ -128,6 +128,36 @@ receipt_path() {
   refute_file_exists "$(receipt_path 01-alpha)"
 }
 
+@test "a green gate whose work never reached the branch leaves a document" {
+  # The acceptance criterion [10] wrote and could not reach ([45]). It names
+  # `not-integrated` and `receipt__summary` has carried its paragraph ever since —
+  # but the trigger fired on `resolved` and on an escalation only, and this route
+  # skips `failures_handle` altogether (the `case` that exempts it with
+  # `resolved`), so the action stayed `none` and nothing was emitted. Dead prose,
+  # and on the one route where a human has most to read: the gate was green, the
+  # work was committed inside a worktree this run then destroyed, and there is no
+  # commit on any branch, no `failed/` ref and no change to the ticket to find it
+  # by afterwards.
+  use_tickets 01-alpha
+  # A lock a crashed git forgot is enough, and it puts the failure exactly where
+  # the route needs it: the commit inside the worktree succeeds, and the fold onto
+  # the branch cannot take the ref.
+  : >"$PROJECT_DIR/.git/refs/heads/main.lock"
+
+  run_loop
+  assert_failure 4
+
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_file_exists "$(receipt_path 01-alpha)"
+  assert_file_contains "$(receipt_path 01-alpha)" "01-alpha — not-integrated"
+  assert_file_contains "$(receipt_path 01-alpha)" "the work never reached the branch"
+  # And what the loop did about the ticket, in the vocabulary the failure policy
+  # already owns. `action=none` on an iteration that gave a ticket back is the kind
+  # of line a human reads in the morning and believes.
+  assert_file_contains "$(receipt_path 01-alpha)" "what the loop then did: given-back"
+  assert_file_contains "$FEATURE_DIR/run.log" "action=given-back"
+}
+
 # ── what the gate collected, kept past the gate ──────────────────────────────
 
 @test "a red branch's whole output outlives the gate that collected it" {
@@ -270,6 +300,74 @@ FAKE
   assert_file_contains "$(receipt_path 01-alpha)" "git log -p failed/01-alpha"
 }
 
+@test "an iteration that walked no zone does not report an empty one" {
+  # The refusal above, made where it was missing ([45]). The same route: no gate
+  # ran, so nothing enumerated the ignored paths, the ignore frontier or what was
+  # written after the tree was taken — and the section simply vanished, which reads
+  # as "those zones were empty" instead of "nobody looked at them". These sentences
+  # are written where the fact becomes known, by the gate as it judges and by the
+  # rollback as it puts the tree back, so an iteration neither of them reached
+  # produces none of them.
+  use_tickets 01-alpha
+  set_config RETRY_N 0
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
+exit 1
+FAKE
+
+  run_loop
+  assert_success
+
+  assert_file_contains "$(receipt_path 01-alpha)" "What nothing here judged"
+  assert_file_contains "$(receipt_path 01-alpha)" "An empty list here is not an empty zone."
+}
+
+@test "a branch the gate's own deadline killed says nothing ran" {
+  # [43] one door down, by the other cause of a missing verdict ([45]). The reason
+  # went out through `gate__log`, so stdout only, and a killed branch's output file
+  # is empty — `receipt_keep_branch` drops it — so there was no findings section to
+  # read the absence off either. What a human got was `tests=red` and
+  # `escalated:failed-impl`: the claim that an implementation was judged and found
+  # wrong, for a suite nobody ever ran to the end.
+  use_tickets 01-alpha
+  set_config RETRY_N 0
+  set_config GATE_TIMEOUT 1
+  set_config TEST_CMD "sleep 30"
+
+  run_loop
+  assert_success
+
+  assert_ticket_status 01-alpha ready-for-human
+  assert_file_contains "$(receipt_path 01-alpha)" "tests=red"
+  assert_file_contains "$(receipt_path 01-alpha)" \
+    "tests red (timed out after 1s): this branch was killed at the gate's own deadline"
+  # The channel is what was missing and the colour is not: the verdict stays red
+  # and the escalation stays what it was. A receipt that inferred anything else
+  # from the verdict is precisely what [43] says cannot be done.
+  assert_file_contains "$(receipt_path 01-alpha)" "escalated:failed-impl"
+}
+
+@test "a branch that left no verdict at all says so too" {
+  # The sibling arm, and the reason both had to move together: `no verdict` and
+  # `timed out` are one admission — this branch judged nothing — while an exit code
+  # is a verdict whose output travels to the findings on its own.
+  #
+  # Staged by killing the subshell that collects the branch rather than the command
+  # under it: `gate__branch` writes the `.rc` after its command returns, so a
+  # command that dies of a signal still leaves one and only this does not.
+  use_tickets 01-alpha
+  set_config RETRY_N 0
+  set_config TEST_CMD 'kill -9 $PPID'
+
+  run_loop
+  assert_success
+
+  assert_file_contains "$(receipt_path 01-alpha)" \
+    "tests red (no verdict): this branch ended without leaving one"
+}
+
 @test "a red branch the API merely refused is named as such in the receipt" {
   # [43] where it can actually reach a document, and finding that route is half the
   # work. A gate whose *every* red branch is a refused lens is `budget-pause`: the
@@ -366,7 +464,65 @@ FAKE
   assert_output_contains "could not write branch failed/01-alpha"
   assert_ticket_status 01-alpha ready-for-human
   assert_file_exists "$(receipt_path 01-alpha)"
-  refute_file_contains "$(receipt_path 01-alpha)" "failed/01-alpha"
+  # The line that would misroute, named exactly ([45]). A blanket refusal of the
+  # branch name was the right assertion while the only way the document could
+  # mention it was to offer it as evidence; the receipt now says out loud that git
+  # refused to write it, which is the opposite claim and the one a human needs.
+  refute_file_contains "$(receipt_path 01-alpha)" "git log -p failed/01-alpha"
+  refute_file_contains "$(receipt_path 01-alpha)" "the attempt, kept before the rollback"
+  assert_file_contains "$(receipt_path 01-alpha)" \
+    "could not write branch failed/01-alpha"
+}
+
+# ── what did not happen ──────────────────────────────────────────────────────
+#
+# The second channel ([45]). The notes above are about coverage — the zones nobody
+# walked — and they are on every iteration, green ones included. These are about
+# the pack's own actions coming back short, they are rare, and what a human does
+# about them is different: a tree that is not back where the session found it, a
+# reference that was promised and never written. [10] wired the sentences it had
+# in front of it and half of `failures.sh`'s admissions had no way to a document
+# at all — including the five reasons the `failed/<ticket>` it sends a human to
+# read may not exist.
+
+@test "a rollback that could not act leaves the document that says so" {
+  # Both halves of the gap in one run.
+  #
+  # The trigger: this iteration is on a fresh retry that nothing will ever spend,
+  # because the run stops over the rollback ([34]). The escalation clause therefore
+  # never fires, and the strongest failure this pack can report produced no
+  # document whatsoever.
+  #
+  # The channel: `failures_rollback`'s three refusals were `failures__log`, so even
+  # on the iterations that did get a receipt they were on stdout only.
+  #
+  # Probe B of [34] as the stage, because it is the one scenario that closes the
+  # instrument for real — the session destroys the pinned ignore rules, so the
+  # snapshot refuses and there is nothing the rollback can act on.
+  use_tickets 01-alpha 02-beta
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src lib
+printf 'written\n' >src/alpha.txt
+printf 'rogue\n' >lib/rogue.sh
+rm -rf "${TMPDIR:-/tmp}"/ralph-ignore.*
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_failure 4
+
+  assert_file_exists "$(receipt_path 01-alpha)"
+  assert_file_contains "$(receipt_path 01-alpha)" "What did not happen"
+  assert_file_contains "$(receipt_path 01-alpha)" \
+    "cannot read the working tree — nothing was rolled back"
+  # And the meta line stops reading as a plan. `retry:1/2` is an honest account of
+  # what the policy decided and a misleading one to read alone here: no later
+  # iteration is coming to spend it.
+  assert_file_contains "$(receipt_path 01-alpha)" "the run stops on this iteration"
+  # The bound: the ticket was never handed to a human, so nothing about the
+  # escalation clause is what produced this document.
+  assert_ticket_status 01-alpha ready-for-agent
 }
 
 @test "the context figure is a peak and never a total" {
