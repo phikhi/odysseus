@@ -406,10 +406,50 @@ LANG_PROSE_PATHS="${LANG_PROSE_PATHS:-*.md *.markdown *.mdx *.rst *.adoc}"
 #   vendor/upstream docs'
 LANG_EXEMPT_PATHS="${LANG_EXEMPT_PATHS-.claude}"
 
+# ── The retro tier ───────────────────────────────────────────────────────────
+
+# Whether a fresh subagent looks at each finished ticket and distils a lesson.
+#
+# `on` or `off`, and anything else is refused at startup rather than read as off:
+# a night that distilled nothing and said nothing about it is the shape this pack
+# refuses everywhere else. It costs one cheap session per ticket the loop finished
+# with — not per iteration — and it writes nothing at all unless there is a lesson.
+#
+# What it writes: `LEARNINGS.md` and `learning-records/` at the root of this
+# project, and `docs/adr/` for an internal architecture decision. All three are
+# written by the loop from the subagent's answer; the subagent itself has no write
+# tool. `LEARNINGS.md` and `learning-records/` are **sealed** — no write-surface can
+# cover them — because the index is inlined into every fresh session's prompt.
+RETRO="${RETRO:-on}"
+
+# The tier the retro runs on. A cheap one: it reads one audit receipt and answers
+# in tagged lines, and it runs once per finished ticket. Empty is refused.
+RETRO_MODEL="${RETRO_MODEL:-haiku}"
+
+# How many times a lesson has to come back before it stops being an observation
+# and becomes a standing rule. Promotion drains it out of the working set — which
+# is what keeps the set a working set — and it is announced on the audit receipt of
+# the iteration that promoted it. Zero is refused: it would promote every first
+# observation.
+#
+# A rule that would need a gate, a lint or a hook is never promoted here. That one
+# is a ticket on the human sink: detecting a missing capability is not the same as
+# creating one.
+LEARNINGS_PROMOTE_AT="${LEARNINGS_PROMOTE_AT:-3}"
+
+# How many lines of what a red gate said travel to the next attempt at the same
+# ticket. Without this channel a fresh retry rewrites the code its review lens has
+# just refused, and is reddened identically until RETRY_N. Zero is refused: it
+# would switch the channel off with no line announcing it.
+RETRO_BRIEF_MAX_LINES="${RETRO_BRIEF_MAX_LINES:-120}"
+
 # ── Noise caps ───────────────────────────────────────────────────────────────
 
 # Max entries kept in the LEARNINGS index (it is injected into every fresh
-# session, so it has to stay small).
+# session, so it has to stay small). What falls off the end is counted, in the
+# index itself and on the receipt of the iteration that pushed it off — an index
+# that quietly forgot its oldest line would read like one that never had it. Zero
+# is refused at startup.
 LEARNINGS_INDEX_MAX="${LEARNINGS_INDEX_MAX:-40}"
 
 # Days an audit receipt is kept before pruning.

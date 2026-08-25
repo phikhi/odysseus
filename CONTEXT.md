@@ -119,12 +119,18 @@ La session fraîche isolée, spawnée par la boucle **après le gate**, sur tier
 _À éviter_ : rétro (l'action de fin de story ailleurs), reviewer, session de vérif.
 
 **Promotion**:
-L'élévation d'une leçon **récurrente** en règle dure : soit une guidance ajoutée au `CLAUDE.md` du projet cible (**autonome**, interne), soit un gate/lint/hook (**escaladé** en `ready-for-human`, contractuel). Jamais silencieuse.
+L'élévation d'une leçon **récurrente** en règle dure : soit une section « standing rules » de l'index de leçons (**autonome**, interne), soit un gate/lint/hook (**escaladé** en `ready-for-human`, contractuel). Jamais silencieuse — elle est annoncée sur le reçu d'audit de l'itération qui l'a faite.
 _À éviter_ : règle, escalade (réservé à la sortie humaine du gate).
+
+_(Révisé par [14], livré le 24/08/2026. La moitié autonome disait « une guidance ajoutée au `CLAUDE.md` du projet cible » ; [31] a scellé `CLAUDE.md` — la boucle n'édite pas les règles qui la jugent — et aucune write-surface ne peut couvrir un chemin scellé. Écrire la guidance ailleurs pour que le prompt aille la lire aurait rebâti le canal fermé sous un autre nom : la promotion autonome vit donc dans l'index, qui est lui-même scellé pour la même raison.)_
 
 **Drain**:
 Un mécanisme qui **retire** une leçon de l'index actif — par supersession ou par promotion — gardant l'index borné en working set. Le drain-par-promotion est le principal.
 _À éviter_ : purge, GC, nettoyage.
+
+**Brief de reprise**:
+Ce que le gate a dit de la **tentative précédente du même ticket**, rendu au prompt de la tentative suivante. Vit dans le run et jamais dans l'arbre ; indexé par ticket ; jeté dès que le ticket cesse de bouger. C'est le canal qui manquait à une tentative intermédiaire, qui ne produit aucun reçu.
+_À éviter_ : reçu (par itération finale, pour un humain), contexte, historique.
 
 ### La valeur bout-en-bout
 

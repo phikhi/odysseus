@@ -334,7 +334,7 @@ lenses_review() {
   session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
 
   verdict="$(lenses__verdict "$stream")"
-  lenses__findings "$stream"
+  lenses_findings "$stream"
 
   case "$verdict" in
     pass)
@@ -401,8 +401,14 @@ lenses_refused_posture() {
   return 0
 }
 
-# What the lens said, for the branch's output — which is what a human reads in the
-# morning and what the audit receipt will carry ([10]).
+# The prose a session put in its stream, for the branch's output — which is what a
+# human reads in the morning and what the audit receipt will carry ([10]).
+#
+# Public since [14], which gave it a second caller: the retro subagent answers in
+# tagged lines and they come back through the same NDJSON. A `__` with two callers
+# is an interface whose name lies, and a copy of the scanner below in the other
+# module would be a second place for the escaping to be got wrong — the reason it
+# is not a `sed` is written two paragraphs down.
 #
 # The prose has to come back out of NDJSON, and a `sed` for `"text":"\(.*\)"`
 # cannot do it: the group is greedy, so it swallows the rest of the event, and
@@ -410,7 +416,7 @@ lenses_refused_posture() {
 # is most of them, in a review of code. So the string is scanned character by
 # character to its first *unescaped* quote, and the escapes are undone afterwards,
 # backslash last so a literal one survives.
-lenses__findings() {
+lenses_findings() {
   awk '
     /"type":"assistant"/ {
       s = $0

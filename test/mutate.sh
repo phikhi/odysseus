@@ -228,6 +228,7 @@ STATE=".claude/lib/state.sh"
 FAILURES=".claude/lib/failures.sh"
 LENSES_LIB=".claude/lib/lenses.sh"
 RECEIPT=".claude/lib/receipt.sh"
+RETRO=".claude/lib/retro.sh"
 # Not `LANG`: that one is the locale every command in this script reads.
 LANGLIB=".claude/lib/lang.sh"
 BUDGET=".claude/lib/budget.sh"
@@ -2696,6 +2697,160 @@ mutation "45 a rollback that could not act ends the run with no document" "$LOOP
 mutation "45 a retry nothing will spend is presented as a plan" "$RECEIPT" \
   's/^  stopped="\$\(receipt__fact run-stopped\)"$/  stopped=""/m' \
   test/receipt.bats "rollback that could not act"
+
+# ── [14] auto-learning & ADR ─────────────────────────────────────────────────
+#
+# The layer that is read by a *model* rather than by a human, which is what makes
+# its mutations different in kind: most of the entries below remove something that
+# would let text nobody vouched for reach the prompt of the next session.
+
+# The guarantee the whole module rests on. Without the posture the retro is an
+# ordinary session with Edit, Write and Bash, standing in the tree of the very
+# iteration it is reviewing.
+mutation "14 the retro subagent is spawned able to write" "$RETRO" \
+  's/  session_spawn "\$dir\/prompt" "\$stream" \$\(lenses_posture\) \|\| true/  session_spawn "\$dir\/prompt" "\$stream" || true/m' \
+  test/retro.bats "no tool that can write"
+
+mutation "14 the retro runs on the delivery tier" "$RETRO" \
+  's/^  MODEL="\$\{RETRO_MODEL:-\$saved_model\}"$/  MODEL="\$saved_model"/m' \
+  test/retro.bats "no tool that can write"
+
+# Self-suppression: nothing is written unless there is a lesson.
+mutation "14 a retro that found nothing writes a record anyway" "$RETRO" \
+  's/^  if \[ -n "\$gist" \]; then$/  if true; then/m' \
+  test/retro.bats "finds nothing writes nothing"
+
+# And the other half of the same sentence: a session that said nothing is not a
+# session that found nothing ([06] on a missing verdict).
+mutation "14 a retro that answered nothing reads as one that found nothing" "$RETRO" \
+  's/^  if \[ "\$answered" = 0 \]; then$/  if false; then/m' \
+  test/retro.bats "answers nothing at all"
+
+# The anti-noise half of the index: dedup, supersession, drain-by-promotion, and
+# the bound. Each of them keeps a working set from becoming a log.
+mutation "14 the same lesson is written twice" "$RETRO" \
+  's/^    \[ "\$\(retro__norm "\$g"\)" = "\$\(retro__norm "\$gist"\)" \] \|\| continue$/    [ x = y ] || continue/m' \
+  test/retro.bats "counted, not written twice"
+
+mutation "14 a recurrent lesson never leaves the working set" "$RETRO" \
+  "s/'\\\$2 \\+ 0 >= at \\+ 0 \\{ print \\}' \"\\\$work\" \\\\/'0 { print }' \"\\\$work\" \\\\/m" \
+  test/retro.bats "promoted out of the working set"
+
+mutation "14 a promotion happens without a word on the document" "$RETRO" \
+  's/^      receipt_note "a lesson this loop recorded was promoted/      : "a lesson this loop recorded was promoted/m' \
+  test/retro.bats "promoted out of the working set"
+
+mutation "14 the index grows past its bound" "$RETRO" \
+  's/^    awk -v keep="\$\{LEARNINGS_INDEX_MAX:-40\}" .NR <= keep. "\$work"/    awk -v keep="\${LEARNINGS_INDEX_MAX:-40}" "1" "\$work"/m' \
+  test/retro.bats "drops its oldest line"
+
+mutation "14 what fell off the index is not counted out loud" "$RETRO" \
+  's/^    receipt_note "\$dropped lesson line\(s\) left the injected index/    : "\$dropped lesson line(s) left the injected index/m' \
+  test/retro.bats "drops its oldest line"
+
+mutation "14 a superseded record does not say what replaced it" "$RETRO" \
+  's/^retro__supersede_record\(\) \{/retro__supersede_record() { return 0;/m' \
+  test/retro.bats "superseded lesson leaves the index"
+
+# What reaches a prompt, and in what shape.
+mutation "14 the lesson index reaches no session" "$LOOP" \
+  's/^\$\(loop__prompt_lessons\)\n//m' \
+  test/retro.bats "reaches the next session"
+
+mutation "14 a lesson line is injected unquoted" "$RETRO" \
+  's/^    printf .> %s\\n. "\$line"$/    printf "%s\\n" "\$line"/m' \
+  test/retro.bats "markdown arrives as text"
+
+mutation "14 the index a prompt is served comes from the working tree" "$RETRO" \
+  's!^retro_index\(\) \{$!retro_index() { cat "\$(retro__index_path)" >"\$RALPH_RETRO_STATE/index" 2>/dev/null || true;!m' \
+  test/retro.bats "reaches no prompt at all"
+
+mutation "14 an index edited under the run is overwritten in silence" "$RETRO" \
+  's/^    retro__log "LEARNINGS.md is not what this run last wrote/    : "LEARNINGS.md is not what this run last wrote/m' \
+  test/retro.bats "never reaches a prompt, and the run says so"
+
+# The channel between two attempts at one ticket ([10] left it open).
+mutation "14 a retried session is told nothing about the attempt before it" "$LOOP" \
+  's/^\$\(loop__prompt_brief "\$ticket"\)\n//m' \
+  test/retro.bats "reaches the next attempt"
+
+mutation "14 nothing is kept from a red gate for the next attempt" "$LOOP" \
+  's/^    retry:\*\) retro_keep_brief "\$ticket" ;;$/    retry:*) : ;;/m' \
+  test/retro.bats "reaches the next attempt"
+
+mutation "14 a brief is carried past its bound in silence" "$RETRO" \
+  's/^  local max="\$\{1:-0\}" line n=0$/  local max=0 line n=0/m' \
+  test/retro.bats "brief longer than its bound"
+
+mutation "14 a gist is written at whatever length it came back" "$RETRO" \
+  's/^    cut -c1-240$/    cat/m' \
+  test/retro.bats "gist longer than one line"
+
+mutation "14 the brief is not keyed by ticket" "$RETRO" \
+  's/^  printf .%s\/brief.%s\\n. "\$RALPH_RETRO_STATE" "\$\(printf .%s. "\$1" \| tr -c .A-Za-z0-9._-. ._.\)"$/  printf "%s\/brief.any\\n" "\$RALPH_RETRO_STATE"/m' \
+  test/retro.bats "belongs to one ticket"
+
+# Which iterations are lesson material: the criterion, not the outcomes that
+# happen to exist ([31], [45]).
+mutation "14 an iteration nothing judged is lesson material too" "$RETRO" \
+  's/^retro_wanted\(\) \{/retro_wanted() { return 0;/m' \
+  test/retro.bats "nothing judged the code distils nothing"
+
+# The two promotions, and the line between them ([15]: detecting a missing
+# capability is not creating one).
+mutation "14 an escalated rule lands on the frontier instead of the human sink" "$RETRO" \
+  's/^\*\*Status:\*\* ready-for-human$/**Status:** ready-for-agent/m' \
+  test/retro.bats "ticket on the human sink"
+
+mutation "14 an escalation waiting for a human is opened again every night" "$RETRO" \
+  's/^      \*"-\$slug"\) return 0 ;;$/      *"-\$slug") : ;;/m' \
+  test/retro.bats "not opened twice"
+
+mutation "14 an internal decision is never recorded" "$RETRO" \
+  's/^retro__write_adr\(\) \{/retro__write_adr() { return 1;/m' \
+  test/retro.bats "recorded as an ADR"
+
+mutation "14 an ADR is written without a word on the document" "$RETRO" \
+  's/^      receipt_note "an architecture decision taken during this iteration/      : "an architecture decision taken during this iteration/m' \
+  test/retro.bats "recorded as an ADR"
+
+# The seal, on the criterion [31] wrote and the trap it named for this ticket.
+mutation "14 the lesson index is not sealed" "$GATE" \
+  "s/^  printf '%s\\\\n' 'LEARNINGS.md' 'learning-records'\\n//m" \
+  test/retro.bats "writes the lesson index cannot be green"
+
+# And the values that would switch the layer off without saying so.
+mutation "14 a RETRO that is neither on nor off is read as off" "$RETRO" \
+  's/^    on \| off\) ;;$/    on | off | maybe) ;;/m' \
+  test/retro.bats "neither on nor off"
+
+mutation "14 an index that keeps nothing is accepted" "$RETRO" \
+  's/^  case "\$\{LEARNINGS_INDEX_MAX:-\}" in\n    .. \| 0 \| \*\[!0-9\]\*\)/  case "\${LEARNINGS_INDEX_MAX:-}" in\n    XX)/m' \
+  test/retro.bats "promotion at zero and an empty brief"
+
+# The index is one file and two iterations can be in flight ([13]). Without the
+# guard a lesson is written on top of a sibling's, and the test's live holder
+# stops mattering.
+mutation "14 the index is published without taking the guard" "$RETRO" \
+  's/^retro__guard_take\(\) \{/retro__guard_take() { return 0;/m' \
+  test/retro.bats "holds the index"
+
+# And the one route this module has to be silent on. Found by [45]'s own test
+# going red: a line here would be the only sentence in a section whose job is to
+# confess that nobody walked anything. Named against retro.bats, so the guarantee
+# has an owner in the file that created the risk — [45]'s entry still removes the
+# confession itself, one function away.
+mutation "14 a module line masks the confession of an unwalked zone" "$RETRO" \
+  's/^  \[ -n "\$verdicts" \] \|\| return 0\n//m' \
+  test/retro.bats "no gate reached gets no line"
+
+mutation "14 the tier switched off says nothing" "$RETRO" \
+  's/^    receipt_note "the retro tier is off/    : "the retro tier is off/m' \
+  test/retro.bats "tier switched off says so"
+
+mutation "14 a retro the API refused is a lesson that was not there" "$RETRO" \
+  's/^  if budget_refused "\$posture"; then$/  if false; then/m' \
+  test/retro.bats "API refused distils nothing"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

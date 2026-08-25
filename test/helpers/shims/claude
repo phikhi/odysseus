@@ -193,7 +193,49 @@ if grep -q 'RALPH-LENS-VERDICT' "$state/claude.calls/$n/stdin" 2>/dev/null; then
     "$state/claude.calls/$n/stdin" 2>/dev/null | head -1)"
 fi
 
-if [ -n "$lens" ]; then
+# The retro subagent asks a third question ([14]), and the fake recognises it the
+# same way it recognises a lens: by what the pack actually sent, never by which
+# call this is. `RALPH-RETRO-NOTHING` unless a test scripted an answer — self
+# suppression is the shipped default, so a suite that answered a lesson by
+# accident would have every iteration writing into the index.
+#
+# Recorded per call so a test can assert the prompt the retro was handed, and how
+# many of them there were, without knowing the order the loop spawned things in.
+retro=0
+if grep -q 'RALPH-RETRO-NOTHING' "$state/claude.calls/$n/stdin" 2>/dev/null; then
+  retro=1
+fi
+
+if [ "$retro" = 1 ]; then
+  mkdir -p "$state/claude.retros"
+  printf '%s\n' "$n" >>"$state/claude.retros/calls"
+  # Which retro this is, so a test can give two iterations two different answers.
+  # Counted from the file rather than kept in a variable: there is at most one
+  # retro per iteration and iterations can be concurrent, so the file is the only
+  # thing that has seen them all.
+  retro_index="$(awk 'END { print NR }' "$state/claude.retros/calls")"
+
+  if [ -f "$state/retro.refused" ]; then
+    printf '{"type":"system","subtype":"init","session_id":"%s","model":"%s"}\n' \
+      "$session" "$model"
+    printf '{"type":"rate_limit_event","rate_limit_info":%s,"uuid":"uuid-%s-rate","session_id":"%s"}\n' \
+      "$(cat "$state/retro.refused")" "$n" "$session"
+    exit 1
+  fi
+
+  # Several tagged lines in one assistant event, which is how a model answers:
+  # they come back to the pack through the same NDJSON as a lens's findings, and a
+  # fake that put one per event would not exercise the scanner that has to find
+  # them there.
+  if [ -f "$state/retro.answer.$retro_index" ]; then
+    answer="$(awk '{ printf "%s\\n", $0 }' "$state/retro.answer.$retro_index")"
+  elif [ -f "$state/retro.answer" ]; then
+    answer="$(awk '{ printf "%s\\n", $0 }' "$state/retro.answer")"
+  else
+    answer="RALPH-RETRO-NOTHING"
+  fi
+
+elif [ -n "$lens" ]; then
   mkdir -p "$state/claude.lenses"
   printf '%s\n' "$n" >>"$state/claude.lenses/$lens"
 

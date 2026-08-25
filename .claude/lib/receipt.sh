@@ -48,6 +48,8 @@
 #   receipt_note SENTENCE...     record one line the run said out loud
 #   receipt_gap SENTENCE...      record one thing that did not happen
 #   receipt_keep_branch NAME FILE   keep a red branch's output while it exists
+#   receipt_branches             the red branches kept, one name per line
+#   receipt_branch_text NAME     what that branch had to say
 #   receipt_render TICKET        the document on stdout
 #   receipt_emit TICKET          render it and hand it to the tracker adapter
 #   receipt_close                throw the workspace away
@@ -187,6 +189,25 @@ receipt_keep_branch() {
   return 0
 }
 
+# What was kept, for a reader that is not the document.
+#
+# Public since [14], and the reason is the rule this pack keeps rather than a
+# preference: the retry channel needs the same copy the document renders, and a
+# second consumer of a `__` is an interface whose name lies. It is the same copy
+# on purpose — the whole of [10]'s half of [06] is that a red lens's findings
+# survive the gate *here* and nowhere else, so a channel that re-read them from
+# somewhere would be re-reading a stream that no longer exists, or `run.log`,
+# which the judged session can rewrite.
+receipt_branches() {
+  [ -n "${RALPH_RECEIPT:-}" ] && [ -f "$RALPH_RECEIPT/branches" ] || return 0
+  cat "$RALPH_RECEIPT/branches" 2>/dev/null || true
+}
+
+receipt_branch_text() {
+  [ -n "${RALPH_RECEIPT:-}" ] && [ -f "$RALPH_RECEIPT/branch.$1" ] || return 0
+  cat "$RALPH_RECEIPT/branch.$1" 2>/dev/null || true
+}
+
 # ── the document ─────────────────────────────────────────────────────────────
 
 # What happened, in one paragraph, and it is the part of this file that has to be
@@ -297,19 +318,22 @@ receipt__evidence() {
 
 receipt__findings() {
   local name printed=0
-  [ -f "$RALPH_RECEIPT/branches" ] || return 0
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    [ -f "$RALPH_RECEIPT/branch.$name" ] || continue
+    # A name whose kept output never made it to disk — `receipt_keep_branch`
+    # tolerates a failed write — is not a heading with nothing under it.
+    [ -n "$(receipt_branch_text "$name")" ] || continue
     if [ "$printed" = 0 ]; then
       printf '## Findings\n\n'
       printf 'What each red branch had to say. For a review lens this is the only copy: the prompt and the stream live in the gate'"'"'s temporary directory, and the gate removes it.\n\n'
       printed=1
     fi
     printf '### %s — red\n\n' "$name"
-    sed 's/^/    /' "$RALPH_RECEIPT/branch.$name"
+    receipt_branch_text "$name" | sed 's/^/    /'
     printf '\n'
-  done <"$RALPH_RECEIPT/branches"
+  done <<BRANCHES
+$(receipt_branches)
+BRANCHES
   return 0
 }
 
