@@ -48,6 +48,12 @@
 #   lenses_that_ran                every lens that was spawned, sorted
 #   lens_call_stdin NAME           the prompt that lens was handed
 #   lens_call_argv NAME            argv that lens was spawned with
+#   retro_answer LINE ...          the tagged lines the retro subagent answers
+#   retro_answer_nth N LINE ...    what the Nth retro of the run answers
+#   retro_refused [STATUS ...]     a retro session the API refused
+#   retro_call_count               how many retro subagents were spawned
+#   retro_call_stdin [N]           the prompt the Nth retro was handed
+#   retro_call_argv [N]            argv the Nth retro was spawned with
 #   stub_exit NAME CODE            exit code for `stub-cmd NAME`
 #   stub_call_count NAME           how many times it ran
 #   usage_respond JSON [JSON ...]  body served for /api/oauth/usage; several
@@ -260,6 +266,18 @@ harness__install_pack() {
   # test/canary.bats puts the default back with config_default and runs the loop
   # the way a project would get it.
   set_config LENSES none
+
+  # The fourth layer's subagent, off, and it is the same injection for the same
+  # reason ([14]). The retro is a `claude` too, so a suite that left it on would
+  # spawn one more session on every iteration that finished a ticket, and every
+  # assertion about how many sessions the loop started would really be an
+  # assertion about the retro.
+  #
+  # The shipped default is *on*. It is put back in two places on purpose, so that
+  # the promise is not "verified only where it was switched off": test/retro.bats
+  # drives the module and the loop with it on, and test/canary.bats runs the loop
+  # the way a project would get it, with config_default.
+  set_config RETRO off
 }
 
 # What the shipped config gives a key, read out of the example rather than
@@ -680,6 +698,56 @@ lens_call_stdin() {
 
 lens_call_argv() {
   claude_call_argv "$(head -1 "$SHIM_STATE/claude.lenses/$1" 2>/dev/null)"
+}
+
+# ── scripting the retro subagent ─────────────────────────────────────────────
+#
+# Addressed by nothing at all: there is at most one retro per iteration, and it is
+# the last session an iteration spawns. What a test needs is the answer it gives
+# and the prompt it was handed.
+
+# The tagged lines the retro answers with, one per argument. No answer at all —
+# and by default, without calling this — is `RALPH-RETRO-NOTHING`, which is what
+# the shipped prompt asks for and what makes the tier self-suppressing.
+#
+# Avoid double quotes in an argument: the fake puts the answer in a JSON string,
+# the way the real binary does, and a fake that escaped them would be modelling
+# its own escaping rather than the pack's scanner.
+retro_answer() {
+  printf '%s\n' "$@" >"$SHIM_STATE/retro.answer"
+}
+
+# The answer the Nth retro of the run gives, for a test that needs two iterations
+# to say different things — a lesson that supersedes an earlier one, two lessons
+# that have to coexist in the index.
+retro_answer_nth() {
+  local n="$1"
+  shift
+  printf '%s\n' "$@" >"$SHIM_STATE/retro.answer.$n"
+}
+
+# A retro session the API refused ([08]/[43] applied to this tier): the in-band
+# event, no answer, non-zero exit.
+retro_refused() {
+  local status="${1:-blocked}" window="${2:-five_hour}" reset="${3:-0}"
+  printf '{"status":"%s","resetsAt":%s,"rateLimitType":"%s","isUsingOverage":false}\n' \
+    "$status" "$reset" "$window" >"$SHIM_STATE/retro.refused"
+}
+
+retro_call_count() {
+  if [ -f "$SHIM_STATE/claude.retros/calls" ]; then
+    awk 'END { print NR }' "$SHIM_STATE/claude.retros/calls"
+  else
+    echo 0
+  fi
+}
+
+retro_call_stdin() {
+  claude_call_stdin "$(sed -n "${1:-1}p" "$SHIM_STATE/claude.retros/calls" 2>/dev/null)"
+}
+
+retro_call_argv() {
+  claude_call_argv "$(sed -n "${1:-1}p" "$SHIM_STATE/claude.retros/calls" 2>/dev/null)"
 }
 
 stub_exit() {

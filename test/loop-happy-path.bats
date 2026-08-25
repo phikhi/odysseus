@@ -162,7 +162,12 @@ teardown() {
   assert_output_contains "src/alpha.txt"
   assert_output_contains "CONTEXT.md"
   assert_output_contains "docs/adr/"
-  assert_output_contains "LEARNINGS.md"
+  # And **not** the lesson index, which used to be a fourth pointer here ([14]).
+  # It lives in the main working tree, and since [13] a session works in a
+  # throwaway worktree carrying only what is committed — so the pointer named a
+  # file that was not there. What replaced it is the index itself, inlined and
+  # quoted, and only when there is one: see test/retro.bats.
+  refute_output_contains "LEARNINGS.md"
   assert_output_contains "The loop marks them, after the gate."
 
   # And the rules say which of them are checked rather than merely asked. A

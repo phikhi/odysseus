@@ -28,6 +28,11 @@ setup() {
   # are red, and the gate does not spend a session on a verdict that cannot change
   # the outcome.
   set_config LENSES "$(config_default LENSES)"
+  # And the fourth layer's tier, for the same reason ([14]). The harness turns it
+  # off so a count of sessions stays a count of sessions; here it is on, so the
+  # hostile world really does spawn a retro after every ticket the loop finished
+  # with — and the honest session below has to answer it.
+  set_config RETRO "$(config_default RETRO)"
 }
 
 teardown() {
@@ -58,6 +63,17 @@ case "$prompt" in
     printf '{"type":"system","subtype":"init","session_id":"lens","model":"test-model"}\n'
     printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"nothing to report. RALPH-LENS-VERDICT: pass"}],"usage":{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":5}}}\n'
     printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-LENS-VERDICT: pass","num_turns":1,"total_cost_usd":0.001}\n'
+    exit 0
+    ;;
+  # The retro subagent ([14]), answered the way the shipped prompt asks a session
+  # with nothing to say to answer. Before the delivery case for the reason the lens
+  # is: it must not take a number from the sequence counter below, which is about
+  # *delivery* sessions — and it must not write the write-surface it can see in the
+  # ticket it was handed, which is what the delivery branch would do with it.
+  *RALPH-RETRO-NOTHING*)
+    printf '{"type":"system","subtype":"init","session_id":"retro","model":"test-model"}\n'
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"nothing worth carrying. RALPH-RETRO-NOTHING"}],"usage":{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":5}}}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-RETRO-NOTHING","num_turns":1,"total_cost_usd":0.001}\n'
     exit 0
     ;;
 esac

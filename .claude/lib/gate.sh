@@ -321,6 +321,23 @@ PATHS
 #                                         every spawn — probed, [31]. This one is
 #                                         not an instruction channel, it is an
 #                                         execution channel
+#   LEARNINGS.md, learning-records        the lesson index is **inlined** into
+#                                         every fresh session's prompt ([14]), so
+#                                         it is read at startup as surely as
+#                                         `CLAUDE.md` is — by a different route,
+#                                         and the criterion above does not ask
+#                                         about routes. Sealing it is what stops
+#                                         [14] from rebuilding, under another
+#                                         name, the channel this list closed: a
+#                                         session that could write the index would
+#                                         be writing the prompt of every session
+#                                         after it. The records go with it because
+#                                         the index points at them and because the
+#                                         loop is their only writer. Free to seal
+#                                         for the same reason as the line below —
+#                                         no ticket needs to write them, the retro
+#                                         writes them from outside every judged
+#                                         tree
 #   .claude/agents, commands, skills,     capabilities, which take effect at the
 #   hooks                                 next spawn. Free to seal: [15] already
 #                                         refuses to let a run create a capability
@@ -354,6 +371,7 @@ gate_sealed_paths() {
   printf '%s\n' '.claude/settings.local.json' '.claude/settings.json'
   printf '%s\n' 'CLAUDE.md' 'CLAUDE.local.md'
   printf '%s\n' '.mcp.json'
+  printf '%s\n' 'LEARNINGS.md' 'learning-records'
   printf '%s\n' '.claude/agents' '.claude/commands' '.claude/skills' '.claude/hooks'
   gate__sealed_config
 }

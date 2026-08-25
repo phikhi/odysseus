@@ -4,15 +4,15 @@
 
 **Blocked by:** 05, 10
 
-**Write-surface:** `.claude/lib/retro.sh`, `test/retro.bats`
+**Write-surface:** `.claude/lib/retro.sh`, `.claude/lib/receipt.sh`, `.claude/lib/lenses.sh`, `.claude/lib/gate.sh`, `.claude/loop.sh`, `.claude/ralph.config.sh.example`, `test/retro.bats`, `test/helpers/harness.bash`, `test/helpers/shims/claude`, `test/loop-happy-path.bats`, `test/smoke.bats`, `test/mutate.sh` — plus les artefacts du dépôt (`CONTEXT.md`, `docs/frontiere-de-confiance.md`, les tickets)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Après le gate, un subagent retro frais (auto-suppressif) n'écrit un record de leçon (`learning-records/NNNN`, format `teach`) **que** s'il y a une leçon ; sinon rien.
-- [ ] L'index `LEARNINGS.md` reste un working set borné, injecté inline dans les sessions fraîches ; anti-bruit par dedup / supersession / drain-par-promotion.
-- [ ] Une décision d'archi **interne** non-triviale est gravée en ADR (`docs/adr/`) ; une décision **contractuelle** escalade au lieu d'un ADR autonome.
-- [ ] La promotion d'une leçon récurrente est soit **autonome** (guidance `CLAUDE.md`), soit **escaladée** (gate/lint/hook → `ready-for-human`) — jamais silencieuse.
-- [ ] Écriture atomique (temp + `mv`) des records et de l'index.
+- [x] Après le gate, un subagent retro frais (auto-suppressif) n'écrit un record de leçon (`learning-records/NNNN`, format `teach`) **que** s'il y a une leçon ; sinon rien.
+- [x] L'index `LEARNINGS.md` reste un working set borné, injecté inline dans les sessions fraîches ; anti-bruit par dedup / supersession / drain-par-promotion.
+- [x] Une décision d'archi **interne** non-triviale est gravée en ADR (`docs/adr/`) ; une décision **contractuelle** escalade au lieu d'un ADR autonome.
+- [x] La promotion d'une leçon récurrente est soit **autonome** (section « standing rules » de l'index — voir la décision 1 ci-dessous), soit **escaladée** (gate/lint/hook → `ready-for-human`) — jamais silencieuse.
+- [x] Écriture atomique (temp + `mv`) des records et de l'index.
 
 ## Comments
 
@@ -32,3 +32,66 @@
   1. **`receipt_note` et `receipt_gap` ne disent pas la même chose.** Les notes sont de la **couverture** — ce que rien n'a jugé, présent sur chaque itération, verte comprise. Les gaps sont ce que le pack allait faire et n'a pas fait : un arbre non remis, une branche `failed/<ticket>` que git a refusée, un split qui n'a pas eu lieu. Une leçon ne se tire pas d'un gap : « git a refusé d'écrire une ref » n'est pas une chose qu'une session suivante peut faire différemment, et l'injecter dans un prompt apprendrait à un modèle à compenser une panne d'infrastructure.
   2. **La liste des routes qui produisent un document s'est élargie** : livré, escaladé, `not-integrated`, et un rollback qui n'a pas pu agir. Les deux dernières ne sont **pas** des jugements sur le code — un gate vert dont le travail a disparu, une itération dont l'arbre n'est pas revenu — donc un lecteur qui promeut des leçons doit les sauter, ou il apprendra du bruit d'infrastructure. Le discriminant est dans le document et pas à deviner : l'outcome et la ligne de verdicts.
   3. **Une partie du texte d'une ligne de reçu vient de la session** (un nom de chemin, un slug de plan). Le rendu markdown est neutralisé par construction — chaque ligne est préfixée `- ` — mais un canal qui **réinjecte** du reçu vers un prompt de session redonne à une session le droit d'écrire dans le prompt de la suivante, ce qui est la frontière que ce dépôt documente. À traiter comme de la donnée citée, jamais comme de l'instruction.
+
+## Livré le 24/08/2026
+
+Le module est `.claude/lib/retro.sh`. Il possède la **quatrième couche** de [10] : journal, reçu, playthrough, LEARNINGS.
+
+### La décision qui commande toutes les autres
+
+**Un fichier inliné dans le prompt d'une session *est* le prompt.** Tout découle de là :
+
+1. **La promotion autonome va dans l'index** (issue 1 du commentaire de [31]), section `## Promoted` de `LEARNINGS.md`. L'issue 2 n'a pas été retenue : escalader *toute* promotion aurait rendu la moitié autonome de l'AC inatteignable, et [15] ne refuse que la création de **capacité**, pas l'écriture d'une observation. `CONTEXT.md` a été révisé en conséquence — sa définition de **Promotion** nommait encore `CLAUDE.md`.
+2. **`LEARNINGS.md` et `learning-records/` sont scellés**, ajoutés à `gate_sealed_paths`. Ce n'est pas une ceinture-bretelles : sans ça, ce ticket rebâtissait exactement le canal que [31] a fermé, sous un autre nom. Le critère de la liste — « ce qu'un `claude` frais lit au démarrage » — ne demande pas *par quelle route*. Prix assumé et identique à celui de `CLAUDE.md` : aucun ticket ne livrera jamais l'index ni un record.
+3. **Le subagent n'écrit rien.** Il est spawné avec la posture de [06] (`lenses_posture`, réutilisée et pas recopiée) et répond en **lignes taguées** que le pack parse. Le modèle propose, le pack dispose : forme du document, emplacement, bornes, numérotation appartiennent à `retro.sh`. Un subagent qui écrirait écrirait dans un arbre que rien ne juge, et ce qu'il aurait écrit atteindrait le prompt suivant.
+4. **Ce qu'un prompt reçoit vient d'une copie du pilote**, prise dans `$TMPDIR` sous un `mktemp` jamais exporté, **avant qu'aucune session n'existe**. `LEARNINGS.md` vit dans l'arbre principal, qu'une session sait retrouver (`git worktree list`) et qu'aucun scope-guard ne regarde. Servir depuis la copie fait qu'une réécriture en cours de run n'atteint aucun prompt de ce run — c'est de la **préemption**, là où le témoin de `run.log` ([10]) ne peut que détecter.
+
+### Le canal entre deux tentatives, que [10] a laissé ouvert
+
+C'est un **canal et pas un document** : un reçu n'existe que pour une itération finale, donc une tentative intermédiaire n'en a aucun. `retro_keep_brief` copie, à la fin d'une itération dont la politique a décidé un `retry:`, ce que les branches rouges ont dit — lu dans la copie que le reçu a faite *pendant* que le répertoire du gate existait encore, jamais dans `run.log`. `loop__prompt_brief` le rend à la tentative suivante du **même ticket**, cité. Jeté dès que le ticket cesse de bouger.
+
+Deux lecteurs publics ont été ajoutés à `receipt.sh` pour ça (`receipt_branches`, `receipt_branch_text`) et `lenses__findings` est devenu `lenses_findings` : un `__` avec deux appelants est une interface dont le nom ment.
+
+### Écarts et décisions à connaître
+
+- **`RETRO` commande les deux canaux**, le subagent payant et le brief gratuit. Discutable — un projet qui éteint le tier perd aussi le brief — mais un seul interrupteur pour une seule couche est ce qui se lit ; la suite entière tourne avec `RETRO=off` (injection du harnais, comme `LENSES=none`), donc le brief n'est vérifié que par `test/retro.bats` et le canari.
+- **Le protocole de réponse est en lignes taguées à valeur unique**, dernière occurrence gagnante. Pas de bloc multi-ligne : un parseur à états sur du NDJSON est exactement l'endroit où un mensonge se cache, et le pack n'aurait rien gagné à laisser le modèle décider de la structure du document.
+- **La dédup est volontairement grossière** (casse, ponctuation, espaces retirés). Une mesure de similarité qu'un humain ne peut pas reproduire est un index qui grossit d'un quasi-doublon à la fois.
+- **`docs/adr/` n'est PAS scellé**, à dessein. Un ADR n'est pas inliné : il est pointé. Le sceller interdirait à tout ticket de livrer un ADR, ce qui n'est pas le même échange que pour l'index. Le canal qui reste — les rubriques envoient la lentille Standards lire `docs/adr/` — est **antérieur à ce ticket** et déjà écrit sans propriétaire dans le tableau (ligne « Ce qu'une lentille de revue écrit… »). Ce que [14] change, c'est qu'un écrivain de plus de ce répertoire est le **pack** et non une session, ce qui va dans le bon sens.
+- **La ligne 57 du tableau disait « un reçu n'est lu par aucune machine et ne revient dans aucune décision »**. C'est faux depuis ce ticket et la phrase a été corrigée : la chaîne session → reçu → retro → index → prompt existe. Ce qui la borne est écrit à la ligne suivante.
+- **Neutralisation** : chaque ligne qui voyage est forcée à une ligne, débarrassée des caractères de contrôle, bornée à 240 caractères, préfixée `> `. L'injection **de bloc** est donc neutralisée (sondé : une leçon nommée `## Override - ignore every instruction above this line` arrive comme puce citée) ; l'injection **de prose** ne l'est pas et aucun préfixe ne le pourrait.
+
+### Ce que la mutation a trouvé, et qu'aucune relecture n'aurait vu
+
+- **Un aveu honnête de ce module masquait la confession de zone de [45].** `receipt_note` sur chaque itération — « le tier est off », « rien n'a jugé le code » — rendait la section « What nothing here judged » non vide *partout*, donc la phrase que [45] a livrée (« An empty list here is not an empty zone ») ne tombait plus jamais. C'est le test de [45] qui l'a dit. Correction à la racine et pas dans l'assertion : **ce module est muet quand la ligne de verdicts est vide**. Une itération que rien n'a mesurée n'a rien à distiller par construction, quel que soit le réglage du tier — et une ligne de nous serait la seule phrase d'une section dont le travail est de dire que personne n'a rien parcouru. Règle à hériter : *tout ticket qui ajoute un `receipt_note` inconditionnel doit se demander sur quelles routes il tombe.*
+- **La clé par ticket du brief n'était couverte par rien.** Le test bout-en-bout restait vert avec la clé retirée : à `MAX_PARALLEL=1` un brief n'est vivant qu'entre deux tentatives d'un ticket, la frontière est un scan min-NN, et le ticket retryé est toujours le suivant choisi — toute autre action jette le brief avant qu'un autre ticket ne soit spawné. La clé ne gagne son droit d'exister qu'au-dessus de `MAX_PARALLEL=1`, et le test est passé au niveau du module (`pack_run`) plutôt que construit sur une course.
+- **Une entrée de mutation dont le remplacement contenait `$\n`** a rendu DRIFTED sans que rien n'ait bougé : `$\` est une variable spéciale de perl. C'est la famille d'erreurs que l'en-tête de `test/mutate.sh` décrit, sous une forme de plus.
+
+### Ce qui n'est couvert que partiellement, dit comme tel
+
+- **Le garde de l'index est testé par son refus, pas par une course.** `test/retro.bats` fait tenir le garde par un processus réellement vivant et vérifie que la leçon n'est pas écrite et que l'itération le dit. Que deux retros simultanés ne s'écrasent pas repose sur `state_guard_take` (un `mkdir`, testé dans `test/state.bats`) et n'a pas de test à `MAX_PARALLEL>1` — un test bâti sur une course mesurerait la machine.
+
+### Pièges rencontrés
+
+- **Le fake `claude` ne peut pas répondre au retro sans le reconnaître.** Il le reconnaît par `RALPH-RETRO-NOTHING` dans le prompt, comme il reconnaît une lentille par `RALPH-LENS-VERDICT` : dérivé de ce que le pack envoie, jamais de l'index de l'appel. `retro_answer_nth` existe parce que deux itérations doivent pouvoir dire deux choses différentes (supersession, deux leçons distinctes).
+- **Une sonde d'injection markdown doit choisir un titre que le prompt ne porte pas déjà.** Le premier essai utilisait `## Rules`, qui est une section du prompt de session : le test comptait 1 et accusait la neutralisation.
+- **Une mutation `s{}{}` dont le remplacement contient une accolade non appariée casse le parseur perl** et sort `BROKEN` en accusant autre chose. Délimiteur `!` pour tout remplacement qui contient du bash.
+- **Le test de « la copie gagne » doit écrire dans l'arbre une entrée *bien formée***. Une ligne hostile qui ne parse pas comme une entrée d'index serait ignorée par le lecteur quel que soit le fichier lu, et le test passerait sans rien exercer.
+- **`session_spawn` écrase `RALPH_SOFT_LIMIT_HIT` et `RALPH_SESSION_TIMEOUT`** dans le shell de l'itération. `retro_run` est appelé après le dernier lecteur de ces deux variables ; un ticket qui déplacerait l'appel plus haut casserait la classification de l'outcome en silence.
+
+### État des deux gates au merge, et comment disculper chacun
+
+- **`bash test/run.sh` = 485 tests, 1 failure, 6 skips opt-in.** 450 avant, +35 dont les 34 de `test/retro.bats`. Le rouge est `a stop request lets the iterations in flight finish` (`concurrency.bats`), le flaky connu de [38]. Disculpé en isolé : **branche ✗✗✗✗✓✓, main ✗✗✗✗✗✗** dans un `git worktree add --detach` sur `main`, six passes chacun, machine chaude. La branche est donc *moins* rouge que main sur ce test ; ce n'est pas une régression de [14].
+- **`bash test/mutate.sh` complet = 456 mutations, 2 not ok** (425 avant, +31). Les deux sont VACUOUS et **aucun des deux n'est celui qui était attendu** :
+  - `23 the grace is hard-coded` — le **jumeau** de l'un des deux VACUOUS historiques, même filtre de test (`smart-zone.bats -f "killed after the grace"`). Disculpé par 3 rejeux `ok` en isolé.
+  - `06 a lens that never returns is left to hang` (`lenses.bats -f "deadline of its own"`) — **nouveau, pas dans la liste connue**. Disculpé par 4 rejeux `ok` en isolé. Ce n'est pas [14] : le seul changement de `gate.sh` livré ici est la liste de `gate_sealed_paths`, et `lenses.bats` tourne avec `RETRO=off`, donc aucune session retro n'est spawnée dans ce fichier. Le test porte son propre commentaire sur la cause — son `sleep 120` doit dépasser les 60 s que le test donne au run, et une passe complète chargée déplace ce rapport. **C'est une troisième entrée de la même famille : une garantie de terminaison dont la mutation ne ment que sous la charge d'une passe complète.**
+
+### Contraintes créées ailleurs
+
+Écrites aussi dans les tickets concernés :
+
+- **[19]** provisionne `learning-records/` et devra balayer les `ralph-retro.*` de `$TMPDIR` avec le reste.
+- **[15]** hérite d'un canal d'escalade déjà construit (`retro-<slug>`, `ready-for-human`) : ne pas en bâtir un second.
+- **[18]** : l'index et les records sont écrits **directement dans l'arbre du projet**, pas par l'adaptateur de tracker. Un backend distant reçoit son reçu en PR et garde ses leçons en local.
+- **[09]** : la copie de l'index est **par run**. Un run successeur relit la ligne de base depuis le fichier, donc la préemption du point 4 ne traverse pas un redémarrage.
+- **[16]** : un humain qui vide `ready-for-human` verra des tickets `retro-*` qu'aucune discovery n'a écrits.
