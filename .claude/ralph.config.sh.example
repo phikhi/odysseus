@@ -443,6 +443,43 @@ LEARNINGS_PROMOTE_AT="${LEARNINGS_PROMOTE_AT:-3}"
 # would switch the channel off with no line announcing it.
 RETRO_BRIEF_MAX_LINES="${RETRO_BRIEF_MAX_LINES:-120}"
 
+# ── The capability review ────────────────────────────────────────────────────
+
+# Whether the retro may also name a **capability** this run needed and this
+# project does not have: a review lens, an agent, a skill, a slash command.
+#
+# It never builds one. `.claude/agents`, `.claude/commands`, `.claude/skills` and
+# `.claude/hooks` are sealed against every write-surface, so a session that
+# created a capability reds its own iteration and is rolled back. What this key
+# switches is whether a missing one becomes a `ready-for-human` ticket in your
+# tracker — the same shape of ticket the retro's escalation opens, with a
+# `capability-` slug — or is never mentioned. `on` or `off`, anything else
+# refused at startup.
+#
+# It costs no session of its own: the retro is already looking at the iteration,
+# and this is one more thing it may answer. What it costs is tickets, which is
+# why the bar below exists.
+#
+# Off does **not** switch off the witness on what a fresh session loads: that one
+# is not a tier, it is the line that says whether a capability appeared under
+# this run at all, and it is on every receipt.
+CAPABILITY="${CAPABILITY:-on}"
+
+# How many times the retro has to ask for the same capability, in one run, before
+# a ticket is opened — when this project **already has something** answering for
+# that name. Asking to widen a lens that runs every night is an opinion the first
+# time and a pattern the third.
+#
+# A name nothing answers for — no lens, no skill, no agent, no command — does not
+# wait for this: an uncovered class is a structural hole, and a second sighting
+# says nothing the first did not. Zero is refused: it would remove the bar rather
+# than lower it.
+#
+# The count is per **run**. There is deliberately no file in the tree keeping it
+# across nights: the sessions being counted can write the tree, and a counter
+# they can write is not a counter.
+CAPABILITY_RECUR_AT="${CAPABILITY_RECUR_AT:-2}"
+
 # ── Noise caps ───────────────────────────────────────────────────────────────
 
 # Max entries kept in the LEARNINGS index (it is injected into every fresh

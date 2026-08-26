@@ -584,8 +584,10 @@ $(retro_index)
 
     $RETRO_TOKEN-ESCALATE: the rule, and what would have to enforce it
 
-- At most one lesson, at most one ADR and at most one escalation. Pick the one
-  that matters; the others will still be true next time.
+$(capability_prompt "$RETRO_TOKEN")
+
+- At most one lesson, at most one ADR, at most one escalation and at most one
+  capability. Pick the one that matters; the others will still be true next time.
 PROMPT
 }
 
@@ -672,24 +674,20 @@ retro__write_adr() {
 }
 
 # A promotion that needs a gate, a lint or a hook: a ticket on the human sink, and
-# never a capability this run builds for itself ([15]). Deduplicated against the
-# tracker rather than against a list of its own — an escalation already waiting for
-# a human is the same escalation, and a second one buries the first.
+# never a capability this run builds for itself ([15]).
+#
+# The *shape* of that ticket is not written here since [15], and that is the
+# decision that ticket had to take rather than a refactor: it opens proposals of
+# its own, and two producers with two formats is what a human emptying the sink
+# discovers only once it is already there. `capability_propose` owns the status,
+# the adapter it goes through and the deduplication — an escalation already
+# waiting for a human is the same escalation, and a second one buries the first.
+# What stays here is what makes this one different from a capability: the slug
+# prefix, and the body that says why a rule is not a lesson.
 retro__escalate() {
-  local ticket="$1" rule="$2" slug id
+  local ticket="$1" rule="$2" slug
   slug="retro-$(retro__slug "$rule")"
-  while IFS= read -r id; do
-    case "$id" in
-      *"-$slug") return 0 ;;
-    esac
-  done <<IDS
-$(tracker_ids 2>/dev/null)
-IDS
-  tracker_open_ticket "$slug" "$rule" <<BODY
-**Status:** ready-for-human
-
-**Blocked by:** None
-
+  capability_propose "$slug" "$rule" <<BODY
 **Escalation:** the retro subagent of an autonomous run asked for a rule this loop must not write itself.
 
 **What was asked**
@@ -808,7 +806,7 @@ SEEN
 retro_run() {
   local ticket="$1" outcome="$2" verdicts="${3:-}" rollback="${4:-0}"
   local dir stream receipt gist why supersedes adr decision because escalate
-  local posture answered=0 result
+  local capability posture answered=0 result
 
   RALPH_RETRO_QUOTA=''
   [ -n "${RALPH_RETRO_STATE:-}" ] || return 0
@@ -880,13 +878,18 @@ retro_run() {
   decision="$(retro__said DECISION "$stream")"
   because="$(retro__said BECAUSE "$stream")"
   escalate="$(retro__said ESCALATE "$stream")"
+  # Read here and not only inside the module that acts on it: a retro whose only
+  # answer was a capability *answered*, and the silence clause below would
+  # otherwise report it as a session that said nothing ([15]).
+  capability="$(capability_said "$RETRO_TOKEN" "$stream")"
 
   case "$supersedes" in
     LR-[0-9]*) ;;
     *) supersedes='' ;;
   esac
 
-  if [ -n "$gist" ] || [ -n "$adr" ] || [ -n "$escalate" ]; then
+  if [ -n "$gist" ] || [ -n "$adr" ] || [ -n "$escalate" ] ||
+    [ -n "$capability" ]; then
     answered=1
   elif lenses_findings "$stream" 2>/dev/null | grep -q "$RETRO_TOKEN-NOTHING"; then
     answered=1
@@ -929,6 +932,12 @@ retro_run() {
       receipt_note "the retro asked for a rule that needs a human, and no ticket was opened for it — either one was already waiting or the tracker refused the write"
     fi
   fi
+
+  # And the fifth thing this session may have said ([15]). It gets its own module
+  # because what happens to it is not what happens to a rule: a bar to clear, an
+  # inventory to consult, and a cheapest answer to name. What it shares with the
+  # escalation above is the shape of the ticket, and that is shared as code.
+  capability_review "$RETRO_TOKEN" "$ticket" "$stream" "$RALPH_RETRO_STATE"
 
   rm -rf "$dir"
   return 0

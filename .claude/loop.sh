@@ -317,6 +317,9 @@ loop_preflight() {
   # night distils anything at all and what a retried session is told — the same
   # reason every other value is refused here rather than clamped.
   retro_preflight || rc=1
+  # And [15]'s, which decides whether a run that needed a review it does not have
+  # ever says so, and how many sightings it takes before a human is asked.
+  capability_preflight || rc=1
   return "$rc"
 }
 
@@ -800,6 +803,15 @@ loop__iterate() {
       ;;
   esac
 
+  # What a fresh session would load as a capability, against the baseline this run
+  # took before it spawned anything ([15]). Here rather than beside the retro
+  # because it has nothing to do with distilling a lesson and everything to do
+  # with this iteration: it must be said whether or not the tier is on, whether or
+  # not a receipt is emitted, and on the red path as much as the green one — a
+  # session that wrote a hook into the operator's home is exactly the session
+  # whose gate went red.
+  capability_drift "${RALPH_RETRO_STATE:-}"
+
   # The audit receipt, on the two iterations that *end* a ticket and on no other.
   #
   # Delivered, or handed to a human: those are the moments a ticket stops moving on
@@ -1222,6 +1234,14 @@ loop_main() {
   # trade the work for the bookkeeping.
   if ! retro_open; then
     loop_log "no lesson index for this run — could not make a workspace for one, so nothing will be distilled and no retried session will be told what its gate said"
+  # And in the same workspace, and only if there is one: what a fresh `claude`
+  # would load as a *capability* right now, on both roots ([15]). Taken here,
+  # before any session of this run exists, which is the whole of what makes a
+  # difference afterwards attributable to this run. It is a witness and not a
+  # control — the seal covers the tree an iteration is judged in, and neither the
+  # main tree nor the operator's home is that tree.
+  elif ! capability_witness "$RALPH_RETRO_STATE"; then
+    loop_log "no baseline of what a fresh session loads as a capability — a lens, an agent, a skill or a hook appearing under this run would go unremarked"
   fi
 
   local iteration=0 sterile=0 ticket reclaimed rid rdisposition
