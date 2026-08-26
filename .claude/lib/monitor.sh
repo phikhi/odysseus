@@ -58,6 +58,17 @@
 # to live with it: SECONDS is an integer, so a deadline fires anywhere between
 # limit-1 and limit+1 seconds. Noise against the shipped 1800 s; a constant of
 # coverage in a test that measures seconds.
+#
+# What that band means at the bottom of its range was found the expensive way
+# ([38]), and it is worth one more sentence because two tests of this file had
+# already walked into it: at limit=1 the lower bound is *zero*. `idle` below is
+# sampled at the spawn, so the very first tick to cross a second boundary already
+# satisfies the comparison — measured on the machine this pack is written on, a
+# stall of 1 fires within 0.3 s of silence 38 times out of 120. Nothing shipped is
+# anywhere near that; the default is 1800. But a test that sets it to 1 to keep
+# itself short is not measuring a hung session, it is measuring a session
+# terminated before it wrote its first line, and the fake `claude` it thinks it is
+# watching has not been `exec`ed yet.
 
 # Sets MONITOR_INT to the integer value of a flat JSON key, or to nothing if the
 # key is absent. The opening quote is what makes a key never match a longer one:
