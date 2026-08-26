@@ -28,3 +28,16 @@
 - **Contrainte posée par [14], livré le 24/08/2026 : la préemption de la quatrième couche ne traverse pas un redémarrage.** Ce qu'une session reçoit comme leçons est servi depuis une **copie que le pilote prend au démarrage du run**, dans `$TMPDIR`, avant qu'aucune session n'existe — ce qui fait qu'une réécriture de `LEARNINGS.md` en cours de run n'atteint aucun prompt de ce run. Un successeur est un run neuf : il relit sa ligne de base **depuis le fichier**, dans l'arbre principal, que rien n'a jugé entre-temps. Donc la garantie « ce qu'un prompt reçoit vient de cette boucle » vaut *par run* et pas d'un run à l'autre. Ce ticket est celui qui enchaîne les runs, donc c'est ici que la question se pose : soit le successeur est traité comme un run neuf et la limite est assumée telle qu'écrite dans `docs/frontiere-de-confiance.md`, soit l'auto-chaînage transmet quelque chose — et alors ce quelque chose devient un canal à sceller comme les autres.
 
   Le canal de reprise entre deux tentatives est, lui, franchement **par run** : il meurt avec le pilote et un ticket retryé après un redémarrage repart sans rien savoir de la tentative d'avant.
+
+- **Contrainte posée par la passe transversale du 26/08/2026 : le témoin de [15] est par run
+  lui aussi, et il perd plus que la préemption de [14].** Le paragraphe ci-dessus dit que la
+  copie de `LEARNINGS.md` ne traverse pas un redémarrage. Le témoin de capacités a la même
+  forme par run — ligne de base au démarrage, comparaison à chaque itération — mais avec une
+  différence qui compte ici : sur un run qui **s'arrête sur une itération retryée** (mur
+  budget compris, donc `exit 6`, donc exactement le cas que ce ticket enchaîne), la dérive
+  détectée n'atteint ni le reçu ni `run.log`, et le successeur la reprend comme ligne de
+  base. L'événement n'est donc pas différé, il est perdu. Le canal est le sujet de [46] ; ce
+  qui appartient à ce ticket est la même question que pour [14] : soit le successeur est un
+  run neuf et la limite est assumée telle qu'écrite, soit l'auto-chaînage transmet une ligne
+  de base — et alors elle devient un canal à sceller comme les autres. Sondes :
+  `.scratch/ralph-pack/sondes/passe-26-08/p2.bats` P2c et `p3.bats` P3b.

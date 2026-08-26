@@ -80,3 +80,33 @@ Correctif : une seule fonction, `capability_is_kind`, avec `grep -qxF`. Le test 
 - **`\\n` et `\\\\n` dans une moitié gauche perl ne matchent pas la même chose.** Le fichier contient `printf '%s\n'` — un backslash et un `n` — donc le motif perl doit porter `\\n` (deux caractères dans la chaîne bash entre apostrophes). Écrire `\\\\n` cherche *deux* backslashes et rend `DRIFTED` sans que rien n'ait bougé. C'est le jumeau du piège `$\n` que [14] avait consigné, par l'autre bout.
 - **`$1` dans la moitié droite d'une mutation est le groupe de capture de perl, et ça sort en `VACUOUS` sur un test sain.** L'avertissement en tête de `test/mutate.sh` nomme `$1` à côté de `$(` et `$&`, et c'est exactement ce qui est arrivé : `grep -qx "$1"` non échappé devient `grep -qx ""`, qui refuse **tous** les kinds — donc la mutation « lit le kind comme un motif » rendait le contrôle plus strict au lieu de le retirer, le test restait vert, et le verdict accusait un test qui faisait son travail. Ni `-Mstrict` ni `bash -n` ne peuvent le voir : les deux moitiés sont légales. C'est le jumeau du `$\n` de [14] avec un symptôme inversé — `DRIFTED` là-bas, `VACUOUS` ici. La règle pratique : après avoir écrit une entrée, relire la moitié **droite** en se demandant ce que perl y voit, pas seulement ce que bash y verra.
 - **Une sonde de témoin doit partir d'un état propre.** Le premier rejeu de la sonde de dérive est resté silencieux : la passe précédente avait laissé le fichier planté, donc la ligne de base l'incluait déjà. Un témoin qui compare deux instants ne peut pas être sondé deux fois de suite dans le même répertoire.
+
+### Ce que la passe transversale du 26/08/2026 a fait de ce ticket
+
+- **La contrainte laissée à [13]/[27] a maintenant un propriétaire : [47].** Elle avait été
+  écrite dans les deux, et les deux sont `resolved` — donc aucun ticket ouvert de la file ne
+  l'aurait lue. La passe a reproduit la course (`sondes/passe-26-08/p4.bats`) et a trouvé
+  que les deux réparations existantes la manquent structurellement : le préflight tourne au
+  démarrage du run, et la renumérotation de la quarantaine est désarmée par le registre de
+  [13] précisément parce que c'est la boucle qui a écrit.
+
+- **Les limites 3 et 5 se composent en un silence définitif, et c'est [46].** Le témoin
+  tourne bien à chaque itération, mais son seul canal durable est le `receipt_gap`, et le
+  reçu n'est émis que sur les quatre routes de [45] ; `capability__log` n'écrit que stdout.
+  Sur un run qui s'arrête *sur* une itération retryée (`ITER_CAP`, `STERILE_K`, arrêt
+  demandé, mur budget), la dérive n'atteint ni reçu ni journal — et comme le témoin est par
+  run, le run suivant la reprend comme ligne de base. Sondé : `p2.bats` P2c, `p3.bats` P3b.
+  `ralph.config.sh.example` dit de ce témoin qu'« il est sur chaque reçu » ; c'est la moitié
+  documentaire du même écart.
+
+- **Ce que la passe a confirmé conforme, et qu'il ne faut pas resonder** : l'AC 4 tient —
+  `CAPABILITY=off` n'éteint pas le témoin (`p5.bats` P5c) — et la limite 3 est exacte : la
+  lentille de la *même* itération voit bien le `$HOME/.claude/settings.json` que la session
+  qu'elle juge vient d'écrire (`p5.bats` P5b).
+
+- **Et la porte de `$HOME` mène plus loin que la moitié « capacité ».** `~/.gitconfig` porte
+  `core.fsmonitor`, qui est un chemin de programme que git lance à chaque rafraîchissement
+  d'index : 248 exécutions sur un run de deux itérations, dans l'arbre de processus du pack,
+  run vert et silence complet. `capability_surfaces` ne le regarde pas, et c'est la bonne
+  décision — ce n'est pas ce qu'un `claude` frais charge comme capacité. Le critère est
+  autre et le propriétaire est [46].

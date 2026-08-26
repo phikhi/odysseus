@@ -125,3 +125,14 @@ Trois trous, tous dans le mécanisme et aucun dans la doctrine : les règles ép
 - **[34] — le témoin détruit blanchit au tour suivant.** Le résidu écrit ici (« un témoin détruit ferme le contrôle, l'itération est rouge avec ses écritures encore en place ») s'arrête un tour trop tôt : l'itération suivante prend cet arbre pour un état d'avant, donc les écritures hors surface ne sont plus le changement de personne. Le fail-closed est un blanchiment en deux coups au prix d'un retry. Le même ticket porte l'autre moitié, qui est un vrai fail-open : le refus de snapshot que ce ticket a introduit est lu comme une liste vide par `gate_unjudged_changes`, donc le confinement des écritures de lentille ([06]) passe au vert sans avoir mesuré.
 
 - **Passe transversale du 06/08/2026 : la remise est juste, son imputation ne l'est plus.** `.git/info/exclude` et `core.excludesFile` vivent dans le répertoire git commun ; depuis [13] plusieurs itérations les épinglent à des instants différents et les remettent sans verrou. `gate_ignore_frontier` répond à « la frontière a-t-elle bougé depuis mon témoin » et jamais à « qui l'a bougée » : sondé, le frère innocent est rougi, rollbacké et facturé d'un retry, et la session qui a élargi trouve la frontière déjà remise et sort verte. C'est [41]. Ce que ce ticket a construit n'est pas en cause — le témoin, la question posée à `git check-ignore`, la remise vérifiée — c'est le fait qu'il n'y avait qu'un acteur quand la question a été formulée.
+
+- **Passe transversale du 26/08/2026 : le pin a le bon mécanisme et la moitié du critère —
+  c'est [46].** Ce ticket a épinglé `.git/info/exclude` et `core.excludesFile` parce qu'ils
+  décident de ce qu'un contrôle **voit**. La même configuration porte des clés qui décident
+  de ce que git **lance** (`core.fsmonitor` est un chemin de programme : 248 exécutions sur
+  un run de deux itérations, dans l'arbre de processus du pilote, run vert et silence) et de
+  ce que git **produit** (`filter.<n>.smudge` via `.git/info/attributes` : une itération
+  réécrit le `CONTEXT.md` que les suivantes lisent, sans qu'aucun diff de tree puisse le
+  voir, puisque les deux trees sont smudgés de la même façon). Les deux sources sont
+  écrivables par une session — `<arbre principal>/.git/config` et `~/.gitconfig`. Sondes :
+  `.scratch/ralph-pack/sondes/passe-26-08/`, `p1c`, `p3` P3a, `p7`, `p8`.

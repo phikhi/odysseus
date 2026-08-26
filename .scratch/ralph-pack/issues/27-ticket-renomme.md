@@ -69,3 +69,14 @@
 - **Contrainte pour [18] : ce trou est propre au backend local.** La collision naît de la convention « le nom de fichier porte le `NN` » et du glob `NN-*.md` de `tracker_local__path`. Un backend distant numérote côté serveur et n'a pas ce chemin — mais il devra dire, dans son propre ticket, comment il rend `tracker_ids` stable quand deux tickets prétendent au même identifiant.
 
 - **Contrainte posée par [15], livré le 25/08/2026 : un troisième producteur d'ids, toujours sans verrou.** `tracker_local__next_nn` lit le répertoire, prend le max et écrit ; deux ouvertures concurrentes peuvent choisir le même `NN`, et c'est exactement la collision que ce ticket sait diagnostiquer et renuméroter. Les producteurs étaient `failures_reslice` et l'escalade de [14] — [42] a sondé deux re-slices voisins créant quatre tickets — et [15] ajoute `capability_propose`. Ce ticket n'a rien à corriger dans ce qu'il a livré ; ce qui manque est en amont, la sérialisation de l'ouverture, et le propriétaire naturel est [13].
+
+- **Passe transversale du 26/08/2026 : la contrainte que [15] a écrite ici a maintenant un
+  ticket, [47].** Ce ticket-ci est `resolved`, donc la contrainte n'avait aucun lecteur dans
+  la file ouverte. La passe a reproduit la course de `tracker_open_ticket`
+  (`.scratch/ralph-pack/sondes/passe-26-08/p4.bats` : deux ouvertures en vol, même `NN`, bare
+  number irrésolvable, ticket bloqué sorti de la frontière pour de bon) et a montré que les
+  deux réparations existantes la manquent structurellement — `tracker_preflight` tourne au
+  démarrage du run, et la renumérotation de `failures_quarantine_strays` est désarmée par le
+  registre des écritures de la boucle, précisément parce que c'est la boucle qui a écrit
+  (`p5.bats` P5a, les deux moitiés côte à côte). Le détail de fenêtre qui compte pour qui
+  écrira le correctif : `nn` est calculé **avant** que le corps ne soit lu sur stdin.
