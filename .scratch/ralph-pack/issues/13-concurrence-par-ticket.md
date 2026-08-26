@@ -212,3 +212,14 @@ Et deux enseignements de méthode, valables au-delà de ce ticket :
 - **Et le plan de travail du reçu est un secret de plus dans `$TMPDIR`.** `RALPH_RECEIPT` est un `mktemp -d` par itération, variable du sous-shell de l'itération et **jamais exportée** — même traitement que `RALPH_IGNORE_PIN` ([30]) et `RALPH_TRACKER_LOG` ([40]), pour la raison exacte de [40] : `claude` est forké depuis ce shell-là. Une itération sœur ne le voit pas non plus, ce qui est voulu : un reçu répond d'une itération et d'une seule.
 
 - **Contrainte posée par [15], livré le 25/08/2026 : deux courses sur l'ouverture de ticket, aucune fermée.** `tracker_open_ticket` n'est protégé par aucun garde : `tracker_local__next_nn` lit le max et écrit, donc deux ouvertures concurrentes peuvent prendre le même `NN` (l'ambiguïté que [27] sait diagnostiquer, pas éviter) ; et toute dédup bâtie dessus — celle de l'escalade de [14] comme celle de `capability_propose` — lit `tracker_ids` avant que la voisine n'écrive, donc deux itérations peuvent ouvrir deux fois la même proposition. [15] a ajouté un troisième producteur et n'a rien aggravé au-delà de ça : son compteur de barre est **append-only** précisément pour ne pas ajouter une troisième course (une ligne par observation, comptée par `grep -c`, jamais un read-modify-write sur un répertoire que deux itérations partagent). Ce qu'il faudrait est un garde autour de l'ouverture, et il appartient à ce ticket-ci parce que c'est lui qui possède la concurrence.
+
+- **Passe transversale du 26/08/2026 : la contrainte que [15] a écrite ici a maintenant un
+  ticket, [47].** Ce ticket-ci est `resolved`, donc la contrainte n'avait aucun lecteur dans
+  la file ouverte. La passe a reproduit la course de `tracker_open_ticket`
+  (`.scratch/ralph-pack/sondes/passe-26-08/p4.bats` : deux ouvertures en vol, même `NN`, bare
+  number irrésolvable, ticket bloqué sorti de la frontière pour de bon) et a montré que les
+  deux réparations existantes la manquent structurellement — `tracker_preflight` tourne au
+  démarrage du run, et la renumérotation de `failures_quarantine_strays` est désarmée par le
+  registre des écritures de la boucle, précisément parce que c'est la boucle qui a écrit
+  (`p5.bats` P5a, les deux moitiés côte à côte). Le détail de fenêtre qui compte pour qui
+  écrira le correctif : `nn` est calculé **avant** que le corps ne soit lu sur stdin.

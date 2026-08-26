@@ -52,3 +52,14 @@
 - **Et une limite de rétention à connaître.** `RECEIPTS_RETENTION_DAYS` vaut 30, et le reçu référence des **objets** git (le commit d'itération, les deux trees) qu'un `gc` peut collecter dès que la branche est passée devant — plus court que 30 jours. Un ticket qui dort longtemps dans le puits humain peut donc arriver avec un reçu dont les références ne résolvent plus. La branche `failed/<ticket>` est une ref, elle, et survit ; c'est celle sur laquelle s'appuyer si ce ticket veut une garantie de durée.
 
 - **Contrainte posée par [14], livré le 24/08/2026 : le puits humain reçoit des tickets qu'aucune discovery n'a écrits.** Le subagent retro ouvre des `NN-retro-<slug>` en `ready-for-human` quand une leçon récurrente demanderait un gate, un lint ou un hook — c'est-à-dire une capacité, que la boucle ne crée pas d'elle-même ([15]). Ils n'ont ni `What to build` rédigé par un humain, ni write-surface, ni critères d'acceptation : ce sont des **demandes**, pas des tickets prêts à broyer. Deux conséquences pour ce ticket : la boucle humaine doit les distinguer d'un `failed-impl` (ce n'est l'échec de rien), et le geste attendu n'est pas « corriger et remettre `ready-for-agent` » mais « décider, puis écrire le vrai ticket ou fermer ». Un `retro-*` remis tel quel sur la frontière serait un ticket qu'aucun scope-guard ne peut juger, faute de surface déclarée.
+
+- **Contrainte posée par la passe transversale du 26/08/2026 — deux, et la seconde est un
+  droit plus qu'une contrainte.** *(a)* Tant que [47] n'est pas livré, le puits peut recevoir
+  **deux fois la même proposition** : la dédup de `capability_propose` lit `tracker_ids`
+  avant d'écrire, donc deux itérations en vol peuvent la franchir toutes les deux. Un humain
+  qui vide le puits verra donc parfois deux `capability-<kind>-<nom>` identiques, et ce n'est
+  pas une erreur de saisie. *(b)* Deux tickets peuvent aussi porter le **même `NN`** — la
+  même course, par `tracker_open_ticket` — et ce cas-là est pire : un bare number cesse de
+  résoudre et tout ticket portant `Blocked by: NN` quitte la frontière définitivement. La
+  boucle humaine est le seul composant qui puisse renommer l'un des deux sans être une
+  session ; si elle le fait, `tracker_preflight` produit déjà la phrase exacte à afficher.

@@ -44,3 +44,14 @@
 - **Contrainte posée par [14], livré le 24/08/2026 : la quatrième couche ne passe pas par l'adaptateur, et c'est une décision.** `LEARNINGS.md`, `learning-records/` et `docs/adr/` sont écrits **directement dans l'arbre du projet**, jamais par `tracker_emit_receipt` ni par aucune opération dispatchée. Un backend distant reçoit donc son reçu en PR et garde ses leçons en local. La raison est celle du scellement : l'index est inliné dans le prompt de chaque session fraîche, donc c'est le prompt — et un prompt servi depuis un service distant serait un prompt que ce pack ne peut ni sceller, ni comparer à une copie qu'il a prise lui-même. Si ce ticket veut publier les leçons ailleurs, la direction qui reste honnête est **sortante seulement** : le pack écrit son index, un adaptateur peut le recopier vers un service, et rien de ce qui revient d'un service n'entre dans un prompt.
 
   Le canal de reprise entre deux tentatives ([14] sur [10]) est dans le même cas et pour une raison de plus : il vit dans `$TMPDIR` sous un nom que le pilote n'exporte pas, donc il n'a pas d'existence hors du run et il n'y a rien à publier.
+
+- **Contrainte posée par la passe transversale du 26/08/2026 : `open_ticket` doit répondre à
+  la question de [47] avant d'exister.** `tracker.sh` dit déjà qu'un backend dont les ids ne
+  peuvent pas entrer en collision « doit encore à son propre ticket une réponse à la question
+  en dessous ([27]) : que fait `tracker_ids` quand deux tickets réclament un identifiant ».
+  La passe a montré que le backend `local` y répond mal : `tracker_local__next_nn` n'a aucun
+  verrou, trois producteurs, et les deux réparations existantes manquent la collision que la
+  boucle crée elle-même. Un backend distant qui numérote côté serveur hérite gratuitement de
+  la moitié « id », **pas** de la moitié « dédup » : `capability_propose` déduplique en
+  lisant `tracker_ids` avant d'écrire, ce qui est une course quel que soit le backend. Livrer
+  après [47] et hériter de ce qu'il aura décidé, plutôt que le redécouvrir sur une API.

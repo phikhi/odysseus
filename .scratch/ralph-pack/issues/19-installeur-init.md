@@ -84,3 +84,14 @@
   1. **Le `.gitignore` se décide autrement que pour `receipts/`.** L'index et les records sont **scellés** ([31], élargi par [14]), donc un projet qui les commite ne rouvre *pas* le trou décrit deux points plus haut : ils entrent dans l'arbre jugé et aucune write-surface ne peut les couvrir. Commiter est même l'option qui les met sous garde ; ne pas commiter les laisse dans l'arbre principal, hors de tout arbre jugé, où seule la copie de run du pilote protège ce qui atteint un prompt. Cet installeur doit **écrire la décision**, pas la laisser tomber du modèle de `.gitignore` qu'il pose. `docs/adr/` n'est pas scellé et se traite comme n'importe quelle documentation.
   2. **Une sixième famille à balayer : `ralph-retro.*`.** Un répertoire par run (pas par itération), qui porte la copie de l'index et les briefs de reprise. Il fuit sur un run tué comme ses frères, et il n'est ni dans les cinq globs d'origine ni dans les deux que le point précédent ajoute — la liste des globs décide de ce qui est compté **et** de ce qui est balayé, donc les deux moitiés se corrigent ensemble.
   3. **Quatre clés de plus dans l'exemple** : `RETRO`, `RETRO_MODEL`, `LEARNINGS_PROMOTE_AT`, `RETRO_BRIEF_MAX_LINES`. La confirmation forcée de cet installeur porte déjà sur `TEST_CMD`/`TYPECHECK_CMD` ; `RETRO=off` est un choix légitime et annoncé sur chaque reçu, donc il n'en demande pas une — mais `RETRO_MODEL` nomme un tier facturé une fois par ticket livré, et c'est le genre de valeur qu'un projet doit voir passer à l'installation.
+
+- **Contrainte posée par la passe transversale du 26/08/2026 : [46] va ajouter des clés que
+  cet installeur provisionne.** Le pin de [30] s'élargit de « ce qu'un contrôle voit » à « ce
+  que git exécute et ce que git transforme » (`core.fsmonitor`, `filter.<n>.smudge` via
+  `.git/info/attributes`), sur deux sources — `<arbre principal>/.git/config` et le
+  `~/.gitconfig` de l'opérateur. Deux conséquences pour ce ticket : la confirmation forcée
+  qu'il fait déjà pour `TEST_CMD="true"` est le seul endroit du pack qui peut attraper un
+  projet dont le `~/.gitconfig` porte déjà une de ces clés **de bonne foi** (un `fsmonitor`
+  légitime existe), et c'est ici qu'il faut le dire plutôt que de laisser une nuit rougir
+  dessus ; et si [46] retient un élargissement de config, c'est cet installeur qui l'écrit
+  dans `ralph.config.sh`. Livrer après [46].
