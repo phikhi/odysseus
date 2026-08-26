@@ -229,6 +229,7 @@ FAILURES=".claude/lib/failures.sh"
 LENSES_LIB=".claude/lib/lenses.sh"
 RECEIPT=".claude/lib/receipt.sh"
 RETRO=".claude/lib/retro.sh"
+CAPABILITY=".claude/lib/capability.sh"
 # Not `LANG`: that one is the locale every command in this script reads.
 LANGLIB=".claude/lib/lang.sh"
 BUDGET=".claude/lib/budget.sh"
@@ -2798,11 +2799,17 @@ mutation "14 an iteration nothing judged is lesson material too" "$RETRO" \
 
 # The two promotions, and the line between them ([15]: detecting a missing
 # capability is not creating one).
-mutation "14 an escalated rule lands on the frontier instead of the human sink" "$RETRO" \
+#
+# Both edits moved file, and neither moved test: [15] took the decision the
+# comment on this ticket asked for and made `capability_propose` the one writer of
+# a human-sink ticket, so that its own proposals and this escalation cannot be two
+# formats. The guarantee is unchanged and it is still retro.bats that must notice
+# — the anchor is simply in the module that owns the shape now.
+mutation "14 an escalated rule lands on the frontier instead of the human sink" "$CAPABILITY" \
   's/^\*\*Status:\*\* ready-for-human$/**Status:** ready-for-agent/m' \
   test/retro.bats "ticket on the human sink"
 
-mutation "14 an escalation waiting for a human is opened again every night" "$RETRO" \
+mutation "14 an escalation waiting for a human is opened again every night" "$CAPABILITY" \
   's/^      \*"-\$slug"\) return 0 ;;$/      *"-\$slug") : ;;/m' \
   test/retro.bats "not opened twice"
 
@@ -2851,6 +2858,124 @@ mutation "14 the tier switched off says nothing" "$RETRO" \
 mutation "14 a retro the API refused is a lesson that was not there" "$RETRO" \
   's/^  if budget_refused "\$posture"; then$/  if false; then/m' \
   test/retro.bats "API refused distils nothing"
+
+# ── [15] detecting a capability, and never building one ──────────────────────
+#
+# The refusal itself is not mutated here and it has an owner: `.claude/agents`,
+# `.claude/commands`, `.claude/skills` and `.claude/hooks` are in
+# `gate_sealed_paths`, and the entry that removes them from that list is [31]'s,
+# against test/gate.bats. What is mutated here is everything the seal cannot
+# reach: the bar, the ordering, the two roots outside every judged tree, and the
+# channel that carries the whole thing.
+
+# The bar, both arms. An uncovered class that had to wait for a recurrence would
+# never get one — nothing else in a run raises the same name twice by itself.
+mutation "15 an uncovered class waits for a recurrence it will not get" "$CAPABILITY" \
+  "s/^    printf 'uncovered\\\\n'\$/    printf 'below-bar 0\\/9\\\\n'/m" \
+  test/capability.bats "uncovered class does not wait"
+
+mutation "15 a refinement of what exists is proposed on first sight" "$CAPABILITY" \
+  's/^  if \[ "\$n" -ge "\$at" \]; then$/  if true; then/m' \
+  test/capability.bats "already has is counted"
+
+mutation "15 the bar counts sightings of anything rather than of one name" "$CAPABILITY" \
+  's/grep -c "\^\$kind\/\$name\\\$"/grep -c "^"/' \
+  test/capability.bats "not the model"
+
+# Reuse before create, one step at a time: a lens that exists must beat building
+# one, and a skill that exists must beat it too.
+mutation "15 what already exists is never looked for" "$CAPABILITY" \
+  's/^    for kind in lens skill agent command; do$/    for kind in ; do/m' \
+  test/capability.bats "lens beats a skill"
+
+mutation "15 only a lens counts as something to reuse" "$CAPABILITY" \
+  's/^    for kind in lens skill agent command; do$/    for kind in lens; do/m' \
+  test/capability.bats "kind does not decide the route"
+
+mutation "15 the proposal does not say what already exists" "$CAPABILITY" \
+  's/^\$\(capability__cheapest "\$decision" "\$candidate" "\$where" "\$name"\)$/(nothing)/m' \
+  test/capability.bats "cheapest answer"
+
+# The channel: without either of these two lines the whole tier is off and no
+# test of it can tell that from a subagent that had nothing to say.
+mutation "15 the capability review never runs" "$RETRO" \
+  's/^  capability_review "\$RETRO_TOKEN" "\$ticket" "\$stream" "\$RALPH_RETRO_STATE"$/  :/m' \
+  test/capability.bats "ticket on the human sink"
+
+mutation "15 the subagent is never told it may name one" "$RETRO" \
+  's/^\$\(capability_prompt "\$RETRO_TOKEN"\)$/(nothing)/m' \
+  test/capability.bats "told what already exists"
+
+mutation "15 a retro that only named a capability reads as one that said nothing" "$RETRO" \
+  's/ \|\|\n    \[ -n "\$capability" \]; then$/; then/m' \
+  test/capability.bats "not a retro that said nothing"
+
+# What an answer that is not one costs: a kind this pack cannot act on must not
+# become a ticket nobody can read.
+mutation "15 an answer this pack cannot read becomes a proposal anyway" "$CAPABILITY" \
+  's/^  if ! capability_is_kind "\$kind" \|\| \[ -z "\$name" \]; then$/  if false; then/m' \
+  test/capability.bats "cannot read"
+
+# And the `F`, which is the control and not a flourish: without it the kind is a
+# regex, `.*` matches `lens`, and the loop writes a file name a session chose with
+# a glob character in it.
+#
+# `\$1` on both halves, and this entry is why the warning at the top of this file
+# names `$1` next to `$(` and `$&`: written bare it is perl's first capture group,
+# it interpolates to the empty string, and `grep -qx ""` refuses **every** kind —
+# which reads as VACUOUS on a test that was doing its job. `-Mstrict` cannot see
+# it and neither can `bash -n`: both halves are legal.
+mutation "15 the kind a model answered is read as a pattern" "$CAPABILITY" \
+  's/  capability_kinds \| grep -qxF "\$1"/  capability_kinds | grep -qx "\$1"/' \
+  test/capability.bats "kind that is a pattern"
+
+# And the two silences. A proposal kept below the bar and a tier switched off are
+# both iterations where nothing was asked for, and neither may be silent.
+mutation "15 a capability kept below the bar is kept in silence" "$CAPABILITY" \
+  's/^      receipt_note "the retro asked for a \$kind called/      : "the retro asked for a \$kind called/m' \
+  test/capability.bats "counted out loud"
+
+mutation "15 the capability review switched off says nothing" "$CAPABILITY" \
+  's/^    receipt_note "the capability review is off/    : "the capability review is off/m' \
+  test/capability.bats "switched off says so"
+
+# ── what the seal does not cover ─────────────────────────────────────────────
+#
+# Two roots reach a later spawn without entering any tree the scope-guard
+# compares: the main working tree an iteration is not judged in, and the
+# operator's home a lens is deliberately spawned to read.
+mutation "15 what a fresh session loads is never witnessed" "$CAPABILITY" \
+  's/^capability_witness\(\) \{/capability_witness() { return 1;/m' \
+  test/capability.bats "operator's home"
+
+mutation "15 the operator's home is not a place a capability can appear" "$CAPABILITY" \
+  's/^  \[ -z "\$\{HOME:-\}" \] \|\| \[ "\$HOME" = "\$root" \] \|\| printf .%s\\n. "\$HOME"$/  :/m' \
+  test/capability.bats "operator's home"
+
+mutation "15 a capability that appeared under the run is not said out loud" "$CAPABILITY" \
+  's/^    receipt_gap "a capability surface changed while this run was in flight/    : "a capability surface changed while this run was in flight/m' \
+  test/capability.bats "main tree"
+
+mutation "15 the witness does not follow a symlinked skill" "$CAPABILITY" \
+  's/find -L "\$path" -type f/find "\$path" -type f/' \
+  test/capability.bats "symlinked skill"
+
+mutation "15 nothing measures the surfaces again after the session" "$LOOP" \
+  's/^  capability_drift "\$\{RALPH_RETRO_STATE:-\}"$/  :/m' \
+  test/capability.bats "operator's home"
+
+# And the values that would switch the tier off without saying so.
+mutation "15 a CAPABILITY that is neither on nor off is read as off" "$CAPABILITY" \
+  's/^    on \| off\) ;;$/    on | off | maybe) ;;/m' \
+  test/capability.bats "neither on nor off"
+
+mutation "15 a bar of zero is accepted" "$CAPABILITY" \
+  's/^  case "\$\{CAPABILITY_RECUR_AT:-\}" in\n    .. \| 0 \| \*\[!0-9\]\*\)$/  case "\${CAPABILITY_RECUR_AT:-}" in\n    XX)/m' \
+  test/capability.bats "bar of zero is refused"
+
+mutation "15 the preflight never asks about this tier" "$LOOP" \
+  's/^  capability_preflight \|\| rc=1$/  :/m' \
+  test/capability.bats "neither on nor off"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
