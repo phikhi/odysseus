@@ -534,12 +534,31 @@ case "$prompt" in
   *01-alpha*)
     # Widen, then die without a verdict: no gate runs on this iteration at all.
     printf 'rogue/\n' >>"$exclude"
+    # Written after the widening and never removed, so a sibling that has seen it
+    # knows the movement has happened — see below for why the widening itself
+    # cannot answer that question.
+    : >"$state/frontier-moved"
     exit 1
     ;;
 esac
 printf 'written\n' >src/beta.txt
 # Gated after the failure policy has put the frontier back, which is what orders
 # these two without timing either of them.
+#
+# **Both edges, in that order, and the second alone was a race** ([38]). The
+# barrier above says the two sessions are live, not that 01 has written yet: a 02
+# that reached this line first polled for the *absence* of `rogue/`, found it
+# absent because nothing had moved, and returned at once. It then resolved green,
+# its `Failures:` was never written and the run came back 0 — the two assertions
+# below failing together, 5 times in 8 replayed in isolation on `main` as on a
+# branch. The rising edge is waited for on a marker rather than on `rogue/`
+# itself, because a marker is monotonic: waiting for the widening to *appear*
+# would deadlock on the run where the restore got there first.
+tries=600
+while [ ! -e "$state/frontier-moved" ] && [ "$tries" -gt 0 ]; do
+  tries=$((tries - 1))
+  sleep 0.1
+done
 tries=600
 while [ "$tries" -gt 0 ]; do
   grep -q 'rogue/' "$exclude" || break
@@ -1024,15 +1043,26 @@ concurrency__gave_up() {
   # spending quota until morning ([28]).
   #
   # **The two sessions are deliberately asymmetric, and that is what makes the
-  # test able to fail.** Held open together, the pilot is blocked collecting them
-  # whatever it would have decided, so a run that tears its iterations down and one
-  # that waits for them are indistinguishable — the first version of this test was
-  # green either way and the mutation gate said so. Here 01 returns at once and 02
-  # is held: the collection comes back with one iteration still in flight, which is
-  # the only moment the decision is taken.
+  # test able to fail.** Held open together for good, the pilot is blocked
+  # collecting them whatever it would have decided, so a run that tears its
+  # iterations down and one that waits for them are indistinguishable — the first
+  # version of this test was green either way and the mutation gate said so. What
+  # this test needs is one iteration coming back while the other is still in
+  # flight: that is the only moment the decision is taken.
   #
-  # And the hold is a file this test writes, never a delay: written with a `sleep`,
-  # what the assertion measures is how busy the machine was.
+  # **What the asymmetry must not be is a race, and it was one** ([38]). 01 used
+  # to return at once and the signal was sent on the sight of its name in
+  # `run.log` — a line the pilot writes when it *forks* an iteration, not when it
+  # collects one. On a fast machine 01 was collected and 03 claimed before the
+  # TERM arrived, and the count came back 3: a pilot that had done nothing wrong,
+  # failing a test that had asked its question a pass too late. Reproduced without
+  # any load, alternating six isolated passes on `main`: ✓ ✗ ✓ ✗ ✓ ✗.
+  #
+  # So the order is a protocol here and not an instant. Both sessions are held;
+  # the signal goes out; the pilot's own acknowledgement — the line its trap
+  # writes — is waited for; and only then is 01 released. By the time the pilot
+  # can take the decision this test is about, the stop is a fact it has already
+  # journalled. Every step is a file this test writes or a line the pilot wrote.
   #
   # 03 is on the frontier for the half of the promise a scenario can actually
   # fail: a stop is a decision about what to **start**. It becomes eligible the
@@ -1046,14 +1076,17 @@ concurrency__gave_up() {
 prompt="$(cat)"
 state="$RALPH_SHIM_STATE"
 case "$prompt" in
-  *'## Ticket: 02-beta'*)
-    : >"$state/held"
-    tries=900
-    while [ ! -e "$state/release" ] && [ "$tries" -gt 0 ]; do
-      tries=$((tries - 1)); sleep 0.1
-    done
-    ;;
+  *'## Ticket: 01-alpha'*) held="$state/held-alpha"; release="$state/release-alpha" ;;
+  *'## Ticket: 02-beta'*) held="$state/held-beta"; release="$state/release-beta" ;;
+  *) held=""; release="" ;;
 esac
+if [ -n "$held" ]; then
+  : >"$held"
+  tries=900
+  while [ ! -e "$release" ] && [ "$tries" -gt 0 ]; do
+    tries=$((tries - 1)); sleep 0.1
+  done
+fi
 for target in $(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
   head -1 | tr -d '`\r' | tr ',' ' '); do
   mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
@@ -1066,16 +1099,29 @@ FAKE
     >"$RALPH_TEST_DIR/stop.out" 2>&1 &
   local pid=$! rc=0 waited=0
 
-  # 02 is in flight and held; 01 has been collected and journalled. The pilot is
-  # therefore about to take the decision this test is about.
-  wait_for_file "$SHIM_STATE/held" 600 || fail "02-beta never started"
+  # Both slots are in flight and neither can come back on its own.
+  wait_for_file "$SHIM_STATE/held-alpha" 600 || fail "01-alpha never started"
+  wait_for_file "$SHIM_STATE/held-beta" 600 || fail "02-beta never started"
+  kill -TERM "$pid"
+
+  # The signal has been *taken* — the pilot's trap has run and said so. Waited for
+  # rather than assumed, because everything below is only a test of the decision
+  # if the decision is taken after this point. Its own bound, because a pilot that
+  # could not acknowledge a stop while it holds iterations is the finding, not a
+  # slow machine.
   waited=0
-  while ! grep -q '01-alpha' "$FEATURE_DIR/run.log" 2>/dev/null; do
-    [ "$waited" -lt 600 ] || fail "01-alpha never finished while 02-beta was held"
+  while ! grep -q 'stop requested' "$RALPH_TEST_DIR/stop.out" 2>/dev/null; do
+    if [ "$waited" -ge 600 ]; then
+      : >"$SHIM_STATE/release-alpha"
+      : >"$SHIM_STATE/release-beta"
+      fail "the pilot never acknowledged the stop while iterations were in flight"
+    fi
     waited=$((waited + 1))
     sleep 0.1
   done
-  kill -TERM "$pid"
+
+  # Now the decision. 01 comes back; 02 is still held; the stop is already a fact.
+  : >"$SHIM_STATE/release-alpha"
 
   # It must **not** be able to come back while 02 is held, and that is asserted by
   # waiting for an exit that has to time out. A pilot that drains cannot exit here
@@ -1088,7 +1134,7 @@ FAKE
     sleep 0.1
   done
 
-  : >"$SHIM_STATE/release"
+  : >"$SHIM_STATE/release-beta"
   waited=0
   while pack_still_running "$pid"; do
     [ "$waited" -lt 600 ] || break

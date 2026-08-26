@@ -426,7 +426,32 @@ FAKE
   # run does not come back at all. So the deadline for this one lives in the
   # test rather than in an assertion about a run that would never return — which
   # is what makes its mutation runnable (see test/mutate.sh).
-  set_config SESSION_STALL_TIMEOUT 1
+  #
+  # **Two numbers used to decide this test and neither of them was under its
+  # control. Both are gone** ([38]).
+  #
+  # The stall was 1, and a deadline of 1 is not a one-second deadline. `idle` is
+  # `$SECONDS` sampled at the spawn and SECONDS is an integer, so the first tick
+  # that crosses a second boundary already satisfies `SECONDS - idle >= 1` — after
+  # as little as no silence at all. Measured on this machine: a stall of 1 fires
+  # within 0.3 s of silence 38 times out of 120. When it won that race the TERM
+  # landed on the *shim*, an ordinary script which ignores nothing — `trap ''
+  # TERM` belongs to the scenario it has not `exec`ed yet — so the session died of
+  # the request, and the KILL under test had had nothing to do. Probed 3 times in
+  # 8 at rest with the reaper removed by hand: the scenario had never run and the
+  # slot directory the shim claims first was not even there. Both mutations below
+  # came back VACUOUS for that, and for nothing to do with the guarantee. The
+  # stall here is 5, which no spawn window on a machine this suite can run on
+  # reaches, and the test **refuses rather than measures** if the scenario was not
+  # in place — a race that reappears has to be loud, not silently vacuous.
+  #
+  # And the session's own end is gone. It used to be 300 `sleep 0.1`, thirty
+  # seconds, which is the number `SESSION_KILL_GRACE` defaults to and therefore
+  # the number the second mutation hard-codes: two thirty-second timers racing by
+  # construction, and only one of them stretches under load. This session has no
+  # length at all — it runs until this test releases it — so no mutation can
+  # install a duration that coincides with anything.
+  set_config SESSION_STALL_TIMEOUT 5
   set_config SESSION_KILL_GRACE 2
   set_config SESSION_TIMEOUT 0
   set_config STERILE_K 1
@@ -434,20 +459,39 @@ FAKE
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 trap '' TERM
+# Written after the trap and before the stream line: a test that has seen this
+# knows every TERM from here on lands on a session that ignores it.
+printf '%s\n' "$$" >"$RALPH_SHIM_STATE/session.pid"
 echo '{"type":"system","subtype":"init","session_id":"s"}'
-i=0
-while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+while [ ! -e "$RALPH_SHIM_STATE/release" ]; do sleep 0.1; done
 : >"$RALPH_SHIM_STATE/session-ran-to-the-end"
 FAKE
 
   bash "$PACK_DIR/loop.sh" >"$RALPH_TEST_DIR/loop.out" 2>&1 &
   PACK_BG_PID=$!
 
-  # Twelve seconds against a stall of one and a grace of two, so that a run which
-  # only comes back when the fake gives up says so here rather than passing
-  # slowly.
-  wait_for_file "$FEATURE_DIR/run.log" 240 ||
-    fail "the run never finished its iteration: the session ignored its TERM and nothing killed it"
+  wait_for_file "$SHIM_STATE/session.pid" 600 ||
+    fail "the session never reached the scenario — the deadline fired inside the spawn window and this test measured nothing about the KILL"
+  local victim waited=0
+  victim="$(cat "$SHIM_STATE/session.pid")"
+
+  # The KILL, watched for on the one event only the KILL can produce: this
+  # session ends no other way. Fifteen seconds — an order of magnitude over the
+  # two configured above and half the thirty the grace mutation installs, so the
+  # two cannot be confused whatever the load. On expiry the session is released
+  # so that the run comes back and the failure is *reported* rather than hanging
+  # the mutation gate inside it.
+  while [ "$waited" -lt 150 ]; do
+    kill -0 "$victim" 2>/dev/null || break
+    waited=$((waited + 1))
+    sleep 0.1
+  done
+  if kill -0 "$victim" 2>/dev/null; then
+    : >"$SHIM_STATE/release"
+    wait "$PACK_BG_PID" 2>/dev/null || true
+    PACK_BG_PID=""
+    fail "the TERM went unanswered for fifteen seconds and nothing killed the session"
+  fi
 
   rc=0
   wait "$PACK_BG_PID" || rc=$?
@@ -457,13 +501,9 @@ FAKE
   assert_file_contains "$FEATURE_DIR/run.log" "session-stalled"
   assert_file_contains "$RALPH_TEST_DIR/loop.out" "hung, terminated"
 
-  # And the assertion that does not depend on how long this test was willing to
-  # wait. `wait_for_file` counts *tries*, not seconds, so under load its deadline
-  # stretches — during a full mutate.sh run it outlasted the session's own thirty
-  # seconds, the fake ended by itself, every assertion above held and the mutation
-  # that removes the KILL came back VACUOUS. What cannot stretch is this marker:
-  # the session reaches it only by running to its own end, which is exactly what
-  # the KILL exists to prevent.
+  # The second witness, and it costs nothing: a session that had been left to
+  # finish would have written this on its way out, and the only path in this test
+  # that releases it is the failure above.
   refute_file_exists "$SHIM_STATE/session-ran-to-the-end"
 }
 
@@ -530,11 +570,28 @@ FAKE
 
 @test "a stream arriving in slow halves is not silence" {
   # The corollary of reading the stream through an open descriptor: a tick can
-  # land in the middle of a `printf`, and half a line is still the session
-  # writing. Counting only whole lines would kill a session *for* writing — here
-  # the halves are 2.5s apart and the whole lines 5s apart, on either side of a
-  # four-second deadline.
-  set_config SESSION_STALL_TIMEOUT 4
+  # land in the middle of a `printf`, and a piece of a line is still the session
+  # writing. Counting only whole lines would kill a session *for* writing.
+  #
+  # **The band these numbers have to sit in, written out — because widening it by
+  # feel is exactly what would make this green and its guarantee unverifiable**
+  # ([28], re-derived by [38] after this test came back red in a full suite). A
+  # deadline of this pack is measured with SECONDS, an integer, so it fires
+  # anywhere between `stall - 1` and `stall + 1` seconds of silence. Two
+  # inequalities have to hold at once:
+  #
+  #   a gap between two pieces must never reach it        piece < stall - 1
+  #   a gap between two whole lines must always reach it  line  > stall + 1
+  #
+  # It used to be 2.5 s pieces, 5 s lines and a stall of 4: the first inequality
+  # had half a second of room, so this test measured how busy the machine was and
+  # reddened inside a full suite while passing 6/6 on its own. Here a line arrives
+  # in four pieces three seconds apart against a stall of eight — 3 < 7 and
+  # 12 > 9 — so a piece would have to take more than twice as long as it asks for
+  # before the verdict changes. Note which side needs the margin: real gaps only
+  # ever *stretch*, so load can only push the second inequality further into the
+  # true, and all of the risk is on the first.
+  set_config SESSION_STALL_TIMEOUT 8
   set_config SESSION_TIMEOUT 0
   set_config ITER_CAP 1
 
@@ -548,9 +605,13 @@ echo '{"type":"system","subtype":"init","session_id":"s"}'
 i=0
 while [ $i -lt 2 ]; do
   printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read'
-  sleep 2.5
-  printf '_input_tokens":100,"output_tokens":5}}},"session_id":"s"}\n'
-  sleep 2.5
+  sleep 3
+  printf '_input_tokens":100,"output'
+  sleep 3
+  printf '_tokens":5}}'
+  sleep 3
+  printf ',"session_id":"s"}\n'
+  sleep 3
   i=$((i + 1))
 done
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.05}'

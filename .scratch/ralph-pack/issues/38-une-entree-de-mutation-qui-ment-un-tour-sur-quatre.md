@@ -4,15 +4,15 @@
 
 **Blocked by:** None
 
-**Write-surface:** `test/smart-zone.bats`, `test/mutate.sh`, `.claude/lib/monitor.sh`
+**Write-surface:** `test/smart-zone.bats`, `test/concurrency.bats`, `test/mutate.sh`, `.claude/lib/monitor.sh`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] **Les deux** entrées de mutation rendent le même verdict sur dix runs consécutifs chacune. Le compte est dans le ticket, pas dans un « ça a l'air stable ».
-- [ ] La cause est **nommée** : pourquoi le faux `claude` meurt parfois à ~1 s alors qu'il porte `trap '' TERM` et que le reaper a été retiré. Un correctif qui stabilise le test sans expliquer ça déplace la flakiness, il ne la retire pas.
-- [ ] Si la cause est dans `monitor.sh` — quelqu'un d'autre que le reaper tue l'arbre — c'est une trouvaille de production et pas de harnais : elle vaut sa propre ligne dans `docs/frontiere-de-confiance.md`.
-- [ ] `a stream arriving in slow halves is not silence` rend le même verdict sur dix suites complètes — c'est dans la suite complète qu'il rougit, jamais seul, donc le critère de sortie doit être mesuré là. Et sans écarter ses marges : 2.5 s contre 4 s sont des constantes de couverture, les élargir rendrait le test vert et sa garantie invérifiable ([28]).
-- [ ] Le canari (`test/canary.bats`) ne gagne pas un `skip` pour ça : une entrée de mutation instable est une garantie non couverte un tour sur quatre, pas une faille connue en attente.
+- [x] **Les deux** entrées de mutation rendent le même verdict sur dix runs consécutifs chacune. Le compte est dans le ticket, pas dans un « ça a l'air stable ».
+- [x] La cause est **nommée** : pourquoi le faux `claude` meurt parfois à ~1 s alors qu'il porte `trap '' TERM` et que le reaper a été retiré. Un correctif qui stabilise le test sans expliquer ça déplace la flakiness, il ne la retire pas.
+- [x] Si la cause est dans `monitor.sh` — quelqu'un d'autre que le reaper tue l'arbre — c'est une trouvaille de production et pas de harnais : elle vaut sa propre ligne dans `docs/frontiere-de-confiance.md`.
+- [x] `a stream arriving in slow halves is not silence` rend le même verdict sur dix suites complètes — c'est dans la suite complète qu'il rougit, jamais seul, donc le critère de sortie doit être mesuré là. Et sans écarter ses marges : 2.5 s contre 4 s sont des constantes de couverture, les élargir rendrait le test vert et sa garantie invérifiable ([28]).
+- [x] Le canari (`test/canary.bats`) ne gagne pas un `skip` pour ça : une entrée de mutation instable est une garantie non couverte un tour sur quatre, pas une faille connue en attente.
 
 ## Comments
 
@@ -91,3 +91,183 @@
 - **Un troisième nom dans la liste, trouvé en livrant [15] le 26/08/2026 : `a stream arriving in slow halves is not silence` (`test/smart-zone.bats`).** Rouge une fois dans une passe complète de `run.sh` (2 h 16 sur une machine où `mutate.sh` a ensuite mis 12 h 20 au lieu de 3 h), sur `refute_output_contains "hung, terminated"`. Disculpé et il faut dire par quoi, parce que « il alterne » n'aurait rien prouvé : 6/6 vert sur la branche **et** 6/6 vert sur `main` dans la même fenêtre par `git worktree add --detach`, puis 3/3 vert des deux côtés sous 36 boucles occupées sur 12 cœurs. Et surtout un argument qui ne dépend d'aucun tirage : la marge est **structurelle**. Le faux écrit des demi-lignes espacées de 2,5 s contre `SESSION_STALL_TIMEOUT=4`, et un délai de ce pack est mesuré avec `SECONDS`, un entier — il tombe donc entre 3 et 5 s. Le pire cas laisse **0,5 s** de marge à un `sleep 2.5` sous pression disque. Ce test mesure la machine dès que la machine ralentit, exactement comme les entrées à deadline de [23].
 
   Ce que ça change pour le corollaire ci-dessus : la liste des noms acceptables en compte **deux** — `a stop request lets the iterations in flight finish` (`concurrency.bats`) et celui-ci. Tout autre nom reste une régression. Et la charge n'est pas un bruit à ignorer : c'est le régime dans lequel ces deux-là apparaissent, donc une passe complète sur une machine chargée en produira plus souvent qu'une passe à froid.
+
+## Livraison, le 26/08/2026
+
+**La cause, nommée, et ce n'est ni le reaper ni `proc_kill_tree`.** Le faux `claude` ne
+mourait pas : **il n'avait jamais démarré**. La sonde A (`sondes/38/s38a.bats`) fait
+tourner le scénario du test avec le reaper retiré à la main, en donnant au faux un
+battement de cœur et un journal de tous les signaux qu'il peut attraper. Sur 8 passes au
+repos, 3 rendent `heartbeats: 0` et un `fake.log` **vide** — pas une ligne, pas même le
+`start` que le faux écrit juste après ses `trap`. La sonde B va un cran plus bas et
+tranche : dans ce cas-là le répertoire de slot que le shim réserve **en premier**
+(`claude.calls/1`, un `mkdir` en tête de fichier) n'existe pas non plus. Le processus est
+mort avant d'avoir rien fait du tout.
+
+Ce qui le tue est la composition de deux choses, dont aucune n'est un défaut du pack :
+
+1. `SESSION_STALL_TIMEOUT 1`. **Un délai de 1 n'est pas un délai d'une seconde.** `idle`
+   est `$SECONDS` échantillonné au spawn, `SECONDS` est un entier, donc le premier tick
+   qui franchit une frontière de seconde satisfait déjà `SECONDS - idle >= 1` — après
+   *zéro* seconde de silence réel. Mesuré hors du pack, sans rien de ce dépôt :
+
+       $ bash -c 'hit=0; n=0; while [ $n -lt 120 ]; do idle=$SECONDS; sleep 0.3;
+           [ $((SECONDS-idle)) -ge 1 ] && hit=$((hit+1)); n=$((n+1)); done; echo $hit/120'
+       38/120
+
+   32 %, à comparer aux 3/8 = 37 % de VACUOUS observés. C'est le même tirage.
+
+2. Le `trap '' TERM` appartient au **scénario**, et le shim ne l'a pas encore `exec`é. Le
+   shim réserve son slot, enregistre l'argv, vide `env`, lit `.mcp.json` et la config
+   projet, puis lit le prompt sur stdin — une vingtaine de forks, 0,01 à 0,28 s au repos.
+   C'est un script ordinaire : il n'ignore rien. Le TERM tombe dessus et le tue.
+
+Donc quand (1) gagne la course, la session meurt de la **requête**, le KILL testé n'a
+rien eu à faire, et les deux entrées de mutation rendent `VACUOUS` pour une raison qui
+n'a aucun rapport avec la garantie qu'elles visent.
+
+**Prédiction, posée puis vérifiée avant d'écrire le correctif** (c'est ce qui distingue
+une cause d'une hypothèse) : monter le délai au-dessus de la fenêtre de spawn doit faire
+disparaître le VACUOUS. Sonde C, identique à B au délai près (`SESSION_STALL_TIMEOUT 3`),
+reaper toujours retiré : **8/8 scénario entré, 8/8 arrivé au bout**, donc 8/8 test rouge,
+donc 8/8 mutation `ok`. Contre 3/8 VACUOUS à 1.
+
+**AC 3 : ce n'est pas une trouvaille de production.** Personne d'autre que le reaper ne
+tue l'arbre ; `monitor.sh` a fait exactement ce qui est écrit dans son en-tête, la bande
+`limite-1 .. limite+1` étant documentée depuis [23]. Aucune ligne n'est due à
+`docs/frontiere-de-confiance.md`. Ce que la bande **veut dire en bas de sa plage** n'y
+était pas, en revanche, et c'est la seule édition de `.claude/**` de ce ticket : onze
+lignes de commentaire dans `monitor.sh` qui disent que la borne basse à `limite=1` est
+*zéro*, avec la mesure. Rien de livré n'en approche — le défaut est 1800 — mais un test
+qui met 1 pour rester court ne mesure pas une session pendue.
+
+### Ce que les tests achètent à la place de leurs délais
+
+`a session that ignores the deadline's TERM is killed after the grace` — **les deux
+nombres qui décidaient du verdict sans être sous son contrôle sont partis.**
+
+- Le stall passe de 1 à **5** : aucune fenêtre de spawn ne l'atteint. Et le test
+  **refuse au lieu de mesurer** si le scénario n'était pas en place — le faux écrit son
+  pid juste après son `trap '' TERM`, le test l'attend, et son absence est un `fail`
+  explicite. Une course qui reviendrait sera bruyante, pas silencieusement creuse.
+- La **durée du faux n'existe plus**. C'était 300 × `sleep 0.1`, soit trente secondes,
+  soit exactement le nombre que `SESSION_KILL_GRACE` vaut par défaut et que la seconde
+  mutation code en dur : deux minuteurs de trente secondes en course par construction,
+  dont un seul s'étire sous charge. Le faux tourne maintenant **jusqu'à ce que le test le
+  relâche**. Aucune mutation ne peut installer une durée qui coïncide avec rien.
+- Ce que le test regarde est le seul événement que seul le KILL peut produire : la
+  disparition du pid. Borné à 15 s — un ordre de grandeur au-dessus des 2 s configurées,
+  la moitié des 30 s que la mutation installe — et sur expiration il **relâche** la
+  session pour que le run revienne et que l'échec soit *rapporté* au lieu de pendre le
+  gate de mutation dedans.
+
+`a stream arriving in slow halves is not silence` — **la bande est écrite, pas élargie.**
+Deux inégalités doivent tenir ensemble, et [28] dit pourquoi on ne touche pas à ces
+nombres au feeling :
+
+    un écart entre deux morceaux ne doit jamais atteindre le délai   morceau < stall - 1
+    un écart entre deux lignes entières doit toujours l'atteindre    ligne   > stall + 1
+
+C'était 2,5 s de morceau, 5 s de ligne, stall 4 : la première inégalité avait **0,5 s** de
+marge, donc le test mesurait la machine. C'est maintenant une ligne en **quatre** morceaux
+espacés de 3 s contre un stall de **8** — `3 < 7` et `12 > 9` — donc un morceau devrait
+mettre plus du **double** de ce qu'il demande avant que le verdict change. Le rapport
+passe de 1,2× à 2,33×. Et le côté qui a besoin de la marge est nommé dans le commentaire :
+un écart réel ne fait que *s'étirer*, donc la charge ne peut que rendre la seconde
+inégalité plus vraie ; tout le risque est sur la première. Les coupures restent au milieu
+d'un nom de clé (`"cache_read` / `_input_tokens"`), sans quoi le test ne prouverait plus
+que le report de morceau réassemble une clé coupée.
+
+`a stop request lets the iterations in flight finish` (`test/concurrency.bats`) — **le
+témoin était pris une passe trop tôt.** Le signal partait à la vue de `01-alpha` dans
+`run.log`, une ligne que le pilote écrit quand il **forke** une itération, pas quand il en
+collecte une : sur une machine rapide 01 était collecté et 03 réclamé avant l'arrivée du
+TERM, et le compte revenait à 3 — un pilote qui n'avait rien fait de mal, mis en échec par
+un test qui avait posé sa question trop tôt. L'ordre est maintenant un **protocole** :
+les deux sessions sont tenues, le signal part, le test attend **l'accusé de réception du
+pilote lui-même** (la ligne que son trap écrit, `stop requested`), et seulement alors
+relâche 01. Au moment où le pilote peut prendre la décision, l'arrêt est un fait qu'il a
+déjà journalisé. L'asymétrie que le test exige — une itération qui revient pendant qu'une
+autre est en vol — est préservée, mais séquencée par le test au lieu d'être tirée au sort.
+L'attente de l'accusé a sa propre borne, parce qu'un pilote incapable d'accuser un arrêt
+en tenant des itérations serait la trouvaille, pas une machine lente.
+
+### Écart de write-surface
+
+Le ticket déclarait `test/smart-zone.bats`, `test/mutate.sh`, `.claude/lib/monitor.sh`.
+Il a fallu **`test/concurrency.bats`** en plus : le troisième dossier de ce ticket
+(`a stop request lets the iterations in flight finish`) vit là, et ses commentaires le
+disaient déjà sans que la write-surface suive. Ligne corrigée en tête.
+`test/mutate.sh` n'a **pas** été touché : les cinq entrées concernées passent telles
+quelles, et ce ticket ne livre aucune garantie de production neuve à muter — il répare
+des instruments. Les cinq, vérifiées une par une après correctif :
+`23 a TERM nobody answers hangs the run for ever` `ok`, `23 the grace is hard-coded` `ok`,
+`23 half a line does not count as the session writing` `ok`,
+`13 a stop schedules new work anyway` `ok`, `44 the orphan question always answers yes` `ok`.
+
+### Piège de harnais trouvé en livrant celui-ci
+
+**Tuer `test/mutate.sh` en vol laisse la mutation appliquée dans l'arbre.** Fait ici :
+le job de fond a été arrêté entre l'édition et la restauration, et `.claude/lib/monitor.sh`
+est resté sans son reaper — c'est-à-dire avec la garantie de [23] retirée, dans un arbre
+qui avait l'air propre à tout sauf à un `git diff`. Un ticket livré sur cet arbre-là aurait
+commité la mutation. À ajouter à la règle existante « ne pas éditer `.claude/` ni `test/`
+pendant qu'un gate tourne » : **et ne pas tuer `mutate.sh` sans vérifier `git diff` après**.
+
+### Sondes conservées
+
+`.scratch/ralph-pack/sondes/38/` — trois `.bats` qui finissent par un `false` volontaire,
+hors de `test/`, non ramassés par `test/run.sh` sans argument. Elles demandent que la
+mutation du reaper soit appliquée à la main (la commande est dans leur en-tête).
+
+### Un quatrième dossier, trouvé par les dix suites de l'AC 4
+
+`a frontier moved on a path no gate judges is still charged to the siblings`
+(`test/concurrency.bats`, livré par [41]) est rouge **1 fois sur 10** dans les suites
+complètes de la phase 2. Le nom n'était dans aucune liste acceptée.
+
+**Disculpé d'abord, et il faut dire par quoi.** Six rejeux isolés alternés dans la même
+fenêtre, branche contre `git worktree add --detach … main` : branche `3✗ / 3✓`, `main`
+`5✗ / 1✓`, signature identique au caractère près des deux côtés. Aucune régression de ce
+ticket — et une inversion qui vaut d'être notée, parce qu'elle contredit le réflexe du
+dépôt : celui-là rougit **plus souvent en isolé (5/8) qu'en suite complète (1/10)**.
+
+**Corrigé ici quand même, et la raison n'est pas le confort.** Une entrée de mutation le
+nomme — `41 a crashed iteration's movement never reaches its siblings`. Un test qui
+rougit *tout seul* fait rapporter **`ok`** à l'entrée qui le nomme : la mutation croit
+avoir été attrapée alors que le test n'a rien mesuré. C'est un **faux `ok`**, c'est-à-dire
+pire qu'un `VACUOUS` — un VACUOUS se voit, un faux `ok` se fond dans les 476 autres. C'est
+la thèse de ce ticket prise par son côté le plus dangereux, donc c'est de ce ticket.
+
+**La cause, et c'est la même que celle du test d'arrêt d'un cran plus loin :** *le test
+attend un état qui n'est pas encore établi, donc « pas encore » se lit « déjà fait ».* La
+barrière du faux ne dit que « les deux sessions sont vivantes ». Après elle, 01 écrit
+`rogue/` dans `.git/info/exclude` et meurt sans verdict ; 02 sondait l'**absence** de
+`rogue/` pour savoir que la politique d'échec l'avait remis. Un 02 qui arrivait là le
+premier trouvait `rogue/` absent — parce que rien n'avait encore bougé — et rendait la
+main immédiatement. Il résolvait alors au vert, son `Failures:` n'était jamais écrit et le
+run revenait à 0 : les deux assertions tombaient ensemble (`assert_failure 4` et
+`ticket_field 02-beta Failures`), ce qui est exactement la sortie observée.
+
+**Le correctif : les deux fronts, dans l'ordre.** 01 pose un marqueur `frontier-moved`
+*après* avoir élargi, et 02 attend le front montant sur ce marqueur puis le front
+descendant sur `rogue/`. Le marqueur plutôt que `rogue/` lui-même parce qu'il est
+**monotone** : attendre l'apparition de l'élargissement se bloquerait sur le run où la
+restauration a gagné la course.
+
+**Mesuré après correctif, même fenêtre, même alternance** — et le témoin est que `main`
+continue de basculer pendant que la branche ne bascule plus :
+
+| | branche | `main` |
+|---|---|---|
+| avant | 3✗ / 3✓ | 5✗ / 1✓ |
+| après | **0✗ / 6✓** | 4✗ / 2✓ |
+
+`41 a crashed iteration's movement never reaches its siblings` : `ok` 3/3.
+
+**Ce que ça a coûté à la procédure, et c'est une leçon à garder** : `test/concurrency.bats`
+a rebougé *après* la passe de mutation complète, donc cette passe est devenue périmée pour
+toutes les entrées qui nomment ce fichier. Les deux gates ont été relancés en entier. La
+règle de `CLAUDE.md` est écrite pour `test/mutate.sh` (« si on réédite mutate.sh après une
+passe, relancer la passe complète ») ; elle vaut pour **tout fichier qu'une entrée
+nomme**, pas seulement pour le fichier d'entrées.
