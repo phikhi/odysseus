@@ -77,3 +77,5 @@
   `docs/frontiere-de-confiance.md` — et cette boucle reste le seul composant qui puisse
   renommer l'un des deux sans être une session. La phrase à afficher est toujours celle que
   `tracker_preflight` produit, au démarrage du run suivant.
+
+- **Contrainte posée par la passe transversale du 27/08/2026, et elle vise exactement ce que cette boucle affiche.** Un ticket peut lire `ready-for-agent`, être **sur la frontière**, et n'être réclamable par aucune itération du run — un garde de claim ressuscité par la restauration de [21] porte le pid du pilote et rien ne le relâche jamais. Aucune ligne de `run.log` ne le nomme (le journal n'écrit que ce qu'une itération a livré), donc une boucle humaine qui lit le tracker et le journal ne peut pas distinguer ce ticket d'un ticket que le run n'a simplement pas eu le temps d'atteindre. C'est [49] qui répare ; si [49] est livré avant, cette note n'a plus d'objet — s'il ne l'est pas, cette boucle est le dernier endroit où un humain pouvait s'en apercevoir.
