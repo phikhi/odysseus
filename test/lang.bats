@@ -296,13 +296,14 @@ script_session_writing_prose() {
   assert_output_contains "did not look at 1"
 }
 
-@test "a name git prints quoted is counted, not judged" {
-  # Found by probing this gate on real names, and it is not this gate's defect:
-  # `git diff-tree --name-only` C-quotes anything outside pure ASCII, so
-  # `docs/spécification.md` reaches every consumer of the changed-file list as
-  # `"docs/sp\303\251cification.md"` — a string `git cat-file`, `git add` and
-  # `rm` all refuse ([39]). Judging it is impossible; being silent about it would
-  # hide a hole four mechanisms share.
+@test "a name outside pure ASCII is judged on the name it really has" {
+  # The exit criterion of [39], and it is the simplest one to check: this gate used
+  # to see `docs/spécification.md` as `"docs/sp\303\251cification.md"` — quotes
+  # included, because `git diff-tree --name-only` C-quotes anything outside pure
+  # ASCII — and count it instead of judging it. Every producer of a changed-file
+  # list now passes `core.quotePath=false`, so the name arrives as itself, the
+  # count that stood in for this ticket is zero, and a French document in a project
+  # that writes durable prose in English is red like any other.
   #
   # Two snapshots taken in two processes rather than one, because the file has to
   # be written between them and the harness's fake is not what stages this.
@@ -314,11 +315,35 @@ script_session_writing_prose() {
   mkdir -p "$PROJECT_DIR/docs"
   lang_french >"$PROJECT_DIR/docs/spécification.md"
 
+  # `rc=0; … || rc=$?` and not a bare call: pack_run runs under `set -e`, so a red
+  # branch would take the whole process down before it printed anything.
+  pack_run "rc=0; lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" '$SHIM_STATE/zone' || rc=\$?; printf 'rc=%s\n' \"\$rc\"; cat '$SHIM_STATE/zone'"
+  assert_success
+  assert_output_contains "rc=1"
+  # Named readably, which is the half a human acts on: the finding is useless if
+  # it points at a string nobody can grep for in their own repository.
+  assert_output_contains "wrote docs/spécification.md, whose prose reads as fr"
+  assert_output_contains "could not address 0"
+}
+
+@test "a name git still prints quoted is counted, not judged" {
+  # What `core.quotePath=false` does not take out of the quoted set: a character
+  # git cannot show as itself. A tab in a file name comes back as `"docs/a\tb.md"`
+  # whatever that setting says, and that string is a path for nobody — so this
+  # branch counts it rather than pretending to have an opinion on prose it cannot
+  # read. The iteration is not passing quietly on it: the scope-guard reds on the
+  # same name in the same gate (test/gate.bats), and this count is what keeps the
+  # residue visible every iteration instead of once in a document.
+  use_tickets 01-alpha
+  pack_run 'gate_tree_snapshot'
+  assert_success
+  local base="$output"
+
+  mkdir -p "$PROJECT_DIR/docs"
+  lang_french >"$PROJECT_DIR/$(printf 'docs/a\tb.md')"
+
   pack_run "lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" '$SHIM_STATE/zone'; printf 'rc=%s\n' \"\$?\"; cat '$SHIM_STATE/zone'"
   assert_success
-  # French prose in a project whose LANG_ARTIFACT is `en`, and green all the
-  # same: reddening a project because one of its files has an accent in its name
-  # is the false red on honest work this gate exists to avoid.
   assert_output_contains "rc=0"
   assert_output_contains "could not address 1"
 }

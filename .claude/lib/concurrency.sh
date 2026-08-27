@@ -565,7 +565,9 @@ concurrency__refresh() {
 
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    line="$(cd "$root" && git ls-tree HEAD -- "$path" 2>/dev/null)" || line=""
+    # `:(literal)`, because a path is not a pattern: a delivered `src/zone[1].txt`
+    # asked about `src/zone1.txt` and got an answer about a file that is not it.
+    line="$(cd "$root" && git ls-tree HEAD -- ":(literal)$path" 2>/dev/null)" || line=""
     if [ -z "$line" ]; then
       rm -f "$root/$path" 2>/dev/null || true
       rmdir -p "$root/$(dirname "$path")" 2>/dev/null || true
@@ -580,7 +582,19 @@ PATHS
   rm -f "$idx"
   # The real index still describes what was there before the fold, which would
   # read as a staged reversal. Same paths, so nothing else staged is disturbed.
-  # shellcheck disable=SC2086
-  (cd "$root" && git reset -q -- $(printf '%s' "$changed" | tr '\n' ' ') 2>/dev/null) || true
+  #
+  # One call per path, and the loop above is why this line was worth finding
+  # ([33], found here by [39]): the walk reads the list one path per line and this
+  # rejoined it into a single whitespace word to hand to git. So a delivered
+  # `src/my file.txt` was written back into the tree by the loop and left staged as
+  # a *deletion* by this line — which is precisely the state the whole function
+  # exists to avoid, on the one path that reached it, and a `git commit -a` in the
+  # morning would have undone the night's work on that file.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    (cd "$root" && git reset -q -- ":(literal)$path" 2>/dev/null) || true
+  done <<PATHS
+$changed
+PATHS
   return 0
 }

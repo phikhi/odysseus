@@ -52,6 +52,24 @@ encore vu comme **deux** ids qui ne résolvent rien.
   passage, pas une ligne, et elle toucherait les huit lecteurs que [37] vient
   d'unifier. Écrire la décision, pas seulement le correctif.
 
+- **Ce que [39] laisse à ce ticket, livré le 27/08/2026.** Deux choses, et la
+  première change le décor. (1) `failures_protect_tracker` lit `issues/` par un
+  `diff-tree --name-status` qui passe désormais `core.quotePath=false`, donc un
+  ticket dont le nom porte un **accent** est adressable et n'a jamais été le sujet
+  ici ; ce qui reste sur ce chemin est exactement le résidu que git cite quoi que
+  dise ce réglage — saut de ligne, tabulation, guillemet, contre-oblique. (2) La
+  question « porter ou refuser » a déjà été tranchée pour les listes de **chemins**
+  et la ligne du tableau de confiance porte l'argument complet : `-z` a été refusé
+  parce que le quotage de git protège la convention — un nom à saut de ligne arrive
+  comme **une** ligne citée, donc il ne coupe jamais une liste en silence, et
+  chaque consommateur peut le refuser à voix haute. **Ce sondage vaut ici et il
+  change la moitié « porter » de la décision** : le transport délimité par NUL
+  n'est pas nécessaire pour *voir* le nom d'un seul tenant, il ne l'est que pour
+  *l'adresser*. Vérifier avant de bâtir : la sonde `s3-saut-de-ligne.bats` a été
+  écrite avant [39] et le producteur qui l'alimente a changé — un id fantôme
+  produit par un `ls` n'est pas un id fantôme produit par `diff-tree`, et les deux
+  lecteurs du tracker ne passent pas par le même.
+
 - **Contrainte pour [18].** L'en-tête de `lib/tracker.sh` pose « un id par ligne »
   comme une clause de l'interface des backends depuis [37]. Ce ticket peut la
   changer ; s'il le fait, c'est cette phrase-là qu'il faut réécrire, pas seulement

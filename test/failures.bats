@@ -436,6 +436,242 @@ failures__stage_a_failed_session() {
   refute_output_contains "README-fixture.txt"
 }
 
+# ── names git does not print as themselves ([39]) ────────────────────────────
+
+@test "the rollback really removes a name outside pure ASCII, and unstages it" {
+  # `git diff-tree --name-status` C-quoted the name, so the restore ran
+  # `rm -f '"docs/sp\303\251cification.md"'` — which removes nothing, says nothing,
+  # and returns success — and then printed the path as one it had put back. The
+  # rollback counted it, the "could not undo" line netted it out, and the file was
+  # still in the tree for the next session to inherit.
+  #
+  # Asserted on the tree and on the index, because those are the two things the
+  # rollback promises: a run that came back to where the session found it.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    printf "%s\n" "$(gate_tree_snapshot)" >.base
+    mkdir -p docs
+    printf "contenu\n" >docs/spécification.md
+    git add -A >/dev/null 2>&1
+    printf "%s\n" "$(gate_tree_snapshot)" >.now
+  '
+  assert_success
+  assert_file_exists "$PROJECT_DIR/docs/spécification.md"
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+  assert_output_contains "rolled back"
+
+  refute_file_exists "$PROJECT_DIR/docs/spécification.md"
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  refute_output_contains "spécification"
+}
+
+@test "a name nothing can address is not reported as one this rollback put back" {
+  # The residue `core.quotePath=false` does not take out of the quoted set: a tab
+  # in a file name. Nothing here can act on that string, and the property is that
+  # the restore says so rather than printing it in the list of paths it put back —
+  # an intention rendered for a result ([30]).
+  #
+  # Driven the way the rollback drives it, through a command substitution, because
+  # that is where the second half of this lives: the admission goes to stderr, and
+  # a `could not put back` printed on stdout would land in the list as though it
+  # were a path that had been restored.
+  use_tickets 01-alpha
+  pack_run 'cd "$(ralph_project_root)"; gate_tree_snapshot'
+  assert_success
+  local base="$output"
+
+  mkdir -p "$PROJECT_DIR/docs"
+  printf 'written\n' >"$PROJECT_DIR/$(printf 'docs/a\tb.md')"
+
+  pack_run "
+    cd \"\$(ralph_project_root)\"
+    restored=\"\$(gate_restore_tree '$base' \"\$(gate_tree_snapshot)\")\"
+    printf 'restored=[%s]\n' \"\$restored\""
+  assert_success
+  assert_output_contains "restored=[]"
+  assert_output_contains "could not put back"
+}
+
+@test "the unstaging survives a path whose name carries a space" {
+  # [33] converted every list in the pack to one path per line and this caller was
+  # missed: the rollback joined the restored paths back into one whitespace word
+  # for `git reset -- $paths`, so `src/my file.txt` became two pathspecs matching
+  # nothing and the file stayed staged, ready to ride along with the next commit —
+  # under a `|| true`, and with `rolled back 2 path(s)` printed over it.
+  #
+  # The neighbour is asserted too, and its verdict is the *unchanged* half: probed
+  # against the pre-fix code, `git reset` leaves a pathspec that matches nothing
+  # alone and unstages the rest, unlike `git add`, which refuses the whole call.
+  # So this asserts the repair did not trade one silent loss for another.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    printf "%s\n" "$(gate_tree_snapshot)" >.base
+    mkdir -p src
+    printf "written\n" >"src/my file.txt"
+    printf "written\n" >src/added.txt
+    git add -A >/dev/null 2>&1
+    printf "%s\n" "$(gate_tree_snapshot)" >.now
+  '
+  assert_success
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    failures_rollback "" "$(cat .base)" "$(cat .now)"
+  '
+  assert_success
+
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  refute_output_contains "my file.txt"
+  refute_output_contains "src/added.txt"
+}
+
+@test "a green iteration commits a file whose name is not ASCII" {
+  # `failures_make_durable` built its commit with `git add -A -- $changed`, and
+  # git refuses the C-quoted string exactly as `rm` does. The scope-guard approved
+  # the file, the ticket went `resolved`, and the work was not in the history —
+  # silently, because that `git add` is under a `|| true` written for a path the
+  # session had deleted out of a tree that was never committed.
+  use_tickets 01-alpha
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `docs/spécification.md`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that declares a name outside pure ASCII"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src docs
+printf 'written\n' >src/alpha.txt
+printf 'contenu\n' >docs/spécification.md
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  # In the history, not merely in the tree: an uncommitted file is what the next
+  # rollback takes away, and what this ticket exists to stop losing.
+  # `core.quotePath=false` on the assertion too: git quotes the name for *this*
+  # reader as readily as it did for the pack, and an assertion on the quoted form
+  # would pass on the very defect this test covers.
+  run git -C "$PROJECT_DIR" -c core.quotePath=false ls-tree -r --name-only HEAD
+  assert_output_contains "docs/spécification.md"
+  assert_equal "$(worktree_dirt)" ""
+}
+
+@test "a green iteration commits a path whose name carries a space" {
+  # The same list, cut the other way, and the worst of the three ([33], found still
+  # standing here by [39]). `git add -A -- $changed` word-split `src/my file.txt`
+  # into `src/my` and `file.txt`; `git add` refuses the *whole* call when one
+  # pathspec matches nothing — unlike `git reset`, probed — so nothing at all was
+  # staged, the rebuilt tree equalled HEAD's, the "everything approved is already
+  # in HEAD" early return fired, and the iteration went `resolved` with not one of
+  # its files committed and not one line about it.
+  #
+  # The neighbour is asserted for that reason: this is not a test about odd names,
+  # it is a test about one bad pathspec taking the whole delivery with it.
+  use_tickets 01-alpha
+  perl -pi -e 's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/*`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket whose surface covers a name with a space"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+printf 'written\n' >"src/my file.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  run git -C "$PROJECT_DIR" ls-tree -r --name-only HEAD
+  assert_output_contains "src/my file.txt"
+  assert_output_contains "src/alpha.txt"
+  # And the real index came back with them: the block that restages the same paths
+  # cut the list the same way, so a staged deletion used to be left sitting there.
+  assert_equal "$(worktree_dirt)" ""
+}
+
+@test "the durable commit leaves no staged reversal, a name with a space included" {
+  # The twin of the test above, and it has to be driven at the module rather than
+  # through the loop — which is the finding, not a convenience. Since [13] the
+  # durable commit runs in a throwaway worktree, so the index it puts back is
+  # thrown away with it and no end-to-end assertion can see this line at all: the
+  # first version of its mutation entry came back VACUOUS against the full-loop
+  # test, which was measuring `concurrency__refresh` instead.
+  #
+  # What it holds is real all the same: `failures_make_durable` commits with an
+  # index of its own, so the caller's index still describes the state from before
+  # the commit — a staged deletion of every path just delivered, waiting to ride
+  # along with the next commit somebody makes. It restages the same list, and it
+  # used to cut that list into words.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    pre="$(git rev-parse HEAD)"
+    base="$(gate_tree_snapshot)"
+    mkdir -p src
+    printf "written\n" >"src/my file.txt"
+    failures_make_durable 01-alpha "$pre" "$base" "$(gate_tree_snapshot)"'
+  assert_success
+  assert_output_contains "committed"
+
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  assert_output_contains "src/my file.txt"
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  assert_equal "$output" ""
+}
+
+@test "a path the gate approved and git would not stage is named, not dropped" {
+  # The general form of the defect [39] found on one name: the durable commit takes
+  # what the scope-guard approved and hands it to `git add`, which has reasons of
+  # its own to refuse — and every one of them lands under a `|| true`. So the
+  # property is not "everything approved is committed", which this pack cannot
+  # promise: it is that a path which was approved and did not make it into the
+  # commit is *named*, exactly as the rollback names what it could not put back.
+  #
+  # Staged on a case that is neither hypothetical nor about odd names: a project
+  # that gitignores a directory its own GUARDED_PATHS names. The snapshot forces
+  # that directory in, so the gate judges the file and approves it; `git add`
+  # without `-f` refuses an ignored path; and the iteration used to go `resolved`
+  # with the work absent from the history and not one line about it. Committing it
+  # anyway is a decision this ticket did not take — see its comments.
+  use_tickets 01-alpha
+  set_config GUARDED_PATHS "vendor"
+  # Written here rather than through gate.bats's `ignore_paths`: the fixture
+  # project deliberately has no `.gitignore`, and each test writes the rule it
+  # means.
+  printf 'vendor/\n' >>"$PROJECT_DIR/.gitignore"
+  harness__commit "test: the project ignores its own guarded directory"
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `vendor/*`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that declares a guarded, ignored directory"
+  script_session_writing src/alpha.txt vendor/thing
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  assert_output_contains "vendor/thing was approved by the gate and could not be staged"
+  run git -C "$PROJECT_DIR" ls-tree -r --name-only HEAD
+  refute_output_contains "vendor/thing"
+  # The rest of the iteration is committed all the same: one path git refused is
+  # not a reason to drop the others, which is what the single `git add -A -- $changed`
+  # did before this ([39]) — it fails the whole call on one bad pathspec.
+  assert_output_contains "src/alpha.txt"
+}
+
 @test "a rollback is not a reset --hard: work nobody in this run made stands" {
   # The whole reason the rollback is exactly as wide as the session's diff. A
   # `git reset --hard` plus `git clean -fd` is the obvious implementation and it

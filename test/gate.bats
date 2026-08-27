@@ -367,6 +367,103 @@ FAKE
   assert_ticket_status 08-no-write-surface ready-for-agent
 }
 
+# ── names git does not print as themselves ───────────────────────────────────
+
+@test "a name outside pure ASCII is judged on the name it really has" {
+  # [39]. `git diff-tree --name-only` C-quotes anything outside pure ASCII, so
+  # `docs/spécification.md` reached this guard as `"docs/sp\303\251cification.md"`
+  # — quotes included, and that string matched no glob a human would write. The
+  # ticket went red for a reason nobody could act on except by renaming their own
+  # file, and the message named a string that is not in their repository.
+  #
+  # Both halves are asserted here because only the pair is the guarantee: declared,
+  # it passes; undeclared, it is red **and named readably**. A fix that made the
+  # guard silent on such names would satisfy the first half alone.
+  # No STERILE_K here: the run has to reach its second iteration, which is the
+  # half that says the declared accented name passes.
+  use_tickets 01-alpha
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `docs/spécification.md`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that declares a name outside pure ASCII"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src docs
+printf 'alpha\n' >src/alpha.txt
+printf 'contenu\n' >docs/spécification.md
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); echo "$n" >"$RALPH_SHIM_STATE/seq"
+if [ "$n" = 1 ]; then
+  printf 'hors surface\n' >docs/annexe-décidée.md
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # The first attempt overflowed onto a second accented name and was refused on
+  # that one, under the name a human can grep for.
+  assert_output_contains "wrote docs/annexe-décidée.md, outside the declared write-surface"
+  refute_output_contains '\303'
+  # The declared one never appears as an overflow: it was matched against the
+  # surface as itself.
+  refute_output_contains "wrote docs/spécification.md, outside"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "what the gate wrote after the tree it judged is named readably too" {
+  # The fifth reader of a changed-file list, and the one that would have been left
+  # quoting if [39] had been read as "the four consumers the ticket named":
+  # `gate_unjudged_changes` diffs the judged tree against the tree as it is now, so
+  # the zone line and — through it — the containment of what a review lens wrote
+  # ([06]) both travel on this list. A zone line naming `"docs/sp\303\251..."` is a
+  # line about a path that is not in the reader's repository, and the containment
+  # would hand that string to `gate_restore_tree`, which cannot act on it.
+  use_tickets 01-alpha
+  gate_writing_suite 'mkdir -p docs; printf rapport >docs/couverture-générée.md; exit 0'
+
+  run_loop
+  assert_success
+  assert_output_contains "this gate itself changed 1 path(s) after the tree it judged: docs/couverture-générée.md"
+  refute_output_contains '\303'
+}
+
+@test "a name this gate cannot address is red whatever the surface says" {
+  # What `core.quotePath=false` does not take out of the quoted set: a character
+  # git cannot show as itself. A tab in a file name arrives as `"docs/a\tb.md"`
+  # whatever that setting says, and that string is a path for nobody — `git add`,
+  # `rm` and `checkout-index` all refuse it.
+  #
+  # The surface here is `*`, which is the whole point: this is not a scoping
+  # question. Before [39] such a name matched `*` like any other, the iteration went
+  # green, and `failures_make_durable` then dropped the file under its `|| true` —
+  # a resolved ticket whose work is not in the history and not one line about it.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  perl -pi -e 's|^\*\*Write-surface:\*\* .*|**Write-surface:** `*`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that declares everything"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src docs
+printf 'alpha\n' >src/alpha.txt
+printf 'written\n' >"$(printf 'docs/a\tb.md')"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "a name this gate cannot address"
+  assert_output_contains "No write-surface may cover it: rename the file"
+  # Internal and not contract: renaming the file is work a fresh session can do,
+  # so this is not a ticket to hand to a human on the first try.
+  assert_output_contains "scope overflow on 01-alpha: internal"
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
 # ── unit: matching a path against a declared surface ─────────────────────────
 
 @test "the write-surface is read as globs, whatever the markdown around it" {

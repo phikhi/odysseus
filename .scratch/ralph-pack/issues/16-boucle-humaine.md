@@ -79,3 +79,16 @@
   `tracker_preflight` produit, au démarrage du run suivant.
 
 - **Contrainte posée par la passe transversale du 27/08/2026, et elle vise exactement ce que cette boucle affiche.** Un ticket peut lire `ready-for-agent`, être **sur la frontière**, et n'être réclamable par aucune itération du run — un garde de claim ressuscité par la restauration de [21] porte le pid du pilote et rien ne le relâche jamais. Aucune ligne de `run.log` ne le nomme (le journal n'écrit que ce qu'une itération a livré), donc une boucle humaine qui lit le tracker et le journal ne peut pas distinguer ce ticket d'un ticket que le run n'a simplement pas eu le temps d'atteindre. C'est [49] qui répare ; si [49] est livré avant, cette note n'a plus d'objet — s'il ne l'est pas, cette boucle est le dernier endroit où un humain pouvait s'en apercevoir.
+
+- **Ce que [39] ajoute à afficher, livré le 27/08/2026.** Deux nouvelles familles de
+  `gap` — c'est-à-dire de promesses revenues courtes, pas de zones jamais regardées —
+  arrivent dans le reçu d'audit et dans la console, et un humain les lit
+  différemment : `could not put back <chemin>` (un nom que le rollback n'a pas su
+  adresser, ou un `rm` qui n'a rien retiré) et `<chemin> was approved by the gate and
+  could not be staged` (un chemin approuvé absent du commit durable). Le second a un
+  cas armé qui n'a rien à voir avec les noms bizarres et qu'il faut savoir présenter :
+  un projet qui `gitignore` un répertoire que son propre `GUARDED_PATHS` nomme voit
+  **chaque** itération verte livrer sans commiter, avec un ticket `resolved` — la
+  boucle humaine est le seul endroit d'où quelqu'un peut décider de forcer, de
+  changer `GUARDED_PATHS`, ou de retirer la règle d'ignore. Avant [39] c'était
+  silencieux ; c'est désormais dit, et dire ne suffit pas si personne ne le range.

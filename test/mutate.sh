@@ -424,7 +424,7 @@ mutation "05 'none' is treated as a command to run" "$GATE" \
 # unique is a latent lie — and the symptom is VACUOUS on a healthy test, which reads
 # like the opposite of what happened.
 mutation "05 the loop's own writes trip the scope-guard" "$GATE" \
-  's/"\$base" "\$now" 2>\/dev\/null \| gate__drop_bookkeeping/"\$base" "\$now" 2>\/dev\/null/' \
+  's/"\$base" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/"\$base" "\$now" 2>\/dev\/null/' \
   test/gate.bats "stays inside its write-surface"
 
 mutation "05 drift is not told apart from a stray write" "$GATE" \
@@ -468,7 +468,7 @@ mutation "05 the snapshot ignores untracked files" "$GATE" \
 # Same story as the entry above: `-r` appears twice since [29], and the first
 # occurrence is the other diff. Anchored on the trees it takes.
 mutation "05 the tree diff is not recursive" "$GATE" \
-  's/git diff-tree -r --name-only "\$base" "\$now"/git diff-tree --name-only "\$base" "\$now"/' \
+  's/diff-tree -r --name-only "\$base" "\$now"/diff-tree --name-only "\$base" "\$now"/' \
   test/gate.bats "new file outside"
 
 mutation "05 the gate verdict does not decide the marking" "$LOOP" \
@@ -517,7 +517,7 @@ mutation "07 a file the session added is not removed" "$GATE" \
   test/failures.bats "removes what the session added"
 
 mutation "07 a file the session deleted is not restored" "$GATE" \
-  's/        GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          gate__gap "could not restore \$path"/        :/' \
+  's/        if ! GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null; then\n          gate__gap "could not restore \$path" >&2\n          continue\n        fi/        :/' \
   test/failures.bats "brings back what it deleted"
 
 # The seam [06] introduced between the two: the rollback learns what it undid from
@@ -529,7 +529,7 @@ mutation "06 the rollback never learns what it put back" "$FAILURES" \
   test/failures.bats "stray write is undone"
 
 mutation "07 what the session staged stays staged" "$FAILURES" \
-  's/    git reset -q -- \$paths 2>\/dev\/null \|\| true/    :/' \
+  's/    git reset -q -- ":\(literal\)\$path" 2>\/dev\/null \|\| true/    :/' \
   test/failures.bats "unstages what it put back"
 
 mutation "07 the commit a session made is left in the history" "$FAILURES" \
@@ -589,7 +589,7 @@ mutation "07 a green iteration is not made durable" "$LOOP" \
   test/failures.bats "never takes away what an earlier gate"
 
 mutation "07 the durable commit takes the whole tree, not what the gate approved" "$FAILURES" \
-  's/  GIT_INDEX_FILE="\$idx" git add -A -- \$changed >\/dev\/null 2>&1 \|\| true/  GIT_INDEX_FILE="\$idx" git add -A >\/dev\/null 2>\&1 || true/' \
+  's/    GIT_INDEX_FILE="\$idx" git add -A -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/    GIT_INDEX_FILE="\$idx" git add -A >\/dev\/null 2>\&1 || true/' \
   test/failures.bats "nothing else is"
 
 mutation "07 the durable commit does not move the branch" "$FAILURES" \
@@ -1381,11 +1381,11 @@ mutation "29 the gate never says what it wrote while it judged" "$GATE" \
 # directory, which is why the tests name `build/coverage.xml` and not a path at the
 # root: a non-recursive diff would report `build` and read as covered.
 mutation "29 the diff of what the gate changed is not recursive" "$GATE" \
-  's/git diff-tree -r --name-only "\$judged" "\$now"/git diff-tree --name-only "\$judged" "\$now"/' \
+  's/diff-tree -r --name-only "\$judged" "\$now"/diff-tree --name-only "\$judged" "\$now"/' \
   test/gate.bats "goes with the worktree"
 
 mutation "29 the loop's own bookkeeping counts as a gate write" "$GATE" \
-  's/"\$judged" "\$now" 2>\/dev\/null \| gate__drop_bookkeeping/"\$judged" "\$now" 2>\/dev\/null/' \
+  's/"\$judged" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/"\$judged" "\$now" 2>\/dev\/null/' \
   test/failures.bats "leaves it standing"
 
 # Emptied rather than removed: the block that names the zone spans four lines, and
@@ -1396,10 +1396,13 @@ mutation "29 the rollback says nothing about what the gate changed" "$FAILURES" 
   's/"\$\(failures__minus "\$changed" "\$undone"\)"/""/' \
   test/failures.bats "leaves it standing"
 
-# And the lie in the other direction: an empty fence filters nothing, so a path the
-# rollback did put back is announced as one it could not.
+# And the lie in the other direction: a filter that matches nothing filters nothing,
+# so a path the rollback did put back is announced as one it could not. Recalibrated
+# by [39], which replaced the word fence this used to blank with a whole-line
+# membership test — same guarantee, and the edit that removes it is now the line that
+# consults the list at all.
 mutation "29 a path the rollback put back is named as one it could not" "$FAILURES" \
-  's/  local fence=" \$\{2:-\} " item/  local fence="" item/' \
+  's/    ! failures__in_list "\$item" "\$\{2:-\}" \|\| continue\n//' \
   test/failures.bats "did put back"
 
 # ── [06] the review lens registry ────────────────────────────────────────────
@@ -3090,6 +3093,107 @@ mutation "47 a unique opening registers its slug instead of its id" "$TRACKER_IF
 mutation "47 an opening that opened nothing is registered all the same" "$TRACKER_IFACE" \
   's/^      tracker__note_write "\$out"$/      tracker__note_write "\${out:-\$1}"/m' \
   test/tracker-local.bats "opened nothing writes no line"
+
+# ── [39] a name git does not print as itself ─────────────────────────────────
+#
+# `git diff-tree` C-quotes any name outside pure ASCII, so `docs/spécification.md`
+# reached the four consumers of the changed-file list as `"docs/sp\303\251cification.md"`
+# — a string `git cat-file`, `git add`, `rm` and `checkout-index` all refuse. Each
+# edit below is the code exactly as it stood before [39], and they are separate
+# entries for the reason [37] gives about its own family: the four consumers fail
+# differently, and a test covering one says nothing about the others.
+
+# The producer every consumer of a changed-file list reads through, so a single
+# line carries the whole family. Named against the language gate's test, which is
+# where the ticket's own exit criterion is asserted: the count [17] posted while
+# waiting for this is zero, and the file is judged under the name it really has.
+mutation "39 the changed-file list keeps git's quoting" "$GATE" \
+  's/  git -c core\.quotePath=false diff-tree -r --name-only "\$base" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/  git diff-tree -r --name-only "\$base" "\$now" 2>\/dev\/null | gate__drop_bookkeeping/' \
+  test/lang.bats "name it really has"
+
+# The third producer, and the one the ticket did not name: the diff between the
+# judged tree and the tree as it is now, which the zone line and the containment of
+# what a review lens wrote both read.
+mutation "39 the gate's own after-diff keeps git's quoting" "$GATE" \
+  's/  git -c core\.quotePath=false diff-tree -r --name-only "\$judged" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/  git diff-tree -r --name-only "\$judged" "\$now" 2>\/dev\/null | gate__drop_bookkeeping/' \
+  test/gate.bats "named readably too"
+
+# The second producer, aimed at its own trees: the restore reads `--name-status`
+# and would otherwise inherit the fix through nothing at all.
+mutation "39 the restore's own list keeps git's quoting" "$GATE" \
+  's/\$\(git -c core\.quotePath=false diff-tree -r --name-status "\$base" "\$now" 2>\/dev\/null\)/$(git diff-tree -r --name-status "\$base" "\$now" 2>\/dev\/null)/' \
+  test/failures.bats "removes a name outside pure ASCII"
+
+# What is left quoted whatever that setting says — a tab, a newline, a quote — is
+# refused rather than compared to a surface it cannot be compared to. The test
+# declares `*`, so a guard that merely stopped matching would still go green.
+mutation "39 a name the gate cannot address is judged like any other" "$GATE" \
+  's/    if gate_unaddressable "\$file"; then\n      rc=1\n      if \[ -z "\$class" \]; then class=internal; fi\n      printf .wrote %s, a name this gate cannot address[^\n]*\n      continue\n    fi\n//' \
+  test/gate.bats "cannot address is red whatever"
+
+# The same question at the other end of the same iteration: the restore must not
+# print a name it could not act on as one it put back ([30]).
+mutation "39 the restore claims it put back what it could not touch" "$GATE" \
+  's/    if gate_unaddressable "\$path"; then\n      gate__gap "could not put back[^\n]*\n      continue\n    fi\n//' \
+  test/failures.bats "not reported as one this rollback put back"
+
+# And the channel that admission travels on. `gate_restore_tree` returns its list
+# on stdout, both callers read it through a command substitution, so a gap printed
+# there is counted as a path that was restored — a failure reported as a success.
+mutation "39 the restore's admissions go into its own return value" "$GATE" \
+  's/      gate__gap "could not put back \$path — git prints this name quoted and nothing here can address it" >&2/      gate__gap "could not put back \$path — git prints this name quoted and nothing here can address it"/' \
+  test/failures.bats "not reported as one this rollback put back"
+
+# The durable commit, as it stood: one call, the list cut into words and globbed.
+#
+# Named against the path with a *space* and not against the accented one, and the
+# first draft of this entry came back VACUOUS for saying otherwise: once the
+# producer no longer quotes, `docs/spécification.md` survives word splitting like
+# any other name, so the accented test says nothing about this line. What this line
+# carries is the [33] half — and it carries it whole, `git add` refusing the entire
+# call on one bad pathspec, so the mutated iteration commits nothing at all.
+mutation "39 the durable commit stages a line of words" "$FAILURES" \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    GIT_INDEX_FILE="\$idx" git add -A -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  GIT_INDEX_FILE="\$idx" git add -A -- \$changed >\/dev\/null 2>\&1 || true/' \
+  test/failures.bats "commits a path whose name carries a space"
+
+# Its twin at the other end of the same function: the caller's index is restaged
+# from the same list, so a name that list could not carry left a staged deletion
+# behind. Named against a test driven at the *module*, and that is the finding
+# rather than a shortcut — since [13] this commit runs in a throwaway worktree, so
+# the index it puts back goes with the worktree and no full-loop test can see this
+# line. The first draft of this entry named the end-to-end test and came back
+# VACUOUS: it was measuring `concurrency__refresh`, one module over.
+mutation "39 the index is put back from a line of words" "$FAILURES" \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    git add -A -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  git add -A -- \$changed >\/dev\/null 2>\&1 || true/' \
+  test/failures.bats "no staged reversal"
+
+# What that `|| true` costs when it fires, which is the general form of the defect
+# above: approved, absent from the commit, and silent.
+mutation "39 a path git refused to stage is dropped without a word" "$FAILURES" \
+  's/    failures__in_list "\$path" "\$changed" \|\| continue\n    failures__gap "\$ticket: \$path was approved by the gate and could not be staged — it is not in this commit"/    failures__in_list "\$path" "\$changed" || continue\n    :/' \
+  test/failures.bats "git would not stage is named"
+
+# The last caller [33] had missed: the rollback rejoined the restored paths into
+# one whitespace word to unstage them.
+mutation "39 the unstaging is handed a line of words" "$FAILURES" \
+  's/    git reset -q -- ":\(literal\)\$path" 2>\/dev\/null \|\| true\n    undone=\$\(\(undone \+ 1\)\)/    undone=\$((undone + 1))/; s/  if \[ "\$undone" -gt 0 \]; then/  if [ -n "\$paths" ]; then\n    git reset -q -- \$paths 2>\/dev\/null || true/' \
+  test/failures.bats "unstaging survives a path"
+
+# The third place the same list was rejoined into a word, one module over: the
+# refresh of the main working tree after a fold walks the list by line and then
+# handed `git reset` all of it at once. What it costs is the state that function
+# exists to prevent — a delivered path left staged as a deletion in the tree a
+# human looks at in the morning.
+mutation "39 the tree refresh unstages a line of words" "$CONCURRENCY" \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done <<PATHS\n\$changed\nPATHS/  (cd "\$root" \&\& git reset -q -- \$(printf \x27%s\x27 "\$changed" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true/' \
+  test/failures.bats "commits a path whose name carries a space"
+
+# The residue, at the one consumer that answers about it with a count rather than a
+# verdict: a name git quotes whatever `core.quotePath` says is not prose this branch
+# can read, and pretending to judge it drops it out of the count in silence.
+mutation "39 the language gate judges a name it cannot read" "$LANGLIB" \
+  's/    if gate_unaddressable "\$file"; then\n      unaddressable=\$\(\(unaddressable \+ 1\)\)\n      continue\n    fi\n//' \
+  test/lang.bats "still prints quoted is counted"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

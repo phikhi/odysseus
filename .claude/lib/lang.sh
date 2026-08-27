@@ -382,26 +382,31 @@ lang_check() {
 
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    # A name git could not print as itself. Anything outside pure ASCII comes
-    # back C-quoted — `"docs/sp\303\251cification.md"`, quotes included — and
-    # that string is a path for nobody: `git cat-file` refuses it, and so does
-    # every other consumer of this list ([39], opened by the probes of [17]).
-    # Asked before the prose filter, because a quoted name does not match `*.md`
-    # either, and being dropped by the glob is exactly how this would stay
-    # invisible.
+    # A name git could not print as itself, asked before the prose filter because
+    # a quoted name does not match `*.md` either — being dropped by the glob is
+    # exactly how this would stay invisible.
     #
-    # Counted rather than judged. Reddening a French project because one of its
-    # files is called `spécification.md` is the false red on honest work this
-    # gate exists to avoid, and a name nobody can address has no honest verdict —
-    # this branch cannot even tell whether it is prose. The count is what makes
-    # the gap visible every iteration instead of once in a document, and it is
-    # what [39] has to drive to zero.
-    case "$file" in
-      '"'*'"')
-        unaddressable=$((unaddressable + 1))
-        continue
-        ;;
-    esac
+    # What this counts changed meaning when [39] was delivered, and the count is
+    # the reason to read that as a fact rather than as a rename. Until then it
+    # caught **any** name outside pure ASCII, `docs/spécification.md` included, and
+    # letting a French project through instead of reddening it for the spelling of
+    # its own file name was the whole of the fail-open. Every producer of this list
+    # now passes `core.quotePath=false`, so that name arrives as itself and is
+    # judged like any other prose file: for the case this counter was written for,
+    # it is zero by construction.
+    #
+    # What is left is the residue git quotes whatever that setting says — a
+    # newline, a tab, a quote, a backslash in a file name — and it is a named limit
+    # rather than a silent one (gate_unaddressable, and the table in
+    # docs/frontiere-de-confiance.md). Still counted rather than judged here, and
+    # the ownership is what makes that honest instead of lax: the scope-guard reds
+    # the iteration on the same name in the same gate, so nothing is passing
+    # quietly — this branch cannot even tell whether such a file is prose, and a
+    # second red on a verdict it cannot reach would be noise.
+    if gate_unaddressable "$file"; then
+      unaddressable=$((unaddressable + 1))
+      continue
+    fi
     gate_in_surface "$file" "$prose" || continue
     # Counted, not passed over in silence. `LANG_EXEMPT_PATHS` is the switch that
     # could turn this whole check off without saying so — the pack's own files
