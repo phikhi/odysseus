@@ -524,8 +524,8 @@ failures__stage_a_failed_session() {
 
   # The register names the ticket the creation *produced*, not the slug it was
   # handed: a line reading `child` names no ticket, and every reader of this
-  # register asks about ids.
-  assert_output_contains "register: 02-child"
+  # register asks about ids. One id per line since [37].
+  assert_output_contains "register:02-child"
 
   # The loop's own creation went to the frontier; the session's went to a human.
   assert_ticket_status 02-child ready-for-agent
@@ -555,6 +555,112 @@ failures__stage_a_failed_session() {
   assert_output_contains "quarantined"
   assert_ticket_status 02-child ready-for-human
   assert_ticket_status 99-invented ready-for-human
+}
+
+# ── an id is the name of a file somebody chose ───────────────────────────────
+#
+# [37]. Every list the pack hands itself has travelled one entry per line since
+# [33], and the tracker's ids were the exception: `for id in $(tracker_ids)`, and
+# a snapshot rendered as ` a b `. An id is not data this pack owns — it is the
+# name of a file a session writes into `issues/`, which is the corollary [27]
+# wrote about the *number* applied to the *splitting*.
+
+@test "a ticket whose name carries a space is one stray, not two ghosts" {
+  # Split on words, `99-my ticket` was two ids no ticket carries: the renumber
+  # refused both by name, the escalation marked neither, and the loop logged
+  # `quarantined 99-my ticket` — the two ghosts run together — over a ticket left
+  # sitting on the frontier with the write-surface the session gave itself. The
+  # control that announced having acted was the one that had not.
+  use_tickets 01-alpha
+  pack_run '
+    seen="$(failures_tracker_snapshot)"
+    printf "**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** \`*\`\n" \
+      >"$(ralph_feature_dir)/issues/99-my ticket.md"
+    printf "strays[%s]\n" "$(failures__strays "$seen" | tr "\n" "|")"
+    failures_quarantine_strays 01-alpha "$seen" || printf "quarantined\n"
+  '
+  assert_output_contains "quarantined"
+  # One stray, and it is the ticket — not `99-my`, and not `ticket`. The whole
+  # list, so an implementation that found it *among* two ghosts is red here too.
+  assert_output_contains "strays[99-my ticket|]"
+
+  # What the quarantine is for, under the name the file really has.
+  assert_ticket_status "99-my ticket" ready-for-human
+  assert_equal "$(ticket_field "99-my ticket" Escalation)" "decision"
+  # And the note a human reads names it, rather than a ticket called `99-my`.
+  assert_file_contains "$(ticket_file 01-alpha)" "99-my ticket"
+}
+
+@test "the same ticket without the space ends exactly the same way" {
+  # The paired witness. Without it the test above says nothing about the space —
+  # it would pass on any implementation that quarantines something at all. This is
+  # the same scenario minus the one character, and it was green before [37] too,
+  # so the two together say that the space is what used to change the answer.
+  use_tickets 01-alpha
+  pack_run '
+    seen="$(failures_tracker_snapshot)"
+    printf "**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** \`*\`\n" \
+      >"$(ralph_feature_dir)/issues/99-myticket.md"
+    printf "strays[%s]\n" "$(failures__strays "$seen" | tr "\n" "|")"
+    failures_quarantine_strays 01-alpha "$seen" || printf "quarantined\n"
+  '
+  assert_output_contains "quarantined"
+  assert_output_contains "strays[99-myticket|]"
+  assert_ticket_status 99-myticket ready-for-human
+  assert_equal "$(ticket_field 99-myticket Escalation)" "decision"
+}
+
+@test "a ticket whose name carries a glob metacharacter is read literally" {
+  # The other half of the same expansion, and it needs its own test: an unquoted
+  # `$(tracker_ids)` is glob-expanded against the *current directory*, so
+  # `99-a[0]` was replaced by whatever happened to be lying beside the run. The
+  # quarantine then escalated an id nothing carries and left the real ticket on
+  # the frontier — the same false green, reached by the other door.
+  use_tickets 01-alpha
+  pack_run '
+    : >"99-a0"
+    seen="$(failures_tracker_snapshot)"
+    printf "**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** \`*\`\n" \
+      >"$(ralph_feature_dir)/issues/99-a[0].md"
+    printf "strays[%s]\n" "$(failures__strays "$seen" | tr "\n" "|")"
+    failures_quarantine_strays 01-alpha "$seen" || printf "quarantined\n"
+  '
+  assert_output_contains "quarantined"
+  assert_output_contains "strays[99-a[0]|]"
+  assert_ticket_status "99-a[0]" ready-for-human
+}
+
+@test "a register naming one id does not exempt a stray that shares a word with it" {
+  # [42] exempts what the loop itself created inside the window, by id. Rendered
+  # as a fence of words, that exemption answered for every *word* of an id: the
+  # loop opening `02-my child.md` put ` 02-my child ` in the fence, and a session
+  # writing itself `02-my.md` matched it. Quarantine bypassed, on a ticket
+  # carrying the write-surface the session chose — which is precisely what this
+  # guard exists to refuse.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
+    : >"$RALPH_TRACKER_LOG"
+    seen="$(failures_tracker_snapshot)"
+    mark="$(tracker_write_mark)"
+    # What the loop wrote in the window, under a name a human may well give a
+    # ticket — and what a session then wrote for itself beside it.
+    printf "02-my child\n" >>"$RALPH_TRACKER_LOG"
+    printf "# 02 — loop\n\n**Status:** ready-for-agent\n\n**Blocked by:** None\n" \
+      >"$(ralph_feature_dir)/issues/02-my child.md"
+    printf "# 02 — session\n\n**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** \`*\`\n" \
+      >"$(ralph_feature_dir)/issues/02-my.md"
+    failures_quarantine_strays 01-alpha "$seen" "$mark" || printf "quarantined\n"
+    rm -f "$RALPH_TRACKER_LOG"
+  '
+  assert_output_contains "quarantined"
+  # The loop's own creation is left alone — that is [42], and it still holds.
+  assert_ticket_status "02-my child" ready-for-agent
+  # And what the session wrote is not, whatever word it shares with it.
+  assert_output_contains "renumbered 02-my -> 03-my"
+  assert_ticket_status 03-my ready-for-human
+  refute_file_exists "$(ticket_file 02-my)"
 }
 
 @test "a rollback never restores the tracker, whatever moved in it" {

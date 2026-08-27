@@ -1466,15 +1466,24 @@ SURFACE
 # surface is a scoping conflict rather than a stray write: two tickets were
 # drawn over one file, and retrying would only break the disjunction the
 # parallel scheduler relies on. The failure policy tells them apart.
+#
+# The ids are read one per line for the reason the surface is ([33], then [37] for
+# this namespace): `for id in $(tracker_ids)` cut a ticket named `99-my ticket`
+# into two ids that resolve to nothing, so nobody owned its declared surface and
+# an overflow into it came back classified as a stray write — retryable, when the
+# whole point of this function is to say it is not (probed, s2c).
 gate__surface_owner() {
   local file="$1" self="$2" id
-  for id in $(tracker_ids); do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     [ "$id" != "$self" ] || continue
     if gate_in_surface "$file" "$(gate_write_surface "$id")"; then
       printf '%s\n' "$id"
       return 0
     fi
-  done
+  done <<IDS
+$(tracker_ids)
+IDS
   return 1
 }
 

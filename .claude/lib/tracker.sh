@@ -9,7 +9,8 @@
 # without the last one silently winning.
 #
 #   tracker_frontier                  eligible ticket ids, min-NN first, one per line
-#   tracker_ids                       every ticket id, whatever its state, min-NN first
+#   tracker_ids                       every ticket id, whatever its state, min-NN
+#                                     first, one per line
 #   tracker_read_ticket ID            the ticket on stdout
 #   tracker_claim ID [OWNER]          take the ticket; non-zero if it was lost
 #   tracker_unclaim ID                give it back to the frontier
@@ -26,6 +27,17 @@
 #   tracker_emit_receipt ID           write the audit receipt from stdin
 #
 # Marking is the loop's job, after the gate — never the session's.
+#
+# **One id per line is part of this interface and not a habit of the local
+# backend** ([37]). Every consumer in the pack reads these lists line by line and
+# compares whole lines, because an id is the name of a file a session — or a
+# human — puts in the tracker: a backend that answered with a line of words would
+# reopen four faults at once, none of which is cosmetic (a quarantine that
+# announces having escalated a ticket still on the frontier, a register that
+# exempts every word of an id, a scope overflow classified retryable, and a claim
+# on a dead owner that is never swept). The limit of that convention is written
+# down where it belongs, in `docs/frontiere-de-confiance.md`: a file name may
+# contain a newline, and this transport cannot carry one.
 
 tracker__dispatch() {
   local op="$1"
@@ -143,15 +155,21 @@ tracker_write_mark() {
   awk 'END { print NR + 0 }' "$RALPH_TRACKER_LOG"
 }
 
-# The ids the loop wrote since that mark, space-fenced so a `case` can ask whether
-# one is in it.
+# The ids the loop wrote since that mark, one per line — the pack's list
+# convention since [33], and here for the reason [37] gives one layer up: an id is
+# a **file name a session chooses**, so a fence of words answers "is this id in the
+# register" by comparing something that is not an id. The register is written one
+# id per line by `tracker__note_write`; joining those lines back with spaces threw
+# that away and the reader compared `*" $id "*` against it, so an id carrying a
+# space exempted every one of its own words. Reachable, and it is a quarantine
+# bypass rather than a cosmetic one: the loop claims `99-my ticket.md` — a name a
+# human may perfectly well give a ticket — the register fence reads ` 99-my ticket `,
+# and a session that then writes itself `99-my.md` with the write-surface it likes
+# is exempted by `failures__in_list` and walks onto the frontier (probed, s2b).
 tracker_writes_since() {
   local mark="${1:-0}"
-  [ -n "${RALPH_TRACKER_LOG:-}" ] && [ -f "$RALPH_TRACKER_LOG" ] || {
-    printf ' \n'
-    return 0
-  }
-  printf ' %s\n' "$(awk -v m="$mark" 'NR > m { printf "%s ", $0 }' "$RALPH_TRACKER_LOG")"
+  [ -n "${RALPH_TRACKER_LOG:-}" ] && [ -f "$RALPH_TRACKER_LOG" ] || return 0
+  awk -v m="$mark" 'NR > m' "$RALPH_TRACKER_LOG"
 }
 
 tracker_frontier() { tracker__dispatch frontier "$@"; }
@@ -218,20 +236,37 @@ tracker_field() { tracker__dispatch field "$@"; }
 # means there was at least one. Reporting, not refusing: a duplicate costs the
 # tickets that name it and nothing else, and a run that refuses to start over it
 # trades a night of work for a warning a human can read in the morning either way.
+# Ids are read one per line here and everywhere below ([37]). `for id in $ids` cut
+# `99-my ticket` into two ids no ticket carries and replaced `99-a[0]` by whatever
+# the current directory happened to hold — and the id namespace is file names a
+# session chooses, so neither is hypothetical.
+#
+# `Blocked by:` is the one list on this page that stays a line of words, and that
+# is a decision rather than an omission. It is **prose a human writes** in a
+# ticket, like `Write-surface:`, and [33] left the written formats alone by
+# converting them at the point of reading. What makes the answer the same here and
+# not merely similar: a dependency is a bare *number* ([27]), the loop already
+# drops every word that does not start with a digit, and a dependency resolving to
+# nothing already blocks fail-safe — so `Blocked by: 99-my ticket` holds the ticket
+# out of the frontier, which is the safe verdict and the one a human can read.
 tracker_preflight() {
   local ids nn dep found=0 carriers raw id
   ids="$(tracker_ids)" || return 0
   [ -n "$ids" ] || return 0
 
-  for nn in $(tracker__ambiguous_numbers "$ids"); do
+  while IFS= read -r nn; do
+    [ -n "$nn" ] || continue
     carriers="$(tracker__carriers "$ids" "$nn")"
     printf '%s\tambiguous-id\ttwo or more tickets carry the number %s (%s): a bare "%s" is never safe to resolve, so anything blocked on it can never enter the frontier\n' \
       "$nn" "$nn" "$(tracker__commas "$carriers")" "$nn"
     found=1
-  done
+  done <<AMBIGUOUS
+$(tracker__ambiguous_numbers "$ids")
+AMBIGUOUS
   [ "$found" = 1 ] || return 0
 
-  for id in $ids; do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     raw="$(tracker_field "$id" 'Blocked by')" || continue
     for dep in $(printf '%s' "$raw" | tr ',' ' '); do
       case "$dep" in
@@ -241,40 +276,68 @@ tracker_preflight() {
       tracker__is_ambiguous "$ids" "$dep" || continue
       printf '%s\tblocked-on-ambiguous-id\t%s is blocked on %s, which %s tickets carry (%s): it stays out of the frontier until a human renames one of them\n' \
         "$id" "$id" "$dep" \
-        "$(tracker__carriers "$ids" "$dep" | wc -w | tr -d ' ')" \
+        "$(tracker__count "$(tracker__carriers "$ids" "$dep")")" \
         "$(tracker__commas "$(tracker__carriers "$ids" "$dep")")"
     done
-  done
+  done <<IDS
+$ids
+IDS
   return 1
 }
 
-# Every id shaped `NN-slug` for this NN. An id that is *exactly* the number is
-# not one of them and settles the question on its own: a backend resolving a bare
-# number matches the exact id before anything else, so `01.md` beside `01-alpha.md`
-# is unambiguous — and renumbering over it would move a ticket nobody could
-# have mis-resolved.
+# Every id shaped `NN-slug` for this NN, one per line. An id that is *exactly* the
+# number is not one of them and settles the question on its own: a backend
+# resolving a bare number matches the exact id before anything else, so `01.md`
+# beside `01-alpha.md` is unambiguous — and renumbering over it would move a ticket
+# nobody could have mis-resolved.
 tracker__carriers() {
-  local ids="$1" nn="$2" id out=''
-  for id in $ids; do
-    [ "$id" != "$nn" ] || return 0
-  done
-  for id in $ids; do
+  local ids="$1" nn="$2" id
+  if tracker__holds_exactly "$ids" "$nn"; then return 0; fi
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     case "$id" in
-      "$nn"-*) out="$out $id" ;;
+      "$nn"-*) printf '%s\n' "$id" ;;
     esac
-  done
-  printf '%s\n' "${out# }"
+  done <<IDS
+$ids
+IDS
+  return 0
+}
+
+# Does any of these ids read exactly as this number.
+tracker__holds_exactly() {
+  local ids="$1" nn="$2" id
+  while IFS= read -r id; do
+    if [ "$id" = "$nn" ]; then return 0; fi
+  done <<IDS
+$ids
+IDS
+  return 1
+}
+
+# How many entries in a one-per-line list. `wc -w` counted *words*, which is the
+# whole of [37]: one ticket named `99-my ticket.md` was two carriers of 99, so a
+# number nothing was ambiguous about was reported as ambiguous — and the report is
+# read by a human who then goes looking for a ticket called `99-my`.
+tracker__count() {
+  awk 'length { n++ } END { print n + 0 }' <<LIST
+$1
+LIST
 }
 
 tracker__is_ambiguous() {
   local n
-  n="$(tracker__carriers "$1" "$2" | wc -w)"
+  n="$(tracker__count "$(tracker__carriers "$1" "$2")")"
   [ "$n" -gt 1 ]
 }
 
+# The numbers carried by more than one ticket, one per line. `seen` stays a fence
+# of words on purpose: what it holds are the `NN` halves, filtered to digits two
+# lines above, and a digit string has no space to lose.
 tracker__ambiguous_numbers() {
-  local ids="$1" id nn seen=' ' out=''
-  for id in $ids; do
+  local ids="$1" id nn seen=' '
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     case "$id" in
       [0-9]*-*) nn="${id%%-*}" ;;
       *) continue ;;
@@ -283,11 +346,18 @@ tracker__ambiguous_numbers() {
     case "$seen" in *" $nn "*) continue ;; esac
     seen="$seen$nn "
     tracker__is_ambiguous "$ids" "$nn" || continue
-    out="$out $nn"
-  done
-  printf '%s\n' "${out# }"
+    printf '%s\n' "$nn"
+  done <<IDS
+$ids
+IDS
+  return 0
 }
 
+# A one-per-line list rendered for a human. Joined line by line and never by
+# `tr '\n' ' '` then `s/ /, /g`, which turned one id carrying a space into two
+# names, in the very message a human reads to go find the file.
 tracker__commas() {
-  printf '%s' "$1" | tr -s ' ' '\n' | sed '/^$/d' | tr '\n' ' ' | sed 's/ *$//; s/ /, /g'
+  awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }' <<LIST
+$1
+LIST
 }

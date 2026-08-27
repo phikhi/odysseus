@@ -938,8 +938,11 @@ FRONTIER
 
 # The ids in flight, space-delimited, for the disjunction test and for the
 # liveness sweep — which must not reclaim a sibling's claim ([12] via [13]).
+# One id per line, because that is what `claim_reclaim_stale` compares and an id
+# is a file name somebody chose ([37]): joined with spaces, an id carrying one
+# exempted each of its own words from the liveness sweep.
 loop__inflight_ids() {
-  printf '%s' "${LOOP_SLOTS:-}" | awk -F'\t' 'NF > 1 { printf "%s ", $2 }'
+  printf '%s' "${LOOP_SLOTS:-}" | awk -F'\t' 'NF > 1 { print $2 }'
 }
 
 loop__inflight_count() {

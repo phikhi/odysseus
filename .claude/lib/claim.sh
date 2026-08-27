@@ -205,21 +205,42 @@ claim_is_held() {
 # switched off by the fix. An id the run is holding is a fact only the run knows,
 # it is written nowhere a session can reach, and it disappears with the run — after
 # which the pid check and the TTL answer for those tickets again.
+#
+# Both lists here — the ids the tracker holds and the ids the run is holding —
+# travel one per line and are compared whole ([37]). They used to be a line of
+# words, and the id namespace is file names a session (or a human) chooses: a
+# ticket called `99-my ticket.md` was cut into two ids the tracker does not carry,
+# so its claim was never even *looked* at — dead owner or not, it stayed `claimed`
+# and out of the frontier for good (probed, s2d). The exemption fence had the
+# mirror defect: an id in flight called `99-my ticket` exempted `99-my`, so a
+# genuinely stale claim was left standing while a sibling ran.
 claim_reclaim_stale() {
-  local held=" ${1:-} " id status record disposition
+  local held="${1:-}" id status record disposition
 
-  for id in $(tracker_ids); do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     status="$(tracker_field "$id" Status)" || continue
     [ "$status" = claimed ] || continue
-    case "$held" in
-      *" $id "*) continue ;;
-    esac
+    claim__among "$id" "$held" && continue
     record="$(tracker_field "$id" Claimed)" || record=""
     claim_is_held "$record" && continue
 
     disposition="$(failures_after_dead_owner \
       "$id" "$(claim_owner_kind "$record")" "$record")" || disposition=unknown
     printf '%s %s\n' "$id" "$disposition"
-  done
+  done <<IDS
+$(tracker_ids)
+IDS
   return 0
+}
+
+# Whether this id is one of the entries in a one-per-line list, compared whole.
+claim__among() {
+  local needle="$1" line
+  while IFS= read -r line; do
+    if [ "$line" = "$needle" ]; then return 0; fi
+  done <<LIST
+$2
+LIST
+  return 1
 }

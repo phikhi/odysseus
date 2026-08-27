@@ -192,6 +192,49 @@ live_record() {
   assert_output_contains "owner=pid:$$"
 }
 
+# ── an id is the name of a file somebody chose ───────────────────────────────
+
+@test "a claim on a ticket whose name carries a space is still swept" {
+  # [37]. The sweep walked `for id in $(tracker_ids)`, so `01-alpha bis` was two
+  # ids nothing carries: both `tracker_field` reads failed, `continue` took the
+  # loop past them, and the ticket that really was claimed by a dead run was never
+  # looked at. `claimed` for ever, out of the frontier, and nothing in the log to
+  # say a ticket had left the board — the fault [12] closed, reopened for any
+  # tracker whose file names are not one word.
+  use_tickets 01-alpha
+  mv "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha bis.md"
+  stamp_claim "01-alpha bis" "pid:$DEAD_PID" "$LAST_WEEK"
+
+  pack_run 'claim_reclaim_stale ""'
+  assert_success
+  assert_output_contains "01-alpha bis retry"
+  assert_ticket_status "01-alpha bis" ready-for-agent
+}
+
+@test "a ticket in flight does not exempt another one that shares a word with it" {
+  # The exemption list is the ids *this run* is holding ([13]), and it had the
+  # mirror defect: a sibling called `02-beta bis` in flight fenced as
+  # ` 02-beta bis `, which answered yes for a stale claim on `02-beta`. The
+  # backstop that exists against a recycled pid was then switched off by a word.
+  use_tickets 01-alpha 02-beta
+  cp "$(ticket_file 02-beta)" "$TRACKER_DIR/02-beta bis.md"
+  stamp_claim 02-beta "pid:$DEAD_PID" "$LAST_WEEK"
+
+  pack_run 'claim_reclaim_stale "02-beta bis"'
+  assert_success
+  assert_output_contains "02-beta retry"
+  assert_ticket_status 02-beta ready-for-agent
+
+  # And the ticket the run really is holding is left alone, which is what makes
+  # the assertion above about the words rather than about a sweep that ignores
+  # its exemption list altogether.
+  stamp_claim 01-alpha "pid:$DEAD_PID" "$LAST_WEEK"
+  pack_run 'claim_reclaim_stale "01-alpha"'
+  assert_success
+  assert_equal "$output" ""
+  assert_ticket_status 01-alpha claimed
+}
+
 @test "a reclaim consumes a retry, and a ticket that runs out of them goes to the human sink" {
   # A claim left behind by one of this pack's own runs is a crash nobody was alive
   # to classify, so it is counted like one. Without the counter, a ticket whose
