@@ -4,14 +4,14 @@
 
 **Blocked by:** None
 
-**Write-surface:** `.claude/lib/tracker-local.sh`, `.claude/lib/tracker.sh`, `test/tracker-local.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
+**Write-surface:** `.claude/lib/tracker-local.sh`, `.claude/lib/tracker.sh`, `.claude/lib/capability.sh`, `test/tracker-local.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Deux ouvertures de ticket en vol ne prennent jamais le même `NN`. Le mécanisme existe déjà à côté : `tracker_local_claim` fait sa lecture-écriture sous `state_guard_take` pour exactement cette raison, et l'écrit.
-- [ ] La dédup de `capability_propose` ne peut plus ouvrir deux fois la même proposition : elle lit `tracker_ids` avant d'écrire, donc elle a la même course par le même bout.
-- [ ] Une collision qui existerait quand même a un chemin de réparation, ou une phrase qui dit qu'elle n'en a pas. Aujourd'hui elle n'a ni l'un ni l'autre : elle naît après le préflight et le registre exempte celle de la boucle.
-- [ ] Le tableau de `docs/frontiere-de-confiance.md` dit ce qui tient « un ticket est identifiable par son `NN` » **quand c'est la boucle qui écrit**. La ligne actuelle ([27]) parle du mauvais écrivain.
+- [x] Deux ouvertures de ticket en vol ne prennent jamais le même `NN`. Le mécanisme existe déjà à côté : `tracker_local_claim` fait sa lecture-écriture sous `state_guard_take` pour exactement cette raison, et l'écrit.
+- [x] La dédup de `capability_propose` ne peut plus ouvrir deux fois la même proposition : elle lit `tracker_ids` avant d'écrire, donc elle a la même course par le même bout.
+- [x] Une collision qui existerait quand même a un chemin de réparation, ou une phrase qui dit qu'elle n'en a pas. Aujourd'hui elle n'a ni l'un ni l'autre : elle naît après le préflight et le registre exempte celle de la boucle.
+- [x] Le tableau de `docs/frontiere-de-confiance.md` dit ce qui tient « un ticket est identifiable par son `NN` » **quand c'est la boucle qui écrit**. La ligne actuelle ([27]) parle du mauvais écrivain.
 
 ## Comments
 
@@ -56,3 +56,107 @@
   réparation qui touche `tracker_local__next_nn` ou le préflight doit repartir du
   code tel qu'il est, pas de ce que cette page décrivait avant. La renumérotation et
   `tracker_local__path` n'ont **pas** bougé — tout y était déjà cité, glob compris.
+
+- **Livré le 27/08/2026.** Ce que le code ne dit pas, dans l'ordre où ça a compté.
+
+  **Le garde ne va pas dans `issues/`, et c'est la seule décision de placement qui
+  ait un coût.** `tracker_local_claim` met le sien à côté du ticket
+  (`$file.guard`), donc le réflexe était d'y mettre celui-ci. `issues/` est
+  exactement l'arbre que `failures_protect_tracker` snapshotte en objet git
+  autour de chaque session : un répertoire de garde pris là pendant qu'une
+  itération voisine compare ses deux snapshots arrive comme un chemin `A`/`D`
+  que la restauration tenterait de `checkout-index`. Le claim s'en tire parce
+  que sa fenêtre est de l'ordre de la milliseconde et qu'il tombe *avant* le
+  spawn ; une ouverture, elle, tombe **dans** la fenêtre d'une sœur, par
+  construction (re-slice, escalade du retro, proposition). Le garde vit donc
+  dans le répertoire de la feature, à côté du verrou de run, et il en hérite
+  l'exposition — une session peut le supprimer ([12]). C'est écrit dans le
+  tableau plutôt qu'ici parce que c'est une frontière de confiance et pas un
+  détail d'implémentation.
+
+  **`$$` est le pid du pilote dans toutes les itérations**, une itération étant
+  un sous-shell (`loop__iterate … &`) et bash ne changeant pas `$$` dans un
+  sous-shell. Conséquences, les deux vraies : `state_guard_take` voit toujours
+  un propriétaire vivant tant que le pilote vit, donc un garde laissé par une
+  itération morte n'est pas récupéré mais attendu (c'est le bon ancrage ici — si
+  le pilote est mort, plus rien n'alloue) ; et `state_guard_release` d'une
+  itération pourrait relâcher le garde d'une sœur, ce qui ne se produit pas
+  parce que chaque relâche suit une prise réussie dans la même fonction. Le
+  claim a déjà cette propriété ; personne ne l'avait écrite.
+
+  **L'ordre corps/numéro est la moitié de la trouvaille, pas un détail de
+  style.** Déplacer `body="$(cat)"` avant l'allocation était nécessaire *avant*
+  de poser le garde : avec l'ordre d'origine, le garde aurait été tenu pendant
+  la production du corps par l'appelant, c'est-à-dire que l'espace des numéros
+  entier aurait attendu le stdin de quelqu'un — pour un re-slice, le temps d'un
+  plan. Le correctif « évident » (envelopper la fonction telle quelle dans un
+  garde) transformait une collision en interblocage de fait.
+
+  **`tracker_renumber` est le second écrivain de l'espace des numéros** et il
+  n'était pas dans la description du ticket. La quarantaine l'appelle depuis une
+  itération pendant qu'une sœur peut ouvrir un enfant de re-slice ; sans le même
+  garde, renumérotation et ouverture se distribuent le même `NN`. Le corps est
+  passé en `tracker_local__renumber_held` (non gardé) pour que rien n'imbrique
+  deux prises du même garde — un garde réentrant aurait été la porte de sortie,
+  et il aurait fallu l'écrire.
+
+  **La dédup est devenue une opération de l'adaptateur (`tracker_open_unique`),
+  pas un garde exposé.** Trois options ont été pesées. Exposer une paire
+  prendre/relâcher publique était layering-légal mais fausse : `open_ticket`
+  prend le même garde, donc un appelant qui l'aurait tenu aurait attendu
+  lui-même. Un troisième argument optionnel sur `open_ticket` laissait un
+  backend distant ignorer le drapeau en silence et rouvrir le doublon. Une
+  opération séparée échoue à voix haute (`does not implement open_unique`,
+  rc 3) : c'est l'issue à préférer, et c'est écrit dans l'en-tête de
+  `tracker.sh` pour [18].
+
+  **Ce que le dispatcher devait apprendre, et pourquoi la première entrée de
+  mutation était VACUOUS.** `open_unique` est routé avec `open_ticket` et
+  `renumber` : le registre veut l'**id** rendu et jamais le slug reçu, sans quoi
+  la proposition que la boucle vient d'ouvrir est mise en quarantaine par la
+  sœur comme du travail qu'une session s'est donné ([42]). La première version
+  de l'entrée nommait `test/capability.bats` — VACUOUS, et le diagnostic n'est
+  pas que le test ment : `capability_propose` est appelé par le retro, donc
+  *après* la quarantaine de sa propre itération, et la quarantaine suivante part
+  d'un snapshot qui contient déjà la proposition. La garantie n'est observable
+  qu'à `MAX_PARALLEL>1`. Le test est descendu au module (registre asserté
+  directement), exactement comme `failures.bats` le fait pour `open_ticket`.
+  C'est la troisième fois que ce dépôt paie « la garantie est vraie, la sonde
+  bout en bout ne peut pas la voir ».
+
+  **Un appelant qui n'obtient pas le garde refuse, il n'alloue pas.** 120 essais
+  × 0,05 s = 6 s, le même bornage que le garde de l'index de leçons. Ce que ça
+  coûte est nommé : un re-slice rend un split incomplet à un humain, une
+  proposition tombe dans la ligne du reçu qui disait déjà « ou le tracker a
+  refusé l'écriture » — cette ligne existait avant ce ticket et couvre le cas
+  sans un mot de plus.
+
+  **Ce qui n'a pas été construit, et pourquoi.** Une vérification après écriture
+  (« le numéro que je viens de prendre est-il porté par mon seul fichier ») a
+  été écrite puis retirée : sous le garde elle est du code mort, et aucune sonde
+  ne peut l'atteindre — `tracker_local__number_taken` et `tracker_local__path`
+  appliquent exactement le même glob, donc il n'existe pas de nom de fichier que
+  l'une voie et l'autre pas. Une garantie qu'aucun test ne peut rendre rouge n'a
+  pas été livrée ; la réparation manquante est devenue la phrase que l'AC
+  autorisait, dans le tableau.
+
+  **Pièges de harnais rencontrés.** Une entrée de mutation qui vise
+  `tracker_local__open_guard_take` seul casse *les deux* garanties (ouverture et
+  renumérotation) : les deux entrées s'ancrent donc sur les deux lignes de
+  `printf` qui diffèrent, pas sur la ligne de prise qui est identique. Et
+  l'entrée [14] `an escalation waiting for a human is opened again every night`
+  a DÉRIVÉ — attendu, la ligne porteuse a changé de fichier
+  (`capability.sh` → `tracker-local.sh`) sans changer de forme ; garantie
+  revérifiée, ancre recalée, entrée rejouée `ok`.
+
+  **Ce que ça laisse aux suivants.** [18] hérite d'une clause d'interface de
+  plus : un backend distant doit répondre à `open_unique` ou être refusé à voix
+  haute, et il doit dire ce que fait sa création concurrente. [16] vide le puits
+  où les propositions atterrissent et peut désormais compter sur « une
+  proposition par slug » plutôt que sur la chance. Le test de la fenêtre
+  corps/numéro (`a body that is slow to arrive does not hold a number`) contient
+  un `sleep 0.5` dont le rôle est d'ouvrir la fenêtre côté *muté*, jamais
+  d'ordonner une assertion : l'ordre est tenu par un fifo, et le test est vert
+  sur du code correct quelle que soit la charge. Si cette entrée de mutation
+  revient VACUOUS sous charge un jour, c'est le sleep qu'il faut allonger, pas
+  le test qu'il faut réécrire.
