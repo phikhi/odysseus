@@ -276,6 +276,40 @@ PATHS
   return 1
 }
 
+# Whether git had to print this name quoted — which is to say whether it is a name
+# anything in this pack can address at all.
+#
+# Every list of paths in here comes out of `git diff-tree`, and git C-quotes a name
+# it cannot print as itself: the whole name wrapped in double quotes, the offending
+# bytes escaped. `core.quotePath=false`, passed by every producer of a path list in
+# this pack since [39], takes the *non-ASCII* case out of that set — and that was
+# the case that mattered, because `docs/spécification.md` is a name a French
+# project really writes. It used to reach every consumer of this list as
+# `"docs/sp\303\251cification.md"`, a string `git cat-file`, `git add`, `rm` and
+# `git checkout-index` all refuse (probed on 05/08/2026, six ways).
+#
+# What stays quoted is a name carrying a character git cannot show as itself: a
+# newline, a tab, a double quote, a backslash. That residue is a **named limit**
+# and the decision is written in docs/frontiere-de-confiance.md rather than left
+# implicit: `-z` would make those names addressable and would also make every list
+# in this pack NUL-separated, which is the convention [33] settled end to end, in
+# nine readers, for a name no project has. Git's own quoting is what makes keeping
+# that convention safe — a name carrying a newline arrives as one quoted *line*, so
+# it never splits a list in silence. It arrives instead as something no consumer
+# can address, which is a thing each of them can refuse out loud.
+#
+# Public because a second module reads it — the language gate — which is this
+# pack's rule for a name rather than a preference, the same one that took
+# `gate__under_path` public in [17]. Three readers ask the question and each does
+# something different with it: the scope-guard reds on it, the restore refuses to
+# claim it put it back, and the language gate counts it.
+gate_unaddressable() {
+  case "$1" in
+    '"'*'"') return 0 ;;
+  esac
+  return 1
+}
+
 # ── the zone git does not show ───────────────────────────────────────────────
 #
 # Every check in this pack is built on a git tree object, so every check inherits
@@ -1187,7 +1221,8 @@ gate_unjudged_changes() {
   [ -n "$judged" ] || return 1
   now="$(gate_tree_snapshot)" || return 1
   [ "$now" != "$judged" ] || return 0
-  git diff-tree -r --name-only "$judged" "$now" 2>/dev/null | gate__drop_bookkeeping
+  git -c core.quotePath=false diff-tree -r --name-only "$judged" "$now" 2>/dev/null |
+    gate__drop_bookkeeping
 }
 
 # ── the diff an iteration is judged on ───────────────────────────────────────
@@ -1297,11 +1332,18 @@ FORCED
 # Public, and named so: the failure policy commits through it and the review
 # lenses will read the diff through it. It was `gate__changed_files` until the
 # second caller appeared, which made a private name a lie.
+#
+# `core.quotePath=false` on this producer and on every other one in the pack
+# ([39]): git escapes any byte outside pure ASCII by default, so a name a French
+# project really writes came back as a string none of the four consumers of this
+# list could address — see gate_unaddressable for what that cost and for what is
+# deliberately left quoted.
 gate_changed_files() {
   local base="$1" now="${2:-}"
   [ -n "$now" ] || now="$(gate_tree_snapshot)" || now=""
   [ -n "$base" ] && [ -n "$now" ] || return 1
-  git diff-tree -r --name-only "$base" "$now" 2>/dev/null | gate__drop_bookkeeping
+  git -c core.quotePath=false diff-tree -r --name-only "$base" "$now" 2>/dev/null |
+    gate__drop_bookkeeping
 }
 
 # Whether this iteration delivered anything at all: true when the gate can see
@@ -1362,6 +1404,16 @@ gate__nothing_delivered() {
 # nothing, and says nothing about what it could not reach. The rollback needs all
 # three and the lens containment needs none of them.
 #
+# Every admission in here goes to **stderr**, and that is not a detail — it is the
+# same trap `gate_tree_snapshot` names one screen up ([30], found again here by
+# [39]). The list of paths this put back *is* the return value, taken by both
+# callers through a command substitution, so a `could not restore` printed on
+# stdout does not merely scroll past: it lands in the list as though it were a path
+# that had been put back, gets counted in `rolled back N path(s)`, is handed to the
+# unstaging as a pathspec, and nets itself out of the "could not undo" line. A
+# failure reported into the channel that reports successes is a failure reported as
+# a success.
+#
 # The loop's own bookkeeping is skipped here rather than by each caller, and that
 # is load-bearing in both directions: the tracker is the only authority on state
 # this system has, and the session stream is being appended to inside the very
@@ -1382,21 +1434,44 @@ gate_restore_tree() {
   while IFS="$(printf '\t')" read -r status path; do
     [ -n "$path" ] || continue
     if gate_is_bookkeeping "$path"; then continue; fi
+    # A name nothing here can address ([39]). Said rather than acted on, and that
+    # is the whole of the entry: `rm -f` on the quoted string removes nothing and
+    # reports success, `checkout-index` answers `is not in the cache`, and the
+    # line at the bottom of this loop then printed the path as one this restore
+    # put back. An intention rendered for a result is exactly what [30] paid for
+    # on `core.excludesFile`, one mechanism over.
+    if gate_unaddressable "$path"; then
+      gate__gap "could not put back $path — git prints this name quoted and nothing here can address it" >&2
+      continue
+    fi
     case "$status" in
       A)
         rm -f "$path"
         # Stops at the first directory that is not empty, so a directory the
         # session did not create survives.
         rmdir -p "$(dirname "$path")" 2>/dev/null || true
+        # Checked rather than assumed, for the same reason as the branch below,
+        # which has a status to look at: `rm -f` reports success for a path it did
+        # not remove — a permission on the directory, a name that is not the name
+        # git meant — and this loop's business is to print what it really put back.
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          gate__gap "could not remove $path" >&2
+          continue
+        fi
         ;;
       *)
-        GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null ||
-          gate__gap "could not restore $path"
+        # No `:(literal)` here, unlike everywhere else a path is handed to git:
+        # `checkout-index` takes file names and not pathspecs, and answers
+        # `:(literal)docs/x.md is not in the cache` to the magic (probed).
+        if ! GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null; then
+          gate__gap "could not restore $path" >&2
+          continue
+        fi
         ;;
     esac
     printf '%s\n' "$path"
   done <<RESTORE
-$(git diff-tree -r --name-status "$base" "$now" 2>/dev/null)
+$(git -c core.quotePath=false diff-tree -r --name-status "$base" "$now" 2>/dev/null)
 RESTORE
 
   rm -f "$idx"
@@ -1533,6 +1608,20 @@ gate__scope_guard() {
 
   while IFS= read -r file; do
     [ -n "$file" ] || continue
+    # Asked before anything compares this string to a list ([39]). A quoted name
+    # matches no pattern a human wrote and no path this pack carries, so every
+    # answer below would be an answer about a different string — and the two the
+    # ticket could get are both wrong in the same direction: a declared surface of
+    # `*` matches it like anything else, and the durable commit then drops the file
+    # in silence because `git add` refuses the same string this loop just approved.
+    # Red whatever the surface says, and retryable: what a fresh session has to do
+    # about it is rename the file, which is work a session can do.
+    if gate_unaddressable "$file"; then
+      rc=1
+      if [ -z "$class" ]; then class=internal; fi
+      printf 'wrote %s, a name this gate cannot address — git prints it quoted because it carries a character it cannot show as itself, and nothing here can commit it, roll it back or read it. No write-surface may cover it: rename the file\n' "$file"
+      continue
+    fi
     # Asked before the surface is consulted, and that ordering is the whole of
     # the guarantee: a ticket that declared the harness's own configuration would
     # otherwise buy a session the right to configure the sessions after it. Red,

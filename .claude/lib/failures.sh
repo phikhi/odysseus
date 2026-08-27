@@ -722,7 +722,7 @@ failures_protect_tracker() {
         ;;
     esac
   done <<TRACKER
-$(git -C "$root" diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)
+$(git -C "$root" -c core.quotePath=false diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)
 TRACKER
 
   rm -f "$idx"
@@ -811,19 +811,36 @@ failures_rollback() {
     return 1
   fi
 
+  # The list travels as it was printed — one path per line — instead of being
+  # joined back into a single whitespace word ([33], and it was still joined here
+  # when [39] came through). Both halves that read it were cutting it on spaces:
+  # the unstaging below turned a name carrying one into pathspecs that matched
+  # nothing, and `failures__minus` answered "already undone" for *each word* of
+  # such a name, so an unrelated path whose name was one of those words dropped out
+  # of the "could not undo" line. A word closure does not break on an entry with a
+  # space in it, it answers yes for every word of it ([37]) — a false negative
+  # nothing prints.
+  paths="$restored"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    paths="$paths $path"
+    # What the session staged is not work in progress either. Unstaging is scoped
+    # to the paths this rollback put back, so an index a human left half-prepared
+    # elsewhere stands. `:(literal)` for the third reason in that family: a path is
+    # not a pattern, and `src/zone[1].txt` was unstaged as `src/zone1.txt`.
+    #
+    # One call per path is a consequence of reading the list by line, not a fix of
+    # its own — probed, and worth knowing because the two git commands differ where
+    # it matters: a pathspec matching nothing makes `git add` refuse the *whole*
+    # call, while `git reset` leaves that one alone and does the rest. So the
+    # defect here was local — `src/my file.txt` stayed staged and its neighbours
+    # did not — and the one in the durable commit was total.
+    git reset -q -- ":(literal)$path" 2>/dev/null || true
     undone=$((undone + 1))
   done <<ROLLBACK
 $restored
 ROLLBACK
 
-  # What the session staged is not work in progress either. Unstaging is scoped
-  # to the same paths, so an index a human left half-prepared elsewhere stands.
-  if [ -n "$paths" ]; then
-    # shellcheck disable=SC2086
-    git reset -q -- $paths 2>/dev/null || true
+  if [ "$undone" -gt 0 ]; then
     failures__log "rolled back $undone path(s) the session touched"
   fi
 
@@ -869,15 +886,21 @@ failures__report_unrolled() {
   return 0
 }
 
-# A list minus a space-delimited set. Same assumption the unstaging above makes:
-# a path with a space in it is not one this loop can carry.
+# A list of paths minus another, both one entry per line, compared whole line
+# against whole line.
+#
+# It was a space-fenced membership test until [39], carrying the assumption its own
+# comment stated — "a path with a space in it is not one this loop can carry" — and
+# the assumption was false in the direction nothing prints: a fence of words does
+# not fail to match a name with a space, it matches *each of its words* ([37]), so
+# `src/my file.md` having been rolled back was read as `src/my` and `file.md`
+# having been, and any unrelated path called one of those two dropped out of the
+# line that says what this rollback could not undo.
 failures__minus() {
-  local fence=" ${2:-} " item
+  local item
   while IFS= read -r item; do
     [ -n "$item" ] || continue
-    case "$fence" in
-      *" $item "*) continue ;;
-    esac
+    ! failures__in_list "$item" "${2:-}" || continue
     printf '%s\n' "$item"
   done <<LIST
 ${1:-}
@@ -961,7 +984,7 @@ failures_preserve_attempt() {
 # of megabytes.
 failures_make_durable() {
   local ticket="$1" pre="$2" base="$3" tree="${4:-}"
-  local changed idx head newtree commit
+  local changed idx head newtree commit path
 
   if [ -z "$base" ]; then
     failures__gap "$ticket: no pre-session snapshot — nothing made durable"
@@ -991,8 +1014,19 @@ failures_make_durable() {
   if [ -n "$head" ]; then
     GIT_INDEX_FILE="$idx" git read-tree "$head" >/dev/null 2>&1 || true
   fi
-  # shellcheck disable=SC2086
-  GIT_INDEX_FILE="$idx" git add -A -- $changed >/dev/null 2>&1 || true
+  # One path per line and one `git add` per path, for the three reasons the
+  # snapshot carries at length ([33], then [39]). `git add -A -- $changed` word-split
+  # a name with a space into pathspecs that matched nothing, and pathname-expanded
+  # the list against the working tree on top of that; a single call fails *whole*,
+  # so one path git refused took every other path out of the commit with it, under a
+  # `|| true` written for the one that was refused; and a pathspec is a pattern, so a
+  # file really named `zone[1].md` was staged as `zone1.md` or as nothing at all.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    GIT_INDEX_FILE="$idx" git add -A -- ":(literal)$path" >/dev/null 2>&1 || true
+  done <<CHANGED
+$changed
+CHANGED
   newtree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || newtree=""
   rm -f "$idx"
 
@@ -1000,6 +1034,29 @@ failures_make_durable() {
     failures__gap "$ticket: could not stage the iteration — it is not committed"
     return 1
   fi
+
+  # What the gate approved and this tree does not carry, named rather than dropped
+  # ([39]). Asserting that `git add` succeeded would prove nothing here — it is
+  # under a `|| true` by necessity, a path the session deleted out of a tree that
+  # was never committed matching nothing on either side — so what is checked is the
+  # result: the paths that still differ between what is about to be committed and
+  # the tree the gate judged. Before this, a name `git add` refused left the file
+  # out of the history with a green iteration and not one line about it, and the
+  # loudest case was the one that opened this ticket: a name outside pure ASCII,
+  # refused for the shape it arrived in.
+  #
+  # Netted against `changed` rather than read whole, and that is not a detail: a run
+  # started on a tree that already had uncommitted work has paths where `base` and
+  # `HEAD` differ and no session touched them, and accusing those would be this
+  # gap line saying something false on every dirty repository.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    failures__in_list "$path" "$changed" || continue
+    failures__gap "$ticket: $path was approved by the gate and could not be staged — it is not in this commit"
+  done <<MISSED
+$(git -c core.quotePath=false diff-tree -r --name-only "$newtree" "$tree" 2>/dev/null)
+MISSED
+
   # Nothing to record: everything the gate approved is already in HEAD. Reached
   # when a session committed its work and HEAD could not be moved back, and when
   # the paths it touched came back to the contents they already had.
@@ -1029,9 +1086,14 @@ failures_make_durable() {
   fi
 
   # The real index still describes the state before the commit, which would show
-  # up as a staged deletion. Same paths, so nothing else staged is disturbed.
-  # shellcheck disable=SC2086
-  git add -A -- $changed >/dev/null 2>&1 || true
+  # up as a staged deletion. Same paths, so nothing else staged is disturbed, and
+  # one literal pathspec per line for the reason the staging above carries.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    git add -A -- ":(literal)$path" >/dev/null 2>&1 || true
+  done <<CHANGED
+$changed
+CHANGED
   failures__log "$ticket: committed $(printf '%s\n' "$changed" | awk 'END { print NR }') path(s)"
   return 0
 }
