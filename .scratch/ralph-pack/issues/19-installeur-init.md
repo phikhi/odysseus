@@ -95,3 +95,5 @@
   légitime existe), et c'est ici qu'il faut le dire plutôt que de laisser une nuit rougir
   dessus ; et si [46] retient un élargissement de config, c'est cet installeur qui l'écrit
   dans `ralph.config.sh`. Livrer après [46].
+
+- **Un troisième reste à balayer, trouvé le 27/08/2026.** `.scratch/<feature>/.open.guard` — le garde d'ouverture de [47] — n'est relâché par aucun trap : le verrou de run dont il « hérite l'exposition » sort par le `trap EXIT` de `run_lock_acquire`, celui-ci non. Un `kill -9` en pleine allocation le laisse, et il traverse un run vert entier sans un mot : `gate_leftovers` ne regarde que `$TMPDIR` (sondé, `.scratch/ralph-pack/sondes/passe-27-08/q1` Q1a). Il est repris silencieusement à la première allocation suivante, donc ce n'est pas un blocage — mais c'est un objet de plus dans la liste « laissé par un run tué, balayé par personne avant [19] ». Si [49] décide de le **compter** plutôt que de le balayer, c'est ici que le balayage arrive.

@@ -89,3 +89,5 @@
   limite de cette convention est nommée et ouverte comme [48] : un nom de fichier
   peut contenir un saut de ligne, qu'un heredoc ne peut pas porter — si [48] change
   le transport, c'est cette clause-là qu'il faut relire ici.
+
+- **Seconde clause d'interface, posée par la passe transversale du 27/08/2026.** Le répertoire du tracker ne contient pas que des tickets : le backend local y écrit trois sortes de transitoires (`<id>.md.guard/` du claim, `<id>.md.tmp.XXXXXX` de `state_atomic_write`, `<id>.md.work.XXXXXX` et `.work.XXXXXX.p` de `set_fields`), et `failures_protect_tracker` les prend pour des éditions de ticket — il les restaure, accuse la session, et refuse le vert. Un backend distant a le même problème sous une autre forme : tout ce que son *stockage* montre au garde et qui n'est pas un ticket. Ce qu'il doit dire est donc « ce que `read_ticket`/`ids`/le snapshot rendent est un ticket, et rien d'autre n'y transite », ou bien fournir sa propre borne. Le correctif et la décision appartiennent à [49] ; cette clause rejoint « un id par ligne » ([37]) dans l'en-tête de `lib/tracker.sh`.
