@@ -56,6 +56,26 @@
   lisant `tracker_ids` avant d'écrire, ce qui est une course quel que soit le backend. Livrer
   après [47] et hériter de ce qu'il aura décidé, plutôt que le redécouvrir sur une API.
 
+- **Contrainte posée par [47], livré le 27/08/2026 : une 15ᵉ opération, `tracker_open_unique
+  SLUG TITLE`, et c'est un refus bruyant qu'elle achète.** « N'ouvre pas si un ticket porte
+  déjà ce slug » est devenu une **opération de l'adaptateur** au lieu d'une lecture que
+  l'appelant fait avant d'écrire : `capability_propose` lisait `tracker_ids`, ne trouvait
+  rien et ouvrait, donc deux propositions en vol n'en trouvaient aucune et en ouvraient deux.
+  La question et l'écriture doivent tomber du même côté de ce qui sérialise la création, quel
+  que soit le backend — un backend qui numérote côté serveur hérite de la moitié « id » et
+  **pas** de celle-ci. Trois choses à écrire ici plutôt qu'à déduire. *(1)* Ne pas
+  l'implémenter n'est pas un dégradé silencieux : `tracker__dispatch` rend 3 avec
+  `does not implement open_unique`, ce qui a été **préféré** à un drapeau optionnel sur
+  `open_ticket` qu'un backend pourrait ignorer sans un mot. *(2)* La sémantique du retour est
+  « rien sur stdout et succès » quand la proposition existait déjà — l'appelant lit le vide,
+  jamais un code de sortie, parce que « déjà en attente d'un humain » est une réussite.
+  *(3)* Le dispatcher note dans le registre de [13] l'**id rendu** et non le slug reçu, et
+  n'écrit **aucune ligne** quand rien n'a été ouvert : une création qui n'a pas eu lieu n'est
+  pas une écriture à exempter, et une ligne de trop donnerait aux deux gardes de [42] un id à
+  sauter pour un ticket que ce run n'a pas touché. Le backend local sérialise par un garde
+  (`state_guard_take`) dans le répertoire de la feature ; un backend distant doit dire ce qui
+  tient l'équivalent chez lui, ou dire que rien ne le tient.
+
 - **Contrainte posée par [37], livré le 27/08/2026 — une clause d'interface, pas un
   détail du backend local.** `tracker_ids` et `tracker_frontier` doivent rendre **un
   id par ligne** ; c'est écrit dans l'en-tête de `lib/tracker.sh` et tous les

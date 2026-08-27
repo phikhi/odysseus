@@ -63,3 +63,17 @@
   résoudre et tout ticket portant `Blocked by: NN` quitte la frontière définitivement. La
   boucle humaine est le seul composant qui puisse renommer l'un des deux sans être une
   session ; si elle le fait, `tracker_preflight` produit déjà la phrase exacte à afficher.
+
+- **Mise à jour par [47], livré le 27/08/2026 : (a) est fermé, (b) ne l'est qu'aux trois
+  quarts.** La dédup de `capability_propose` est passée dans l'adaptateur
+  (`tracker_open_unique`), du même côté du garde que l'écriture, donc le puits ne reçoit plus
+  deux fois la même proposition : un `capability-<kind>-<nom>` en double n'est plus un
+  effet de course connu, et si un humain en voit un, c'est une trouvaille. Pour (b),
+  l'allocation d'un `NN` et l'écriture qui la réserve tiennent maintenant sous un garde, et
+  `tracker_renumber` passe par le même — la boucle ne peut plus produire la collision. **Ce
+  qui reste et arrive donc encore ici** : un doublon posé par un humain éditant `issues/` à
+  la main pendant un run, et la fenêtre sans compare-and-swap de `state_guard_take`. Ni l'un
+  ni l'autre n'a de réparation automatique — c'est écrit comme tel dans
+  `docs/frontiere-de-confiance.md` — et cette boucle reste le seul composant qui puisse
+  renommer l'un des deux sans être une session. La phrase à afficher est toujours celle que
+  `tracker_preflight` produit, au démarrage du run suivant.

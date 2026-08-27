@@ -600,3 +600,193 @@ TICKET
   assert_success
   assert_ticket_status "02-beta bis" resolved
 }
+
+# ── one number at a time ─────────────────────────────────────────────────────
+#
+# Allocating an `NN` reads the directory, takes the max and writes it back, and
+# there are three producers of that call now ([13]): a re-slice, the retro's
+# escalation and a capability proposal, each inside its own iteration. Two of them
+# in flight took the same number, and what that costs is permanent and paid
+# elsewhere — a bare number stops resolving, so every ticket carrying
+# `Blocked by: NN` leaves the frontier for good ([27]).
+#
+# The tests below drive the module rather than launching processes and hoping.
+# Two openings racing on a real machine is a probe (`.scratch/ralph-pack/sondes/`)
+# and never a test: it would measure the machine, which this pack has paid for
+# twice. What is asserted here is what the guarantee actually is — the allocation
+# happens under a guard, and the guard is not held while a body is being produced.
+
+# A guard held by a process that really is alive, which is the only state
+# `state_guard_take` refuses: an owner it cannot see is taken over.
+hold_open_guard() {
+  sleep 30 &
+  OPEN_GUARD_HOLDER=$!
+  mkdir -p "$FEATURE_DIR/.open.guard"
+  printf '%s\n' "$OPEN_GUARD_HOLDER" >"$FEATURE_DIR/.open.guard/pid"
+}
+
+release_open_guard() {
+  kill "$OPEN_GUARD_HOLDER" 2>/dev/null || true
+  rm -rf "$FEATURE_DIR/.open.guard"
+}
+
+@test "an opening refuses a number it cannot allocate under the guard" {
+  hold_open_guard
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_ticket blocked "Blocked"'
+  held_status="$status"
+  held_output="$output"
+  release_open_guard
+
+  [ "$held_status" != 0 ] || fail "the opening allocated a number nothing serialised"
+  case "$held_output" in
+    *"could not take the ticket-open guard"*) ;;
+    *) fail "the refusal says nothing about the guard: $held_output" ;;
+  esac
+  refute_file_exists "$(ticket_file 10-blocked)"
+
+  # And the refusal is a refusal and not a broken function: the same call goes
+  # through once the guard is free. Without this half, a guard that never let
+  # anybody in would pass the assertions above.
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_ticket blocked "Blocked"'
+  assert_success
+  assert_equal "$output" "10-blocked"
+}
+
+@test "a renumber refuses rather than allocating beside an opening" {
+  # The other writer of the number space. The quarantine calls it from one
+  # iteration while a sibling may be opening a re-slice child, so a renumber that
+  # allocated outside the guard would hand out a number an opening just took.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha-bis.md"
+
+  hold_open_guard
+  pack_run 'tracker_renumber 01-alpha-bis'
+  held_status="$status"
+  release_open_guard
+
+  [ "$held_status" != 0 ] || fail "the renumber allocated a number nothing serialised"
+  assert_file_exists "$TRACKER_DIR/01-alpha-bis.md"
+
+  pack_run 'tracker_renumber 01-alpha-bis'
+  assert_success
+  assert_equal "$output" "10-alpha-bis"
+}
+
+@test "a body that is slow to arrive does not hold a number" {
+  # The window is not the microsecond one would assume: `nn` used to be computed
+  # **before** `body="$(cat)"` was read, so a number was chosen and not yet
+  # written for as long as the caller took to produce the body — for a re-slice,
+  # the time of a plan. The fifo is what makes this a test and not a race: the
+  # first opening cannot finish until this test writes to it, so the ordering is
+  # decided here rather than by the scheduler.
+  fifo="$RALPH_TEST_DIR/body.fifo"
+  mkfifo "$fifo"
+
+  pack_run_bg 'tracker_open_ticket first "First" <'"$fifo"' >'"$RALPH_TEST_DIR"'/first.id'
+  # A writer only gets through a fifo once a reader is there, so this returns
+  # when the child is inside the call — and it cannot leave it without a body.
+  exec 9>"$fifo"
+  sleep 0.5
+
+  pack_run 'printf "%s\n" "**What to build:** second" | tracker_open_ticket second "Second"'
+  assert_success
+  assert_equal "$output" "10-second"
+
+  printf '**What to build:** first\n' >&9
+  exec 9>&-
+  wait "$PACK_BG_PID" || true
+
+  # 11 and not 10: two tickets carrying 10 is the state nothing repairs.
+  assert_equal "$(cat "$RALPH_TEST_DIR/first.id")" "11-first"
+
+  pack_run 'tracker_local__path 10'
+  assert_success
+  assert_output_contains "10-second.md"
+}
+
+@test "open_unique opens a slug once and answers the second by silence" {
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_unique proposal "A proposal"'
+  assert_success
+  assert_equal "$output" "10-proposal"
+
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_unique proposal "A proposal"'
+  assert_success
+  assert_equal "$output" ""
+
+  run bash -c "ls '$TRACKER_DIR' | grep -c -- '-proposal\.md'"
+  assert_equal "$output" "1"
+}
+
+@test "an opening in flight does not open a slug a second one landed first" {
+  # [47] by its other end. `capability_propose` read `tracker_ids`, found no
+  # proposal and opened one, so two proposals in flight both found nothing and
+  # both opened — the same race as the number, and a second proposal buries the
+  # first on the human sink. The question and the write have to fall on the same
+  # side of the guard, which is why this is an operation and not a caller's check.
+  fifo="$RALPH_TEST_DIR/body.fifo"
+  mkfifo "$fifo"
+
+  pack_run_bg 'tracker_open_unique proposal "A proposal" <'"$fifo"' >'"$RALPH_TEST_DIR"'/first.id'
+  exec 9>"$fifo"
+
+  pack_run 'printf "%s\n" "**What to build:** second" | tracker_open_unique proposal "A proposal"'
+  assert_success
+  assert_equal "$output" "10-proposal"
+
+  printf '**What to build:** first\n' >&9
+  exec 9>&-
+  wait "$PACK_BG_PID" || true
+
+  # Nothing, because by the time it looked there was one — and it looked under
+  # the guard, after its body, not before.
+  assert_equal "$(cat "$RALPH_TEST_DIR/first.id")" ""
+
+  run bash -c "ls '$TRACKER_DIR' | grep -c -- '-proposal\.md'"
+  assert_equal "$output" "1"
+}
+
+@test "the guard is not left behind by an opening that finished" {
+  # A guard nobody released is a tracker nobody can add to for as long as the run
+  # lives: every stamp inside one run carries the pilot's pid, so `state_guard_take`
+  # sees a live owner and waits it out rather than recovering it.
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_ticket first "First"'
+  assert_success
+  refute_file_exists "$FEATURE_DIR/.open.guard/pid"
+
+  pack_run 'tracker_renumber 01-alpha'
+  assert_success
+  refute_file_exists "$FEATURE_DIR/.open.guard/pid"
+}
+
+@test "a unique opening tells the register the id it made, not the slug it was given" {
+  # The register is what keeps the two guards over `issues/` off a ticket the loop
+  # itself wrote ([13]/[42]), and the one question they ask is whether an id that
+  # appeared is the loop's own creation. A line carrying the slug names no ticket
+  # at all, so a proposal a sibling iteration finds is quarantined as work a
+  # session gave itself, under a note naming a ticket nobody can go and look at.
+  #
+  # Asserted at the module rather than through a run, and for the reason
+  # failures.bats gives for the same assertion on `open_ticket`: the guards run
+  # inside another iteration's window, which is not observable at MAX_PARALLEL=1.
+  pack_run 'RALPH_TRACKER_LOG="'"$RALPH_TEST_DIR"'/register"
+    : >"$RALPH_TRACKER_LOG"
+    printf "%s\n" "**What to build:** something" |
+      tracker_open_unique proposal "A proposal" >/dev/null
+    printf "register:%s\n" "$(cat "$RALPH_TRACKER_LOG")"'
+  assert_success
+  assert_output_contains "register:10-proposal"
+}
+
+@test "a unique opening that opened nothing writes no line to the register" {
+  # A creation that did not happen is not a write to exempt: a line here would
+  # hand both guards an id to skip for a ticket this run did not touch.
+  pack_run 'printf "%s\n" "**What to build:** something" | tracker_open_unique proposal "A proposal"'
+  assert_success
+
+  pack_run 'RALPH_TRACKER_LOG="'"$RALPH_TEST_DIR"'/register"
+    : >"$RALPH_TRACKER_LOG"
+    printf "%s\n" "**What to build:** something" |
+      tracker_open_unique proposal "A proposal" >/dev/null
+    printf "register:[%s]\n" "$(cat "$RALPH_TRACKER_LOG")"'
+  assert_success
+  assert_output_contains "register:[]"
+}

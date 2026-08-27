@@ -2815,7 +2815,12 @@ mutation "14 an escalated rule lands on the frontier instead of the human sink" 
   's/^\*\*Status:\*\* ready-for-human$/**Status:** ready-for-agent/m' \
   test/retro.bats "ticket on the human sink"
 
-mutation "14 an escalation waiting for a human is opened again every night" "$CAPABILITY" \
+# Moved file again, and not test: [47] took the deduplication out of
+# `capability_propose` and made it an adapter operation, because a caller that
+# reads `tracker_ids` and then opens has the whole write between its question and
+# its answer. The guarantee is unchanged and retro.bats still owns it — the arm
+# that answers "one is already waiting" is simply in the backend now.
+mutation "14 an escalation waiting for a human is opened again every night" "$TRACKER" \
   's/^      \*"-\$slug"\) return 0 ;;$/      *"-\$slug") : ;;/m' \
   test/retro.bats "not opened twice"
 
@@ -3026,6 +3031,65 @@ mutation "37 the surface owner is looked up by words" "$GATE" \
 mutation "37 a carrier is named by its first word" "$TRACKER_IFACE" \
   's/      "\$nn"-\*\) printf \x27%s\\n\x27 "\$id" ;;/      "\$nn"-*) printf \x27%s\\n\x27 \$id ;;/' \
   test/tracker-local.bats "the name its file really has"
+
+# ── [47] tracker_open_ticket has no lock ─────────────────────────────────────
+#
+# Allocating an `NN` is a read-modify-write on a directory with three producers,
+# and a collision is permanent: a bare number stops resolving, so every ticket
+# carrying `Blocked by: NN` leaves the frontier for good ([27]). Neither repair can
+# reach the one the loop creates — the preflight ran at the start of the run, and
+# the quarantine's renumber is disarmed by the register of the loop's own writes
+# ([13]/[42]) precisely because it is the loop that wrote it.
+#
+# Each refusal below has its twin that removes the ability to act: a guard that let
+# nobody in would satisfy every "it refused" assertion on its own.
+
+mutation "47 the number is allocated with nothing serialising it" "$TRACKER" \
+  's/  tracker_local__open_guard_take \|\| \{\n    printf [^\n]*refusing to allocate a number[^\n]*\n    return 1\n  \}\n/  true\n/' \
+  test/tracker-local.bats "refuses a number it cannot allocate"
+
+mutation "47 the renumber allocates beside an opening" "$TRACKER" \
+  's/  tracker_local__open_guard_take \|\| \{\n    printf [^\n]*refusing to renumber[^\n]*\n    return 1\n  \}\n/  true\n/' \
+  test/tracker-local.bats "renumber refuses rather than allocating"
+
+mutation "47 the guard never lets anybody in" "$TRACKER" \
+  's/^tracker_local__open_guard_take\(\) \{/tracker_local__open_guard_take() { return 1;/m' \
+  test/tracker-local.bats "refuses a number it cannot allocate"
+
+mutation "47 a finished opening keeps the guard" "$TRACKER" \
+  's/^tracker_local__open_guard_release\(\) \{/tracker_local__open_guard_release() { return 0;/m' \
+  test/tracker-local.bats "not left behind by an opening"
+
+# The width of the window, and it is the ordering rather than the guard: the
+# number used to be chosen before the body was read, so it was reserved and
+# unwritten for as long as its caller took to produce one.
+mutation "47 the number is chosen before the body arrives" "$TRACKER" \
+  's/  mkdir -p "\$dir"\n  body="\$\(cat\)"\n\n/  mkdir -p "\$dir"\n\n/; s/  nn="\$\(tracker_local__next_nn\)"\n/  body="\$(cat)"\n  nn="\$(tracker_local__next_nn)"\n/' \
+  test/tracker-local.bats "slow to arrive does not hold a number"
+
+mutation "47 a slug already on the sink is opened again" "$TRACKER" \
+  's/^tracker_local__slug_taken\(\) \{/tracker_local__slug_taken() { return 1;/m' \
+  test/tracker-local.bats "opens a slug once"
+
+# The same race by its other end: the question and the write on opposite sides of
+# the guard, which is what `capability_propose` did when it read `tracker_ids`
+# first. The edit puts the check back where the answer goes stale.
+mutation "47 the slug is looked up before the body, outside the guard" "$TRACKER" \
+  's/  if \[ -n "\$unique" \] && tracker_local__slug_taken "\$dir" "\$slug"; then\n    tracker_local__open_guard_release\n    return 0\n  fi\n\n//; s/  body="\$\(cat\)"\n/  if [ -n "\$unique" ] \&\& tracker_local__slug_taken "\$dir" "\$slug"; then return 0; fi\n  body="\$(cat)"\n/' \
+  test/tracker-local.bats "does not open a slug a second one landed"
+
+# The register wants the id the guards will meet in `issues/`, never the slug the
+# caller passed: a line naming no ticket exempts nothing, and the proposal the loop
+# just opened is quarantined as work a session gave itself ([42]).
+mutation "47 a unique opening registers its slug instead of its id" "$TRACKER_IFACE" \
+  's/^    open_ticket \| open_unique \| renumber\)$/    open_ticket | renumber)/m' \
+  test/tracker-local.bats "the id it made, not the slug"
+
+# And its twin: a line for a creation that did not happen hands both guards an id
+# to skip for a ticket this run never touched.
+mutation "47 an opening that opened nothing is registered all the same" "$TRACKER_IFACE" \
+  's/^      tracker__note_write "\$out"$/      tracker__note_write "\${out:-\$1}"/m' \
+  test/tracker-local.bats "opened nothing writes no line"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

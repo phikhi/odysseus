@@ -271,23 +271,136 @@ tracker_local_bump_failures() {
   printf '%s\n' "$next"
 }
 
+# ── serialising the number space ─────────────────────────────────────────────
+#
+# Allocating an `NN` is a read-modify-write on the *directory*: read what is
+# there, take the next free number, write a file carrying it. That is exactly the
+# shape `tracker_local_claim` already guards, for exactly the same reason — two
+# openers must not both read the directory and both believe they won, and
+# re-reading our own file afterwards would not settle it. There are three
+# producers now (`failures_reslice`, the retro's escalation, `capability_propose`)
+# and each runs inside its own iteration ([13]), so this is not hypothetical.
+#
+# What a collision costs is permanent, and it is not paid by the ticket carrying
+# the number: dependencies are written as bare numbers, `tracker_local__path`
+# rightly refuses to resolve one that two files carry, and every ticket holding
+# `Blocked by: NN` leaves the frontier for good ([27]). Neither of the two repairs
+# that exist can reach it either — `tracker_preflight` ran once at the start of
+# the run, and the quarantine's renumber is disarmed by the register of the loop's
+# own writes ([13]/[42]) precisely because it *is* the loop that wrote it. So the
+# answer has to be here, before the collision exists.
+#
+# The guard sits in the feature directory and **not** in `issues/`, where the
+# claim's guard sits, and the difference is not tidiness: `issues/` is what
+# `failures_protect_tracker` snapshots as a git tree around every session, so a
+# guard taken there while a sibling compares two snapshots arrives as a path that
+# restore would try to check out. The number space belongs to the tracker as a
+# whole rather than to any one ticket, so its guard belongs beside the run lock —
+# and it inherits the run lock's exposure with it: a session can delete it ([12]),
+# which is written down in `docs/frontiere-de-confiance.md` rather than left here.
+tracker_local__open_guard() {
+  printf '%s/.open.guard\n' "$(ralph_feature_dir)"
+}
+
+# Bounded, and what the bound reaches is a refusal rather than a free-for-all.
+# `state_guard_take` already recovers a guard whose owner is gone; this waits for
+# one that is merely busy. An allocation is one directory read and one write, so a
+# caller still waiting after six seconds is not queued behind work — and going
+# ahead anyway would be the collision this exists to prevent, taken deliberately.
+#
+# Every stamp inside one run carries the *pilot's* pid, iterations being subshells
+# of it ([13]), so the liveness `state_guard_take` reads is the run's own. That is
+# the right anchor here and not a defect: a guard left by an iteration that died
+# with the pilot still alive is one the pilot can still be inside.
+tracker_local__open_guard_take() {
+  local guard tries=120
+  guard="$(tracker_local__open_guard)"
+  while [ "$tries" -gt 0 ]; do
+    state_guard_take "$guard" "ticket-open guard" "${FEATURE:-unknown}" && return 0
+    tries=$((tries - 1))
+    sleep 0.05
+  done
+  return 1
+}
+
+tracker_local__open_guard_release() {
+  state_guard_release "$(tracker_local__open_guard)"
+  return 0
+}
+
 tracker_local_open_ticket() {
-  local slug="$1" title="$2" dir nn id file body
+  tracker_local__open "$1" "$2" ''
+}
+
+# The same creation, refused if a ticket already carries this slug. Nothing on
+# stdout when one did, and that is a success: "already waiting for a human" is the
+# answer the caller asked for.
+#
+# It is an operation rather than a check its caller makes first, and that is the
+# whole of it. `capability_propose` read `tracker_ids`, found no proposal and
+# opened one — two proposals in flight both read nothing and both opened, which is
+# the race on the number entered by the other end. The only cure is for the
+# question and the write to fall on the same side of the guard. Exposing the guard
+# for a caller to take instead would not do it: `open_ticket` takes it too, so a
+# caller holding it would wait for itself.
+tracker_local_open_unique() {
+  tracker_local__open "$1" "$2" unique
+}
+
+# The body is read **before** a number is allocated, and the guard is held across
+# the allocation and the write that reserves it.
+#
+# That ordering is the width of the window rather than a matter of style. `nn` used
+# to be computed first and `body="$(cat)"` came after, so a number was chosen and
+# not yet written for as long as its caller took to produce the body — for a
+# re-slice, the time of a plan. Under a guard the same ordering would be worse
+# still: the whole number space would wait on somebody else's stdin.
+tracker_local__open() {
+  local slug="$1" title="$2" unique="${3:-}" dir body nn id file rc=0
   dir="$(tracker_local__issues_dir)"
   mkdir -p "$dir"
+  body="$(cat)"
+
+  tracker_local__open_guard_take || {
+    printf 'tracker: could not take the ticket-open guard — refusing to allocate a number nothing serialises\n' >&2
+    return 1
+  }
+
+  if [ -n "$unique" ] && tracker_local__slug_taken "$dir" "$slug"; then
+    tracker_local__open_guard_release
+    return 0
+  fi
+
   nn="$(tracker_local__next_nn)"
   id="$nn-$slug"
   file="$dir/$id.md"
-  body="$(cat)"
   {
     printf '# %s — %s\n\n' "$nn" "$title"
     if [ -n "$body" ]; then printf '%s\n' "$body"; fi
-  } | state_atomic_write "$file"
+  } | state_atomic_write "$file" || rc=1
+  tracker_local__open_guard_release
+  [ "$rc" = 0 ] || return 1
+
   tracker_local__has_field "$file" "Blocked by" ||
     tracker_local__set_fields "$id" "Blocked by" None
   tracker_local__has_field "$file" Status ||
     tracker_local__set_fields "$id" Status ready-for-agent
   printf '%s\n' "$id"
+}
+
+# Does any ticket already carry this slug — an id ending `-<slug>`, which is the
+# comparison `capability_propose` made against `tracker_ids` and has to stay the
+# same one, moved to the side of the guard where it settles something.
+tracker_local__slug_taken() {
+  local dir="$1" slug="$2" file base
+  for file in "$dir"/*.md; do
+    [ -e "$file" ] || continue
+    base="$(basename "$file" .md)"
+    case "$base" in
+      *"-$slug") return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # The next free number, and free is checked rather than assumed.
@@ -339,7 +452,23 @@ tracker_local__number_taken() {
 # name that resolves. The body is left exactly as the session wrote it, heading
 # included — the note the quarantine appends is where the old name is recorded,
 # because rewriting the content would be the very deletion this avoids.
+# Under the same guard as an opening, and for the same directory: this reads the
+# number space and writes into it, so a renumber and an opening racing each other
+# hand out the same number as surely as two openings do. The quarantine calls this
+# from an iteration while a sibling iteration may be opening a re-slice child.
 tracker_local_renumber() {
+  local out rc=0
+  tracker_local__open_guard_take || {
+    printf 'tracker: could not take the ticket-open guard — refusing to renumber against a directory nothing serialises\n' >&2
+    return 1
+  }
+  out="$(tracker_local__renumber_held "$1")" || rc=$?
+  tracker_local__open_guard_release
+  [ -z "$out" ] || printf '%s\n' "$out"
+  return "$rc"
+}
+
+tracker_local__renumber_held() {
   local id="$1" file dir base nn slug newnn newid carriers=0 hit
   file="$(tracker_local__path "$id")" || return 1
   dir="$(tracker_local__issues_dir)"

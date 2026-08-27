@@ -348,17 +348,17 @@ capability_bar() {
 # buries the first. Prints the id it opened, and nothing at all when it opened
 # nothing — the caller reads emptiness, never an exit code, because "already
 # waiting" is a success.
+#
+# The deduplication is `tracker_open_unique` and no longer a `tracker_ids` read
+# here, and that is [47] rather than tidying: reading the tracker and then opening
+# leaves the answer stale for exactly as long as it takes to write the ticket, so
+# two proposals in flight both found nothing and both opened — the same race as
+# the number allocation, entered by the other end. The adapter asks the question
+# on the side of its own guard, where it settles something.
 capability_propose() {
-  local slug="$1" title="$2" id body
+  local slug="$1" title="$2" body
   body="$(cat)"
-  while IFS= read -r id; do
-    case "$id" in
-      *"-$slug") return 0 ;;
-    esac
-  done <<IDS
-$(tracker_ids 2>/dev/null)
-IDS
-  tracker_open_ticket "$slug" "$title" <<BODY
+  tracker_open_unique "$slug" "$title" <<BODY
 **Status:** ready-for-human
 
 **Blocked by:** None

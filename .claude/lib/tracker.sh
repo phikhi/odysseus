@@ -21,6 +21,8 @@
 #   tracker_block_on ID DEPS          hold it until those tickets are resolved
 #   tracker_bump_failures ID          count one failure; new count on stdout
 #   tracker_open_ticket SLUG TITLE    create a ticket from stdin; id on stdout
+#   tracker_open_unique SLUG TITLE    the same, unless a ticket already carries
+#                                     this slug; then nothing at all on stdout
 #   tracker_renumber ID               give it an id no other ticket shares; the
 #                                     id it now carries on stdout
 #   tracker_append_note ID            append a comment from stdin
@@ -62,16 +64,21 @@ tracker__dispatch() {
     frontier | ids | read_ticket | field | emit_receipt)
       "$fn" "$@"
       ;;
-    open_ticket | renumber)
-      # The two operations whose *answer* is an id, and the register wants the id
-      # a guard will meet in `issues/` rather than the argument. `open_ticket`
-      # takes a slug, so noting the argument wrote a line naming no ticket at all
+    open_ticket | open_unique | renumber)
+      # The operations whose *answer* is an id, and the register wants the id a
+      # guard will meet in `issues/` rather than the argument. The two openings
+      # take a slug, so noting the argument wrote a line naming no ticket at all
       # — a nuisance while only the restore read the register ([13]), and wrong
       # the moment the quarantine reads it ([42]): the one thing it asks is
       # whether an id that appeared is the loop's own creation. `renumber` needs
       # both, because it moves a file: the number that stopped existing and the
-      # one that now does.
-      [ "$op" = open_ticket ] || tracker__note_write "${1:-}"
+      # one that now does. An `open_unique` that opened nothing answers nothing,
+      # and `tracker__note_write` writes no line for an empty id — which is right:
+      # a creation that did not happen is not a write to exempt.
+      case "$op" in
+        open_ticket | open_unique) ;;
+        *) tracker__note_write "${1:-}" ;;
+      esac
       out="$("$fn" "$@")" || rc=$?
       [ -z "$out" ] || printf '%s\n' "$out"
       tracker__note_write "$out"
@@ -183,6 +190,15 @@ tracker_mark_ready() { tracker__dispatch mark_ready "$@"; }
 tracker_block_on() { tracker__dispatch block_on "$@"; }
 tracker_bump_failures() { tracker__dispatch bump_failures "$@"; }
 tracker_open_ticket() { tracker__dispatch open_ticket "$@"; }
+# "Open this, unless one carrying the slug is already there." An operation and not
+# a caller reading `tracker_ids` first, because the read and the write have to be
+# on the same side of whatever serialises creation — a caller that looks and then
+# opens has the race of [47] by its other end, and two proposals in flight both
+# find nothing and both open. A backend whose creation is not serialised owes this
+# question its own answer rather than inheriting one: unimplemented is a loud
+# refusal here (`does not implement open_unique`), which is the outcome to prefer
+# over a duplicate nobody notices.
+tracker_open_unique() { tracker__dispatch open_unique "$@"; }
 # Only the quarantine calls this, and only on what a session added. A backend
 # whose ids cannot collide — one numbered server-side — returns the id unchanged
 # and is done; it still owes its own ticket an answer to the question underneath
