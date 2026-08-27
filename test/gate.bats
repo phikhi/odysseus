@@ -318,6 +318,29 @@ FAKE
   assert_ticket_status 02-beta ready-for-agent
 }
 
+@test "the ticket that owns an overflowed surface is found under a name with a space" {
+  # The same scenario as above, one character apart ([37]). `for id in
+  # $(tracker_ids)` made `02-beta bis` two ids that resolve to nothing, so
+  # `gate_write_surface` read an empty surface for both, nobody owned
+  # `src/beta.txt`, and an overflow into another ticket's declared surface came
+  # back classified as a stray write — **retryable**, when the whole job of this
+  # lookup is to say that it is not. An id is a file name somebody chose.
+  use_tickets 01-alpha 02-beta
+  mv "$(ticket_file 02-beta)" "$TRACKER_DIR/02-beta bis.md"
+  harness__commit "test: a ticket whose file name carries a space"
+  set_config STERILE_K 1
+  script_session_writing src/beta.txt
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "02-beta bis"
+  assert_output_contains "drift"
+  assert_output_contains "scope overflow on 01-alpha: contract"
+  refute_output_contains "outside the declared write-surface"
+  assert_ticket_status 01-alpha ready-for-human
+}
+
 @test "a ticket that declares no write-surface may not write at all" {
   use_tickets 08-no-write-surface
   set_config STERILE_K 1

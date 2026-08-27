@@ -45,3 +45,14 @@
 - **Ce que la sonde ne prouve pas, et qu'il ne faut pas prétendre.** Elle met les deux ouvertures en vol à la main, avec un fifo. Elle ne mesure pas la probabilité de la course en exploitation, et un test qui la mesurerait mesurerait la machine — le harnais a déjà payé cette leçon deux fois. Le test qui tient la garantie doit être au niveau du module, comme celui de la clé du brief de [14] : deux appels sérialisés par le garde, pas deux processus lancés en espérant.
 
 - **Ordre.** Avant [16] et [18] : [16] vide le puits où les doublons de proposition atterrissent, et [18] doit implémenter `open_ticket` sur un backend distant — `tracker.sh` lui dit déjà qu'il doit répondre à « que fait `tracker_ids` quand deux tickets réclament un identifiant », et il vaut mieux qu'il hérite de la réponse que de la redécouvrir.
+
+- **Ce que [37] laisse ici, livré le 27/08/2026.** La liste sur laquelle ce ticket
+  va travailler est maintenant sûre à lire : `tracker_ids` voyage à raison d'un id
+  par ligne et se compare ligne entière, donc un ticket nommé `99-my ticket.md` n'est
+  plus deux ids fantômes au milieu d'une allocation de numéro. Concrètement,
+  `tracker__carriers`, `tracker__is_ambiguous`, `tracker__count` et
+  `tracker__ambiguous_numbers` ont changé de forme (heredoc + `while IFS= read -r`
+  au lieu de `for id in $ids`, comptage de lignes au lieu de `wc -w`) : une
+  réparation qui touche `tracker_local__next_nn` ou le préflight doit repartir du
+  code tel qu'il est, pas de ce que cette page décrivait avant. La renumérotation et
+  `tracker_local__path` n'ont **pas** bougé — tout y était déjà cité, glob compris.

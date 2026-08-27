@@ -55,3 +55,17 @@
   la moitié « id », **pas** de la moitié « dédup » : `capability_propose` déduplique en
   lisant `tracker_ids` avant d'écrire, ce qui est une course quel que soit le backend. Livrer
   après [47] et hériter de ce qu'il aura décidé, plutôt que le redécouvrir sur une API.
+
+- **Contrainte posée par [37], livré le 27/08/2026 — une clause d'interface, pas un
+  détail du backend local.** `tracker_ids` et `tracker_frontier` doivent rendre **un
+  id par ligne** ; c'est écrit dans l'en-tête de `lib/tracker.sh` et tous les
+  consommateurs du pack lisent ligne par ligne et comparent des **lignes entières**
+  (`failures__in_list`, `claim__among`, `tracker__holds_exactly`). Un adaptateur qui
+  rendrait une ligne de mots rouvre quatre pannes d'un coup, et aucune n'est
+  cosmétique : une quarantaine qui annonce avoir escaladé un ticket resté sur la
+  frontière, un registre ([13]/[42]) qui exempte chaque *mot* d'un id, un
+  débordement de surface classé retryable au lieu de `contract`, et un claim de run
+  mort jamais balayé. Les sondes sont dans `.scratch/ralph-pack/sondes/37/`. La
+  limite de cette convention est nommée et ouverte comme [48] : un nom de fichier
+  peut contenir un saut de ligne, qu'un heredoc ne peut pas porter — si [48] change
+  le transport, c'est cette clause-là qu'il faut relire ici.

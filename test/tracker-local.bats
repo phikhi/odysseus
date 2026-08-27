@@ -563,3 +563,40 @@ TICKET
   assert_success
   assert_equal "$output" ""
 }
+
+# ── an id is the name of a file somebody chose ───────────────────────────────
+
+@test "the preflight names a carrier by the name its file really has" {
+  # [37]. `for id in $ids` cut `01-alpha bis` into two ids the directory does not
+  # hold, so the scan named `01-alpha` twice at a human and never mentioned the
+  # file they would have to go and rename. This finding is read at 3am by somebody
+  # who has to find a ticket; naming one that does not exist is the whole cost.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/01-alpha bis.md"
+
+  pack_run 'tracker_preflight'
+  assert_failure
+  assert_output_contains "two or more tickets carry the number 01"
+  assert_output_contains "01-alpha bis, 01-alpha"
+  assert_output_contains "03-blocked is blocked on 01, which 2 tickets carry"
+}
+
+@test "a ticket whose name carries a space still answers to its own id" {
+  # The other end of the same namespace, and the witness for the renumber the
+  # quarantine performs: every write operation takes the id as an argument and has
+  # to keep resolving to the file. [37] expected this to be the trap and it was
+  # not — everything under `tracker_local__path` was already quoted, its glob
+  # included (`"$dir/$id"-*.md`, where a metacharacter inside `$id` is literal).
+  mv "$(ticket_file 02-beta)" "$TRACKER_DIR/02-beta bis.md"
+
+  pack_run 'tracker_field "02-beta bis" Status'
+  assert_success
+  assert_equal "$output" "ready-for-agent"
+
+  pack_run 'tracker_frontier | tr "\n" "|"'
+  assert_success
+  assert_output_contains "02-beta bis|"
+
+  pack_run 'tracker_mark_resolved "02-beta bis"'
+  assert_success
+  assert_ticket_status "02-beta bis" resolved
+}

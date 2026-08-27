@@ -614,8 +614,10 @@ FAKE
   "
   assert_success
   # The note is there and the receipt is not: this is an equality, not a subset,
-  # so an implementation that noted neither would be red here too.
-  assert_output_contains "register=[ 01-alpha ]"
+  # so an implementation that noted neither would be red here too. One id per line
+  # since [37] — an id is a file name somebody chose, and a fence of words answered
+  # for each of its words.
+  assert_output_contains "register=[01-alpha]"
   run bash -c "grep -c . '$RALPH_TEST_DIR/register'"
   assert_equal "$output" "1"
 }

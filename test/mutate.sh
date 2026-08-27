@@ -2160,8 +2160,14 @@ mutation "13 a fold that could not reach the branch does not stop the run" "$LOO
   's/  if \[ "\$outcome" = not-integrated \]; then\n    loop_log "\$ticket: the gate was green and the work did not reach the branch — stopping"\n    stop_code=4\n  fi\n//' \
   test/failures.bats "stops the run rather than resolving nothing"
 
+# DRIFTED when [37] made this list travel one id per line: the exemption used to be
+# an inline `case "$held" in *" $id "*`, and it is now one call to `claim__among`,
+# which compares whole lines. The guarantee is the same one and it is still carried
+# — checked before this anchor was moved, not after — so what changed here is the
+# line that carries it and nothing else. The entry two below still removes the
+# *comparison*; this one still removes the exemption.
 mutation "13 the sweep reclaims the claims this run is holding" "$CLAIM" \
-  's/    case "\$held" in\n      \*" \$id "\*\) continue ;;\n    esac\n//' \
+  's/    claim__among "\$id" "\$held" && continue\n//' \
   test/concurrency.bats "does not reclaim a claim this run is holding"
 
 mutation "13 the sweep is not told what is in flight" "$LOOP" \
@@ -2976,6 +2982,50 @@ mutation "15 a bar of zero is accepted" "$CAPABILITY" \
 mutation "15 the preflight never asks about this tier" "$LOOP" \
   's/^  capability_preflight \|\| rc=1$/  :/m' \
   test/capability.bats "neither on nor off"
+
+# ── [37] the ids of the tracker are a line of words ──────────────────────────
+#
+# The id namespace is file names a session — or a human — chooses, so each edit
+# below is the code exactly as it stood before [37]: a list of ids handed over as
+# words, or a membership test asking about words. They are separate entries and
+# not one, because the two halves of the same expansion are not the same failure:
+# a space cuts an id into ids nothing carries, a `[` replaces it by whatever the
+# current directory holds, and a test covering one says nothing about the other.
+
+mutation "37 the strays are recut into words" "$FAILURES" \
+  's/  while IFS= read -r id; do\n    \[ -n "\$id" \] \|\| continue\n    ! failures__in_list/  for id in \$(tracker_ids); do\n    ! failures__in_list/; s/  done <<IDS\n\$\(tracker_ids\)\nIDS/  done/' \
+  test/failures.bats "one stray, not two ghosts"
+
+mutation "37 the register exempts every word of an id" "$FAILURES" \
+  's/    if \[ "\$line" = "\$needle" \]; then return 0; fi/    case " \$line " in *" \$needle "*) return 0 ;; esac/' \
+  test/failures.bats "shares a word with it"
+
+mutation "37 the quarantine note runs two ids together" "$FAILURES" \
+  's!^failures__join\(\) \{!failures__join() { printf "%s" "\$1" | tr -s " " "\\n" | sed "/^\$/d" | tr "\\n" " " | sed "s/ *\$//; s/ /, /g"; return 0;!m' \
+  test/failures.bats "one stray, not two ghosts"
+
+mutation "37 the claim sweep walks words" "$CLAIM" \
+  's/  while IFS= read -r id; do\n    \[ -n "\$id" \] \|\| continue\n    status=/  for id in \$(tracker_ids); do\n    status=/; s/  done <<IDS\n\$\(tracker_ids\)\nIDS/  done/' \
+  test/claim.bats "carries a space is still swept"
+
+mutation "37 a sibling in flight exempts every word of its id" "$CLAIM" \
+  's/    if \[ "\$line" = "\$needle" \]; then return 0; fi/    case " \$line " in *" \$needle "*) return 0 ;; esac/' \
+  test/claim.bats "shares a word with it"
+
+# The producer of that same list, one layer up, and it fails differently from the
+# entry above: there the fence answers for a word, here the whole list arrives as
+# one line and exempts nobody at all.
+mutation "37 the ids in flight are handed over as a line of words" "$LOOP" \
+  's/awk -F.\\t. .NF > 1 \{ print \$2 \}./awk -F\x27\\t\x27 \x27NF > 1 { printf "%s ", \$2 }\x27/' \
+  test/concurrency.bats "does not reclaim a claim this run is holding"
+
+mutation "37 the surface owner is looked up by words" "$GATE" \
+  's/  while IFS= read -r id; do\n    \[ -n "\$id" \] \|\| continue\n    \[ "\$id" != "\$self" \]/  for id in \$(tracker_ids); do\n    [ "\$id" != "\$self" ]/; s/  done <<IDS\n\$\(tracker_ids\)\nIDS/  done/' \
+  test/gate.bats "under a name with a space"
+
+mutation "37 a carrier is named by its first word" "$TRACKER_IFACE" \
+  's/      "\$nn"-\*\) printf \x27%s\\n\x27 "\$id" ;;/      "\$nn"-*) printf \x27%s\\n\x27 \$id ;;/' \
+  test/tracker-local.bats "the name its file really has"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

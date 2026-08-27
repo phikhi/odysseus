@@ -470,10 +470,14 @@ failures_after_dead_owner() {
 # `issues/`: the liveness sweep and the claim came before, and the marking, the
 # retry counter and the journal all come after.
 
-# The ids the tracker holds right now, space-delimited and space-fenced so that a
-# `case` can ask whether one is in it.
+# The ids the tracker holds right now, one per line — the convention every list
+# the pack hands itself has followed since [33], and the reason it has to reach the
+# ids too is [37]: an id is the name of a file **the session chooses**, so a format
+# that joins them with spaces asks the reader to guess where one ends. This used to
+# render ` a b ` and the reader asked `case "$seen" in *" $id "*`, which is a
+# comparison against words and not against ids.
 failures_tracker_snapshot() {
-  printf ' %s' "$(tracker_ids | tr '\n' ' ')"
+  tracker_ids
 }
 
 # ── what the loop itself wrote, for every guard here ─────────────────────────
@@ -486,36 +490,43 @@ failures_tracker_snapshot() {
 #
 # An empty mark means "no register was taken", which is a caller driving one
 # iteration at a time: the shape these guards had before there was ever a sibling,
-# and the answer is the empty fence rather than a refusal.
+# and the answer is the empty list rather than a refusal.
 failures__register_since() {
   local mark="${1:-}"
-  [ -n "$mark" ] || {
-    printf ' \n'
-    return 0
-  }
+  [ -n "$mark" ] || return 0
   tracker_writes_since "$mark"
 }
 
-# Whether this id is in that fence. A function and not an inline `case` in each
-# guard: the fence's shape — leading and trailing space — is the register's
-# business, and a second copy of the pattern is a second place to get it wrong.
-failures__in_register() {
-  case "$2" in
-    *" $1 "*) return 0 ;;
-  esac
+# Whether this id is one of the entries in a one-per-line list of ids. One
+# function for the register and for the pre-session snapshot, because since [37]
+# the two travel in the same shape and the question they ask is the same one —
+# a second copy of the comparison is a second place to get it wrong.
+#
+# Whole lines, never `case "$list" in *" $id "*`: that pattern answered yes for
+# every *word* of an id, so a register naming `99-my ticket` exempted a stray
+# called `99-my`, and a snapshot holding `99-my ticket` hid a stray called
+# `ticket`. An id is a file name a session chooses ([37]).
+failures__in_list() {
+  local needle="$1" line
+  while IFS= read -r line; do
+    if [ "$line" = "$needle" ]; then return 0; fi
+  done <<LIST
+$2
+LIST
   return 1
 }
 
 # Ids that were not there before. Not "tickets the loop created": the loop's own
 # creations happen after this check, on purpose.
 failures__strays() {
-  local seen="$1 " id
-  for id in $(tracker_ids); do
-    case "$seen" in
-      *" $id "*) continue ;;
-    esac
+  local seen="$1" id
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    ! failures__in_list "$id" "$seen" || continue
     printf '%s\n' "$id"
-  done
+  done <<IDS
+$(tracker_ids)
+IDS
   return 0
 }
 
@@ -561,7 +572,7 @@ failures_quarantine_strays() {
   # the one other tickets point at.
   while IFS= read -r stray; do
     [ -n "$stray" ] || continue
-    ! failures__in_register "$stray" "$ours" || continue
+    ! failures__in_list "$stray" "$ours" || continue
     final="$stray"
     # A refusal is said, never swallowed. Rendering the unchanged id when the
     # renumber could not run would hand back exactly the state being repaired,
@@ -572,12 +583,12 @@ failures_quarantine_strays() {
       final="$renamed_to"
     fi
     if [ "$final" != "$stray" ]; then
-      renamed="$renamed $stray -> $final"
+      renamed="$(failures__append_line "$stray -> $final" "$renamed")"
       printf 'This ticket reached the tracker as `%s`, written by the %s session, and carried a number another ticket already had. It was renumbered to `%s` rather than deleted or left in place: nothing a session wrote is destroyed, and a duplicate number takes every ticket that points at it out of the frontier for good. The body below is exactly as the session wrote it, heading included.\n' \
         "$stray" "$ticket" "$final" | tracker_append_note "$final" || true
     fi
     tracker_mark_escalated "$final" decision || true
-    kept="$kept $final"
+    kept="$(failures__append_line "$final" "$kept")"
   done <<STRAYS
 $strays
 STRAYS
@@ -590,17 +601,33 @@ STRAYS
   printf 'The %s session wrote these tickets into the tracker itself: %s. Nothing validated their write-surface or their acceptance criteria, so they are waiting for a human instead of sitting on the frontier.%s\n' \
     "$ticket" "$(failures__join "$kept")" \
     "$(if [ -n "$renamed" ]; then
-      printf ' Renumbered on the way in, to keep a bare number resolvable:%s.' "$renamed"
+      printf ' Renumbered on the way in, to keep a bare number resolvable: %s.' "$(failures__join "$renamed")"
     fi)" |
     tracker_append_note "$ticket" || true
-  failures__log "$ticket: the session wrote the tracker itself — quarantined${kept}"
+  failures__log "$ticket: the session wrote the tracker itself — quarantined $(failures__join "$kept")"
   [ -z "$renamed" ] ||
-    failures__log "$ticket: a ticket the session added took a number another ticket already had — renumbered${renamed}"
+    failures__log "$ticket: a ticket the session added took a number another ticket already had — renumbered $(failures__join "$renamed")"
   return 1
 }
 
+# Add one entry to a one-per-line list held in a variable. The accumulators above
+# used to be `x="$x $entry"`, which is the [37] defect wearing the other hat: the
+# separator was a space and the entries are ids a session names, so the note that
+# tells a human *which* tickets were quarantined ran two of them together the
+# moment one carried a space.
+failures__append_line() {
+  if [ -n "$2" ]; then
+    printf '%s\n%s' "$2" "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# A one-per-line list rendered for a human, joined whole line by whole line.
 failures__join() {
-  printf '%s' "$1" | tr -s ' ' '\n' | sed '/^$/d' | tr '\n' ' ' | sed 's/ *$//; s/ /, /g'
+  awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }' <<LIST
+$1
+LIST
 }
 
 # Where the tickets live, relative to the repository root. Same assumption
@@ -681,7 +708,7 @@ failures_protect_tracker() {
     # retry counter, its marking. Skipped before the status is even looked at,
     # because restoring it is how two iterations in flight destroy each other.
     id="$(basename "$path" .md)"
-    ! failures__in_register "$id" "$ours" || continue
+    ! failures__in_list "$id" "$ours" || continue
     case "$status" in
       A)
         # Left where it is: a created ticket belongs to the quarantine, which
