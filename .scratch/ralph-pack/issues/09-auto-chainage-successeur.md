@@ -41,3 +41,32 @@
   run neuf et la limite est assumée telle qu'écrite, soit l'auto-chaînage transmet une ligne
   de base — et alors elle devient un canal à sceller comme les autres. Sondes :
   `.scratch/ralph-pack/sondes/passe-26-08/p2.bats` P2c et `p3.bats` P3b.
+
+- **[46], livré le 29/08/2026 : la moitié « l'événement est perdu » est refermée, la
+  question qui appartient à ce ticket ne l'est pas.** Le paragraphe ci-dessus disait
+  que sur un `exit 6` — un mur budget, donc exactement le cas que ce ticket enchaîne
+  — la dérive de capacités détectée n'atteignait ni le reçu ni `run.log`, et que le
+  successeur la reprenait comme ligne de base : l'événement était perdu, pas différé.
+  Le canal est réparé : `capability_drift` rend ses lignes, l'itération les passe au
+  pilote par son slot, et `loop__finish` écrit une ligne `run.log` par surface avec
+  **la surface en sujet**. Un humain qui lit le journal du run mort le matin voit
+  donc ce qui a bougé.
+
+  Ce qui reste à trancher **ici** est inchangé et c'est la même question que pour
+  [14] : le témoin est toujours **par run**, donc le successeur reprend l'état
+  courant comme sa propre ligne de base et ne redira rien de ce que le run précédent
+  a vu. Soit le successeur est un run neuf et la limite est assumée telle qu'écrite
+  dans `docs/frontiere-de-confiance.md`, soit l'auto-chaînage transmet une ligne de
+  base — et alors elle devient un canal à sceller comme les autres, dans un fichier
+  qu'aucune session ne peut écrire ni nommer ([40] : ce n'est pas « hors de l'arbre »
+  qui protège un secret, c'est « qui en connaît le nom »).
+
+- **[46] ajoute une contrainte au successeur lui-même.** Un run neuf reprend la
+  configuration git courante comme frontière épinglée (`gate_frontier_common`), donc
+  une clé que la session d'un run précédent a laissée dans `<arbre>/.git/config` ou
+  dans `~/.gitconfig` et que ce run-là n'a pas pu remettre devient la **ligne de
+  base** du successeur, en silence. C'est le même résidu que [30] laisse pour un run
+  tué, et il est écrit au tableau ; ce qui est neuf est qu'un successeur *programmé*
+  le franchit à coup sûr, là où un run relancé à la main est relancé par un humain
+  qui a lu le reçu. À décider ici, avec le reste : ce que le successeur relit et ce
+  qu'il hérite.
