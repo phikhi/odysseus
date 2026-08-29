@@ -162,3 +162,20 @@
   le test qu'il faut réécrire.
 
 - **Ce que la passe transversale du 27/08/2026 a trouvé sur ce ticket, et ce qu'elle a disculpé.** Deux corrections à sa ligne du tableau, portées par [49]. (1) « Le garde vit dans le répertoire de la feature et pas dans `issues/` » est le bon diagnostic, appliqué à un seul garde : celui du **claim** est toujours dans `issues/`, et l'argument « sa fenêtre est de l'ordre de la milliseconde et il tombe avant le spawn » ne vaut que pour le claim de l'itération elle-même — une sœur claime où elle tombe, et le transitoire ressuscité sort son ticket de la frontière pour le reste du run (`q5`). (2) « une session peut le supprimer, et ce que ça lui rachèterait n'est qu'une collision » ne nomme qu'une direction : une session peut aussi le **poser**, depuis une itération verte, et ça éteint les trois producteurs de tickets **plus** `tracker_renumber` — donc la réparation de [27] — pour la nuit et pour les runs suivants (`q2`). Disculpés, à ne pas resonder : `state_guard_release` avec deux sœurs en vol (la sœur refusée ne relâche rien, `q4` Q4c) ; la double reprise d'un garde périmé (barrière d'attente active, `both=0` sur 300 tours — la course est stagée, pas gagnée) ; l'invisibilité du garde aux gates, qui est structurelle (les branches jugent le worktree, `ralph_feature_dir` résout dans l'arbre principal) et le met au même rang que `.run.lock` ; et le refus bout en bout du re-slice, qui marche et se dit sur le reçu (`q3`). Mesures au passage : la borne annoncée à 6 s vaut **8 s**, et `tracker_renumber` la paie par intrus.
+
+- **Complété par [49], livré le 29/08/2026, sur quatre points de ce ticket.**
+  (a) Le tableau de confiance ne chiffrait que la **suppression** du garde ; la
+  **pose** vaut l'espace des numéros entier — les trois producteurs et
+  `tracker_renumber` — pour la nuit et les runs suivants, et c'est écrit là
+  maintenant. (b) La cause d'un refus d'allocation atteint le **reçu**
+  (`tracker_local__open_refused`, pid détenteur et depuis quand) au lieu de deux
+  `printf … >&2` ; les trois producteurs disaient déjà qu'aucun ticket n'avait été
+  ouvert, aucun ne pouvait dire pourquoi. (c) Un `.open.guard` laissé par un run tué
+  est compté au démarrage du run suivant (`gate_leftovers`, sur la liveness du
+  propriétaire) — il traversait un run vert entier en silence, ce garde n'étant
+  relâché par aucun trap là où le verrou de run l'est par le sien. (d) L'argument
+  écrit ici pour laisser le garde du claim dans `issues/` — « sa fenêtre est de
+  l'ordre de la milliseconde et il tombe avant le spawn » — est faux pour une
+  **sœur**, et la conclusion tient pour une autre raison : la correction est du côté
+  du garde qui compare les arbres. La borne d'attente annoncée à six secondes en vaut
+  huit, mesurées.

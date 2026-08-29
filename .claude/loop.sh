@@ -949,6 +949,30 @@ loop__inflight_count() {
   printf '%s' "${LOOP_SLOTS:-}" | awk -F'\t' 'NF > 1 { n++ } END { print n + 0 }'
 }
 
+# A ticket that was on the frontier a moment ago and could not be claimed, said in
+# the file a human opens in the morning and not only on a console ([49]).
+#
+# What it says is what it observed, and the two cases have nothing in common. The
+# status having moved is the ordinary one: a sibling took the ticket between the
+# frontier scan and here, and there is an owner to name. The status *not* having
+# moved means the tracker's own exclusion refused the read-modify-write — nobody
+# holds the ticket, and the single sentence this used to print ("someone else has
+# it") named a holder that does not exist. That was also everything a run said
+# about it: `run.log` had no line at all for a ticket no iteration could take, so a
+# run that ended sterile against one left a journal in which it never appears, and
+# a console nobody reads at eight in the morning ([45]).
+loop__claim_refused() {
+  local ticket="$1" status owner
+  status="$(tracker_field "$ticket" Status 2>/dev/null)" || status=''
+  owner="$(tracker_field "$ticket" Claimed 2>/dev/null)" || owner=''
+  if [ -n "$status" ] && [ "$status" != ready-for-agent ]; then
+    loop_log "could not claim $ticket — it is $status now${owner:+ ($owner)}"
+  else
+    loop_log "could not claim $ticket — its status is still ${status:-unreadable} and the tracker refused the write: nobody is named as holding it"
+  fi
+  loop_journal_append "$ticket" claim-refused 0 0 0
+}
+
 # Claim a ticket, give it a tree of its own, and fork the iteration into it.
 #
 # The refusal comes back in `LOOP_START_REFUSED` and never as a return status, and
@@ -962,7 +986,7 @@ loop__start() {
   LOOP_START_REFUSED=0
 
   if ! tracker_claim "$ticket" "pid:$$"; then
-    loop_log "could not claim $ticket — someone else has it"
+    loop__claim_refused "$ticket"
     rm -rf "$pin"
     sterile=$((sterile + 1))
     return 0
@@ -1171,7 +1195,12 @@ loop_main() {
   # ([24]): a human reading the log in the morning sees it instead of having to
   # remember it exists. Nothing here removes anything — see gate_leftovers.
   local leftovers
-  if leftovers="$(gate_leftovers)"; then loop_log "$leftovers"; fi
+  while IFS= read -r leftovers; do
+    [ -n "$leftovers" ] || continue
+    loop_log "$leftovers"
+  done <<LEFTOVERS
+$(gate_leftovers || true)
+LEFTOVERS
   # And what they left *inside* it: a worktree a killed run never removed stays
   # registered in the common git directory, where every later `git worktree` call
   # carries it. Counted and not pruned, for the reason above — this pack locks a

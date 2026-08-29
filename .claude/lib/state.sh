@@ -82,9 +82,22 @@ state_guard_take() {
   # deciding "the owner is dead" while another run finishes its takeover will
   # displace a guard that is now live, rename or not, because neither step checks
   # that the guard is still the one it inspected. The filesystem has no
-  # compare-and-swap to express that in bash. What covers it is downstream — the
-  # run and tree locks are re-checked for ownership on every iteration
-  # (`*_is_ours`), and a claim is a test-and-set on the ticket's own status.
+  # compare-and-swap to express that in bash. Two of the three callers are covered
+  # downstream — the run and tree locks are re-checked for ownership on every
+  # iteration (`*_is_ours`), and a claim is a test-and-set on the ticket's own
+  # status, so a stolen guard costs a re-read and not a wrong answer.
+  #
+  # The third has nothing downstream and it was added after this paragraph was
+  # written ([47] via [49]): the ticket-open guard is the whole of the mutual
+  # exclusion for allocating an `NN`, and what a collision there costs is
+  # permanent — a bare number stops resolving, every ticket carrying `Blocked by:
+  # NN` leaves the frontier for good, and neither of [27]'s two repairs can reach
+  # a duplicate the *loop* wrote. Nothing re-reads that allocation afterwards,
+  # because there is nothing to re-read it against. Measured rather than assumed
+  # before this was written down: two subshells of one pilot brought into
+  # `state_guard_take` together on a stale guard never both took it (300 rounds,
+  # zero double takes, zero colliding numbers) — the race is staged and not won,
+  # which is a reason to leave it alone and not a reason to call it covered.
   moved="$guard.stale.$$"
   if mv "$guard" "$moved" 2>/dev/null; then
     rm -rf "$moved"

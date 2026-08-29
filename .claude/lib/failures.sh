@@ -637,6 +637,46 @@ failures__issues_path() {
   printf '.scratch/%s/issues\n' "${FEATURE:?ralph: FEATURE is not set}"
 }
 
+# Whether a path that moved inside the tracker directory is a **ticket file**,
+# which is the only thing the guard below restores.
+#
+# The definition is the tracker's own scan — `"$dir"/*.md`, that directory and no
+# deeper — and writing it down is [49]. `issues/` holds more than tickets, and the
+# rest of it is the *pack's own*: the guard directory a claim takes beside the
+# ticket it is about to stamp (`<id>.md.guard/pid`), the temp file every atomic
+# write leaves next to its target (`<id>.md.tmp.XXXXXX`), the working copy
+# `set_fields` publishes from (`<id>.md.work.XXXXXX`, plus its own `.p`). Each of
+# them exists for a few milliseconds inside a window this guard is 35 ms wide, so
+# a sibling that writes the tracker while this session is judged leaves one in the
+# *before* snapshot and not in the *after* one — a `D` this guard used to hand to
+# `checkout-index`, putting a lock back and calling a session that wrote nothing
+# an editor of the tracker.
+#
+# The register of [13]/[42] cannot help and it must not be asked to: it is indexed
+# by **id**, and none of those names is one — `basename .../02-beta.md.guard/pid
+# .md` is `pid`, `basename 02-beta.md.work.IDdYXp .md` is the whole name.
+#
+# Filtering here rather than moving the transients out of `issues/` is the
+# decision, and it is not free: what a session drops in there under a name that is
+# not `<id>.md` is now restored by nothing, and it was never quarantined either
+# (`tracker_ids` globs `*.md`). That zone is named out loud on every window it
+# moves in, below, rather than left to a document. The other exit — publishing
+# every transient somewhere else — was refused because it is not available to the
+# one that matters: `state_atomic_write` has to write beside its target for the
+# rename to be atomic, and its targets are not all in `issues/`.
+failures__is_ticket_path() {
+  local path="$1" dir="$2" rest
+  case "$path" in
+    "$dir"/*.md) ;;
+    *) return 1 ;;
+  esac
+  rest="${path#"$dir"/}"
+  case "$rest" in
+    */*) return 1 ;;
+  esac
+  return 0
+}
+
 # The tickets as a git tree object. Taken twice, around the spawn: two identical
 # hashes is the whole of the normal case, and it costs one plumbing call.
 #
@@ -665,6 +705,14 @@ failures_tracker_tree() {
 # costs the attempt, because a session left free to try again would be starting
 # from a contract it partly authored. A guard that cannot see does not pass.
 #
+# **Ticket files, and nothing else** ([49]). What moved under a name that is not
+# `<id>.md` is left where it is and named out loud: `issues/` is also where this
+# pack puts its own short-lived objects, and a `D` for one of those is a sibling's
+# lock, not an edit — restoring it accused a session that had written nothing,
+# refused a green to an innocent iteration and, when the `D` was a claim's guard,
+# put the lock back stamped with the pilot's own live pid, which nothing releases
+# and which takes that ticket out of the frontier for the rest of the run.
+#
 # Every git call here names the project root, for the reason failures_tracker_tree
 # does: the caller's working directory is a throwaway worktree since [13], and the
 # tracker lives in the tree the run was started in. A `checkout-index` run from the
@@ -673,6 +721,7 @@ failures_tracker_tree() {
 failures_protect_tracker() {
   local ticket="$1" before="$2" mark="${3:-}"
   local dir after idx status path restored=0 root ours id
+  local others='' others_n=0 unvouched=''
 
   if [ -z "$before" ]; then
     failures__gap "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
@@ -704,6 +753,23 @@ failures_protect_tracker() {
   # away from restoring something outside the tracker.
   while IFS="$(printf '\t')" read -r status path; do
     [ -n "$path" ] || continue
+    # A name git prints quoted whatever `core.quotePath` says — a tab, a newline,
+    # a quote — is a name nothing here can hand to `checkout-index` ([39]). Named
+    # and counted as a hole rather than restored, and it keeps the iteration from
+    # being green: a guard that cannot see does not pass.
+    if gate_unaddressable "$path"; then
+      failures__gap "$ticket: $path moved in the tracker under a name this guard cannot address — nothing was put back for it"
+      unvouched=1
+      continue
+    fi
+    # Not everything under `issues/` is a ticket, and this guard restores tickets.
+    # The pack's own transients live there too, and a sibling's lock put back by a
+    # `checkout-index` is a ticket no iteration of this run can claim again.
+    if ! failures__is_ticket_path "$path" "$dir"; then
+      others="$(failures__append_line "$path" "$others")"
+      others_n=$((others_n + 1))
+      continue
+    fi
     # A ticket this run wrote itself inside the window: a sibling's claim, its
     # retry counter, its marking. Skipped before the status is even looked at,
     # because restoring it is how two iterations in flight destroy each other.
@@ -731,13 +797,26 @@ TRACKER
   # moves; a human who had staged a tracker edit before the run loses that much.
   git -C "$root" reset -q -- "$dir" 2>/dev/null || true
 
-  # Additions only: that is the quarantine's business and not a failure of its own.
-  [ "$restored" -gt 0 ] || return 0
+  # What restoring tickets and only tickets leaves behind, said on the window it
+  # is paid in rather than once in a document ([24]'s rule for a zone nobody
+  # guards). Most of what lands here is this pack's own churn — a sibling
+  # mid-claim, an atomic write in flight — so the sentence says that rather than
+  # reading as an accusation, which is the whole point of the filter.
+  [ "$others_n" = 0 ] ||
+    failures__say "$ticket: $others_n path(s) under the tracker directory that are not ticket files moved in this window and were left exactly as they are ($(failures__join "$others")): the pack writes its own transients beside the tickets — a claim's guard, an atomic write's temp file — and anything else dropped in there is put back by nothing here and quarantined by nothing either, both looking only at a name shaped <id>.md"
 
-  printf 'The %s session edited the tracker itself (%s ticket file(s)). The edits were restored from the snapshot taken when the session started, and the iteration was not allowed to be green: the write-surface a session grants itself is exactly what the scope-guard would otherwise read back from it.\n' \
-    "$ticket" "$restored" | tracker_append_note "$ticket" || true
-  failures__log "$ticket: the session edited the tracker — restored $restored ticket file(s), the iteration cannot be green"
-  return 1
+  [ -z "$unvouched" ] ||
+    failures__log "$ticket: a path in the tracker moved under a name this guard cannot address — nothing here can vouch for the tracker, so the iteration cannot be green"
+
+  # Additions only: that is the quarantine's business and not a failure of its own.
+  if [ "$restored" -gt 0 ]; then
+    printf 'The %s session edited the tracker itself (%s ticket file(s)). The edits were restored from the snapshot taken when the session started, and the iteration was not allowed to be green: the write-surface a session grants itself is exactly what the scope-guard would otherwise read back from it.\n' \
+      "$ticket" "$restored" | tracker_append_note "$ticket" || true
+    failures__log "$ticket: the session edited the tracker — restored $restored ticket file(s), the iteration cannot be green"
+    return 1
+  fi
+  [ -z "$unvouched" ] || return 1
+  return 0
 }
 
 # ── rollback ─────────────────────────────────────────────────────────────────
@@ -1240,6 +1319,13 @@ failures_reslice() {
 
   children="${children# }"
   if [ -z "$children" ]; then
+    # Said on the ticket and not only on the receipt ([49]): the split below writes
+    # a note when it is *incomplete*, and a human sorting the sink in the morning
+    # could not tell a plan nothing could be made of from a plan that was never
+    # written without opening the receipt. Same shape as its neighbour, so the two
+    # read as the two halves of one answer.
+    printf 'Re-slice refused: the plan was sound and not one of its tickets could be created — every write the tracker was asked for was refused. This ticket keeps its acceptance criteria, and nothing was split off it.\n' |
+      tracker_append_note "$ticket" || true
     failures__gap "$ticket: the re-slice created nothing"
     return 1
   fi

@@ -1819,6 +1819,60 @@ FAKE
   assert_equal "$output" "1"
 }
 
+@test "a re-slice that could create nothing says so on the ticket, and says why" {
+  use_tickets 07-overlaps-alpha
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 1
+
+  # The guard [47] put on the number space, held by somebody alive for the whole
+  # of the run: every creation the plan asks for is refused, so a sound plan
+  # produces no children at all.
+  sleep 60 &
+  holder=$!
+  mkdir -p "$FEATURE_DIR/.open.guard"
+  printf '%s\n' "$holder" >"$FEATURE_DIR/.open.guard/pid"
+  printf '2026-08-28T00:00:00Z\n' >"$FEATURE_DIR/.open.guard/since"
+
+  script_too_big_then <<'FAKE'
+plan="$(printf '%s' "$prompt" | sed -n 's/^Write the plan to \([^,]*\),.*/\1/p' | head -1)"
+cat >"$plan" <<'PLAN'
+--- ticket: alpha-half | The alpha half ---
+**Write-surface:** `src/alpha.txt`
+
+- [ ] the alpha half exists
+--- ticket: eta-half | The eta half ---
+**Write-surface:** `src/eta.txt`
+
+- [ ] the eta half exists
+PLAN
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.01}'
+FAKE
+
+  run_loop
+  kill "$holder" 2>/dev/null || true
+  rm -rf "$FEATURE_DIR/.open.guard"
+  assert_failure 4
+
+  assert_ticket_status 07-overlaps-alpha ready-for-human
+  assert_equal "$(ticket_field 07-overlaps-alpha Escalation)" "too-big"
+
+  # The neighbouring path — a split that got *some* of its children — writes a note
+  # on the ticket, and this one wrote nothing anywhere a human sorting the sink in
+  # the morning would look: the difference between a plan nothing could be made of
+  # and a plan that was never written is not visible from the ticket ([49]).
+  assert_file_contains "$(ticket_file 07-overlaps-alpha)" "Re-slice refused"
+
+  # And the cause reaches a durable document. `run.log` records the ticket's own
+  # escalation, `too-big`, which is the wrong cause; the two lines that name the
+  # guard are `printf … >&2`, on a console nobody reads at eight in the morning.
+  assert_file_contains "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/07-overlaps-alpha.md" \
+    "the ticket-open guard was held"
+
+  # Nothing was created on the way, guard or no guard.
+  run bash -c "ls '$TRACKER_DIR' | awk 'END { print NR }'"
+  assert_equal "$output" "1"
+}
+
 @test "a plan that splits nothing is not a split" {
   use_tickets 07-overlaps-alpha
   set_config SOFT_LIMIT_TOKENS 5000
@@ -2186,6 +2240,158 @@ FAKE
   assert_success
   assert_output_contains "rc=1"
   assert_output_contains "cannot be vouched for"
+}
+
+@test "a claim guard a sibling dropped inside the window is not put back" {
+  use_tickets 01-alpha 02-beta
+
+  # `issues/` is not a directory of ticket files. `tracker_local_claim` takes its
+  # guard beside the ticket it is about to stamp, and since [13] there is one
+  # sibling per slot claiming wherever it falls — while this iteration's
+  # pre-session snapshot, a `git add -A` over that directory, takes 35 ms. A guard
+  # held across the snapshot and released during the session arrives here as a `D`.
+  #
+  # Staged at the module and never raced: a test that measures this window
+  # measures the machine, which this harness has paid for twice ([38]).
+  pack_run '
+guard="$(tracker_local__path 02-beta).guard"
+mkdir -p "$guard"
+printf "%s\n" "$$" >"$guard/pid"
+ralph_now >"$guard/since"
+before="$(failures_tracker_tree)"
+rm -rf "$guard"
+
+rc=0
+failures_protect_tracker 01-alpha "$before" "" || rc=$?
+printf "rc=%s\n" "$rc"
+if [ -d "$guard" ]; then
+  printf "verdict=resurrected pid=%s\n" "$(cat "$guard/pid" 2>/dev/null)"
+else
+  printf "verdict=gone\n"
+fi
+printf "note=%s\n" "$(tracker_read_ticket 01-alpha | grep -c "edited the tracker" || true)"
+printf "claim=%s\n" "$(tracker_claim 02-beta "pid:$$" && printf taken || printf refused)"
+'
+  assert_success
+
+  # Three consequences of one `checkout-index`, and the third one ends the run:
+  # an innocent iteration refused a green, a note on its ticket accusing a session
+  # that wrote nothing in the tracker, and the lock back in place carrying the
+  # pilot's own live pid — which nothing releases, `state_guard_release` following
+  # a successful take and never a resurrection, so that ticket cannot be claimed
+  # again for the rest of the run.
+  assert_output_contains "verdict=gone"
+  assert_output_contains "rc=0"
+  assert_output_contains "note=0"
+  assert_output_contains "claim=taken"
+}
+
+@test "an atomic write's temp file that vanished in the window is not put back" {
+  use_tickets 01-alpha 02-beta
+
+  # The second shape, and it fails differently: the claim's guard is a path one
+  # level *below* the tracker, this one is a sibling of a ticket that merely does
+  # not end in `.md`. `state_atomic_write` publishes by writing beside its target
+  # and renaming, and removes the temp when the write itself fails — so a snapshot
+  # taken while a sibling is mid-write holds a file the next one does not.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+tmp="$(mktemp "$dir/02-beta.md.tmp.XXXXXX")"
+printf "half a ticket\n" >"$tmp"
+before="$(failures_tracker_tree)"
+rm -f "$tmp"
+
+rc=0
+failures_protect_tracker 01-alpha "$before" "" || rc=$?
+printf "rc=%s\n" "$rc"
+if [ -e "$tmp" ]; then printf "verdict=resurrected\n"; else printf "verdict=gone\n"; fi
+printf "note=%s\n" "$(tracker_read_ticket 01-alpha | grep -c "edited the tracker" || true)"
+printf "frontier=%s\n" "$(tracker_frontier | tr "\n" " ")"
+'
+  assert_success
+
+  # A resurrected temp file is not a lock, so what it costs is the other two: the
+  # accusation and the green. And it stays out of the frontier either way — the
+  # tracker's own scans glob `*.md` — which is why nothing downstream would ever
+  # have said this happened.
+  assert_output_contains "verdict=gone"
+  assert_output_contains "rc=0"
+  assert_output_contains "note=0"
+  assert_output_contains "frontier=01-alpha 02-beta "
+}
+
+@test "what the tracker guard leaves alone because it is not a ticket is named" {
+  use_tickets 01-alpha 02-beta
+
+  # The price of restoring ticket files and only ticket files, and a session pays
+  # it as much as this pack does: what lands in `issues/` under a name that is not
+  # `<id>.md` is put back by nothing here, and the quarantine never looked at it
+  # either ([27] globs `*.md`). A zone nobody judges is named on the window it
+  # moves in rather than left to a document ([24]).
+  #
+  # Two shapes, because the answer has two clauses and one of them has no producer
+  # inside this pack: a name that is not `*.md`, and a `.md` that is not *directly*
+  # in the tracker. The second is reachable by a session alone — it creates
+  # `issues/drafts/09-ghost.md` in one iteration, where it is an addition nobody
+  # judges, and removes it inside the next one's window, where restoring it would
+  # put a session's own file back under a name the tracker never carried.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+mkdir -p "$dir/drafts"
+cp "$dir/02-beta.md" "$dir/drafts/09-ghost.md"
+before="$(failures_tracker_tree)"
+rm -rf "$dir/drafts"
+printf "what the session thought\n" >"$dir/session-notes.txt"
+
+rc=0
+failures_protect_tracker 01-alpha "$before" "" || rc=$?
+printf "rc=%s\n" "$rc"
+[ -e "$dir/session-notes.txt" ] && printf "notes=left\n"
+if [ -e "$dir/drafts/09-ghost.md" ]; then printf "ghost=restored\n"; else printf "ghost=gone\n"; fi
+printf "ids=%s\n" "$(tracker_ids | tr "\n" " ")"
+'
+  assert_success
+
+  assert_output_contains "2 path(s) under the tracker directory that are not ticket files"
+  assert_output_contains "session-notes.txt"
+  assert_output_contains "drafts/09-ghost.md"
+  assert_output_contains "notes=left"
+  assert_output_contains "ghost=gone"
+  # Named, not judged: an addition is the quarantine's business, and neither of
+  # these two is even that — the tracker's own scans never saw them.
+  assert_output_contains "rc=0"
+  assert_output_contains "ids=01-alpha 02-beta "
+}
+
+@test "a ticket that moved under a name this guard cannot address is not vouched for" {
+  use_tickets 01-alpha 02-beta
+
+  # The residue [39] named and left: git quotes a name carrying a tab, a newline or
+  # a quote whatever `core.quotePath` says, and a quoted string is one no consumer
+  # of this list can hand to `checkout-index`. The fourth reader of that question,
+  # and the only one that cannot even tell whether what it is looking at is a
+  # ticket — so it refuses to vouch rather than counting a ticket it did not put
+  # back, or dropping the path into the zone line as though it were a temp file.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+weird="$dir/$(printf "09-a\tb").md"
+cp "$dir/02-beta.md" "$weird"
+before="$(failures_tracker_tree)"
+rm -f "$weird"
+
+rc=0
+failures_protect_tracker 01-alpha "$before" "" || rc=$?
+printf "rc=%s\n" "$rc"
+if [ -e "$weird" ]; then printf "verdict=restored\n"; else printf "verdict=gone\n"; fi
+'
+  assert_success
+
+  assert_output_contains "rc=1"
+  assert_output_contains "under a name this guard cannot address"
+  assert_output_contains "verdict=gone"
+  # And not counted as a ticket it restored: the note on the ticket says how many
+  # ticket files were put back, and this one was not.
+  refute_output_contains "restored 1 ticket file(s)"
 }
 
 @test "a tracker the session staged does not stay staged" {

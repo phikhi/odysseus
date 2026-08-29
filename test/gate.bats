@@ -2089,3 +2089,35 @@ FAKE
   [ -d "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" ] ||
     fail "the run removed a leftover it is only supposed to name"
 }
+
+@test "a run says what an earlier run left holding inside the feature directory" {
+  # The same zone one directory in, and it is not the same sentence ([49]). The run
+  # lock comes off through the trap its own acquisition installs; the ticket-open
+  # guard of [47] is released by the call that took it and by nothing else, so a
+  # run killed while holding it crossed every later run in silence — this counted
+  # `$TMPDIR` and nothing else. It is recovered at the next allocation, which is
+  # right, and is not a reason for a whole run to go by without a word about a
+  # guard nobody owns.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  # A pid that is certainly gone: a subshell's own, read after it exited.
+  dead="$(bash -c 'printf %s "$$"')"
+  mkdir -p "$FEATURE_DIR/.open.guard"
+  printf '%s\n' "$dead" >"$FEATURE_DIR/.open.guard/pid"
+
+  # And its witness, which is what keeps the count from being a constant: a guard
+  # whose owner still answers belongs to something alive — a sibling run of another
+  # feature, this very process — and naming it would be the false alarm that makes
+  # a morning line unreadable.
+  mkdir -p "$FEATURE_DIR/.busy.guard"
+  printf '%s\n' "$$" >"$FEATURE_DIR/.busy.guard/pid"
+
+  run_loop
+  assert_output_contains "1 exclusion guard(s) left in"
+  assert_output_contains ".open.guard"
+  refute_output_contains ".busy.guard"
+  # Said, not swept, like its neighbour above.
+  [ -d "$FEATURE_DIR/.open.guard" ] ||
+    fail "the run removed a guard it is only supposed to name"
+}
