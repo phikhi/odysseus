@@ -1178,30 +1178,35 @@ mutation "30 the pin records none of the working tree's rules" "$GATE" \
 # The anchor moved with [41], which routed that copy through the run's own witness
 # — the copy is still the guarantee, the line that carries it is a call now.
 mutation "30 the pin records nothing of .git/info/exclude" "$GATE" \
-  's/  gate__ignore_common_copy exclude "\$rules\/\.git\/info\/exclude" \\\n    "\$\(gate__ignore_exclude_path\)"/  :/' \
+  's/  gate__frontier_common_copy exclude "\$rules\/\.git\/info\/exclude" \\\n    "\$\(gate__ignore_exclude_path\)"/  :/' \
   test/gate.bats "does not hide what it wrote behind it"
 
 # The half that keeps one red iteration from buying a whole night: without the
 # restore, the *next* pin records the widened frontier as the project's own.
 mutation "30 the frontier of the git directory is not put back" "$GATE" \
-  's/^gate__ignore_restore\(\) \{/gate__ignore_restore() { return 1;/m' \
+  's/^gate__frontier_restore\(\) \{/gate__frontier_restore() { return 1;/m' \
   test/gate.bats "widen the blind zone"
 
 # Reporting the intention instead of the result. `git config --unset` writes the
 # repository config, so a key a session put in the user's config survives it — and
 # the message said "(put back)" all the same.
+#
+# Anchored on the `esac` above it since [46], and that is the trap this file
+# documents rather than a flourish: `gate__config_restore` ends with the same
+# comparison and sits *earlier* in the file, so the bare line would have applied
+# cleanly to the wrong function while this test kept its guarantee.
 mutation "30 a restore that was only attempted reports success" "$GATE" \
-  's/  \[ "\$\(gate__ignore_current "\$name"\)" = "\$pinned" \]/  return 0/' \
+  's/    \*\) return 1 ;;\n  esac\n  \[ "\$\(gate__frontier_current "\$name"\)" = "\$pinned" \]/    *) return 1 ;;\n  esac\n  return 0/' \
   test/gate.bats "could not put back"
 
 # The verdict, as opposed to the visibility: the frontier moves, the file behind it
 # is still judged through the pin, and nothing says who moved it.
 mutation "30 moving the frontier is not a finding" "$GATE" \
-  's/^gate_ignore_frontier\(\) \{/gate_ignore_frontier() { return 0;/m' \
+  's/^gate_frontier\(\) \{/gate_frontier() { return 0;/m' \
   test/gate.bats "widen the blind zone"
 
 mutation "30 the scope-guard drops the frontier findings" "$GATE" \
-  's/  if \[ -n "\$\{RALPH_GATE_IGNORE:-\}" \]; then/  if [ -n "" ]; then/' \
+  's/  if \[ -n "\$\{RALPH_GATE_FRONTIER:-\}" \]; then/  if [ -n "" ]; then/' \
   test/gate.bats "outside the repository is named"
 
 # The cause behind [24]'s consequence, which is the one line a human gets when the
@@ -1213,7 +1218,7 @@ mutation "30 nothing says the session moved the frontier" "$GATE" \
 # Fail-closed. A pin that is set and unreadable must not read as "no pin at all",
 # which is the fail-open the whole mechanism would collapse into.
 mutation "30 a broken pin snapshots anyway" "$GATE" \
-  's/  if gate__ignore_pin_broken; then return 1; fi/  :/' \
+  's/  if gate__frontier_pin_broken; then return 1; fi/  :/' \
   test/gate.bats "pin that cannot be read"
 
 # The folding, which is what keeps a node_modules out of the morning log: descend
@@ -1231,7 +1236,7 @@ mutation "30 a folded directory holding a judged path is reported whole" "$GATE"
 # The second caller, and the reason it exists: a planning session is never gated,
 # so nothing else on that path would put the rules back.
 mutation "30 the re-slice session's frontier is left where it put it" "$FAILURES" \
-  's/moved="\$\(gate_ignore_frontier\)"/moved=""/' \
+  's/moved="\$\(gate_frontier\)"/moved=""/' \
   test/failures.bats "re-slice session cannot leave"
 
 # The fixture's own world: `.git/info/exclude` is created by every real `git init`,
@@ -1655,7 +1660,7 @@ mutation "35 a measurement it could not take is read as nothing delivered" "$GAT
   's/  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then\n    return 1\n  fi/  changed="\$(gate_changed_files "\$base" "\$now")" || changed=""/' \
   test/gate.bats "could not read is not read as nothing to deliver"
 
-# The findings of `gate_ignore_frontier` ride on the scope-guard's output, and the
+# The findings of `gate_frontier` ride on the scope-guard's output, and the
 # scope-guard is not started on this path. Without this loop a session that moved
 # an ignore rule and wrote nothing would have its move put back in silence ([30]).
 mutation "35 a frontier moved on this path is put back without a word" "$GATE" \
@@ -1703,7 +1708,7 @@ mutation "35 the fake session delivers nothing by default" "$SHIM" \
 # that the two classes nothing gated get there at all.
 
 mutation "32 an iteration no gate judged keeps its widened frontier" "$FAILURES" \
-  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      :/' \
+  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__frontier "\$ticket"/      :/' \
   test/failures.bats "crashed cannot leave the ignore frontier widened"
 
 # The correction placed on the path that happened to be probed — which is exactly
@@ -1723,7 +1728,7 @@ mutation "32 only the class the probe used gets its frontier back" "$FAILURES" \
 # been removed. Diagnosed rather than rewritten: the guarantee has two owners now,
 # so the edit has to remove both.
 mutation "32 the restore is bolted onto every class, gated or not" "$FAILURES" \
-  's/  case "\$class" in\n    crash \| timeout \| budget\)\n      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"\n      ;;\n  esac/  failures__ignore_frontier "\$ticket"/' \
+  's/  case "\$class" in\n    crash \| timeout \| budget\)\n      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__frontier "\$ticket"\n      ;;\n  esac/  failures__frontier "\$ticket"/' \
   test/failures.bats "once, not twice"
 
 # The cause line behind [24]'s consequence, on the path where `gate__report_frontier`
@@ -2332,7 +2337,7 @@ mutation "44 the orphan question always answers yes" "$LOOP" \
 # and report VACUOUS about a test that is fine — the shape this file's header warns
 # about twice.
 mutation "44 nothing is asked between the session and the gate" "$LOOP" \
-  's/  if loop__orphaned "\$ticket" "\$slot"; then\n    return 0\n  fi\n\n  # Before the gate reads/  # Before the gate reads/' \
+  's/  if loop__orphaned "\$ticket" "\$slot"; then\n    return 0\n  fi\n\n  # Before anything below reads/  # Before anything below reads/' \
   test/concurrency.bats "run was killed"
 
 mutation "44 nothing is asked between the gate and the commit" "$LOOP" \
@@ -2388,14 +2393,14 @@ mutation "44 an owner that is already gone is taken all the same" "$PROC" \
 # what it saw with its own eyes — which is the pack before this ticket, and the
 # author of the widening walks.
 mutation "41 a movement is not recorded for the iterations in flight" "$GATE" \
-  's/^gate__ignore_record\(\) \{/gate__ignore_record() { return 0;/m' \
+  's/^gate__frontier_record\(\) \{/gate__frontier_record() { return 0;/m' \
   test/concurrency.bats "charged to every iteration in flight"
 
 # The same hole from the reading side, and it is a separate entry because it is a
 # separate half: a run that records faithfully and then only ever reports what it
 # detected itself is the same false green.
 mutation "41 an iteration reads only what it saw itself" "$GATE" \
-  's/^gate__ignore_share\(\) \{/gate__ignore_share() { printf "%s\\\\n" "\$1"; return 0;/m' \
+  's/^gate__frontier_share\(\) \{/gate__frontier_share() { printf "%s\\\\n" "\$1"; return 0;/m' \
   test/concurrency.bats "charged to every iteration in flight"
 
 # The mark. Reading the whole register instead of what landed after this
@@ -2405,11 +2410,11 @@ mutation "41 an iteration reads only what it saw itself" "$GATE" \
 #
 # Aimed at the definition and not at either reader, and that is not a shortcut:
 # the first version of this entry anchored on the line that reads the mark, which
-# by then existed twice — it edited `gate__ignore_pin_broken` and reported VACUOUS
+# by then existed twice — it edited `gate__frontier_pin_broken` and reported VACUOUS
 # about a test that was fine. The two readers now share one definition, so the
 # anchor is unique by construction.
 mutation "41 the register is read from the beginning of the run" "$GATE" \
-  's/^gate__ignore_mark\(\) \{/gate__ignore_mark() { printf "0\\\\n"; return 0;/m' \
+  's/^gate__frontier_mark\(\) \{/gate__frontier_mark() { printf "0\\\\n"; return 0;/m' \
   test/concurrency.bats "sequenced bills the session that wrote"
 
 # What nobody can be charged for, said out loud. A bill that cannot be contested
@@ -2429,17 +2434,17 @@ mutation "41 the unattributable line is printed whatever the run does" "$GATE" \
 # takes its baseline from disk, so an iteration that spawns mid-widening pins the
 # widening — and its own restore puts it back over its sibling's witness.
 mutation "41 the shared frontier is witnessed once per iteration again" "$GATE" \
-  's/^gate__ignore_common_copy\(\) \{\n  local slot="\$1" dest="\$2" live="\$3" common="\$\{RALPH_IGNORE_COMMON:-\}"/gate__ignore_common_copy() {\n  local slot="\$1" dest="\$2" live="\$3" common=""/m' \
+  's/^gate__frontier_common_copy\(\) \{\n  local slot="\$1" dest="\$2" live="\$3" common="\$\{RALPH_FRONTIER_COMMON:-\}"/gate__frontier_common_copy() {\n  local slot="\$1" dest="\$2" live="\$3" common=""/m' \
   test/gate.bats "while the frontier was widened"
 
 mutation "41 the pin's manifest reads the shared sources from disk" "$GATE" \
-  's/^gate__ignore_pin_manifest\(\) \{\n  local common="\$\{RALPH_IGNORE_COMMON:-\}"/gate__ignore_pin_manifest() {\n  local common=""/m' \
+  's/^gate__frontier_pin_manifest\(\) \{\n  local common="\$\{RALPH_FRONTIER_COMMON:-\}"/gate__frontier_pin_manifest() {\n  local common=""/m' \
   test/gate.bats "while the frontier was widened"
 
 # And the loop refusing to start without it, which is what keeps the fallback in
 # the library from being the shipped behaviour.
 mutation "41 a run with no witness of the shared frontier starts anyway" "$LOOP" \
-  's/  if ! RALPH_IGNORE_COMMON="\$\(gate_ignore_common\)"; then/  RALPH_IGNORE_COMMON="\$(gate_ignore_common)" || RALPH_IGNORE_COMMON=""\n  if false; then/' \
+  's/  if ! RALPH_FRONTIER_COMMON="\$\(gate_frontier_common\)"; then/  RALPH_FRONTIER_COMMON="\$(gate_frontier_common)" || RALPH_FRONTIER_COMMON=""\n  if false; then/' \
   test/gate.bats "witness of the shared frontier"
 
 # The guard that orders the restore. Two iterations detecting and restoring at
@@ -2456,19 +2461,27 @@ mutation "41 a guard that was never taken is released all the same" "$GATE" \
   's/  if \[ "\$took" = 1 \]; then concurrency_frontier_release \|\| true; fi/  concurrency_frontier_release || true/' \
   test/gate.bats "released only by the iteration that took it"
 
-# The same edit as [32]'s first entry, judged by the other producer's test: what
-# [32] delivers is that a crashed iteration gets its frontier back at all, what
-# [41] delivers is that the movement reaches the *siblings* on that path too. One
-# entry per guarantee rather than one per line, the way the [33] pair is written.
-mutation "41 a crashed iteration's movement never reaches its siblings" "$FAILURES" \
-  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      :/' \
+# What [41] delivers on a path no gate judged is that the movement reaches the
+# **siblings**, and this entry has moved once, for the reason [43]'s note three
+# entries up gives. It used to be [32]'s own edit — take `failures__frontier` off
+# the crash path and nothing recorded the widening — judged by this other
+# producer's test. [46] gave that guarantee a second and **earlier** owner:
+# `loop__iterate` puts the frontier back the moment its session returns, so the
+# crash path records through that instead, and the old edit came back VACUOUS
+# about a test that was fine. Diagnosed rather than rewritten. Both owners write
+# the register through this one line, so this is the line that removes the
+# guarantee on every path; [32]'s entry keeps the old edit, which still removes
+# what only `failures__frontier` does — the sentence on the crashed iteration's
+# own document.
+mutation "41 a crashed iteration's movement never reaches its siblings" "$GATE" \
+  's/    printf \x27%s\\t%s\\n\x27 "\$tag" "\$line" >>"\$common\/ledger"/    :/' \
   test/concurrency.bats "no gate judges is still charged"
 
 # Fail-closed on the two things [41] added to `$TMPDIR`. Both had a fallback that
 # reads the live sources, so a session that destroyed either would have bought back
 # the pack before this ticket — quietly, where destroying the pin stops the night.
 mutation "41 a destroyed run witness reads as no witness at all" "$GATE" \
-  's/  \[ -f "\$common\/manifest" \] && \[ -f "\$common\/exclude" \] && \[ -f "\$common\/ledger" \] \|\|\n    return 0\n//' \
+  's/  \[ -f "\$common\/manifest" \] && \[ -f "\$common\/exclude" \] &&\n    \[ -f "\$common\/attributes" \] && \[ -f "\$common\/ledger" \] \|\| return 0\n//' \
   test/gate.bats "closes the control, like a destroyed pin"
 
 mutation "41 a register that got shorter is nobody's business" "$GATE" \
@@ -2521,7 +2534,7 @@ mutation "43 the pilot is never told a lens was refused" "$LOOP" \
 # combination: `budget` is a reason, not a kind of session, so "who put the ignore
 # rules back" cannot be answered by its name.
 mutation "43 a widening a gate already read is charged again" "$FAILURES" \
-  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__ignore_frontier "\$ticket"/      failures__ignore_frontier "\$ticket"/' \
+  's/      \[ "\$\{RALPH_GATE_FRONTIER_READ:-0\}" = 1 \] \|\| failures__frontier "\$ticket"/      failures__frontier "\$ticket"/' \
   test/budget.bats "not charged to the run twice"
 
 # ── [10] the audit receipt, and a journal worth reading ──────────────────────
@@ -2975,7 +2988,7 @@ mutation "15 the witness does not follow a symlinked skill" "$CAPABILITY" \
   test/capability.bats "symlinked skill"
 
 mutation "15 nothing measures the surfaces again after the session" "$LOOP" \
-  's/^  capability_drift "\$\{RALPH_RETRO_STATE:-\}"$/  :/m' \
+  's/^\$\(capability_drift "\$\{RALPH_RETRO_STATE:-\}"\)$//m' \
   test/capability.bats "operator's home"
 
 # And the values that would switch the tier off without saying so.
@@ -3276,6 +3289,76 @@ mutation "49 a ticket nobody could claim leaves no line in the journal" "$LOOP" 
 mutation "49 the refusal names an owner nobody holds" "$LOOP" \
   's/^loop__claim_refused\(\) \{/loop__claim_refused() { loop_log "could not claim \$1 — someone else has it"; loop_journal_append "\$1" claim-refused 0 0 0; return 0;/m' \
   test/loop-happy-path.bats "no iteration could claim"
+
+# ── [46] the configuration decides what git runs, too ────────────────────────
+#
+# Every entry aims at a guarantee and not at the contents of a list: replacing
+# what `gate_config_keys` returns wholesale would prove that a key nobody watches
+# is not watched, which nobody doubts. The one entry that does touch the list
+# takes a *single* key out of it, which is the edit a later ticket tidying this up
+# would really make.
+
+# The whole fourth kind. Without it the frontier is [30]'s again — what a check
+# can see — and says nothing at all about what git runs.
+mutation "46 the configuration half of the frontier is never read" "$GATE" \
+  's/^gate__config_manifest\(\) \{/gate__config_manifest() { return 0;/m' \
+  test/gate.bats "run its own program through the repository config"
+
+# One key off the derived list, which is what makes the list a list and not a
+# decoration: the mechanism still works, and this one key goes unwatched.
+mutation "46 core.fsmonitor is off the watched list" "$GATE" \
+  's/    \x27core\\\.fsmonitor\x27 \\\n//' \
+  test/gate.bats "run its own program through the repository config"
+
+# The file that arms a filter on a path. Without it a `filter.<n>.smudge` is
+# watched and inert, and `* filter=x` — or a bare `* text=auto` — is not watched
+# at all.
+mutation "46 the attributes file is not a source of its own" "$GATE" \
+  's/^gate__config_attributes_path\(\) \{/gate__config_attributes_path() { return 0;/m' \
+  test/gate.bats "attributes file alone is a movement"
+
+# The verdict. Detected, restored, and not a finding: the iteration goes green
+# over a run that has just been executing a program a session chose.
+mutation "46 moving what git runs is not a finding" "$GATE" \
+  's/    \[ "\$kind" = cfg \] && \[ -n "\$name" \] \|\| continue/    continue/' \
+  test/gate.bats "run its own program through the repository config"
+
+# The restore reporting its intention instead of its result — the same lie [30]
+# paid for one mechanism up, on the door [15] found open: `git config --unset`
+# writes *this* repository's config, so a value in the operator's home survives it
+# untouched and "(put back)" would be false.
+mutation "46 a configuration restore that was only attempted claims success" "$GATE" \
+  's/  git config --unset-all "\$name" >\/dev\/null 2>&1 \|\| true\n  \[ "\$\(gate__frontier_current "\$name"\)" = "\$pinned" \]/  return 0/' \
+  test/gate.bats "cannot put back is named"
+
+# Where the restore falls, which is the question [32] asked once and [46] had to
+# ask again: put back only at the three gated sites, the tracker guard has already
+# staged and checked out every ticket through the session's own filter.
+mutation "46 the frontier is put back only once the tracker has been read" "$LOOP" \
+  's/^  gate_frontier_put_back >\/dev\/null \|\| true$/  :/m' \
+  test/gate.bats "put back before the tracker guard"
+
+# And the register's own rule, which is what makes a second caller safe ([41]
+# wrote it as a convention about call sites): a movement no restore can undo is
+# re-detected by every look, so without this the iteration is billed twice for one
+# widening and every sibling in flight with it.
+mutation "46 one movement is recorded once per look instead of once per iteration" "$GATE" \
+  's/      \*"\$nl\$tag\$tab\$line\$nl"\*\) continue ;;/      *"never matches this") continue ;;/' \
+  test/gate.bats "cannot put back is named"
+
+# ── [46] the witness of [15] reaches a document ──────────────────────────────
+
+# The line itself. Without it the witness is back to a receipt that does not exist
+# on this route and a stdout that has scrolled.
+mutation "46 the capability witness says nothing a document can keep" "$CAPABILITY" \
+  's/    printf \x27%s\\t%s\\t%s\\n\x27 "\$path" capability-drift \\\n      "a capability surface changed under this run: \$path"/    :/' \
+  test/capability.bats "iteration a run stops on"
+
+# The pilot's half: the iteration measured it and wrote it to its slot, and
+# nothing carried it to the file a human opens in the morning.
+mutation "46 the drift never reaches the run journal" "$LOOP" \
+  's/      loop_journal_append "\$drift_subject" "\$\{drift_outcome:-capability-drift\}" 0 0 0/      :/' \
+  test/capability.bats "iteration a run stops on"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

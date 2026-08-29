@@ -88,7 +88,7 @@
 #   capability_propose SLUG TITLE     the human-sink ticket, deduplicated (stdin: body)
 #   capability_surfaces               what a fresh `claude` loads as a capability
 #   capability_witness DIR            the run's baseline, before any session exists
-#   capability_drift DIR              what moved under it, said out loud
+#   capability_drift DIR              what moved under it: subject<TAB>outcome<TAB>message
 
 # The tag suffixes this module owns. The prefix comes from whoever carries the
 # answer — the retro, today — and is passed in rather than read out of its
@@ -596,8 +596,10 @@ BODY
 # nothing here reaches outside the repository to undo a file — and it never reds
 # an iteration either, because a false red on the operator's own home would stop
 # a night over a file the operator wrote. What it buys is that a capability
-# appearing mid-run is a sentence on the receipt of every iteration after it
-# instead of a silence.
+# appearing mid-run is a sentence on the run journal and on the receipt of every
+# iteration after it instead of a silence — two documents since [46], because one
+# of them is missing on exactly the iteration a run stops on (see
+# `capability_drift`).
 #
 # The list is written against the criterion and not against the cases that made
 # it ([31], [45]): everything a fresh `claude` loads which changes what a session
@@ -666,7 +668,7 @@ PATHS
   return 0
 }
 
-# What moved under it, one sentence per surface, on the document that answers for
+# What moved under it, one sentence per surface, on the documents that answer for
 # this iteration. Silent when nothing moved: this is an *event* channel and not a
 # coverage one, so its silence says no such event was recorded, which is all it
 # ever claimed ([45]'s own line between the two).
@@ -674,6 +676,20 @@ PATHS
 # A gap and not a note, for the same reason: the notes are the zones nothing
 # walked and they are on every receipt; this is the pack's own promise coming
 # apart, it is rare, and what a human does about it is different.
+#
+# **And it is *returned* as well as written, which is [46] on this ticket.** The
+# two channels this had were both narrower than the event, exactly the mistake
+# [45] is about. `receipt_gap` reaches a document only on the four routes that
+# emit a receipt, and the printf reached stdout, which scrolls past. Measured on
+# 26/08/2026 rather than deduced: on a run that stops *on* a retried iteration —
+# `ITER_CAP`, `STERILE_K`, a requested stop, a budget wall — the drift reached no
+# document at all, and the witness being per run, the next run took the changed
+# surface as its own baseline. The silence was definitive and not deferred.
+#
+# So the line goes back to the caller as `subject<TAB>outcome<TAB>message`, the
+# shape `tracker_preflight` already uses, and the caller puts it where a document
+# can hold it. It cannot be done here: `run.log` is written by the pilot and this
+# runs in an iteration's shell, which is the whole of why the channel was missing.
 capability_drift() {
   local dir="$1" path was now
   [ -n "$dir" ] && [ -s "$dir/capability.witness" ] || return 0
@@ -682,7 +698,8 @@ capability_drift() {
     now="$(capability__digest "$path")"
     [ "$now" != "$was" ] || continue
     receipt_gap "a capability surface changed while this run was in flight: $path — nothing here judged it, no rollback undoes it, and what a fresh session loads from it is what is there now"
-    capability__log "a capability surface changed under this run: $path"
+    printf '%s\t%s\t%s\n' "$path" capability-drift \
+      "a capability surface changed under this run: $path"
   done <"$dir/capability.witness"
   return 0
 }

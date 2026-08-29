@@ -378,6 +378,42 @@ opened_ticket() {
   assert_file_contains "$(receipt_path 01-alpha)" "$HOME/.claude/agents"
 }
 
+@test "the witness reaches a document on the iteration a run stops on" {
+  # [46] on [15], and it is [45] read one ticket later: both of this witness's
+  # channels were narrower than the event it reports. `receipt_gap` reaches the
+  # audit receipt, which exists only for an iteration the loop has *finished* with
+  # ([10]: a receipt per attempt would bury the one that matters), and the printf
+  # reached stdout, which scrolls past. So an iteration ending on a fresh retry
+  # produced no document at all — and when the run stops there, no later iteration
+  # is coming to produce one either. The witness being per run, the next run takes
+  # the changed surface as its own baseline: probed on 26/08/2026, the silence was
+  # definitive and not deferred.
+  #
+  # `run.log` is the other document, and this shell cannot write it: it belongs to
+  # the pilot. The line crosses on the slot and `loop__finish` journals it.
+  use_tickets 01-alpha
+  set_config ITER_CAP 1
+  set_config RETRY_N 2
+  set_config STERILE_K 5
+  stub_exit tests 1
+  session_writes "src/alpha.txt" "$HOME/.claude/agents/backdoor.md"
+
+  run_loop
+  assert_failure 4
+
+  # No receipt, and that is [10]'s decision rather than something worked around
+  # here: this iteration is a fresh retry the loop has not finished with. Asserted
+  # so that the journal line below is the *only* durable trace and cannot be
+  # satisfied by a receipt appearing for some other reason.
+  refute_file_exists "$(receipt_path 01-alpha)"
+
+  # And the surface is named. A journal line reading `capability-drift` with
+  # nothing in the subject field sends a human nowhere, which is the same
+  # half-truth [10] refused to put in this file in the first place.
+  assert_file_contains "$FEATURE_DIR/run.log" "capability-drift"
+  assert_file_contains "$FEATURE_DIR/run.log" "$HOME/.claude/agents"
+}
+
 @test "a write through a symlinked skill is seen, where the seal cannot see it" {
   # The reserve [31] wrote down and left for this ticket: here `.claude/skills` is
   # a farm of symlinks, and a write *through* a link lands outside the sealed

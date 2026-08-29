@@ -149,12 +149,14 @@ failures_classify() {
   esac
 }
 
-# ── the frontier of what any of this can see ─────────────────────────────────
+# ── the frontier: what any of this can see, and what git runs ────────────────
 
-# The ignore rules put back, on an iteration no gate judged ([32]).
+# The frontier put back, on an iteration no gate judged ([32]).
 #
 # `.git/info/exclude` and `core.excludesFile` are in no tree, so no rollback
-# reaches them, and they decide what every check in this pack can see. [30] made
+# reaches them, and they decide what every check in this pack can see; since [46]
+# the same list carries the configuration that decides what git *executes* and what
+# it hands the next worktree, which is in no tree either. [30] made
 # that a finding and put them back — inside `gate_run`, which is exactly where an
 # iteration that crashed or was cut short never goes. Left alone, the *next*
 # iteration pins the widened frontier as the project's own configuration and
@@ -176,14 +178,14 @@ failures_classify() {
 # apply to nothing. If that rollback refuses, it says so itself and the run stops
 # ([34]) — a line that has been contradicted two lines later and loudly is not the
 # half-truth [29] refused.
-failures__ignore_frontier() {
+failures__frontier() {
   local ticket="$1" moved findings finding
 
   if moved="$(gate_moved_tree_rules)"; then
     failures__say "$ticket: this session moved the ignore frontier: $moved — no gate judged this iteration, and those rules go back with the rest of what it wrote"
   fi
 
-  findings="$(gate_ignore_frontier)" || true
+  findings="$(gate_frontier)" || true
   while IFS= read -r finding; do
     [ -n "$finding" ] || continue
     failures__say "$ticket: $finding"
@@ -256,7 +258,7 @@ failures_handle() {
   # while they are still there.
   case "$class" in
     crash | timeout | budget)
-      [ "${RALPH_GATE_FRONTIER_READ:-0}" = 1 ] || failures__ignore_frontier "$ticket"
+      [ "${RALPH_GATE_FRONTIER_READ:-0}" = 1 ] || failures__frontier "$ticket"
       ;;
   esac
 
@@ -1256,7 +1258,7 @@ failures_reslice() {
   # the rules back and the *next* iteration would pin the widened ones. Said out
   # loud rather than quietly undone: there is no gate on this path to carry a
   # finding, so the log line is the only trace a human gets.
-  moved="$(gate_ignore_frontier)" || failures__say \
+  moved="$(gate_frontier)" || failures__say \
     "$ticket: the re-slice session moved the ignore frontier — $(printf '%s' "$moved" | tr '\n' ';')"
 
   # And the plan is refused whole if it wrote the tracker instead of returning

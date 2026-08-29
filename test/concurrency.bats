@@ -498,7 +498,7 @@ concurrency__outcomes() {
   # [32] gave the restore three callers, and only one of them is `gate_run`: a
   # session that crashes and one that runs out of time are put back by
   # `failures_handle`, and a re-slice's planning session by `failures_reslice`.
-  # All three go through `gate_ignore_frontier`, so all three record — but "by
+  # All three go through `gate_frontier`, so all three record — but "by
   # construction" is an inference until one of them is staged, and the crash path
   # is the one with no scope-guard to carry a finding at all.
   use_tickets 01-alpha 02-beta
