@@ -46,10 +46,13 @@
 #   RALPH_GATE_VERDICTS     e.g. "tests=green typecheck=red scope=green"
 #   RALPH_GATE_FAILED       the red branch names
 #   RALPH_GATE_SCOPE_CLASS  internal | contract, when the scope-guard is red
-#   RALPH_GATE_IGNORE       the ignore rule sources this session moved outside the
-#                           working tree, already phrased as scope findings. Filled
-#                           before the fan, like the tree, because the branch that
-#                           reports them is a subshell ([30])
+#   RALPH_GATE_FRONTIER     the sources outside the working tree this session moved
+#                           — the ignore rules that decide what every check can see
+#                           ([30]) and the git configuration that decides what git
+#                           *runs* and what it *hands* the next session ([46]) —
+#                           already phrased as scope findings. Filled before the
+#                           fan, like the tree, because the branch that reports them
+#                           is a subshell
 #   RALPH_GATE_TREE         the tree every branch is judged on, so the rollback and
 #                           the durable commit act on exactly what was approved.
 #                           Taken before the fan and filled in before it, so a
@@ -74,10 +77,10 @@
 #                           retry charged — the criterion [08] wrote and wired to
 #                           two outcomes only ([43])
 #   RALPH_GATE_FRONTIER_READ
-#                           1 once this gate has put the ignore rules back and read
-#                           this iteration's share of the movement register. The
-#                           failure policy asks again on the paths where nobody
-#                           did, and a second ask charges a widening twice ([41])
+#                           1 once this gate has put the frontier back and read this
+#                           iteration's share of the movement register. The failure
+#                           policy asks again on the paths where nobody did, and a
+#                           second ask charges a widening twice ([41])
 
 gate__log() {
   printf 'ralph: gate: %s\n' "$*"
@@ -556,9 +559,37 @@ gate_guarded_paths() {
 # takes effect on the next iteration rather than on the one that wrote it.
 #
 # Four sources decide and they get three treatments, because they are not the same
-# kind of thing (see gate_ignore_frontier): the `.gitignore` files of the working
+# kind of thing (see gate_frontier): the `.gitignore` files of the working
 # tree; `.git/info/exclude` and `core.excludesFile`, in the git directory; and the
 # global excludes file, which lives outside the repository altogether.
+#
+# ── and the other half of the same question ([46]) ───────────────────────────
+#
+# Everything above is about what a check can **see**. The same configuration files
+# decide what git *runs* and what it *hands back*, and none of that was pinned,
+# looked at, or said out loud. Measured on 26/08/2026 rather than reasoned about:
+#
+#   - `core.fsmonitor` is a path to a program, and git runs it on every index
+#     refresh. A session that set it — in `<main tree>/.git/config`, or in the
+#     operator's `~/.gitconfig`, both writable by a session — got **252
+#     executions on a run of two iterations**, with `git` itself as the parent, so
+#     inside the *pilot's* process tree: not in a session, not in a worktree, not
+#     under a gate. Both tickets came out `resolved`, `run.log` said nothing and no
+#     receipt said anything.
+#   - a `filter.<n>.smudge` armed by `.git/info/attributes` rewrites what git
+#     writes into a working tree. Both files live in the **common** git directory,
+#     so a filter installed by one iteration applies to every worktree the run
+#     creates afterwards: probed, the second iteration's session was handed a
+#     `CONTEXT.md` that had been rewritten while the main tree and the blob still
+#     held the original, two greens, two `resolved`, complete silence. Nothing
+#     *could* see it — the scope-guard compares two trees and both are filtered the
+#     same way, so the diff is empty.
+#
+# So the same machinery — a pinned value, compared, restored, and red — carries a
+# fourth kind, `cfg`. What is on that list is derived from a criterion and not
+# from the three keys the probe happened to try ([31]): **anything a session can
+# put in a git configuration source that makes git execute a program or transform
+# a content**. gate_config_keys is the list and says what it leaves out and why.
 
 # ── two witnesses, because the sources are not all the same shape ────────────
 #
@@ -586,7 +617,7 @@ gate_guarded_paths() {
 # The loop refuses to start without it, the way it refuses without a pin. The
 # fallback below — no witness, read the live sources — exists so `gate_*` stays
 # drivable outside a run, and never fires under `loop.sh`.
-gate_ignore_common() {
+gate_frontier_common() {
   local dir file
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-frontier.XXXXXX")" || return 1
   : >"$dir/exclude"
@@ -599,12 +630,20 @@ gate_ignore_common() {
   if [ -n "$file" ] && [ -f "$file" ]; then
     cp "$file" "$dir/global" 2>/dev/null || true
   fi
-  if ! { gate__ignore_manifest | awk -F'\t' '$1 != "tree"'; } >"$dir/manifest"; then
+  # And the file that arms a filter or a diff driver on a path ([46]). In the
+  # common git directory like `info/exclude`, in no tree, declarable in no
+  # write-surface, and shared by every worktree the run makes.
+  : >"$dir/attributes"
+  file="$(gate__config_attributes_path)"
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    cp "$file" "$dir/attributes" 2>/dev/null || true
+  fi
+  if ! { gate__ignore_shared_manifest; gate__config_manifest; } >"$dir/manifest"; then
     rm -rf "$dir"
     return 1
   fi
   # The register of frontier movements this run has seen, and the only thing that
-  # survives a restore. See gate_ignore_frontier: a movement erased by the first
+  # survives a restore. See gate_frontier: a movement erased by the first
   # gate to look would otherwise be invisible to every iteration behind it.
   : >"$dir/ledger"
   printf '%s\n' "$dir"
@@ -612,8 +651,8 @@ gate_ignore_common() {
 
 # One rule source into a witness: from the run's witness when there is one, from
 # the live file when there is not.
-gate__ignore_common_copy() {
-  local slot="$1" dest="$2" live="$3" common="${RALPH_IGNORE_COMMON:-}"
+gate__frontier_common_copy() {
+  local slot="$1" dest="$2" live="$3" common="${RALPH_FRONTIER_COMMON:-}"
   if [ -n "$common" ] && [ -f "$common/$slot" ]; then
     cp "$common/$slot" "$dest" 2>/dev/null || true
     return 0
@@ -626,20 +665,25 @@ gate__ignore_common_copy() {
 
 # What one iteration's pin records: the tree rules as they stand right now, and
 # the common sources as the *run* was handed them.
-gate__ignore_pin_manifest() {
-  local common="${RALPH_IGNORE_COMMON:-}"
+#
+# The tree half is asked for on its own rather than filtered out of the whole
+# manifest, which is a cost and not a style: since [46] the shared half asks git
+# for every configuration key it watches, and computing that here only to throw it
+# away would pay for it on every iteration for nothing.
+gate__frontier_pin_manifest() {
+  local common="${RALPH_FRONTIER_COMMON:-}"
   if [ -n "$common" ] && [ -f "$common/manifest" ]; then
-    { gate__ignore_manifest || true; } | awk -F'\t' '$1 == "tree"'
+    gate__ignore_tree_manifest || true
     cat "$common/manifest"
     return 0
   fi
-  gate__ignore_manifest
+  gate__frontier_manifest
 }
 
 # How many movements the run's register held when this pin was taken. What an
 # iteration is charged for is what appears in it after that mark.
-gate__ignore_ledger_len() {
-  local common="${RALPH_IGNORE_COMMON:-}"
+gate__frontier_ledger_len() {
+  local common="${RALPH_FRONTIER_COMMON:-}"
   if [ -n "$common" ] && [ -f "$common/ledger" ]; then
     awk 'END { print NR + 0 }' "$common/ledger"
     return 0
@@ -651,16 +695,16 @@ gate__ignore_ledger_len() {
 # spawn. One definition and two readers — the share below, and the fail-closed
 # check that a register never got *shorter* than it — because the same number
 # answers both, and two copies of it would drift the day one of them is corrected.
-gate__ignore_mark() {
+gate__frontier_mark() {
   local seen
-  seen="$(cat "${RALPH_IGNORE_PIN:-}/ledger-seen" 2>/dev/null || printf '0')"
+  seen="$(cat "${RALPH_FRONTIER_PIN:-}/ledger-seen" 2>/dev/null || printf '0')"
   case "$seen" in '' | *[!0-9]*) seen=0 ;; esac
   printf '%s\n' "$seen"
 }
 
 # The rules as they stood, kept as a witness repository — a git directory of its
 # own carrying copies of every rule source and no project files at all. Printed as
-# a path; the loop holds it in RALPH_IGNORE_PIN for the length of one iteration
+# a path; the loop holds it in RALPH_FRONTIER_PIN for the length of one iteration
 # and takes a fresh one for the next.
 #
 # A witness repository rather than a parsed copy of the rules, because gitignore
@@ -674,7 +718,7 @@ gate__ignore_mark() {
 # diffs trees can put anything. A session that reaches into `$TMPDIR` is the same
 # limit as one that reaches into `.git/`: out of reach of the loop, and the reason
 # the pin is refused rather than ignored when it cannot be read.
-gate_ignore_pin() {
+gate_frontier_pin() {
   local pin rules file dir
   pin="$(mktemp -d "${TMPDIR:-/tmp}/ralph-ignore.XXXXXX")" || return 1
   rules="$pin/rules"
@@ -710,23 +754,29 @@ RULES
   # would record whatever a sibling's session had written a second earlier.
   mkdir -p "$rules/.git/info" || true
   : >"$rules/.git/info/exclude"
-  gate__ignore_common_copy exclude "$rules/.git/info/exclude" \
+  gate__frontier_common_copy exclude "$rules/.git/info/exclude" \
     "$(gate__ignore_exclude_path)"
   : >"$pin/global"
-  gate__ignore_common_copy global "$pin/global" "$(gate__ignore_global_path)"
+  gate__frontier_common_copy global "$pin/global" "$(gate__ignore_global_path)"
+  # And the attributes file the restore puts back ([46]). Beside the pin rather
+  # than inside the witness repository: `git check-ignore` is what that repository
+  # exists to answer, and an attributes file would change nothing it says.
+  : >"$pin/attributes"
+  gate__frontier_common_copy attributes "$pin/attributes" \
+    "$(gate__config_attributes_path)"
   # Set locally, so the machine's own `core.excludesFile` — from the user's global
   # config or from the default `~/.config/git/ignore` — cannot leak into the
   # witness's answers. What the project's rules said about it is pinned above.
   git -C "$rules" config core.excludesFile "$pin/global" >/dev/null 2>&1 || true
 
-  if ! gate__ignore_pin_manifest >"$pin/manifest"; then
+  if ! gate__frontier_pin_manifest >"$pin/manifest"; then
     rm -rf "$pin"
     return 1
   fi
   # Where this iteration starts reading the run's register of movements. Taken
   # here, in the pilot and before the iteration is forked, so that "recorded after
   # my mark" is "recorded while I was in flight".
-  gate__ignore_ledger_len >"$pin/ledger-seen"
+  gate__frontier_ledger_len >"$pin/ledger-seen"
   printf '%s\n' "$pin"
 }
 
@@ -737,22 +787,36 @@ gate__ignore_tree_rules() {
   git ls-files --cached --others --exclude-standard -- '*.gitignore' 2>/dev/null || true
 }
 
-# The **common** git directory and not this working tree's private one, which is
-# the same distinction `ralph_tree_lock_path` makes in the other direction ([22]).
-# A linked worktree answers `--git-dir` with `.git/worktrees/<name>/`, and git
-# reads no ignore rules from there: `info/` is one of the paths every worktree
-# shares, so the file that decides what a check can see is the common one.
+# One file under the git directory's `info/`, by name — the **common** git
+# directory and not this working tree's private one, which is the same distinction
+# `ralph_tree_lock_path` makes in the other direction ([22]). A linked worktree
+# answers `--git-dir` with `.git/worktrees/<name>/`, and git reads neither ignore
+# rules nor attributes from there: `info/` is one of the paths every worktree
+# shares, so the files that decide what a check can see — and, since [46], what git
+# transforms on its way into a worktree — are the common ones.
 #
 # Probed on 06/08/2026, because reading it wrong is silent in exactly the way this
 # section exists to refuse: a rule written into the common `info/exclude` hides a
 # file inside a linked worktree, while a pin that had looked in the private
 # directory would have recorded no local excludes at all — and the snapshot would
 # then go on being taken through whatever a session had written there ([13]).
-gate__ignore_exclude_path() {
+#
+# Two callers rather than one since [46], which is why it takes a name: the same
+# reading mistake would be silent in the same way for `info/attributes`, and two
+# copies of this would be two chances to make it.
+gate__frontier_info_path() {
   local gitdir
   gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
   [ -n "$gitdir" ] || return 0
-  printf '%s/info/exclude\n' "$gitdir"
+  printf '%s/info/%s\n' "$gitdir" "$1"
+}
+
+gate__ignore_exclude_path() {
+  gate__frontier_info_path exclude
+}
+
+gate__config_attributes_path() {
+  gate__frontier_info_path attributes
 }
 
 # The excludes file outside the repository: whatever `core.excludesFile` resolves
@@ -768,13 +832,27 @@ gate__ignore_global_path() {
   printf '%s\n' "$value"
 }
 
-# What the rules are right now, one line per source: kind, name, digest. The three
-# kinds are the three answers to "may a session write this, and can the run put it
-# back" — gate_ignore_frontier is where that is spelled out.
+# What the frontier is right now, one line per source: kind, name, digest. The four
+# kinds are the four answers to "may a session write this, what does it decide, and
+# can the run put it back" — gate_frontier is where that is spelled out.
 #
 # A missing file digests to `-`, which is what makes an appearing or vanishing
 # rule file a movement like any other.
-gate__ignore_manifest() {
+#
+# In three producers rather than one, and the split is the one the witnesses make:
+# the tree half is per-worktree and pinned per iteration, the other two are shared
+# by every iteration in flight and pinned per run ([41], [46]). A caller that wants
+# one of them must not pay for the others — the config half asks git for a list of
+# keys, and `gate__frontier_pin_manifest` would otherwise buy it once per iteration
+# to throw it away.
+gate__frontier_manifest() {
+  gate__ignore_tree_manifest
+  gate__ignore_shared_manifest
+  gate__config_manifest
+  return 0
+}
+
+gate__ignore_tree_manifest() {
   local file
   while IFS= read -r file; do
     [ -n "$file" ] || continue
@@ -782,6 +860,11 @@ gate__ignore_manifest() {
   done <<RULES
 $(gate__ignore_tree_rules)
 RULES
+  return 0
+}
+
+gate__ignore_shared_manifest() {
+  local file
   printf 'dir\t%s\t%s\n' '.git/info/exclude' \
     "$(gate__digest "$(gate__ignore_exclude_path)")"
   printf 'dir\t%s\t%s\n' 'core.excludesFile' \
@@ -799,6 +882,225 @@ gate__digest() {
   cksum <"$1" | awk '{ print $1 "." $2 }'
 }
 
+# ── the configuration that decides what git runs ([46]) ──────────────────────
+#
+# One extended regular expression per line, matched against the **effective**
+# configuration — `git config --list` answers with system, global, local, worktree
+# and every `include` already resolved, which is what the criterion is about: not
+# "what is in this file" but "what will git do".
+#
+# The criterion, and the list is derived from it rather than from the three keys a
+# probe happened to try ([31]): **what a session can put in a git configuration
+# source that makes git execute a program, or transform a content on its way into
+# or out of the object database.** Section and key come back lowercased and the
+# subsection verbatim, which is why the patterns are lowercase and the middle is
+# `.*`.
+#
+# What is deliberately **not** here, each with its reason, because a list with a
+# silent omission is the defect this ticket is about:
+#
+#   `alias.*`             a `!command` alias is a program, and git will not run one
+#                         for any name it has a built-in for. Every git invocation
+#                         in this pack is a built-in subcommand, so this cannot
+#                         fire — a property of *git*, which is what makes it a
+#                         bound and not a bet on this pack's current call sites.
+#   `core.excludesFile`   watched one mechanism up, by [30], and restored there.
+#                         Two owners restoring one key would put it back twice and
+#                         charge for it twice.
+#   `core.worktree`,      they decide what git *addresses* — which tree, which
+#   `core.bare`           objects — and not what it runs or transforms. A different
+#                         question, with no owner, and said here rather than left
+#                         to look like an oversight.
+#
+# And two that are here even though the probe of 26/08/2026 measured them *not*
+# firing, which is the same rule read the other way: `core.hooksPath` does nothing
+# today because `failures_make_durable` commits with plumbing on purpose, and
+# `diff.external` does nothing because every diff this pack takes is
+# `--name-only` or `--name-status`. Both of those are facts about this pack's
+# current call sites and not about git, so leaving them out would make the list
+# derived from the code instead of from the criterion — and the ticket that
+# switched one `git commit-tree` for a `git commit` would reopen the hole with
+# nothing to notice it.
+gate_config_keys() {
+  printf '%s\n' \
+    'core\.fsmonitor' \
+    'core\.hookspath' \
+    'core\.sshcommand' \
+    'core\.gitproxy' \
+    'core\.alternaterefscommand' \
+    'core\.askpass' \
+    'core\.editor' \
+    'core\.pager' \
+    'sequence\.editor' \
+    'pager\..*' \
+    'credential\.helper' \
+    'credential\..*\.helper' \
+    'diff\.external' \
+    'diff\..*\.command' \
+    'diff\..*\.textconv' \
+    'merge\..*\.driver' \
+    'filter\..*\.clean' \
+    'filter\..*\.smudge' \
+    'filter\..*\.process' \
+    'gpg\.program' \
+    'gpg\..*\.program' \
+    'commit\.gpgsign' \
+    'tag\.gpgsign' \
+    'trailer\..*\.command' \
+    'trailer\..*\.cmd' \
+    'uploadpack\.packobjectshook' \
+    'remote\..*\.uploadpack' \
+    'remote\..*\.receivepack' \
+    'remote\..*\.proxy' \
+    'difftool\..*\.cmd' \
+    'mergetool\..*\.cmd' \
+    'guitool\..*\.cmd' \
+    'browser\..*\.cmd' \
+    'web\.browser' \
+    'help\.browser' \
+    'sendemail\.smtpserver' \
+    'sendemail\..*\.smtpserver' \
+    'init\.templatedir' \
+    'protocol\..*\.allow' \
+    'ssh\.variant' \
+    'core\.autocrlf' \
+    'core\.eol' \
+    'core\.safecrlf' \
+    'core\.symlinks' \
+    'core\.attributesfile' \
+    'core\.quotepath' \
+    'core\.precomposeunicode' \
+    'core\.protectntfs' \
+    'core\.protecthfs' \
+    'extensions\.worktreeconfig' \
+    'include\.path' \
+    'includeif\..*\.path'
+  return 0
+}
+
+# The effective keys that match, deduplicated: a key set in two sources — or a
+# multi-valued one — is listed once per value by git and is one source here.
+#
+# The match is caught in a variable rather than piped straight through, and that is
+# the pack running under `set -o pipefail` and not a preference: the ordinary case
+# here is a project where **none** of these keys is set, so the `grep` exits 1, so
+# the pipeline does, and a function that let that status escape would be a
+# fail-open dressed as an empty answer — exactly the shape `gate__frontier_share`
+# has a paragraph about one screen down.
+gate__config_names() {
+  local re names
+  re="$(gate_config_keys |
+    awk 'NR == 1 { printf "%s", $0; next } { printf "|%s", $0 } END { printf "\n" }')"
+  [ -n "$re" ] || return 0
+  names="$({ git config --list --name-only 2>/dev/null || true; } |
+    LC_ALL=C grep -E "^($re)\$" || true)"
+  [ -n "$names" ] || return 0
+  printf '%s\n' "$names" | LC_ALL=C sort -u
+  return 0
+}
+
+# What git would do with that key, as one number. `--get-all` and not `--get`: a
+# multi-valued key is a list, and a session that appends a second `filter.x.smudge`
+# has moved the frontier whatever the first one says.
+gate__config_digest() {
+  local value
+  value="$({ git config --get-all "$1" 2>/dev/null || true; })"
+  printf '%s' "$value" | cksum | awk '{ print $1 "." $2 }'
+}
+
+# The name a key gets in the manifest when its own name cannot travel in one.
+#
+# A subsection may hold any byte but a newline, a tab included, and the manifest is
+# tab-separated — so `filter.a<TAB>b.smudge` would be read as a name of `filter.a`
+# and restored on the wrong key. They are folded into one line instead, digested
+# name and value together so that any change to any of them still moves it, and
+# `gate__config_restore` re-derives the real names rather than reading them back
+# out of a field that cannot hold them ([39]'s posture on a path git prints quoted:
+# name it, and never pretend to have addressed it).
+GATE_CONFIG_ODD='a git configuration key whose name carries a control character'
+
+gate__config_manifest() {
+  local tab cr name odd=''
+  tab="$(printf '\t')"
+  cr="$(printf '\r')"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    case "$name" in
+      *"$tab"* | *"$cr"*)
+        odd="$odd$name=$({ git config --get-all "$name" 2>/dev/null || true; })
+"
+        continue
+        ;;
+    esac
+    printf 'cfg\t%s\t%s\n' "$name" "$(gate__config_digest "$name")"
+  done <<NAMES
+$(gate__config_names)
+NAMES
+  [ -z "$odd" ] ||
+    printf 'cfg\t%s\t%s\n' "$GATE_CONFIG_ODD" \
+      "$(printf '%s' "$odd" | cksum | awk '{ print $1 "." $2 }')"
+  # And the file that arms those filters and drivers on a path. In the same kind
+  # because it answers the same question — it decides what git hands a worktree —
+  # and it is put back the same way, from the run's witness.
+  printf 'cfg\t%s\t%s\n' '.git/info/attributes' \
+    "$(gate__digest "$(gate__config_attributes_path)")"
+  return 0
+}
+
+# One configuration source back where the pin found it, and whether it is really
+# back — the same attempt-then-verify `gate__frontier_restore` makes for the ignore
+# sources, and for a sharper version of the same reason: `git config --unset-all`
+# writes *this repository's* config, so a value a session put in the operator's
+# `~/.gitconfig` survives it untouched and a restore that only checked its own exit
+# status would be a lie on exactly the door [15] found open.
+#
+# Nothing is written outside the repository, here as everywhere in this pack. What
+# that costs is stated in the finding rather than hidden: a key that still answers
+# with the session's value after the unset is named as one this run could not put
+# back, and the iteration stays red for as long as it does.
+gate__config_restore() {
+  local name="$1" pinned="$2" tab cr key target
+  case "$name" in
+    '.git/info/attributes')
+      target="$(gate__config_attributes_path)"
+      [ -n "$target" ] || return 1
+      if [ "$pinned" = '-' ]; then
+        rm -f "$target" 2>/dev/null || true
+      else
+        mkdir -p "$(dirname "$target")" 2>/dev/null || true
+        cp "${RALPH_FRONTIER_PIN}/attributes" "$target" 2>/dev/null || true
+      fi
+      [ "$(gate__digest "$(gate__config_attributes_path)")" = "$pinned" ]
+      return
+      ;;
+    "$GATE_CONFIG_ODD")
+      # The run was handed keys of this shape already: nothing is done and nothing
+      # is claimed. Unsetting them would take away the operator's own configuration
+      # to answer a question about the session's, and this line cannot tell the two
+      # apart — the names it would need are the ones that do not fit in the field.
+      [ -z "$pinned" ] || return 1
+      # None at the pin, so every one of them appeared under this run. Asked for
+      # again rather than read back out of a field that cannot hold them.
+      tab="$(printf '\t')"
+      cr="$(printf '\r')"
+      while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        case "$key" in
+          *"$tab"* | *"$cr"*)
+            git config --unset-all "$key" >/dev/null 2>&1 || true
+            ;;
+        esac
+      done <<NAMES
+$(gate__config_names)
+NAMES
+      [ -z "$(gate__frontier_current "$GATE_CONFIG_ODD")" ]
+      return
+      ;;
+  esac
+  git config --unset-all "$name" >/dev/null 2>&1 || true
+  [ "$(gate__frontier_current "$name")" = "$pinned" ]
+}
+
 # A pin that was set and cannot be read. Refused rather than ignored: the point of
 # the pin is that what the checks can see does not depend on what the session left
 # behind, so a missing one is a control that cannot see.
@@ -809,13 +1111,13 @@ gate__digest() {
 # reach the other — and the fallbacks around them are "read the live sources",
 # which is a quiet return to the behaviour this ticket removed. Destroying the pin
 # stops the night; destroying these would have cost nothing.
-gate__ignore_pin_broken() {
-  local pin="${RALPH_IGNORE_PIN:-}" common="${RALPH_IGNORE_COMMON:-}" seen total
+gate__frontier_pin_broken() {
+  local pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}" seen total
   [ -n "$pin" ] || return 1
   [ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ] || return 0
   [ -n "$common" ] || return 1
-  [ -f "$common/manifest" ] && [ -f "$common/exclude" ] && [ -f "$common/ledger" ] ||
-    return 0
+  [ -f "$common/manifest" ] && [ -f "$common/exclude" ] &&
+    [ -f "$common/attributes" ] && [ -f "$common/ledger" ] || return 0
 
   # A register that got shorter is one somebody rewrote: it is append-only by
   # construction, so a length below this iteration's own mark is not a state this
@@ -823,7 +1125,7 @@ gate__ignore_pin_broken() {
   # — a truncation back to exactly an iteration's mark erases a movement that
   # iteration had not read yet, and nothing here can tell that from a night in
   # which nothing moved.
-  seen="$(gate__ignore_mark)"
+  seen="$(gate__frontier_mark)"
   total="$(awk 'END { print NR + 0 }' "$common/ledger")"
   [ "$total" -lt "$seen" ] && return 0
   return 1
@@ -836,33 +1138,41 @@ gate__ignore_pin_broken() {
 # The symmetric difference of two manifests: a line present in both appears twice
 # and `uniq -u` drops it. Names are unique inside one manifest, so nothing else
 # can pair up.
-gate_ignore_moved() {
-  local pin="${RALPH_IGNORE_PIN:-}" moved
+gate_frontier_moved() {
+  local pin="${RALPH_FRONTIER_PIN:-}" moved
   [ -n "$pin" ] || return 1
   [ -f "$pin/manifest" ] || return 1
-  moved="$( { gate__ignore_manifest; cat "$pin/manifest"; } |
+  moved="$( { gate__frontier_manifest; cat "$pin/manifest"; } |
     LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
   [ -n "$moved" ] || return 1
   printf '%s\n' "$moved"
 }
 
-gate__ignore_pinned() {
+gate__frontier_pinned() {
   awk -F'\t' -v name="$1" '$2 == name { print $3 }' \
-    "${RALPH_IGNORE_PIN:-/dev/null}/manifest" 2>/dev/null || true
+    "${RALPH_FRONTIER_PIN:-/dev/null}/manifest" 2>/dev/null || true
 }
 
-gate__ignore_current() {
-  { gate__ignore_manifest || true; } |
+gate__frontier_current() {
+  { gate__frontier_manifest || true; } |
     awk -F'\t' -v name="$1" '$2 == name { print $3 }'
 }
 
-# Put one rule source back where the pin found it, and answer whether it is really
+# Put one source back where the pin found it, and answer whether it is really
 # back. Attempt and then verify, because the attempt can succeed on the wrong
 # level: `git config --unset` writes the repository's config, so a value a session
 # put in the *user's* config would survive it and the restore would be a lie.
-gate__ignore_restore() {
-  local name="$1" pinned target
-  pinned="$(gate__ignore_pinned "$name")"
+#
+# Dispatched on the **kind** and not on the name since [46]: a `cfg` source is a
+# configuration key whose name a session chooses, so a `case` on the name alone
+# would be a case a session gets to steer.
+gate__frontier_restore() {
+  local kind="$1" name="$2" pinned target
+  pinned="$(gate__frontier_pinned "$name")"
+  if [ "$kind" = cfg ]; then
+    gate__config_restore "$name" "$pinned"
+    return
+  fi
   case "$name" in
     'core.excludesFile')
       if [ "$pinned" = '-' ]; then
@@ -881,12 +1191,12 @@ gate__ignore_restore() {
         # otherwise leave a restore that reports success and put nothing back —
         # which the verification below would catch, but as a mystery.
         mkdir -p "$(dirname "$target")" 2>/dev/null || true
-        cp "${RALPH_IGNORE_PIN}/rules/.git/info/exclude" "$target" 2>/dev/null || true
+        cp "${RALPH_FRONTIER_PIN}/rules/.git/info/exclude" "$target" 2>/dev/null || true
       fi
       ;;
     *) return 1 ;;
   esac
-  [ "$(gate__ignore_current "$name")" = "$pinned" ]
+  [ "$(gate__frontier_current "$name")" = "$pinned" ]
 }
 
 # The frontier this run has seen move while this iteration was in flight, put back
@@ -920,7 +1230,7 @@ gate__ignore_restore() {
 # rather than this one. It would also hand every session a one-line way to take
 # the run's concurrency away for the rest of the night.
 #
-# Three kinds, and the difference is the whole of the design:
+# Four kinds, and the difference is the whole of the design:
 #
 #   tree  a `.gitignore` of the working tree. Ordinary project work — a ticket is
 #         allowed to add an ignore rule and [19]'s installer writes one — so
@@ -941,6 +1251,19 @@ gate__ignore_restore() {
 #         there is the host's isolation ([24]). The iteration that moved it is
 #         still judged through the pin; a later one is not, and that residue is
 #         written down rather than papered over.
+#   cfg   a git configuration key that makes git run a program or transform a
+#         content, and `.git/info/attributes`, which arms those on a path ([46]).
+#         Not about seeing at all: `core.fsmonitor` is a command git executes on
+#         every index refresh — 252 of them on a probed run of two iterations, in
+#         the *pilot's* process tree — and a `filter.<n>.smudge` rewrites what git
+#         writes into every worktree the run makes afterwards. Red on the same
+#         grounds as `dir` and put back the same way, with one difference that is
+#         stated in the finding rather than assumed: the restore is an `unset` in
+#         **this repository's** config, so a value that came from the operator's
+#         `~/.gitconfig`, from the machine's, or from a key a session *removed* is
+#         named as one this run could not put back — and the iteration, and every
+#         iteration of this run after it, stays red over it. Fail-closed and loud,
+#         which is the same residue `host` has one line up.
 #
 # In two passes, and that is the lesson of [29] rather than a shape: a finding has
 # to be net of what the run *did* put back. `core.excludesFile` names the file the
@@ -949,49 +1272,70 @@ gate__ignore_restore() {
 # path outside the repository as unrecoverable a line after restoring the key that
 # had brought it into play. Probed on 03/08/2026: the second finding named a file
 # no session had touched.
-gate_ignore_frontier() {
-  local mine share took=0
-  [ -n "${RALPH_IGNORE_PIN:-}" ] || return 0
-
-  # Under a guard in the common git directory, for the reason the fold takes one
-  # ([13]): the two `dir` sources are shared by every worktree, so two iterations
-  # detecting and restoring at once would each write over the other's attempt and
-  # each record a movement for one widening. Under it, the first one through puts
-  # the file back and the second finds nothing moved — which is what makes "the
-  # restore happens once" a fact rather than an intention.
-  #
-  # A guard that cannot be taken is not a reason to skip the restore: the target is
-  # a fixed value from the run's witness, so the worst an unguarded race costs is
-  # the same movement recorded twice, and skipping would cost the night. Released
-  # only if it was taken — `state_guard_release` matches on `$$`, which a subshell
-  # of the pilot shares with its siblings, so releasing a guard we never held would
-  # take it away from the iteration that does.
-  if concurrency_frontier_take; then took=1; fi
-  mine="$(gate__ignore_detect)" || true
-  gate__ignore_record "$mine" || true
-  if [ "$took" = 1 ]; then concurrency_frontier_release || true; fi
-
-  share="$(gate__ignore_share "$mine")" || true
+gate_frontier() {
+  local mine share
+  [ -n "${RALPH_FRONTIER_PIN:-}" ] || return 0
+  mine="$(gate_frontier_put_back)"
+  share="$(gate__frontier_share "$mine")" || true
   [ -n "$share" ] || return 0
   printf '%s\n' "$share"
   return 1
 }
 
+# Detect, put back, record — and stop there, without reading this iteration's
+# share of the register.
+#
+# Public because it has a second caller, and the second caller is the point
+# ([46]). The three sites [32] wired are all *after* the tracker guard, and the
+# tracker guard reads and writes files through whatever git has been configured to
+# do to them: `failures_tracker_tree` stages `issues/` — so a `clean` filter
+# rewrites every ticket on the way into the tree it compares — and its
+# `checkout-index` writes them back out through the matching `smudge`. A session
+# that installed a filter and left could have the guard rewrite the whole tracker
+# on disk, durably, before anything got as far as noticing. So the loop puts the
+# frontier back the moment its session returns, and the gate's own call then finds
+# nothing moved and reads the movement out of the register instead — which is what
+# the register is for.
+#
+# Under a guard in the common git directory, for the reason the fold takes one
+# ([13]): every source but `tree` is shared by every worktree, so two iterations
+# detecting and restoring at once would each write over the other's attempt and
+# each record a movement for one widening. Under it, the first one through puts
+# the file back and the second finds nothing moved — which is what makes "the
+# restore happens once" a fact rather than an intention.
+#
+# A guard that cannot be taken is not a reason to skip the restore: the target is
+# a fixed value from the run's witness, so the worst an unguarded race costs is
+# the same movement recorded twice, and skipping would cost the night. Released
+# only if it was taken — `state_guard_release` matches on `$$`, which a subshell
+# of the pilot shares with its siblings, so releasing a guard we never held would
+# take it away from the iteration that does.
+gate_frontier_put_back() {
+  local mine took=0
+  [ -n "${RALPH_FRONTIER_PIN:-}" ] || return 0
+  if concurrency_frontier_take; then took=1; fi
+  mine="$(gate__frontier_detect)" || true
+  gate__frontier_record "$mine" || true
+  if [ "$took" = 1 ]; then concurrency_frontier_release || true; fi
+  [ -z "$mine" ] || printf '%s\n' "$mine"
+  return 0
+}
+
 # What moved since this iteration's witness, put back, and phrased. The detection
 # proper: everything above it is about who gets told.
-gate__ignore_detect() {
+gate__frontier_detect() {
   local kind name rc=0
 
   while IFS="$(printf '\t')" read -r kind name; do
     [ "$kind" = dir ] && [ -n "$name" ] || continue
-    if gate__ignore_restore "$name"; then
+    if gate__frontier_restore "$kind" "$name"; then
       printf 'moved the ignore frontier in %s, which decides what every check here can see — no write-surface may cover it (put back)\n' "$name"
     else
       printf 'moved the ignore frontier in %s, which decides what every check here can see — and this run could not put it back\n' "$name"
     fi
     rc=1
   done <<INSIDE
-$( { gate_ignore_moved || true; } )
+$( { gate_frontier_moved || true; } )
 INSIDE
 
   while IFS="$(printf '\t')" read -r kind name; do
@@ -999,8 +1343,24 @@ INSIDE
     printf 'moved the ignore frontier in %s, outside the repository — no write-surface may cover it, and nothing here can put it back\n' "$name"
     rc=1
   done <<OUTSIDE
-$( { gate_ignore_moved || true; } )
+$( { gate_frontier_moved || true; } )
 OUTSIDE
+
+  # And the half that is not about seeing at all ([46]): what git *runs*, and what
+  # it transforms on the way into a worktree. Said in its own words rather than
+  # under the sentence above, because a human who reads "the ignore frontier" about
+  # `core.fsmonitor` has been told the wrong thing about what just happened.
+  while IFS="$(printf '\t')" read -r kind name; do
+    [ "$kind" = cfg ] && [ -n "$name" ] || continue
+    if gate__frontier_restore "$kind" "$name"; then
+      printf 'moved %s, which decides what git executes and what it hands the next session — no write-surface may cover it (put back)\n' "$name"
+    else
+      printf 'moved %s, which decides what git executes and what it hands the next session — and this run could not put it back: what answers for it now is not written in this repository, and nothing here writes outside it\n' "$name"
+    fi
+    rc=1
+  done <<EXEC
+$( { gate_frontier_moved || true; } )
+EXEC
   return "$rc"
 }
 
@@ -1012,13 +1372,38 @@ OUTSIDE
 # Appended and never rewritten: the register is the one trace of a widening that
 # outlives the restore, so a writer that could shorten it would hand a session the
 # eraser this whole section exists to take away.
-gate__ignore_record() {
-  local findings="$1" common="${RALPH_IGNORE_COMMON:-}" line
+gate__frontier_record() {
+  local findings="$1" common="${RALPH_FRONTIER_COMMON:-}" line
+  local tag="${RALPH_FRONTIER_PIN:-}" tab nl seen
   [ -n "$common" ] && [ -f "$common/ledger" ] || return 0
   [ -n "$findings" ] || return 0
+
+  # Once per movement per iteration, and it is the register that says so rather
+  # than a convention about call sites ([46] on [41]). [41] wrote "one caller per
+  # iteration, whichever path it takes", and `failures_handle` keeps a flag to
+  # honour it — because a movement **no restore can undo** is re-detected by every
+  # look, so a second look recorded it a second time and billed every sibling in
+  # flight for it twice. That invariant broke the moment the loop started putting
+  # the frontier back before the tracker guard: two calls, one iteration.
+  #
+  # So the rule moves into the thing it is about. A line this pin has already
+  # recorded and **not yet read** is not appended again. Scoped to the unread part
+  # on purpose: after `gate_run` has read its share the mark has moved past it, so
+  # the same sentence recorded later is a genuinely new event — which is exactly
+  # the re-slice's planning session moving the same source a second time ([32]),
+  # and dropping that one would under-report a movement nothing else names.
+  tab="$(printf '\t')"
+  nl='
+'
+  seen="$nl$(tail -n "+$(($(gate__frontier_mark) + 1))" "$common/ledger" 2>/dev/null ||
+    true)$nl"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    printf '%s\t%s\n' "${RALPH_IGNORE_PIN:-}" "$line" >>"$common/ledger"
+    case "$seen" in
+      *"$nl$tag$tab$line$nl"*) continue ;;
+    esac
+    printf '%s\t%s\n' "$tag" "$line" >>"$common/ledger"
+    seen="$seen$tag$tab$line$nl"
   done <<RECORD
 $findings
 RECORD
@@ -1033,8 +1418,8 @@ RECORD
 #
 # With no register — `gate_*` driven outside a run — an iteration is charged for
 # what it saw itself, which is what this did before [41].
-gate__ignore_share() {
-  local mine="$1" pin="${RALPH_IGNORE_PIN:-}" common="${RALPH_IGNORE_COMMON:-}"
+gate__frontier_share() {
+  local mine="$1" pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}"
   local ledger seen total tag finding foreign=0
 
   ledger="$common/ledger"
@@ -1047,7 +1432,7 @@ gate__ignore_share() {
     return 0
   fi
 
-  seen="$(gate__ignore_mark)"
+  seen="$(gate__frontier_mark)"
   total="$(awk 'END { print NR + 0 }' "$ledger")"
   [ "$total" -gt "$seen" ] || return 0
   printf '%s\n' "$total" >"$pin/ledger-seen" 2>/dev/null || true
@@ -1082,7 +1467,7 @@ LEDGER
 # it — rather than one message with a clause nobody checks.
 gate_moved_tree_rules() {
   local moved
-  moved="$( { gate_ignore_moved || true; } |
+  moved="$( { gate_frontier_moved || true; } |
     awk -F'\t' '$1 == "tree" { print $2 }' | tr '\n' ' ' | sed 's/ *$//')"
   [ -n "$moved" ] || return 1
   printf '%s\n' "$moved"
@@ -1096,10 +1481,10 @@ gate_moved_tree_rules() {
 # iteration: the manifest costs a `git ls-files` and a handful of digests, where
 # walking the ignored zone costs the whole working tree.
 gate_newly_hidden() {
-  local pin="${RALPH_IGNORE_PIN:-}" listing hidden path fence
+  local pin="${RALPH_FRONTIER_PIN:-}" listing hidden path fence
   [ -n "$pin" ] || return 0
-  if gate__ignore_pin_broken; then return 1; fi
-  gate_ignore_moved >/dev/null || return 0
+  if gate__frontier_pin_broken; then return 1; fi
+  gate_frontier_moved >/dev/null || return 0
 
   listing="$(git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
     listing=""
@@ -1649,8 +2034,8 @@ gate__scope_guard() {
   # reason: it is the harness's own visibility, so no write-surface may cover it,
   # and it is retryable because a fresh session starts from rules the gate has
   # already put back.
-  if [ -n "${RALPH_GATE_IGNORE:-}" ]; then
-    printf '%s\n' "$RALPH_GATE_IGNORE"
+  if [ -n "${RALPH_GATE_FRONTIER:-}" ]; then
+    printf '%s\n' "$RALPH_GATE_FRONTIER"
     class=internal
     rc=1
   fi
@@ -2158,7 +2543,7 @@ gate_run() {
   RALPH_GATE_VERDICTS=""
   RALPH_GATE_FAILED=""
   RALPH_GATE_SCOPE_CLASS=""
-  RALPH_GATE_IGNORE=""
+  RALPH_GATE_FRONTIER=""
   RALPH_GATE_TREE=""
   RALPH_GATE_NOTHING_DELIVERED=0
   RALPH_GATE_QUOTA=""
@@ -2173,7 +2558,7 @@ gate_run() {
   # not the rule is still in place. What the restore buys is the iteration *after*
   # this one — without it, the widened frontier is what the next pin records, and a
   # single red iteration would have bought a whole night of blindness ([30]).
-  RALPH_GATE_IGNORE="$(gate_ignore_frontier)" || true
+  RALPH_GATE_FRONTIER="$(gate_frontier)" || true
   # Said to whoever comes after, and it has one reader: the failure policy asks
   # again on the paths where nobody restored, and reads that list off its own
   # classification ([32]). Since [08] one class on that list — `budget` — can also
@@ -2212,7 +2597,7 @@ gate_run() {
     rc=1
     gate__say "$ticket: nothing was delivered: this iteration changed no file this gate can see, so there is nothing here to judge and nothing to commit"
     # And what the frontier of that visibility did, which no branch is left to
-    # report on this path. `gate_ignore_frontier` has already put the rules back
+    # report on this path. `gate_frontier` has already put the rules back
     # above; its findings normally travel on the scope-guard's output, and a
     # session that moved an ignore rule *and* wrote nothing would otherwise leave
     # the one line naming it unprinted ([30]: a zone nobody guards gets named
@@ -2221,7 +2606,7 @@ gate_run() {
       [ -n "$finding" ] || continue
       gate__say "$ticket: $finding"
     done <<IGNORE
-${RALPH_GATE_IGNORE:-}
+${RALPH_GATE_FRONTIER:-}
 IGNORE
   else
     gate__start "$dir" tests bash -c "$TEST_CMD"

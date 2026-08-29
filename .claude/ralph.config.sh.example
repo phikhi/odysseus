@@ -462,7 +462,11 @@ RETRO_BRIEF_MAX_LINES="${RETRO_BRIEF_MAX_LINES:-120}"
 #
 # Off does **not** switch off the witness on what a fresh session loads: that one
 # is not a tier, it is the line that says whether a capability appeared under
-# this run at all, and it is on every receipt.
+# this run at all. Where it lands, stated exactly, because the sentence that used
+# to be here said "on every receipt" and that was false: a receipt exists only for
+# an iteration the loop finished with, so an iteration ending on a fresh retry
+# produced none. It lands in `run.log` on **every** iteration where it fires — one
+# line naming the surface — and on the receipt as well wherever there is one.
 CAPABILITY="${CAPABILITY:-on}"
 
 # How many times the retro has to ask for the same capability, in one run, before

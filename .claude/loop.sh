@@ -436,6 +436,7 @@ loop__iterate() {
   local ticket="$1" slot="$2" tree="$3" start="$4" provisioned="${5:-0}"
   local outfile base pre seen issues rc turns cost tokens outcome
   local tracker_written changed commit mark emit attempt
+  local drift_subject drift_outcome drift_message
   local RALPH_ROLLBACK_FAILED=0
   # Declared here rather than left to the failure policy's own assignment, and the
   # locality is the point: these belong to *this* iteration, and with two in flight
@@ -573,6 +574,21 @@ loop__iterate() {
   if loop__orphaned "$ticket" "$slot"; then
     return 0
   fi
+
+  # Before anything below reads or writes a file *through git* ([46]). The tracker
+  # guard one line down stages `issues/` to compare it and checks it back out to
+  # restore it, and both of those go through whatever `filter.<n>.clean` and
+  # `.smudge` the configuration names — so a session that installed one could have
+  # the guard rewrite every ticket on disk, permanently, before any check had
+  # looked at the configuration at all. The three sites [32] wired are all further
+  # down; this one puts the frontier back as soon as the session is gone, and the
+  # gate's own call then finds nothing moved and reads the movement out of the
+  # run's register, which is what the register exists for.
+  #
+  # After the orphan guard above, deliberately: an iteration whose run is dead
+  # writes nothing, here as everywhere ([44]), and a killed run leaving the
+  # frontier where its session left it is the residue [30] already carries.
+  gate_frontier_put_back >/dev/null || true
 
   # Before the gate reads a single field out of the tracker: the write-surface
   # it is about to judge against is a line in a file the session could just have
@@ -810,7 +826,22 @@ loop__iterate() {
   # not a receipt is emitted, and on the red path as much as the green one — a
   # session that wrote a hook into the operator's home is exactly the session
   # whose gate went red.
-  capability_drift "${RALPH_RETRO_STATE:-}"
+  #
+  # **And it has to reach a document on every one of them, which is what it did
+  # not do** ([46] on [15]). The receipt below is emitted on four routes only, so
+  # an iteration that ends on a fresh retry produced none — and when the run
+  # *stops* there, no later iteration was coming to produce one either. The other
+  # end of the channel is the journal, and this shell cannot write it: `run.log`
+  # belongs to the pilot. So the lines cross on the slot, the way the outcome and
+  # the failure action do — bookkeeping and never a decision ([13]) — and
+  # `loop__finish` puts them on the file a human opens in the morning.
+  while IFS="$(printf '\t')" read -r drift_subject drift_outcome drift_message; do
+    [ -n "$drift_subject" ] || continue
+    loop_log "$drift_message"
+    printf '%s\t%s\n' "$drift_subject" "$drift_outcome" >>"$slot/drift"
+  done <<DRIFT
+$(capability_drift "${RALPH_RETRO_STATE:-}")
+DRIFT
 
   # The audit receipt, on the two iterations that *end* a ticket and on no other.
   #
@@ -1031,7 +1062,7 @@ loop__start() {
   loop_log "iteration $iteration: $ticket"
   # A session is about to run, so the budget's "twice in a row" is over.
   budget_paused=0
-  RALPH_IGNORE_PIN="$pin"
+  RALPH_FRONTIER_PIN="$pin"
   loop__iterate "$ticket" "$slot" "$tree" "$tip" "${provisioned:-0}" &
   LOOP_SLOTS="$LOOP_SLOTS$!	$ticket	$slot	$tree	$pin
 "
@@ -1086,6 +1117,7 @@ SLOTS
 # copy, so this may never be called from a subshell or a pipeline.
 loop__finish() {
   local ticket="$1" slot="$2" tree="$3" pin="$4" outcome posture
+  local drift_subject drift_outcome
 
   outcome="$(cat "$slot/outcome" 2>/dev/null || true)"
   if [ -z "$outcome" ]; then
@@ -1129,6 +1161,25 @@ loop__finish() {
     "$(cat "$slot/tokens" 2>/dev/null || true)" \
     "$(cat "$slot/action" 2>/dev/null || true)"
   loop_log "iteration $(cat "$slot/n" 2>/dev/null || printf '?'): $ticket -> $outcome"
+
+  # And what the iteration's own witness saw ([46] on [15]). Transcribed and never
+  # re-measured: the iteration is the process that took the reading, and asking
+  # again here would answer about a different instant — a surface a sibling put
+  # back between the two would be a drift that reached the receipt and not the
+  # journal, which is the split this is closing. The subject field carries the
+  # surface, the way `loop__report_tracker_findings` carries a duplicate id: the
+  # names go where a name fits, and a line naming nothing sends a human nowhere.
+  #
+  # A `while` with a redirect and never a pipe, for the reason the reclaim loop
+  # above spells out: `loop_journal_append` keeps the run's own copy of the journal
+  # in a variable of this process, and the right-hand side of a pipeline is a
+  # subshell that would take that copy away with it.
+  if [ -f "$slot/drift" ]; then
+    while IFS="$(printf '\t')" read -r drift_subject drift_outcome; do
+      [ -n "$drift_subject" ] || continue
+      loop_journal_append "$drift_subject" "${drift_outcome:-capability-drift}" 0 0 0
+    done <"$slot/drift"
+  fi
 
   # The pin dies with the iteration: the next one is entitled to the rules it is
   # handed, including a rule this iteration legitimately delivered. Leaked on a
@@ -1226,7 +1277,7 @@ LEFTOVERS
   # own id and `failures_protect_tracker` skips the ticket the session just
   # rewrote — it restores nothing, says nothing, and the gate then reads the
   # write-surface the session gave itself. Out of the tree was never the property
-  # that mattered; **who knows the name** is. Same treatment as `RALPH_IGNORE_PIN`
+  # that mattered; **who knows the name** is. Same treatment as `RALPH_FRONTIER_PIN`
   # ([30]), which is the same secret in the same directory, for the same reason.
   RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")" ||
     RALPH_TRACKER_LOG=''
@@ -1244,8 +1295,8 @@ LEFTOVERS
   # the run is back to charging whichever iteration looked first for a file it
   # never opened, and a bill nobody can contest is worse than a run that did not
   # start.
-  if ! RALPH_IGNORE_COMMON="$(gate_ignore_common)"; then
-    loop_log "cannot witness this repository's shared ignore frontier — refusing to grind a frontier whose movements nothing could attribute"
+  if ! RALPH_FRONTIER_COMMON="$(gate_frontier_common)"; then
+    loop_log "cannot witness this repository's shared frontier — the ignore rules every check sees through, and the configuration that decides what git runs — refusing to grind a frontier whose movements nothing could attribute"
     rm -f "${RALPH_TRACKER_LOG:-}"
     exit 4
   fi
@@ -1279,7 +1330,7 @@ LEFTOVERS
   local iteration=0 sterile=0 ticket reclaimed rid rdisposition
   local budget_posture='' budget_paused=0 span pin
   local stop_code=''
-  local RALPH_IGNORE_PIN=''
+  local RALPH_FRONTIER_PIN=''
   LOOP_SLOTS=''
 
   while :; do
@@ -1438,7 +1489,7 @@ RECLAIMED
         continue
       fi
       rm -f "${RALPH_TRACKER_LOG:-}"
-      rm -rf "${RALPH_IGNORE_COMMON:-}"
+      rm -rf "${RALPH_FRONTIER_COMMON:-}"
       retro_close
       loop_journal_verify || true
       if [ "$iteration" -eq 0 ]; then
@@ -1469,12 +1520,12 @@ RECLAIMED
     # It is taken here, in the pilot, and handed to the iteration by inheritance:
     # a shell variable and never a file, because a file beside the tracker would be
     # one the judged session can write.
-    if ! RALPH_IGNORE_PIN="$(gate_ignore_pin)"; then
+    if ! RALPH_FRONTIER_PIN="$(gate_frontier_pin)"; then
       loop_log "cannot pin this project's ignore rules — refusing to grind a frontier whose visibility nothing can vouch for"
       stop_code=4
       continue
     fi
-    pin="$RALPH_IGNORE_PIN"
+    pin="$RALPH_FRONTIER_PIN"
 
     # Not `loop__start … || stop_code=4`: testing the status here would switch
     # errexit off inside the iteration this call forks. See loop__start.
@@ -1483,7 +1534,7 @@ RECLAIMED
   done
 
   rm -f "${RALPH_TRACKER_LOG:-}"
-  rm -rf "${RALPH_IGNORE_COMMON:-}"
+  rm -rf "${RALPH_FRONTIER_COMMON:-}"
   retro_close
   # Last, after every iteration has been collected and journalled, and never a
   # reason to change the exit code: a journal is not an authority in this pack, so

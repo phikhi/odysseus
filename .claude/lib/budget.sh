@@ -504,7 +504,7 @@ budget_span() {
 # Not `sleep "$span"`, and this is the [25] lesson rather than a style: bash defers
 # a trapped signal until the running external command returns, so a single five-hour
 # sleep would hold a stop request for five hours. `RALPH_STOP` is the loop's, read
-# here the way `gate.sh` reads the loop's `RALPH_IGNORE_PIN` — a run-level variable,
+# here the way `gate.sh` reads the loop's `RALPH_FRONTIER_PIN` — a run-level variable,
 # not a call back up into the loop.
 #
 # Non-zero means it was cut short, and the loop stops rather than spawning into a

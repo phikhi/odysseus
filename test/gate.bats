@@ -1318,11 +1318,11 @@ FAKE
   cp "$PROJECT_DIR/.git/info/exclude" "$RALPH_TEST_DIR/exclude.before"
 
   pack_run '
-    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
     printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    gate_ignore_frontier || true
-    rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    gate_frontier || true
+    rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"'
   assert_success
   assert_output_contains "moved the ignore frontier in .git/info/exclude"
   assert_output_contains "(put back)"
@@ -1344,9 +1344,9 @@ FAKE
 
   pack_run '
     printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    gate_ignore_frontier || true
-    rm -rf "$RALPH_IGNORE_PIN"'
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    gate_frontier || true
+    rm -rf "$RALPH_FRONTIER_PIN"'
   assert_success
   refute_output_contains "moved the ignore frontier"
   assert_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
@@ -1364,11 +1364,11 @@ FAKE
   printf '999999\n' >"$guard/pid"
 
   pack_run '
-    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
     printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    gate_ignore_frontier || true
-    rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    gate_frontier || true
+    rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"'
   assert_success
   assert_output_contains "taking over a stale frontier guard (pid 999999)"
   refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
@@ -1391,14 +1391,14 @@ FAKE
   use_tickets 01-alpha
 
   pack_run '
-    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
+    RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
     printf "rogue/\n" >>"$(git rev-parse --git-common-dir)/info/exclude"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
     guard="$(concurrency_frontier_guard)"
     state_guard_take "$guard" "a sibling of this iteration" test
-    gate_ignore_frontier || true
+    gate_frontier || true
     if [ -d "$guard" ]; then printf "GUARD-STILL-HELD\n"; else printf "GUARD-GONE\n"; fi
-    rm -rf "$guard" "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+    rm -rf "$guard" "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"'
   assert_success
   assert_output_contains "GUARD-STILL-HELD"
   assert_output_contains "moved the ignore frontier in .git/info/exclude"
@@ -1483,6 +1483,231 @@ FAKE
   local named
   named="$(printf '%s\n' "$output" | grep 'nothing in this gate judged' | tail -1)"
   assert_equal "${named#*ignored path(s): }" ".scratch/other-feature/"
+}
+
+# ── [46] the configuration that decides what git runs ────────────────────────
+
+@test "the key list is derived from its criterion, and says what it leaves out" {
+  # [31]'s rule, applied to a list a probe could have written from three cases.
+  # What is asserted here is the *criterion* — a key that makes git run a program,
+  # a key that transforms a content — and the two deliberate absences, each of
+  # which is a decision this ticket took and not a key nobody thought of.
+  pack_run 'gate_config_keys'
+  assert_success
+
+  # Runs a program.
+  assert_output_contains 'core\.fsmonitor'
+  assert_output_contains 'core\.hookspath'
+  assert_output_contains 'diff\.external'
+  assert_output_contains 'diff\..*\.textconv'
+  assert_output_contains 'merge\..*\.driver'
+  assert_output_contains 'credential\..*\.helper'
+  # Transforms a content.
+  assert_output_contains 'filter\..*\.smudge'
+  assert_output_contains 'filter\..*\.clean'
+  assert_output_contains 'core\.autocrlf'
+  assert_output_contains 'core\.attributesfile'
+  # Decides which file the ones above are read from, which is the same question
+  # one level up: a session that points `include.path` at a file it wrote gets
+  # every key in it, and unsetting the include is what takes them away again.
+  assert_output_contains 'include\.path'
+  assert_output_contains 'extensions\.worktreeconfig'
+
+  # And the bounds, which are the part a list like this gets wrong. `alias.*` is a
+  # program git will not run for a built-in name, and this pack calls nothing else
+  # — a fact about git. `core.excludesFile` has an owner one mechanism up ([30]),
+  # and two owners restoring one key would put it back twice and bill it twice.
+  refute_output_contains 'alias'
+  refute_output_contains 'excludesfile'
+}
+
+@test "a session cannot make git run its own program through the repository config" {
+  # [46]. `core.fsmonitor` is a path to a program, and git runs it on every index
+  # refresh — every `git add -A` of a snapshot, every `git status`, every worktree.
+  # Probed on 26/08/2026: 252 executions on a run of two iterations, with `git`
+  # itself as the parent, so inside the *pilot's* process tree — not in a session,
+  # not in a worktree, not under a gate. Both tickets came out `resolved` and
+  # nothing anywhere said a word.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  mkdir -p "$RALPH_TEST_DIR/hooks"
+  cat >"$RALPH_TEST_DIR/hooks/fsm" <<HOOK
+#!/usr/bin/env bash
+printf 'x\n' >>"$SHIM_STATE/fsmonitor-fired"
+exit 1
+HOOK
+  chmod +x "$RALPH_TEST_DIR/hooks/fsm"
+
+  script_claude <<FAKE
+#!/usr/bin/env bash
+cat >/dev/null
+git config core.fsmonitor '$RALPH_TEST_DIR/hooks/fsm'
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  # Named in its own words: a human told "the ignore frontier" about this one has
+  # been told the wrong thing about what happened.
+  assert_output_contains "moved core.fsmonitor, which decides what git executes"
+  assert_output_contains "(put back)"
+  refute_file_contains "$PROJECT_DIR/.git/config" "fsmonitor"
+
+  # And it costs the iteration, on exactly the grounds the sealed configuration
+  # does: this is the harness's own behaviour, and no write-surface covers it.
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
+@test "a smudge filter one iteration installs does not reach the next one" {
+  # The second half of [46], and the one no control *could* see before it: the
+  # scope-guard compares two trees and both come out of the same filter, so the
+  # diff is empty. `.git/info/attributes` and the filter both live in the common
+  # git directory, so they apply to every worktree the run makes afterwards —
+  # probed, the second session was handed a rewritten `CONTEXT.md` while the main
+  # tree and the blob still held the original.
+  use_tickets 01-alpha 02-beta
+  set_config RETRY_N 0
+  set_config STERILE_K 5
+  printf 'the original line\n' >"$PROJECT_DIR/CONTEXT.md"
+  harness__commit "fixture: a tracked file with known content"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+case "$prompt" in
+  *01-alpha*)
+    printf '* filter=ralphprobe\n' >>"$(git rev-parse --git-common-dir)/info/attributes"
+    git config filter.ralphprobe.smudge 'sed s/original/REWRITTEN/'
+    git config filter.ralphprobe.clean cat
+    mkdir -p src && printf 'written\n' >src/alpha.txt
+    ;;
+  *)
+    cp CONTEXT.md "$RALPH_SHIM_STATE/what-the-next-session-saw" 2>/dev/null || true
+    mkdir -p src && printf 'written\n' >src/beta.txt
+    ;;
+esac
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+
+  assert_output_contains "moved filter.ralphprobe.smudge, which decides what git executes"
+  assert_output_contains "moved .git/info/attributes, which decides what git executes"
+  assert_file_contains "$SHIM_STATE/what-the-next-session-saw" "the original line"
+  refute_file_contains "$PROJECT_DIR/.git/config" "ralphprobe"
+  # Read rather than refuted in place: the run was handed no attributes file at
+  # all, so putting it back means there is none — and `refute_file_contains` on a
+  # path that does not exist is a failure and not a refutation.
+  run bash -c "cat '$PROJECT_DIR/.git/info/attributes' 2>/dev/null || true"
+  refute_output_contains "ralphprobe"
+}
+
+@test "a value this run cannot put back is named as one it could not put back" {
+  # The operator's home is the door [15] found open, and this is the half [15] did
+  # not measure: a `core.fsmonitor` there is a command that runs in the *pack's*
+  # process, where a hook in `~/.claude/settings.json` runs in the next session's.
+  # Nothing in this pack writes outside the repository — so the unset is a local
+  # one, it does not take, and what the finding says is exactly that.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<FAKE
+#!/usr/bin/env bash
+cat >/dev/null
+printf '[core]\n\tfsmonitor = /bin/true\n' >"\$HOME/.gitconfig"
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "and this run could not put it back"
+  assert_output_contains "core.fsmonitor"
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # Once, and exactly once. A movement no restore can undo is re-detected by every
+  # look, and [46] added a second one — the loop puts the frontier back before the
+  # tracker guard reads a ticket through git. [41] held "one movement, one charge"
+  # as a convention about call sites; the register holds it now, and without that
+  # this iteration is billed twice for one widening, with every sibling in flight.
+  local said
+  said="$(printf '%s\n' "$output" | grep -c 'could not put it back')"
+  assert_equal "$said" "1"
+  # Untouched: this pack does not write outside the repository, and a restore that
+  # reached into the operator's home would be a bigger promise than the one it is
+  # keeping here.
+  assert_file_contains "$HOME/.gitconfig" "fsmonitor"
+}
+
+@test "the attributes file alone is a movement, with no configuration key beside it" {
+  # `.git/info/attributes` arms git's *built-in* transformations on its own —
+  # `text`, `eol`, `working-tree-encoding`, `ident` — so it is a source in its own
+  # right and not a companion to the filter keys. In no tree, coverable by no
+  # write-surface, shared by every worktree: the same three properties that put
+  # `.git/info/exclude` on this frontier in the first place.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '* text=auto eol=crlf\n' >>"$(git rev-parse --git-common-dir)/info/attributes"
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_output_contains "moved .git/info/attributes"
+  assert_output_contains "(put back)"
+  run bash -c "cat '$PROJECT_DIR/.git/info/attributes' 2>/dev/null || true"
+  refute_output_contains "eol=crlf"
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
+@test "the frontier is put back before the tracker guard reads a ticket through git" {
+  # Where the restore happens, which is the question [32] asked once and [46] had
+  # to ask again. The three sites [32] wired are all *behind*
+  # `failures_protect_tracker`, and that guard reads and writes `issues/` **through
+  # git**: it stages the directory to compare it (`gate_tree_snapshot`, so a
+  # `clean` filter runs) and checks the pre-session blobs back out to restore it
+  # (so the matching `smudge` runs). A session that edits its own ticket *and*
+  # installs a filter therefore had the guard write the tracker back through the
+  # filter — on disk, durably, and for every run after this one — before anything
+  # had so much as looked at the configuration.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '* filter=ralphprobe\n' >>"$(git rev-parse --git-common-dir)/info/attributes"
+git config filter.ralphprobe.smudge 'sed s/Alpha/POISONED/'
+git config filter.ralphprobe.clean cat
+# The tracker of the tree the run was started in, which is the one the guard
+# restores: this iteration stands in a throwaway worktree ([13]).
+printf 'edited by the session\n' >>"$(cat "$RALPH_SHIM_STATE/tracker-dir")/01-alpha.md"
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  # The guard did act — otherwise this test would be green because nothing was
+  # written back at all, which is the false green the whole scenario turns on.
+  refute_file_contains "$TRACKER_DIR/01-alpha.md" "edited by the session"
+  # And what it wrote back is the ticket and not the ticket run through the
+  # session's own filter.
+  refute_file_contains "$TRACKER_DIR/01-alpha.md" "POISONED"
 }
 
 # ── a list of paths is not a line of words ───────────────────────────────────
@@ -1691,14 +1916,14 @@ FAKE
   # `pack_run` runs the pack's own bootstrap and already wraps it in `run`; a
   # second `run` around it swallows both the status and the output, which is how
   # this assertion first passed against nothing at all.
-  pack_run 'export RALPH_IGNORE_PIN=/nonexistent/ralph-pin; gate_tree_snapshot'
+  pack_run 'export RALPH_FRONTIER_PIN=/nonexistent/ralph-pin; gate_tree_snapshot'
   assert_failure
   assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
 
   # The refutation, without which the assertion above could be passing on any
   # error at all: the same call with a pin it can read hands back a tree object.
-  pack_run 'export RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN"'
+  pack_run 'export RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    gate_tree_snapshot; rm -rf "$RALPH_FRONTIER_PIN"'
   assert_success
   case "$output" in
     [0-9a-f][0-9a-f]*) ;;
@@ -1715,19 +1940,19 @@ FAKE
   use_tickets 01-alpha
 
   pack_run '
-    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    rm -rf "$RALPH_IGNORE_COMMON"
-    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN"'
+    RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    rm -rf "$RALPH_FRONTIER_COMMON"
+    gate_tree_snapshot; rm -rf "$RALPH_FRONTIER_PIN"'
   assert_failure
   assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
 
   # The refutation, without which the assertion above could be passing on any error
   # at all: the same call with both witnesses in place hands back a tree object.
   pack_run '
-    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+    RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    gate_tree_snapshot; rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"'
   assert_success
   case "$output" in
     [0-9a-f][0-9a-f]*) ;;
@@ -1744,11 +1969,11 @@ FAKE
   use_tickets 01-alpha
 
   pack_run '
-    RALPH_IGNORE_COMMON="$(gate_ignore_common)"
-    printf "some-pin\ta movement a sibling recorded\n" >>"$RALPH_IGNORE_COMMON/ledger"
-    RALPH_IGNORE_PIN="$(gate_ignore_pin)"
-    : >"$RALPH_IGNORE_COMMON/ledger"
-    gate_tree_snapshot; rm -rf "$RALPH_IGNORE_PIN" "$RALPH_IGNORE_COMMON"'
+    RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
+    printf "some-pin\ta movement a sibling recorded\n" >>"$RALPH_FRONTIER_COMMON/ledger"
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    : >"$RALPH_FRONTIER_COMMON/ledger"
+    gate_tree_snapshot; rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"'
   assert_failure
   assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
 }
@@ -1873,7 +2098,7 @@ OUT"
   pack_run '
     mkdir -p src && printf "written\n" >src/alpha.txt
     base="$(gate_tree_snapshot)"
-    export RALPH_IGNORE_PIN=/nonexistent/ralph-pin
+    export RALPH_FRONTIER_PIN=/nonexistent/ralph-pin
     gate_run 01-alpha "$base" || true
     printf "verdicts=%s\n" "$RALPH_GATE_VERDICTS"'
   assert_success
@@ -1908,7 +2133,7 @@ OUT"
 
 @test "a session that delivered nothing and moved the ignore frontier is still told so" {
   # The one line no branch is left to print on this path. The findings of
-  # `gate_ignore_frontier` normally travel on the scope-guard's output, and the
+  # `gate_frontier` normally travel on the scope-guard's output, and the
   # scope-guard is not started here — so a session that widened the frontier and
   # wrote nothing behind it would have had its move put back in silence. A zone
   # nobody guards gets named every time round ([24], [30]), and "every time"
