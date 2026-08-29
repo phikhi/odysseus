@@ -92,3 +92,11 @@
   boucle humaine est le seul endroit d'où quelqu'un peut décider de forcer, de
   changer `GUARDED_PATHS`, ou de retirer la règle d'ignore. Avant [39] c'était
   silencieux ; c'est désormais dit, et dire ne suffit pas si personne ne le range.
+
+- **Ce que [49] laisse à lire ici, livré le 29/08/2026.** Un ticket qu'aucune
+  itération n'a pu réclamer a désormais une ligne `claim-refused` dans `run.log`
+  (sujet = l'id du ticket), et la phrase de la console dit ce qu'elle a observé : le
+  statut a bougé, avec son propriétaire, ou il n'a pas bougé et **personne** ne tient
+  le ticket. C'était le trou : la boucle humaine est le lecteur d'une frontière dont
+  un ticket a disparu, et le seul trace qu'il en existait était une console disant
+  « someone else has it » en désignant personne.

@@ -191,6 +191,15 @@ tracker_local__is_unblocked() {
 # both read "ready-for-agent" and both stamp themselves owner. Re-reading our
 # own stamp afterwards would not settle it — both writers can believe they won.
 # So the read-modify-write happens under a guard, held only for its duration.
+#
+# This guard lives in `issues/`, beside the ticket it is about, and [47] left it
+# there while putting its own next to the run lock. That asymmetry is deliberate
+# and it is not the duration argument [47] gave for it ([49]): a guard on a ticket
+# belongs with the ticket — a remote backend would take it wherever that ticket
+# lives — and what made the placement dangerous was on the other side, in a guard
+# comparing two trees of `issues/` as if the directory held nothing but tickets.
+# That side is where it was fixed, once, for all three kinds of transient this
+# pack leaves in there rather than only for this one.
 tracker_local_claim() {
   local id="$1" owner="${2:-pid:$$}" file guard rc=0
   file="$(tracker_local__path "$id")" || return 1
@@ -305,8 +314,15 @@ tracker_local__open_guard() {
 # Bounded, and what the bound reaches is a refusal rather than a free-for-all.
 # `state_guard_take` already recovers a guard whose owner is gone; this waits for
 # one that is merely busy. An allocation is one directory read and one write, so a
-# caller still waiting after six seconds is not queued behind work — and going
-# ahead anyway would be the collision this exists to prevent, taken deliberately.
+# caller still waiting out the bound is not queued behind work — and going ahead
+# anyway would be the collision this exists to prevent, taken deliberately.
+#
+# The bound is a hundred and twenty tries and not a duration, so what it is worth
+# is measured and not declared: eight seconds on this machine ([49]), the sleeps
+# plus the cost of the loop, where [47] wrote six. Who pays it is the part worth
+# knowing — `tracker_renumber` takes this guard once **per intruder**, so a
+# session that drops ten files in the tracker costs a held guard eighty seconds of
+# an iteration that is doing nothing else.
 #
 # Every stamp inside one run carries the *pilot's* pid, iterations being subshells
 # of it ([13]), so the liveness `state_guard_take` reads is the run's own. That is
@@ -325,6 +341,28 @@ tracker_local__open_guard_take() {
 
 tracker_local__open_guard_release() {
   state_guard_release "$(tracker_local__open_guard)"
+  return 0
+}
+
+# Why nothing was allocated, on the console **and** on the audit receipt ([49]).
+#
+# All three producers already say that no ticket was opened — the re-slice gaps
+# twice, the two proposals say "either one was already waiting or the tracker
+# refused the write" — and none of them can say *why*, because the reason belongs
+# to this backend. Said here, once, on the document a human actually reads in the
+# morning: `run.log` carries the ticket's own escalation (`too-big` for a
+# re-slice), which is the wrong cause, and a line on the console is a line nobody
+# reads ([45] is the general form of this).
+#
+# `receipt_gap` is a no-op when no receipt is open, so this is unconditional; each
+# of the three producers runs inside an iteration that has one.
+tracker_local__open_refused() {
+  local what="$1" guard holder since
+  guard="$(tracker_local__open_guard)"
+  holder="$(state_guard_holder "$guard" 2>/dev/null)" || holder=''
+  since="$(cat "$guard/since" 2>/dev/null)" || since=''
+  printf 'tracker: could not take the ticket-open guard — %s\n' "$what" >&2
+  receipt_gap "the ticket-open guard was held for the whole wait, by pid ${holder:-nobody the guard names} since ${since:-an unknown time}, so $what. A number handed out beside another allocation is permanent: a bare number stops resolving, and every ticket carrying it as a blocker leaves the frontier for good ([27])"
   return 0
 }
 
@@ -362,7 +400,7 @@ tracker_local__open() {
   body="$(cat)"
 
   tracker_local__open_guard_take || {
-    printf 'tracker: could not take the ticket-open guard — refusing to allocate a number nothing serialises\n' >&2
+    tracker_local__open_refused 'refusing to allocate a number nothing serialises'
     return 1
   }
 
@@ -459,7 +497,7 @@ tracker_local__number_taken() {
 tracker_local_renumber() {
   local out rc=0
   tracker_local__open_guard_take || {
-    printf 'tracker: could not take the ticket-open guard — refusing to renumber against a directory nothing serialises\n' >&2
+    tracker_local__open_refused 'refusing to renumber against a directory nothing serialises'
     return 1
   }
   out="$(tracker_local__renumber_held "$1")" || rc=$?

@@ -99,3 +99,14 @@
 - **Contrainte posée par [44], livré le 07/08/2026 : cette garantie s'arrête au bord d'un run tué, et c'est une décision.** Depuis [13] une itération est un sous-shell qui survit à un `kill -KILL` sur son pilote, et il portait `failures_protect_tracker` avec tout le reste. [44] l'arrête **avant** cet appel, donc une session qui a édité son propre ticket dans l'instant où son run meurt garde son édition : restaurer aurait voulu dire écrire un ticket que le run suivant est peut-être déjà en train de reprendre par le balayage de [12], et [42] a montré ce que deux écrivains font à ce fichier. Ce n'est pas neuf en soi — avant [13] la session mourait avec son run et laissait la même chose — mais c'est maintenant le seul chemin par lequel une `Write-surface:` réécrite par une session survit à quoi que ce soit. Le balayage la rend au run suivant **sans la relire**. Ce qu'il faudrait est ici ou dans [12] : le run qui reprend un claim laissé par un run mort ne peut faire confiance à aucun champ du ticket, y compris ceux que ce garde protège quand tout va bien.
 
 - **Passe transversale du 27/08/2026 : ce garde restaure des chemins qui ne sont pas des tickets, et l'exemption de [13]/[42] ne peut structurellement pas s'en occuper.** `issues/` porte trois sortes de transitoires écrits par le pack lui-même (`<id>.md.guard/` du claim, `<id>.md.tmp.XXXXXX` de `state_atomic_write`, `<id>.md.work.XXXXXX` et `.work.XXXXXX.p` de `set_fields`). Un transitoire présent dans le snapshot d'avant et absent de celui d'après tombe dans la branche `*)`, donc `checkout-index -f`, donc `restored++` — d'où une note qui **accuse la session** d'avoir édité le tracker quand elle n'a rien écrit, une itération innocente qui ne peut pas être verte, et, pour le garde de claim, un ticket sorti de la frontière pour le reste du run. Le registre ne peut pas aider : il compare `basename "$path" .md`, qui vaut `pid` pour `.../02-beta.md.guard/pid` et le nom entier pour un `.work` — jamais un id (sondé, `q5` Q5e, `restored 3` avec le registre correctement rempli). Fenêtre mesurée : le snapshot est un `git add -A` de 35 ms, un `set_fields` expose son `.work` 15 ms. Propriétaire : [49].
+
+- **Refermé par [49], livré le 29/08/2026, et ce que ça change à la portée de ce
+  ticket.** La restauration ne restaure plus que des fichiers de ticket : un chemin
+  qui n'est pas `<id>.md` directement dans `issues/` est laissé tel quel et
+  **nommé** (journal et reçu), un chemin que git cite quand même ([39]) fait refuser
+  de vouer sans compter un ticket remis. Trois conséquences fermées d'un coup — la
+  note qui accusait une session muette, l'itération innocente refusée verte, et le
+  verrou de claim remis avec le pid du pilote. Le prix, écrit au tableau de
+  confiance : ce qu'une session dépose dans `issues/` sous un autre nom n'est
+  restauré par personne et ne l'était déjà pas mis en quarantaine — nommé à chaque
+  fenêtre où il bouge, jamais tu.

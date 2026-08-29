@@ -188,7 +188,18 @@ gate_preflight() {
 # cost *inside* the repository — a registration in the common git directory that
 # every later `git worktree` call carries — is a different fact and is said by
 # `concurrency_leftovers`.
+#
+# One finding per line since [49], because the second one is not a sentence about
+# `$TMPDIR` at all: what a killed run leaves in the feature directory is an
+# exclusion guard, and it is counted on liveness rather than on age.
 gate_leftovers() {
+  local rc=1
+  if gate__tmp_leftovers; then rc=0; fi
+  if gate__stale_guards; then rc=0; fi
+  return "$rc"
+}
+
+gate__tmp_leftovers() {
   local tmp="${TMPDIR:-/tmp}" n
   n="$(find "$tmp" -maxdepth 1 \
     \( -name 'ralph-gate.*' -o -name 'ralph-ignore.*' \
@@ -198,6 +209,43 @@ gate_leftovers() {
   [ -n "$n" ] && [ "$n" -gt 0 ] || return 1
   printf '%s temporary director(ies) from earlier runs are still in %s: a run killed mid-iteration leaves one behind, and nothing here removes them\n' \
     "$n" "$tmp"
+  return 0
+}
+
+# And what a killed run leaves *inside* the feature directory: an exclusion guard
+# nobody owns any more ([49]).
+#
+# The run lock is released by the trap its own acquisition installs, so it comes
+# off on every ordinary death. The ticket-open guard of [47] is released by the
+# call that took it and by nothing else, and it is the whole of the mutual
+# exclusion on the number space — so a run killed while holding it crossed every
+# later run in complete silence, `gate_leftovers` having only ever looked at
+# `$TMPDIR`. It is recovered at the next allocation (`state_guard_take` displaces a
+# guard whose owner is gone), which is the right behaviour and not a reason for
+# nobody to have counted it: a guard nobody counts is also a guard nobody notices
+# is *held*, and this pack has a document about what it does not look at.
+#
+# Liveness rather than the age used above, and the difference is which question
+# each one can answer. `$TMPDIR` is shared with runs of other repositories, so
+# ownership there is unknowable and a day of silence is the only evidence
+# available. This directory belongs to one feature of one tree, which this run
+# holds the lock on: a guard whose owner still answers `kill -0` belongs to
+# something alive, and one whose owner does not belongs to nobody at all.
+gate__stale_guards() {
+  local dir guard owner names='' n=0
+  [ -n "${FEATURE:-}" ] || return 1
+  dir="$(ralph_feature_dir)" || return 1
+  [ -d "$dir" ] || return 1
+  for guard in "$dir"/*.guard "$dir"/.*.guard; do
+    [ -d "$guard" ] || continue
+    owner="$(cat "$guard/pid" 2>/dev/null)" || owner=''
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then continue; fi
+    n=$((n + 1))
+    names="$names $(basename "$guard")"
+  done
+  [ "$n" -gt 0 ] || return 1
+  printf '%s exclusion guard(s) left in %s by an earlier run:%s — the owner is gone, nothing here removes them, and the next caller that needs one takes it over without a word\n' \
+    "$n" "$dir" "$names"
   return 0
 }
 
@@ -300,9 +348,12 @@ PATHS
 #
 # Public because a second module reads it — the language gate — which is this
 # pack's rule for a name rather than a preference, the same one that took
-# `gate__under_path` public in [17]. Three readers ask the question and each does
+# `gate__under_path` public in [17]. Four readers ask the question and each does
 # something different with it: the scope-guard reds on it, the restore refuses to
-# claim it put it back, and the language gate counts it.
+# claim it put it back, the language gate counts it, and the tracker's own guard
+# ([21] via [49]) treats a ticket that moved under such a name as a tracker it
+# cannot vouch for — the only one of the four that cannot even tell whether what
+# it is looking at is a ticket.
 gate_unaddressable() {
   case "$1" in
     '"'*'"') return 0 ;;

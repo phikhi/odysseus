@@ -108,3 +108,15 @@
   pas rendre tel quel. L'argument complet et le prix de l'alternative (`-z`, neuf
   lecteurs) sont dans la ligne « Un fichier dont le nom n'est pas de l'ASCII pur est
   adressable par le pack » de `docs/frontiere-de-confiance.md`.
+
+- **Clause héritée de [49], livré le 29/08/2026.** Le répertoire du tracker ne
+  contient pas que des tickets : le backend local y pose un garde de claim, le
+  temporaire de chaque écriture atomique et la copie de travail de `set_fields`. Un
+  garde pris autour d'une session — la restauration de [21] ici, l'équivalent
+  ailleurs — ne doit pas prendre ces objets pour une édition de la session, et le
+  registre des écritures de la boucle ne peut pas les exempter parce qu'il est indexé
+  par **id**. Ce backend-ci répond par un prédicat (`failures__is_ticket_path` :
+  directement dans `issues/`, suffixe `.md`) ; un backend distant doit répondre à la
+  même question pour la forme qu'il stocke, et dire ce qu'il fait de ce qui n'est pas
+  un ticket. Corollaire déjà écrit ailleurs : un garde qui vit sur un ticket voyage
+  avec ce ticket, celui qui sérialise l'espace des numéros vit à côté du verrou de run.

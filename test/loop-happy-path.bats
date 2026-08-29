@@ -365,6 +365,48 @@ FAKE
   assert_ticket_status 01-alpha ready-for-human
 }
 
+@test "a ticket no iteration could claim is not silent in the journal" {
+  use_tickets 01-alpha 02-beta
+  set_config STERILE_K 2
+
+  # A claim guard on 02-beta whose owner stays alive for the whole run — the shape
+  # a sibling leaves behind for a few milliseconds, staged here for good.
+  # `tracker_claim` is a test-and-set under that guard, so nothing can claim the
+  # ticket while it is held and it stays `ready-for-agent` on the frontier: the
+  # loop picks it again on every iteration, and the run ends sterile against it.
+  guard="$TRACKER_DIR/02-beta.md.guard"
+  mkdir -p "$guard"
+  printf '%s\n' "$$" >"$guard/pid"
+  printf '2026-08-28T00:00:00Z\n' >"$guard/since"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  # The whole trace this used to leave was one console line, and it named a holder
+  # that does not exist: `run.log` — the file a human opens in the morning, and the
+  # only one a receipt can read — had nothing at all for a ticket no iteration
+  # could ever take ([45] on [49]).
+  assert_file_contains "$FEATURE_DIR/run.log" "$(printf '02-beta\tclaim-refused')"
+  assert_output_contains "could not claim 02-beta — its status is still ready-for-agent"
+  refute_output_contains "someone else has it"
+
+  # And the run really did end against this ticket rather than around it.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta ready-for-agent
+  assert_output_contains "sterile run"
+}
+
 @test "sterile counts consecutive barren iterations — a success resets it" {
   use_tickets 01-alpha 02-beta
 

@@ -1777,7 +1777,7 @@ mutation "36 the session's grace fires at a pid that changed hands" "$MONITOR" \
 # before it makes any temporary directory of its own, so with only stale ones
 # staged the count reads the same either way.
 mutation "36 nothing names what earlier runs left in TMPDIR" "$LOOP" \
-  's/  if leftovers="\$\(gate_leftovers\)"; then loop_log "\$leftovers"; fi\n//' \
+  's/  while IFS= read -r leftovers; do\n    \[ -n "\$leftovers" \] \|\| continue\n    loop_log "\$leftovers"\n  done <<LEFTOVERS\n\$\(gate_leftovers \|\| true\)\nLEFTOVERS\n//' \
   test/gate.bats "left behind in TMPDIR"
 
 mutation "36 a run beside this one is counted as a leak" "$GATE" \
@@ -3048,11 +3048,11 @@ mutation "37 a carrier is named by its first word" "$TRACKER_IFACE" \
 # nobody in would satisfy every "it refused" assertion on its own.
 
 mutation "47 the number is allocated with nothing serialising it" "$TRACKER" \
-  's/  tracker_local__open_guard_take \|\| \{\n    printf [^\n]*refusing to allocate a number[^\n]*\n    return 1\n  \}\n/  true\n/' \
+  's/  tracker_local__open_guard_take \|\| \{\n    tracker_local__open_refused [^\n]*refusing to allocate a number[^\n]*\n    return 1\n  \}\n/  true\n/' \
   test/tracker-local.bats "refuses a number it cannot allocate"
 
 mutation "47 the renumber allocates beside an opening" "$TRACKER" \
-  's/  tracker_local__open_guard_take \|\| \{\n    printf [^\n]*refusing to renumber[^\n]*\n    return 1\n  \}\n/  true\n/' \
+  's/  tracker_local__open_guard_take \|\| \{\n    tracker_local__open_refused [^\n]*refusing to renumber[^\n]*\n    return 1\n  \}\n/  true\n/' \
   test/tracker-local.bats "renumber refuses rather than allocating"
 
 mutation "47 the guard never lets anybody in" "$TRACKER" \
@@ -3194,6 +3194,88 @@ mutation "39 the tree refresh unstages a line of words" "$CONCURRENCY" \
 mutation "39 the language gate judges a name it cannot read" "$LANGLIB" \
   's/    if gate_unaddressable "\$file"; then\n      unaddressable=\$\(\(unaddressable \+ 1\)\)\n      continue\n    fi\n//' \
   test/lang.bats "still prints quoted is counted"
+
+# ── [49] the tracker directory holds the pack's own transients ───────────────
+#
+# `failures_protect_tracker` compared two tree objects of `issues/` as though that
+# directory held nothing but tickets, and this pack puts three other kinds of
+# object in there: a claim's guard directory, the temp file every atomic write
+# leaves beside its target, the working copy `set_fields` publishes from. One held
+# across the pre-session snapshot and released inside the window arrives as a `D`,
+# and `checkout-index` put it back — a session that wrote nothing accused on its
+# own ticket, an innocent iteration refused a green, and for a claim's guard a lock
+# restored with the pilot's own live pid, which nothing releases and which takes
+# that ticket off the frontier for the rest of the run.
+#
+# The predicate has two clauses answering for different producers, so they are
+# separate entries: everything this pack leaves in there fails the suffix, and only
+# a session can produce a `.md` one level down.
+
+mutation "49 anything beside a ticket is a ticket" "$FAILURES" \
+  's/    "\$dir"\/\*\.md\) ;;/    "\$dir"\/*) ;;/' \
+  test/failures.bats "atomic write's temp file that vanished"
+
+mutation "49 a .md below the tracker is a ticket" "$FAILURES" \
+  's/  rest="\$\{path#"\$dir"\/\}"\n  case "\$rest" in\n    \*\/\*\) return 1 ;;\n  esac\n//' \
+  test/failures.bats "is not a ticket is named"
+
+mutation "49 the guard restores whatever moved in there" "$FAILURES" \
+  's/    if ! failures__is_ticket_path "\$path" "\$dir"; then\n      others="\$\(failures__append_line "\$path" "\$others"\)"\n      others_n=\$\(\(others_n \+ 1\)\)\n      continue\n    fi\n//' \
+  test/failures.bats "claim guard a sibling dropped"
+
+# And the other half of the same decision: what it stops restoring, it names. A
+# filter nobody is told about reads exactly like a directory in which nothing else
+# ever moves ([24]).
+mutation "49 what it leaves alone is left alone in silence" "$FAILURES" \
+  's/  \[ "\$others_n" = 0 \] \|\|\n    failures__say [^\n]*\n//' \
+  test/failures.bats "is not a ticket is named"
+
+# The fourth reader of [39]'s question, and the only one that cannot tell whether
+# what it is looking at is a ticket: without it a quoted name falls through the
+# filter into the zone line, as though a ticket the session removed were a temp
+# file this pack had left lying about.
+mutation "49 a ticket it cannot address is passed over as bookkeeping" "$FAILURES" \
+  's/    if gate_unaddressable "\$path"; then\n      failures__gap [^\n]*\n      unvouched=1\n      continue\n    fi\n//' \
+  test/failures.bats "cannot address is not vouched"
+
+# What a human sorting the human sink in the morning can tell apart without opening
+# the receipt: a plan nothing could be made of, and a plan that was never written.
+mutation "49 a split that created nothing says nothing on its ticket" "$FAILURES" \
+  's/    printf \x27Re-slice refused[^\n]*\n      tracker_append_note "\$ticket" \|\| true\n//' \
+  test/failures.bats "could create nothing"
+
+# And why it created nothing, which only the backend knows: `run.log` records the
+# ticket's own escalation (`too-big`), which is the wrong cause, and the two lines
+# that name the guard are `printf … >&2`.
+mutation "49 the cause of a refused allocation stays on the console" "$TRACKER" \
+  's/^  receipt_gap "the ticket-open guard was held[^\n]*\n//m' \
+  test/failures.bats "could create nothing"
+
+# The guard [47] added is released by the call that took it and by nothing else —
+# unlike the run lock, whose acquisition installs a trap — so a run killed while
+# holding it crossed every later run in silence.
+mutation "49 a guard a dead run left behind is counted by nobody" "$GATE" \
+  's/^gate__stale_guards\(\) \{/gate__stale_guards() { return 1;/m' \
+  test/gate.bats "left holding inside the feature"
+
+# Its twin, and the reason the count is asserted rather than the sentence: a guard
+# whose owner still answers belongs to something alive, and naming it would be the
+# false alarm that makes a morning line unreadable.
+mutation "49 a guard something alive is holding is counted as a leak" "$GATE" \
+  's/    if \[ -n "\$owner" \] && kill -0 "\$owner" 2>\/dev\/null; then continue; fi\n//' \
+  test/gate.bats "left holding inside the feature"
+
+# A ticket no iteration could claim had no line in `run.log` at all: the run ended
+# sterile against it, and the file a human opens in the morning never named it.
+mutation "49 a ticket nobody could claim leaves no line in the journal" "$LOOP" \
+  's/^  loop_journal_append "\$ticket" claim-refused 0 0 0\n//m' \
+  test/loop-happy-path.bats "no iteration could claim"
+
+# And the sentence itself, as it stood: one line for two causes, naming a holder
+# that does not exist whenever the tracker's own exclusion is what refused.
+mutation "49 the refusal names an owner nobody holds" "$LOOP" \
+  's/^loop__claim_refused\(\) \{/loop__claim_refused() { loop_log "could not claim \$1 — someone else has it"; loop_journal_append "\$1" claim-refused 0 0 0; return 0;/m' \
+  test/loop-happy-path.bats "no iteration could claim"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

@@ -80,3 +80,12 @@
   registre des écritures de la boucle, précisément parce que c'est la boucle qui a écrit
   (`p5.bats` P5a, les deux moitiés côte à côte). Le détail de fenêtre qui compte pour qui
   écrira le correctif : `nn` est calculé **avant** que le corps ne soit lu sur stdin.
+
+- **Ce que [49] mesure sur la réparation de ce ticket, le 29/08/2026.**
+  `tracker_renumber` passe par le garde d'ouverture de [47], et il le prend **une
+  fois par intrus** : la borne d'attente est de huit secondes mesurées (cent-vingt
+  essais de 0,05 s plus le coût de la boucle) et non les six annoncées, donc dix
+  fichiers déposés par une session dans `issues/` coûtent quatre-vingts secondes
+  d'itération immobile avant que la quarantaine ne renonce. Et une session qui
+  **pose** ce garde éteint `tracker_renumber` pour toute la durée où son propriétaire
+  vit, c'est-à-dire la réparation de ce ticket : ligne au tableau de confiance.
