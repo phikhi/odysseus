@@ -82,6 +82,16 @@
 #                never starts, the name turned into a link into the sealed
 #                `.claude/` makes this pack write through it at an instant when
 #                no run exists to be judged.
+#   the programs `PATH`, verbatim, which is the third thing on this line a
+#                session reaches and the one that is not a *path in the tree* at
+#                all ([52]). A directory already on it — `~/.local/bin`,
+#                `/usr/local/bin`, `node_modules/.bin` — is writable by the same
+#                user the session runs as, and what it holds decides which `git`
+#                and which `claude` the woken run gets. Nothing on this line can
+#                check that, and nothing in the job's shell can either: the check
+#                has to compare against what the *dying* run started with. So it
+#                is made where that baseline exists — a run leaving a moved
+#                program behind arms nothing at all (`scheduler_arm`, return 6).
 #   the tracker  `FEATURE`, which this line did not carry until [53]. The config
 #                ships `FEATURE="${FEATURE:-}"`, so a run started with one in its
 #                environment armed a successor that exits 2 on an empty tracker
@@ -443,6 +453,18 @@ scheduler__quote() {
 #
 # Where the next guard goes: this is the job's own preflight, and it is the place
 # for anything that has to be true *before* `loop.sh` is trusted to check it.
+#
+# [52] looked and put nothing here, which is worth writing down so the question
+# is not reopened by guesswork. Its check — a PATH entry that is not an absolute
+# directory — is asked by `gate_path_preflight`, at the top of `loop_main`, and
+# `loop.sh` reaches it having run no program by name at all (it computes
+# `RALPH_DIR` with parameter expansion rather than `dirname` for exactly that).
+# A copy here would be a second spelling of one rule, and only one of the two
+# would be the one under test. What genuinely cannot be checked from inside the
+# job is the *other* half — whether the programs this PATH resolves to are the
+# ones the dying run started with — because the baseline for that died with the
+# run that took it. That is why the answer is a refusal to arm and not a check at
+# the wake.
 scheduler__wake() {
   local usable pick run
   usable='ralph_wake_usable() { [ -n "$1" ] && [ ! -L "$1" ] && [ ! -L "${1%/*}" ] && { [ ! -e "$1" ] || { [ -f "$1" ] && [ -O "$1" ]; }; } && ( : >>"$1" ) 2>/dev/null; };'
@@ -464,7 +486,15 @@ scheduler__wake() {
 # it, because that directory is a zone a session writes in.
 #
 # Four variables and no more. `PATH` so the successor finds the same `claude`
-# and the same `git` this run found; `RALPH_CONFIG` under the name it really has
+# and the same `git` this run found — **and whatever else a session put in one of
+# its directories**, which is the half that was missing until [52]: this line
+# freezes the pilot's PATH, and a successor is a fresh shell that has hashed
+# nothing, so every name on it is resolved again days later with no human in the
+# room. That is answered by a refusal to arm (`scheduler_arm`, on the witness
+# `gate_path_witness` takes before the first session) and **not** by a sentence on
+# the arming line: a caveat would put the words next to a job that was queued
+# anyway, and the whole reason [09] arms one at all is that nobody is reading.
+# `RALPH_CONFIG` under the name it really has
 # ([31]: a run started with another value must not silently hand its successor
 # the default); `FEATURE` for the same reason and it is the same rule ([53]: the
 # config ships `FEATURE="${FEATURE:-}"`, so a run pointed at a tracker by its
@@ -559,6 +589,7 @@ scheduler_outcome() {
     3) printf 'successor-blocked-instant\n' ;;
     4) printf 'successor-blocked-marker\n' ;;
     5) printf 'successor-blocked-mechanism\n' ;;
+    6) printf 'successor-blocked-path\n' ;;
     *) printf 'successor-blocked\n' ;;
   esac
 }
@@ -588,13 +619,33 @@ scheduler_outcome() {
 # a program a session chose, running in the pilot process tree on every index
 # refresh. The human this successor exists to replace is exactly the person who
 # would have read the receipt and caught it.
+#
+# `programs` is the same decision one level up, and it is asked **first** ([52]).
+# `residue` is what git said about git's own configuration, so a `git` a session
+# planted on this run's PATH is what answered it: an interposed program does not
+# get past the residue check, it *writes* the residue check's answer. And the
+# exposure is worse here than there, because the queued line carries this run's
+# PATH verbatim — a successor days out resolves the same names to the same files,
+# in a fresh shell that has hashed nothing, with no human between.
 scheduler_arm() {
   local window="${1:-}" reset="${2:-}" source="${3:-}" residue="${4:-}"
+  local programs="${5:-}"
   local mech line armed at chain kind name
 
   if [ "${WEEKLY_RESUME:-schedule}" != schedule ]; then
     scheduler__log "not arming a successor: WEEKLY_RESUME=${WEEKLY_RESUME:-} — this project resumes a weekly wall by hand"
     return 1
+  fi
+
+  if [ -n "$programs" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      scheduler__log "$line"
+    done <<PROGRAMS
+$programs
+PROGRAMS
+    scheduler__log "not arming a successor: the line this run would queue carries its own PATH, so a fresh shell days from now resolves those names the same way — and a fresh run adopts what it finds as the project's own and never says it again. A human has to look first"
+    return 6
   fi
 
   if [ -n "$residue" ]; then

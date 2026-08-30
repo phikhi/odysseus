@@ -676,6 +676,13 @@ gate_frontier_common() {
     rm -rf "$dir"
     return 1
   fi
+  # And what decides which `git` answered every question above ([52]). Here
+  # rather than beside the capability witness because this is the same object:
+  # one directory holding what the *run* was handed, taken before its first
+  # session, in `$TMPDIR` under a name nothing exports. Never fatal — a name this
+  # machine does not have digests to `-`, which is an answer — so a run is not
+  # refused over a program it was never going to call.
+  gate_path_witness "$dir" || true
   # The register of frontier movements this run has seen, and the only thing that
   # survives a restore. See gate_frontier: a movement erased by the first
   # gate to look would otherwise be invisible to every iteration behind it.
@@ -1517,6 +1524,362 @@ gate_frontier_residue() {
     LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
   [ -n "$left" ] || return 1
   printf '%s\n' "$left"
+}
+
+# ── what decides which program the pack runs at all ([52]) ───────────────────
+#
+# Everything above is about what a check can *see* and what git *runs*. One thing
+# is upstream of all of it, this file included: `PATH`. The pack runs `git`,
+# `claude`, `at`, `date` and `cksum` by their bare names, in the pilot's own
+# shell, and a session can put a file in a directory that is already on that
+# PATH — `~/.local/bin`, `/usr/local/bin` on many macs, `node_modules/.bin` under
+# an `npm run`. No ticket declares that directory, no rollback reaches it, and no
+# tree the scope-guard compares contains it.
+#
+# Measured on 30/08/2026 rather than reasoned about (`sondes/passe-30-08/r5`): a
+# session plants a passthrough `git` from a **green** iteration; the run it
+# planted from makes **0** calls through it, and the **next** run makes **204** —
+# `rev-parse --git-dir`, `worktree list --porcelain`, `config --get
+# core.excludesFile` among them, which is the working-tree lock ([22]), the
+# visibility frontier ([30], [41], [46]) and the tree the scope-guard judges
+# ([21], [29]), all answered by a file a session wrote. The zero is not a reprieve
+# and it is the reason this is watched at the level it is watched at: bash
+# **hashes** a command path the first time it resolves it, and the pilot resolved
+# `git` long before that session existed. What is exposed is therefore every
+# *fresh* shell — the next run, the `bash -c` of `TEST_CMD` and `TYPECHECK_CMD`,
+# and the successor, days out.
+#
+# A witness built *with* git cannot witness *against* git, which is why [46]'s
+# answer does not reach here: `gate_frontier_common` asks git what the
+# configuration says. And `claude` is the same door and worse — an interposed one
+# owns the sessions **and** the review lenses of the next run, which is both
+# halves of the judgement ([06], [20]).
+#
+# ── what this is, and the two exits it was chosen from ───────────────────────
+#
+# **A witness and a refusal to arm, out of one measurement.** Not a control, and
+# that is [15]'s posture for [15]'s reason: nothing in this pack reaches outside
+# the repository to undo a file, and reddening an iteration over a binary the
+# operator upgraded would end a night on `brew upgrade`. So a program that moved
+# under this run costs a `receipt_gap` and a line on `run.log` — and, because the
+# damage lands on the next *fresh* shell rather than on this one, a run that is
+# leaving one behind **arms no successor** (`scheduler_arm`, which is [09]'s
+# reasoning applied to the second kind: a fresh run adopts what it finds and
+# never says it again).
+#
+# The third exit — a preflight refusing a PATH that points inside the tree the
+# session writes — is **not** taken as such, and the reason is a price rather
+# than a doubt: `node_modules/.bin` on PATH is what `npm run` does, so refusing it
+# would refuse an ordinary way of starting a run, and an absolute directory under
+# the project tree is watched by the witness below like any other. Its one
+# sub-case that no witness can cover is taken, and only that one — see
+# `gate_path_preflight`.
+#
+# ── where the bar is, and it is calculated rather than guessed ───────────────
+#
+# The obvious witness — the *directories* on PATH — is the wrong one twice. It
+# watches thousands of files this pack never runs, so any `brew upgrade` at all
+# moves it: noise, on a channel whose consequence is refusing to arm a successor.
+# And it still would not say *which* program answered. What is watched is
+# therefore the **resolution and the content of the names this pack executes**:
+# one `command -v` per name — a shell builtin, so PATH is read and nothing is run
+# — and one digest of what it resolved to. A `git` planted ahead of the real one
+# moves the resolution; a `git` overwritten in place moves the digest; an upgrade
+# of a tool this pack never runs moves neither.
+#
+# What that leaves, written here because nothing else holds it: `cksum` is itself
+# resolved through PATH, so a session that planted one first would fabricate this
+# manifest — the same sentence as "a witness built with git cannot witness
+# against git", one turn lower, and it is why `cksum` is on the list below. What
+# bounds it is *when* the baseline is taken: before the first session of the run
+# exists. Fabricating it needs a plant a **previous** run left behind, which is
+# the case the refusal to arm exists to stop.
+
+# The names this pack runs, and therefore the names a session can answer for.
+#
+# Derived from the criterion — **what this pack executes by its bare name and
+# then believes** — and not from the two the probe happened to plant ([31], and
+# `gate_config_keys` one section up for the same rule).
+#
+# Bash **builtins are absent, and that is the criterion rather than an omission**:
+# `printf`, `read`, `test`, `[`, `kill`, `cd`, `pwd`, `command` and `wait` are
+# resolved by the shell and never through PATH, so no file can stand in for them.
+# That is also why this list is shorter than a reading of the source suggests —
+# `kill` appears thirty-seven times in this pack and cannot be substituted.
+#
+# What a substituted one buys, by group:
+#
+#   git claude          both halves of the judgement: every tree the scope-guard
+#                       compares, the working-tree lock, the visibility frontier
+#                       — and every session and every review lens.
+#   at systemd-run      what the night hands to, hours after anyone stopped
+#                       reading ([09]).
+#   curl date           what the run believes about the subscription and about
+#                       time: a wall, a reset, a claim's liveness ([08], [12]).
+#   cksum awk sed grep  the pack's own arithmetic — every digest, every manifest,
+#   tr cut sort uniq    every ledger and every verdict this file computes is read
+#   head tail wc cat    back through one of these.
+#   diff find ls
+#   mktemp              the names of the four secrets that are secret because
+#                       nothing exports them ([30], [40]): a predictable one is
+#                       a register a session can find.
+#   rm cp mv mkdir      what a rollback and a worktree are made of ([07], [13]).
+#   touch basename
+#   dirname ps sleep
+#   uname               which chain this platform gets, and therefore whether a
+#                       successor survives a reboot.
+#
+# A call site added to this pack in a program not on this list reopens the hole
+# with nothing to notice it. That is the same debt `gate_config_keys` carries and
+# it is written in both places on purpose.
+gate_path_programs() {
+  printf '%s\n' \
+    git claude at systemd-run curl date cksum awk sed grep tr cut sort uniq \
+    head tail wc cat diff find ls mktemp rm cp mv mkdir touch basename dirname \
+    ps sleep uname
+  return 0
+}
+
+# Where one name would resolve **in a fresh shell**, or `-` for a name no
+# directory on this PATH answers for.
+#
+# The search is done here, over PATH, and never asked of `command -v` — and that
+# is the trap this whole ticket is about, walked into once while delivering it.
+# Bash **hashes** a command path the first time it resolves one, and `command -v`
+# and `type -P` both answer out of that table. In the pilot's own shell, which
+# resolved `git` before the first session of the night existed, they go on
+# answering `/usr/bin/git` however many `git`s a session has since planted in
+# front of it: measured, and the witness read "nothing moved" on exactly the run
+# whose successor would run the plant. The exposed party is every shell that has
+# hashed *nothing* — the next run, the `bash -c` of `TEST_CMD`, the job days out
+# — so the question this asks has to be theirs and not this shell's.
+#
+# `hash -r` would fix the answer and buy the defect with it: a shell that clears
+# its table is a shell that then *runs* what it just found. So this is a search
+# and never a resolution, and nothing here executes anything — which is also what
+# lets `gate_path_preflight` run before the pack's first program.
+#
+# An empty or relative entry is skipped rather than resolved against a working
+# directory: `gate_path_preflight` refuses a run carrying one, and answering for
+# `.` here would be answering about a different directory than the shell being
+# warned about. A name that resolves to nothing absolute is `-` and never the
+# word itself — a builtin, a function and a missing binary are all "no file a
+# session could have written", and recording `git` as a location would make every
+# later comparison meaningless.
+gate__path_where() {
+  local name="${1:-}" list="${PATH:-}:" entry candidate
+  if [ -n "$name" ]; then
+    while [ -n "$list" ]; do
+      entry="${list%%:*}"
+      list="${list#*:}"
+      case "$entry" in
+        /*) ;;
+        *) continue ;;
+      esac
+      candidate="${entry%/}/$name"
+      [ -f "$candidate" ] && [ -x "$candidate" ] || continue
+      printf '%s\n' "$candidate"
+      return 0
+    done
+  fi
+  printf -- '-\n'
+  return 0
+}
+
+# `name<TAB>where<TAB>digest` per program. `gate__digest` and not a second
+# spelling of it, and it is asked **only about an absolute path** — which is a
+# guard and not a formality. `-` is the answer for a name no PATH directory
+# answers for, and `[ -f - ]` is *true* in a working directory that holds a file
+# called `-`, which a session can write in its own worktree with one redirection.
+# Without the test below, every uninstalled name on the list would digest to that
+# file, and the drift line would accuse a program nobody had touched while the
+# successor was refused for it — [49]'s defect, reached by a different door.
+gate__path_manifest() {
+  local name where digest
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    where="$(gate__path_where "$name")"
+    digest='-'
+    [ "$where" = '-' ] || digest="$(gate__digest "$where")"
+    printf '%s\t%s\t%s\n' "$name" "$where" "$digest"
+  done <<PROGRAMS
+$(gate_path_programs)
+PROGRAMS
+  return 0
+}
+
+# The run's baseline, into the run's own witness directory — the one
+# `gate_frontier_common` makes, before the first session of the night exists and
+# under a `mktemp` name the pilot never exports ([30], [40]). One witness per run
+# and not one per iteration, for the reason [41] gave the shared frontier sources
+# theirs: PATH belongs to the pilot's process and not to a worktree, so an
+# iteration that took its own would pin whatever a sibling's session had just
+# planted.
+gate_path_witness() {
+  local dir="${1:-}"
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  gate__path_manifest >"$dir/path" 2>/dev/null || return 1
+  return 0
+}
+
+# What moved under it, `name<TAB>was<TAB>now`. Non-zero when nothing did, which
+# is every ordinary night.
+#
+# Nothing here updates the witness, so a program that moved is reported by this
+# iteration and by every iteration after it — the same shape as `capability_drift`
+# and for the same reason: there is no restore, so the difference is still true
+# the next time somebody asks.
+gate__path_moved() {
+  local dir="${1:-}" name was_where was_digest where digest moved=1
+  [ -n "$dir" ] && [ -s "$dir/path" ] || return 1
+  while IFS="$(printf '\t')" read -r name was_where was_digest; do
+    [ -n "$name" ] || continue
+    where="$(gate__path_where "$name")"
+    # Only about an absolute path, for `gate__path_manifest`'s reason — and this
+    # is the half where it bites: this runs in the worktree an iteration works in,
+    # which is the directory the session it is judging just wrote.
+    digest='-'
+    [ "$where" = '-' ] || digest="$(gate__digest "$where")"
+    [ "$where" != "$was_where" ] || [ "$digest" != "$was_digest" ] || continue
+    printf '%s\t%s\t%s\n' "$name" "$was_where" "$where"
+    moved=0
+  done <"$dir/path"
+  return "$moved"
+}
+
+# One clause naming what moved, so that the iteration's sentence and the
+# successor's refusal describe the same event in the same words. Four cases,
+# because "moved" is four different facts and a reader has to act on them
+# differently.
+gate__path_clause() {
+  local name="$1" was="$2" now="$3"
+  if [ "$was" = "$now" ]; then
+    printf 'the file this pack runs as `%s` (%s) is not the file it was when this run started\n' \
+      "$name" "$now"
+  elif [ "$now" = '-' ]; then
+    printf 'this pack ran `%s` as %s when this run started, and that name is on no PATH directory now\n' \
+      "$name" "$was"
+  elif [ "$was" = '-' ]; then
+    printf '`%s` was on no PATH directory when this run started and resolves to %s now\n' \
+      "$name" "$now"
+  else
+    printf 'this pack runs `%s` as %s and ran it as %s when this run started\n' \
+      "$name" "$now" "$was"
+  fi
+}
+
+# The iteration's channel: `subject<TAB>outcome<TAB>message`, the shape
+# `capability_drift` already uses, and a `receipt_gap` on the way past.
+#
+# Two documents and not one, which is [46] on [15]: the receipt is emitted on
+# four routes only, so an iteration ending on a fresh retry produces none — and a
+# run that *stops* there has no later iteration coming to produce one either. The
+# line goes back to the caller because `run.log` belongs to the pilot and this
+# runs in an iteration's shell.
+#
+# A gap and not a note: this is an event channel, silent when no such event was
+# recorded, which is all it ever claims ([45]).
+#
+# The subject field carries where the name resolves *now* and not just the name,
+# which is [15]'s own lesson taken rather than repeated: `run.log` is the only
+# durable document on the iteration a run stops on, and a line reading
+# `git path-drift` there sends a human looking for something without saying where.
+gate_path_drift() {
+  local dir="${1:-}" name was now clause subject
+  while IFS="$(printf '\t')" read -r name was now; do
+    [ -n "$name" ] || continue
+    clause="$(gate__path_clause "$name" "$was" "$now")"
+    case "$now" in
+      '-') subject="$name is on no PATH directory now" ;;
+      *) subject="$name is now $now" ;;
+    esac
+    receipt_gap "a program this pack runs by name changed while this run was in flight: $clause — nothing here judged it, no rollback undoes it, and this run had already resolved that name, so what it buys is the next fresh shell"
+    printf '%s\t%s\t%s\n' "$subject" path-drift "$clause"
+  done <<MOVED
+$(gate__path_moved "$dir" || true)
+MOVED
+  return 0
+}
+
+# The same measurement, read by the pilot after the last iteration has been
+# drained, as the sentences a morning reader gets. Non-zero when nothing moved.
+#
+# Sentences and not the raw fields, unlike `gate_frontier_residue`, because the
+# claim is this module's: "these programs are not the ones this run started with"
+# is something only the witness can vouch for, where "so nothing is armed" is
+# `scheduler_arm`'s own. One clause, two consumers, neither able to drift from
+# the other.
+gate_path_residue() {
+  local dir="${1:-}" name was now found=1
+  while IFS="$(printf '\t')" read -r name was now; do
+    [ -n "$name" ] || continue
+    gate__path_clause "$name" "$was" "$now"
+    found=0
+  done <<MOVED
+$(gate__path_moved "$dir" || true)
+MOVED
+  return "$found"
+}
+
+# The PATH entries no witness can cover, refused before this pack runs a single
+# program by name. Two kinds, and both are "there is no honest measurement of
+# this", which is the shape every preflight in this pack has ([31], [17]): a
+# value that switches a control off without saying so.
+#
+# **Empty or relative** — `.`, `..`, `bin`, `~/bin` unexpanded, or the empty
+# string a stray colon leaves behind — does not name *a* directory. It names a
+# different directory in every shell this pack starts: the pilot's, the worktree
+# an iteration works in ([13]), the `bash -c` of `TEST_CMD`, the job shell of a
+# successor. A baseline taken in one of them says nothing about the others, so
+# the witness above would report `git` unmoved while a session's own committed,
+# judged, green `./git` was being executed by the next command that ran in that
+# tree.
+#
+# **Carrying a tab or a newline** cannot travel in the witness at all: the
+# manifest is tab-separated, so `/dir<TAB>x/git` reads back as a name, a location
+# and a digest that are three fragments of two fields. Nothing here would be
+# wrong about it in a way anybody could act on — the comparison would simply
+# never match again, so the drift line would fire every iteration and no
+# successor would ever be armed, on that machine, silently. This is not a session
+# reaching anywhere: a session cannot change the pilot's `PATH`, and the entry is
+# the operator's own. It is refused for [39]'s reason rather than for a threat —
+# name it, never pretend to have addressed it.
+#
+# **Called before the first external command of the run, and that placement is
+# the guarantee** rather than tidiness. `loop_main` calls it before it resolves
+# the project root, and `loop.sh` computes `RALPH_DIR` with parameter expansion
+# instead of `dirname` so that this is true of the file as a whole. A refusal
+# handed down after a planted program has already run is a refusal that arrived
+# after the fact.
+#
+# It costs a run started with a stray colon in its PATH, which is a real refusal
+# and not a theoretical one — so the message names the entry and says what to do.
+gate_path_preflight() {
+  local list="${PATH:-}:" entry tab rc=0
+  # A literal newline and not `$(printf '\n')`, which is the empty string: a
+  # command substitution strips every trailing newline, and an empty needle in the
+  # `case` below matches every entry there is — a refusal that refuses the machine.
+  local nl='
+'
+  tab="$(printf '\t')"
+  while [ -n "$list" ]; do
+    entry="${list%%:*}"
+    list="${list#*:}"
+    case "$entry" in
+      *"$tab"* | *"$nl"*)
+        printf 'ralph: PATH carries an entry whose name holds a tab or a newline — this pack records what it resolves `git` and `claude` to in a tab-separated witness, so that entry cannot travel in it and nothing here could tell you afterwards whether the program behind it had moved. Take it out of PATH and start the run again\n' >&2
+        rc=1
+        continue
+        ;;
+    esac
+    case "$entry" in
+      /*) continue ;;
+    esac
+    printf 'ralph: PATH carries the entry "%s", which is not an absolute directory — it means a different directory in every shell this pack starts, so nothing here can witness what it will resolve `git` and `claude` to. Take it out of PATH, or spell it absolutely, and start the run again\n' \
+      "$entry" >&2
+    rc=1
+  done
+  return "$rc"
 }
 
 # The `.gitignore` files of the working tree this session moved, on one line, and

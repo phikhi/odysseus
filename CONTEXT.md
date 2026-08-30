@@ -269,7 +269,7 @@ L'ordre auto-détecté des mécanismes de programmation one-shot que la boucle e
 _À éviter_ : ordonnanceur, planificateur, cron auto-effaçant (envisagé, non livré).
 
 **Repli hebdo (`pause-hebdo`)**:
-La sortie propre quand rien n'est armé — mécanisme absent, `WEEKLY_RESUME=human`, instant qu'aucune mesure ne porte, ou résidu de configuration que le run laisse derrière lui. Même code de sortie que le mur (`6`) et une ligne de journal distincte : `weekly-pause` contre `successor-armed`.
+La sortie propre quand rien n'est armé — mécanisme absent, `WEEKLY_RESUME=human`, instant qu'aucune mesure ne porte, marqueur déjà en place, résidu de configuration que le run laisse derrière lui, ou **programme que le run n'avait pas au démarrage** (la ligne mise en file fige le `PATH` du pilote, et un successeur est un shell frais qui résout tout à nouveau — [52]). Même code de sortie que le mur (`6`) et une ligne de journal distincte : `successor-armed` quand quelque chose est armé, `weekly-pause` quand le projet a choisi de reprendre à la main, et un mot `successor-blocked-*` par raison sinon ([53]) — un lecteur du matin doit pouvoir distinguer « ce projet reprend à la main » de « un marqueur refuse chaque nuit depuis mardi ».
 _À éviter_ : échec, abandon (le run a fini ce qu'il pouvait finir).
 
 ### L'audit a posteriori

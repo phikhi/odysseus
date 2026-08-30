@@ -3595,6 +3595,105 @@ mutation "53 a marker still waiting for its instant is counted too" "$GATE" \
   's#  \[ "\$at" -le "\$now" \] \|\| return 1#  :#' \
   test/scheduler.bats "nobody woke is counted"
 
+# ── [52] what decides which program the pack runs ────────────────────────────
+
+# The run's baseline of what it resolves its own names to, taken before the first
+# session exists. Without it there is nothing to compare a plant against, and the
+# witness is silent on the run that produced it.
+mutation "52 the run takes no baseline of the programs it runs" "$GATE" \
+  's#  gate_path_witness "\$dir" \|\| true\n##' \
+  test/gate.bats "plants ahead"
+
+# The trap this ticket is about, one layer down inside its own instrument: bash
+# hashes a command path, `command -v` answers out of that table, and the pilot
+# resolved `git` before the first session existed. Asked that way the witness
+# reports "nothing moved" on exactly the run whose successor runs the plant.
+mutation "52 the witness asks this shell's hash table instead of PATH" "$GATE" \
+  's/^gate__path_where\(\) \{/gate__path_where() { command -v "\$1" 2>\/dev\/null || printf -- "-\\\\n"; return 0;/m' \
+  test/gate.bats "fresh shell"
+
+# The other half of one measurement: a plant *ahead* of the real one moves the
+# resolution, a rewrite in place moves only the digest — and the second needs no
+# PATH order at all, which makes it the cheaper of the two.
+mutation "52 a program overwritten where it stands is not noticed" "$GATE" \
+  's# \|\| \[ "\$digest" != "\$was_digest" \]##' \
+  test/gate.bats "overwritten where it stands"
+
+# The refusal itself. The queued line carries this run's PATH verbatim and a
+# successor is a fresh shell that has hashed nothing, so without this a night ends
+# by handing days-out execution to whatever a session left on that PATH.
+mutation "52 a run leaving a substituted program arms a successor anyway" "$SCHEDULER_LIB" \
+  's#  if \[ -n "\$programs" \]; then#  if false; then#' \
+  test/scheduler.bats "planted a program"
+
+# And the pilot's half of it: the scheduler cannot ask this question, the witness
+# is the pilot's and dies with it.
+mutation "52 the pilot never asks what its programs are before arming" "$LOOP" \
+  's#  programs="\$\(gate_path_residue "\$\{RALPH_FRONTIER_COMMON:-\}" \|\| true\)"#  programs=""#' \
+  test/scheduler.bats "planted a program"
+
+# The PATH entry no witness can cover, because it is a different directory in
+# every shell this pack starts.
+mutation "52 the PATH nothing can witness is not refused" "$LOOP" \
+  's#  gate_path_preflight \|\| exit 2#  :#' \
+  test/gate.bats "not an absolute directory"
+
+# And *when* it is refused, which is the whole of the guarantee: `dirname` here
+# would be a program resolved through the very PATH being refused, three dozen
+# lines before anything could say so.
+mutation "52 the refusal arrives after this pack has run a program" "$LOOP" \
+  's#RALPH_DIR="\$\(cd "\$_ralph_src" && pwd\)"#RALPH_DIR="\$(cd "\$(dirname "\$\{BASH_SOURCE\[0\]\}")" && pwd)"#' \
+  test/gate.bats "not an absolute directory"
+
+# The entry that cannot travel in a tab-separated witness at all. Without the
+# clause the comparison never matches again, the drift fires every iteration and
+# no successor is ever armed on that machine, in silence.
+mutation "52 a PATH entry the witness cannot record is accepted" "$GATE" \
+  's#      \*"\$tab"\* \| \*"\$nl"\*\)#      "ralph-no-such-entry")#' \
+  test/gate.bats "cannot travel in the witness"
+
+# And the needle it is matched with. Written as a literal newline because a
+# command substitution strips every trailing one, so the obvious spelling is the
+# empty string — and an empty needle matches every entry there is, which turns
+# this refusal into one that refuses the machine.
+mutation "52 the newline needle is an empty string" "$GATE" \
+  's#  local nl=\x27\n\x27#  local nl=\x27\x27#' \
+  test/gate.bats "not an absolute directory"
+
+# The empty entry a stray colon leaves behind, which means `.` to every shell
+# there is and arrives by accident rather than by decision.
+mutation "52 the empty PATH entry a stray colon leaves is accepted" "$GATE" \
+  's#      /\*\) continue ;;#      "" \| /*) continue ;;#' \
+  test/gate.bats "empty PATH entry"
+
+# Both channels at once: `receipt_gap` is called inside the drift, so removing the
+# call leaves the receipt and the journal equally silent.
+mutation "52 the drift reaches no document at all" "$LOOP" \
+  's#\$\(gate_path_drift "\$\{RALPH_FRONTIER_COMMON:-\}"\)##' \
+  test/gate.bats "plants ahead"
+
+# [15]'s own lesson, taken rather than repeated: `run.log` is the only durable
+# document on the iteration a run stops on, and `git path-drift` there sends a
+# human looking for something without saying where.
+mutation "52 the journal names the program and not where it resolves" "$GATE" \
+  's#\*\) subject="\$name is now \$now" ;;#*) subject="\$name" ;;#' \
+  test/gate.bats "plants ahead"
+
+# `-` is the answer for a name no PATH directory answers for, and `[ -f - ]` is
+# true in a working directory holding a file called `-`, which a session writes
+# with one stray redirection in the worktree this comparison runs in. Without the
+# test, every uninstalled name digests to that file and the drift accuses a
+# program nobody touched — [49]'s defect through another door.
+mutation "52 a name nothing answers for is digested as a file" "$GATE" \
+  's#    \[ "\$where" = \x27-\x27 \] \|\| digest="\$\(gate__digest "\$where"\)"\n    \[ "\$where" != "\$was_where" \]#    digest="\$(gate__digest "\$where")"\n    [ "\$where" != "\$was_where" ]#' \
+  test/gate.bats "whatever the working directory holds"
+
+# The binary that owns both halves of the judgement — every session and every
+# review lens of the next run — left off the list the witness is computed from.
+mutation "52 the binary that owns both halves of the judgement is not watched" "$GATE" \
+  's#    git claude at systemd-run#    git at systemd-run#' \
+  test/gate.bats "never the directories"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
