@@ -102,3 +102,22 @@
   « someone else has it » en désignant personne.
 
 - **Contrainte posée par [09], livré le 29/08/2026 : la boucle humaine ne doit jamais armer de successeur.** `SCHEDULER` et `WEEKLY_RESUME` appartiennent au chemin AFK et à lui seul. Un successeur programmé pendant qu'un humain draine réveillerait un run sur un arbre qu'un humain est en train de travailler — la destruction mutuelle que [22] refuse, obtenue par une porte que personne ne regarde. Ce qui le tient aujourd'hui est un fait de structure et non un contrôle : `loop__arm_successor` vit dans `loop.sh` et rien d'autre ne l'appelle. Si `human-loop.sh` finit par partager un lib avec la boucle AFK, c'est ici qu'il faut refuser explicitement, pas dans `scheduler.sh` — la question est « qui a le droit d'armer », pas « comment on arme ». Deux objets neufs qu'un humain peut rencontrer et qu'il faut savoir expliquer : `<gitdir>/ralph.successor` (marqueur singleton, écrit par un run AFK, jamais effacé — un successeur qui se réveille écrit par-dessus) et `.scratch/<feature>/successor.log` (la sortie du job programmé, à côté de `run.log`).
+
+## Note de la passe transversale du 30/08/2026
+
+Deux choses de plus à lire dans `run.log`, et une à ne jamais faire.
+
+- **`weekly-pause` est ambigu et le restera jusqu'à [53].** Mesuré
+  (`sondes/passe-30-08/r2`) : le journal écrit `weekly-pause` aussi bien pour un
+  projet ayant choisi `WEEKLY_RESUME=human` que pour un run à qui un **marqueur
+  forgé** a interdit d'armer — la phrase qui nomme le marqueur est un
+  `scheduler__log`, donc stdout, donc morte avec le process. Une boucle humaine qui
+  présenterait `weekly-pause` comme « ce projet reprend à la main » se tromperait
+  dans le second cas.
+- **Un mur budget peut laisser `budget-wall` seul**, sans `successor-armed` ni
+  `weekly-pause` : c'est un run tué pendant le drainage. Trois fins, trois formes ;
+  la troisième n'est écrite nulle part comme un état ([53]).
+- **Rappel de [09], et la passe le confirme** : cette boucle ne doit **jamais**
+  armer. Le marqueur est par arbre et le verrou d'arbre refuse un second run
+  (`R4b`) — un successeur programmé pendant qu'un humain draine remettrait deux
+  runs sur un arbre, et c'est le second qui sortirait en 1.

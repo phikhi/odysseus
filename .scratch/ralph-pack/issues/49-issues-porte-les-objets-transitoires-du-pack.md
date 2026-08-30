@@ -303,3 +303,17 @@ Verts sur `ticket-49`, canari compris, mesurés le 29/08/2026 :
   déplacées.
 
 Nouvelle baseline. Aucun nom toléré : tout rouge est une régression.
+
+## Note de la passe transversale du 30/08/2026
+
+**Vos deux réparations tiennent au réel**, sondes du 27/08 rejouées sur `a4ecf90` :
+`q5` Q5a rend `rc=0`, aucune résurrection du garde de la sœur, aucune fausse
+accusation, et la confession nomme les deux chemins transitoires ; `q1` Q1a rend
+`1 exclusion guard(s) left in … .open.guard — the owner is gone`.
+
+Une sœur pour votre `gate__stale_guards`, qui n'est pas à vous mais qu'il faut
+connaître : `<gitdir>/ralph.successor` ([09]) est le troisième objet qu'un run
+laisse derrière lui et le seul que **rien** ne compte — `gate_leftovers` regarde
+`$TMPDIR` ([36]) et les `*.guard` de la feature (vous), pas le répertoire git. Il
+est inerte quand son instant est passé, donc c'est un constat de plus et pas un
+rouge, exactement comme les deux autres. Propriétaire : [53].

@@ -263,3 +263,45 @@ Ont aussi été touchés, aucun de façon évitable :
   cas que l'en-tête de `mutate.sh` demande d'interroger en premier — « aucun test
   n'a tourné » avant « aucun test n'a rougi » — sans quoi il se serait lu comme un
   test creux. Filtre corrigé, entrée rejouée `ok`.
+
+## Note de la passe transversale du 30/08/2026
+
+Les cinq angles que ce ticket avait ouverts ont été sondés
+(`.scratch/ralph-pack/sondes/passe-30-08/`). **Quatre trouvailles, deux tickets,
+et une hypothèse de l'angle (a) à corriger.**
+
+- **(a) le kill entre le mur et la queue — l'hypothèse était fausse.** `run.log`
+  n'est pas muet : il porte `budget-wall` **seul**, ce qui distingue bien les
+  trois fins (`budget-wall successor-armed` · `budget-wall weekly-pause` ·
+  `budget-wall`). Ce qui manque est que ce troisième état soit écrit comme un
+  état, et que la phrase qui promet l'armement ne soit pas un `loop_log` mourant
+  avec le process. Repris par [53].
+- **(b) le marqueur — pire que « pas balayé ».** Une session l'atteint depuis une
+  itération **verte** (`git rev-parse --git-common-dir`), et comme rien ne
+  l'efface et que `scheduler_armed_at` ne compare que son premier champ à `now`,
+  l'instant qu'elle écrit décide *combien de nuits* l'armement est éteint — deux
+  mesurées, marqueur intact. Le tableau disait « la nuit » au singulier ; corrigé.
+  Et `run.log` enregistre `weekly-pause`, le mot exact d'un projet ayant choisi
+  `WEEKLY_RESUME=human` : la cause n'atteint aucun document durable. Repris par
+  [53].
+- **(c) `successor.log` — le canal est choisi par la session.** La redirection est
+  la première chose que le shell du job fait, avant `loop.sh`. Répertoire → le job
+  sort en 1 et **`loop.sh` ne démarre jamais** ; lien vers `.claude/settings.json`
+  → le successeur **écrit dans le chemin scellé** (153 → 1240 octets), depuis une
+  itération verte, bout en bout. Repris par [53].
+- **(d) deux features d'un arbre — angle disculpé.** Le verrou d'arbre refuse le
+  second run avant que la question du marqueur se pose. Séquentiellement, la
+  première feature prend l'unique créneau de l'arbre : voulu, écrit, pas réparé.
+- **(e) le `PATH` figé — la plus grosse, et elle dépasse ce ticket.** Une session
+  qui pose un `git` dans un répertoire du `PATH` n'atteint pas le run courant
+  (bash avait hashé `git`) mais **204 appels du run suivant**, dont ceux dont
+  vivent le verrou d'arbre, la frontière de visibilité et l'arbre jugé. Ce ticket
+  y ajoute que le `PATH` est **figé dans la file** et rejoue des jours plus tard
+  sans humain. Ticket [52], qui est le second cas de la phrase que [46] avait
+  écrite (« ce que le pack exécute ensuite ») et qui n'avait pas de propriétaire.
+
+Ce que cette passe formule et qu'il faut garder : **ce ticket a demandé avec soin
+ce qu'un successeur hérite comme *ligne de base*, jamais ce qu'il hérite comme
+*contexte d'exécution*** — quel programme (`PATH`), quel travail (`FEATURE`, que
+la ligne ne porte pas), quel canal (`successor.log`), et si oui ou non (le
+marqueur).
