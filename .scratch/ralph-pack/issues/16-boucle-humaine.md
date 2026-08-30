@@ -121,3 +121,22 @@ Deux choses de plus à lire dans `run.log`, et une à ne jamais faire.
   armer. Le marqueur est par arbre et le verrou d'arbre refuse un second run
   (`R4b`) — un successeur programmé pendant qu'un humain draine remettrait deux
   runs sur un arbre, et c'est le second qui sortirait en 1.
+- **Contrainte posée par [52], livré le 30/08/2026 : `human-loop.sh` est un second
+  point d'entrée, donc un second endroit où la question du `PATH` se pose.**
+  `loop.sh` refuse maintenant de démarrer (`exit 2`) sur une entrée de `PATH` vide,
+  relative, ou portant une tabulation — `gate_path_preflight`, appelé en
+  **première ligne** de `loop_main`, avant `cd "$(ralph_project_root)"` qui est
+  déjà un `git`. Ce n'est pas une convention de style : la garantie est que le
+  refus arrive *avant* que le pack n'exécute un programme par son nom, et c'est
+  pour ça que `loop.sh` calcule `RALPH_DIR` par expansion de paramètre au lieu de
+  `dirname`. Deux choses à faire ici : appeler `gate_path_preflight` avant tout
+  appel externe, et ne pas réintroduire un `dirname`, un `basename` ou un
+  `git` au-dessus de cet appel dans le bootstrap. La mutation « 52 the refusal
+  arrives after this pack has run a program » mesure exactement ce point sur
+  `loop.sh` ; une entrée jumelle sera à écrire pour celui-ci.
+- **Et un mot de journal de plus à savoir lire** ([52]) :
+  `successor-blocked-path`, un run qui finit en tenant un `git`, un `claude` ou un
+  `at` qu'il n'avait pas au démarrage. Comme les quatre autres
+  `successor-blocked-*`, ce n'est pas `weekly-pause` et une boucle humaine qui les
+  confondrait présenterait « ce projet reprend à la main » à un opérateur dont la
+  machine porte une plante.

@@ -241,10 +241,18 @@ SCHEDULER="${SCHEDULER:-auto}"
 # that is leaving a git configuration source somewhere it did not find it does
 # not arm one at all, because a fresh run would pin that as the project's own.
 #
+# It does inherit **one** thing, because the queue gives a job no environment of
+# its own: this run's `PATH`, verbatim, on the command line. A successor is a
+# fresh shell that has hashed nothing, so every name on that line is resolved
+# again days later — in a repository a session wrote in all night. So a run that
+# ends holding a `git`, a `claude` or an `at` it did not start with arms nothing
+# either ([52]), and every iteration that saw one moved says so on its receipt and
+# in this journal.
+#
 # When nothing is armed, the run journal says which of the reasons it was:
 # `weekly-pause` for this key set to `human`, and a `successor-blocked-*` word for
-# a residue, an instant nothing measured, a marker already in place, or a machine
-# with no scheduler on it.
+# a residue, an instant nothing measured, a marker already in place, a machine
+# with no scheduler on it, or a program this run did not start with.
 WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
 
 # ── Per-ticket concurrency ───────────────────────────────────────────────────

@@ -33,7 +33,19 @@
 # Kept bash 3.2 compatible: the pack must run on a stock macOS shell.
 set -euo pipefail
 
-RALPH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Parameter expansion and not `dirname`, which is the only reason this is three
+# lines instead of one ([52]). `gate_path_preflight` refuses a PATH this pack
+# cannot witness *before* the pack runs a single program by name, and `dirname`
+# here would have been that program — resolved through the very PATH being
+# refused, three dozen lines before anything could say so. `cd` and `pwd` are
+# builtins.
+_ralph_src="${BASH_SOURCE[0]}"
+case "$_ralph_src" in
+  */*) _ralph_src="${_ralph_src%/*}" ;;
+  *) _ralph_src='.' ;;
+esac
+RALPH_DIR="$(cd "$_ralph_src" && pwd)"
+unset _ralph_src
 RALPH_CONFIG="${RALPH_CONFIG:-$RALPH_DIR/ralph.config.sh}"
 export RALPH_DIR
 
@@ -852,6 +864,19 @@ loop__iterate() {
 $(capability_drift "${RALPH_RETRO_STATE:-}")
 DRIFT
 
+  # And what a fresh shell would *run*, against the same kind of baseline ([52]).
+  # The same two channels for the same reason, and one difference worth the second
+  # block: this witness is the run's, not the retro's, so it exists even when the
+  # fourth layer could not open a workspace — which is the iteration a lesson was
+  # lost on and exactly not the one to go quiet about a planted `git` on.
+  while IFS="$(printf '\t')" read -r drift_subject drift_outcome drift_message; do
+    [ -n "$drift_subject" ] || continue
+    loop_log "$drift_message"
+    printf '%s\t%s\n' "$drift_subject" "$drift_outcome" >>"$slot/drift"
+  done <<PROGRAMS
+$(gate_path_drift "${RALPH_FRONTIER_COMMON:-}")
+PROGRAMS
+
   # The audit receipt, on the two iterations that *end* a ticket and on no other.
   #
   # Delivered, or handed to a human: those are the moments a ticket stops moving on
@@ -1246,10 +1271,16 @@ loop__finish() {
 # spells out: the run keeps its copy of the journal in a variable of this process
 # and a pipeline's right-hand side is a subshell.
 loop__arm_successor() {
-  local lines line residue rc=0
+  local lines line residue programs rc=0
   residue="$(gate_frontier_residue || true)"
+  # And what decides which `git` answered that question ([52]), read off the same
+  # run witness. Asked here rather than inside the scheduler because the pilot is
+  # the only shell that holds the witness — and passed alongside the residue
+  # rather than folded into it, because the two refusals are not the same refusal
+  # and a morning reader has to be able to tell them apart in one grep.
+  programs="$(gate_path_residue "${RALPH_FRONTIER_COMMON:-}" || true)"
   lines="$(scheduler_arm "${RALPH_BUDGET_WINDOW:-}" "${RALPH_BUDGET_RESET:-}" \
-    "${RALPH_BUDGET_SOURCE:-}" "$residue")" || rc=$?
+    "${RALPH_BUDGET_SOURCE:-}" "$residue" "$programs")" || rc=$?
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     loop_log "$line"
@@ -1261,6 +1292,17 @@ SUCCESSOR
 }
 
 loop_main() {
+  # First, and the position is the guarantee ([52]). `PATH` decides which `git`,
+  # which `claude` and which `at` everything below runs, so a PATH this pack
+  # cannot witness has to be refused before the pack resolves a single name
+  # through it — `ralph_project_root` on the next line is already a `git`. Nothing
+  # above this point in this file runs a program by name.
+  #
+  # Outside `loop_preflight` and not inside it for that reason, and on the same
+  # exit code: the preflight resolves the tracker directory before it decides
+  # anything, and a refusal that arrives after the fact is not one.
+  gate_path_preflight || exit 2
+
   cd "$(ralph_project_root)"
 
   # Where this run's own block in the journal starts, taken before anything writes

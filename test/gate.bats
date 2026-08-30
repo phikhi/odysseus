@@ -2346,3 +2346,279 @@ FAKE
   [ -d "$FEATURE_DIR/.open.guard" ] ||
     fail "the run removed a guard it is only supposed to name"
 }
+
+# ── [52] what decides which program the pack runs at all ─────────────────────
+#
+# `PATH` is upstream of everything above, this file included: `gate_frontier_*`
+# asks git what the configuration says, so an interposed `git` does not get past
+# that check, it *writes* its answer. Measured on the 30/08 pass — a session
+# plants a passthrough `git` from a green iteration, the run it planted from makes
+# 0 calls through it because bash hashed `git` before that session existed, and
+# the next run makes 204.
+#
+# What is delivered is a witness and a refusal to arm, out of one measurement,
+# plus the one preflight refusal no witness could replace. Not a control: nothing
+# in this pack reaches outside the repository to undo a file.
+
+# The audit receipt of one ticket, where a gap has to land.
+gate_receipt_path() {
+  printf '%s/receipts/%s/%s.md\n' "$PROJECT_DIR" "$RALPH_TEST_FEATURE" "$1"
+}
+
+@test "the witness is the programs this pack runs, never the directories they live in" {
+  # The obvious witness — the directories on PATH — is wrong twice: it watches
+  # thousands of files this pack never runs, so any `brew upgrade` at all moves it
+  # (noise, on a channel whose consequence is refusing to arm a successor), and it
+  # still would not say which program answered. What is watched is the resolution
+  # and the content of the names this pack executes.
+  pack_run 'gate_path_programs'
+  assert_success
+  assert_output_contains "git"
+  assert_output_contains "claude"
+  # `cksum` is on the list because this witness is computed with it: a session
+  # that planted one would fabricate the manifest, which is the same sentence as
+  # "a witness built with git cannot witness against git", one turn lower.
+  assert_output_contains "cksum"
+
+  pack_run 'dir="$(mktemp -d)"; gate_path_witness "$dir"; cat "$dir/path"'
+  assert_success
+  # `name<TAB>where<TAB>digest`, and an absolute path is the only thing recorded
+  # as a location: a builtin, a shell function or a name this machine does not
+  # have is `-` and never the word itself, which a later comparison could not
+  # tell apart from a file.
+  printf '%s\n' "$output" | grep -q '^git	/' ||
+    fail "git was not resolved to an absolute path:
+$output"
+  printf '%s\n' "$output" | grep -q '^claude	/' ||
+    fail "claude was not resolved to an absolute path:
+$output"
+}
+
+@test "what the witness resolves is a fresh shell's answer, not this shell's hash table" {
+  # The trap this ticket is about, walked into once while delivering it. Bash
+  # **hashes** a command path the first time it resolves one, and `command -v` and
+  # `type -P` both answer out of that table. The pilot resolved `git` before the
+  # night's first session existed, so a witness built on them reports "nothing
+  # moved" on exactly the run whose successor runs the plant — which is the
+  # measured shape of this whole defect, reproduced one layer down inside its own
+  # instrument.
+  #
+  # `hash -r` would fix the answer and buy the defect with it: the shell that
+  # clears its table is the shell that then runs what it just found. So the two
+  # answers are asked for side by side, and the guarantee is that they differ.
+  mkdir -p "$RALPH_TEST_DIR/mine-bin" "$RALPH_TEST_DIR/witness"
+  export PATH="$RALPH_TEST_DIR/mine-bin:$PATH"
+
+  pack_run 'w="'"$RALPH_TEST_DIR"'/witness"; m="'"$RALPH_TEST_DIR"'/mine-bin"
+    gate_path_witness "$w"
+    git --version >/dev/null 2>&1
+    printf "#!/bin/sh\nexit 0\n" >"$m/git"
+    chmod +x "$m/git"
+    printf "hash-says %s\n" "$(command -v git)"
+    printf "search-says %s\n" "$(gate__path_where git)"'
+  assert_success
+  assert_output_contains "search-says $RALPH_TEST_DIR/mine-bin/git"
+  refute_output_contains "hash-says $RALPH_TEST_DIR/mine-bin/git"
+}
+
+@test "a program a session plants ahead of the one this run started with is named on both documents" {
+  # The measured scenario, end to end and from a **green** iteration: nothing
+  # hostile is refused, nothing goes red, the ticket resolves — and the plant is
+  # still there afterwards, outside every tree the scope-guard compares and out of
+  # reach of every rollback. What it buys is the next fresh shell, which is why
+  # this is said on documents a human reads in the morning rather than swept.
+  mine="$RALPH_TEST_DIR/mine-bin"
+  mkdir -p "$mine"
+  export PATH="$mine:$PATH"
+
+  use_tickets 01-alpha
+  # A passthrough and not a stub: a broken `git` would red the run for the wrong
+  # reason, and what is being measured is reach, not damage.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+prompt="$(cat)"
+target=""
+IFS=: read -ra dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  case "$d" in *mine-bin) target="$d"; break ;; esac
+done
+if [ -n "$target" ] && [ ! -e "$target/git" ]; then
+  real="$(PATH="${PATH#*:}" command -v git)"
+  cat >"$target/git" <<PLANT
+#!/usr/bin/env bash
+exec "$real" "\$@"
+PLANT
+  chmod +x "$target/git"
+fi
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for t in $surface; do
+  mkdir -p "$(dirname "$t")" && printf 'written\n' >"$t"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  [ -x "$mine/git" ] || fail "the fake never planted anything, so this measures nothing"
+
+  assert_file_contains "$(gate_receipt_path 01-alpha)" \
+    "a program this pack runs by name changed while this run was in flight"
+  assert_file_contains "$(gate_receipt_path 01-alpha)" "$mine/git"
+
+  # And the journal, which is the only durable document on the iteration a run
+  # stops on ([46] on [15]). The subject carries where the name resolves *now*: a
+  # line reading `git path-drift` sends a human looking without saying where.
+  assert_file_contains "$FEATURE_DIR/run.log" "path-drift"
+  assert_file_contains "$FEATURE_DIR/run.log" "$mine/git"
+}
+
+@test "a program overwritten where it stands moves too, with its resolution unchanged" {
+  # The paired witness for the plant above, and the reason a digest is taken at
+  # all: a witness on the resolution alone would report nothing when a session
+  # rewrote the very file the run had already resolved — the cheaper of the two
+  # plants, and the one that needs no PATH order at all.
+  mkdir -p "$RALPH_TEST_DIR/mine-bin" "$RALPH_TEST_DIR/witness"
+  printf '#!/bin/sh\nexit 0\n' >"$RALPH_TEST_DIR/mine-bin/systemd-run"
+  chmod +x "$RALPH_TEST_DIR/mine-bin/systemd-run"
+  export PATH="$RALPH_TEST_DIR/mine-bin:$PATH"
+
+  pack_run 'gate_path_witness "'"$RALPH_TEST_DIR"'/witness"'
+  assert_success
+  assert_file_contains "$RALPH_TEST_DIR/witness/path" \
+    "$RALPH_TEST_DIR/mine-bin/systemd-run"
+
+  printf '#!/bin/sh\nexit 1\n' >"$RALPH_TEST_DIR/mine-bin/systemd-run"
+
+  pack_run 'receipt_gap() { printf "GAP %s\n" "$*"; }
+    gate_path_drift "'"$RALPH_TEST_DIR"'/witness"'
+  assert_success
+  assert_output_contains "is not the file it was when this run started"
+  assert_output_contains "systemd-run"
+  assert_output_contains "GAP a program this pack runs by name changed"
+}
+
+@test "a name this machine does not have is not a file, whatever the working directory holds" {
+  # `-` is the answer for a name no PATH directory answers for, and `[ -f - ]` is
+  # **true** in a working directory that holds a file called `-` — which a session
+  # writes with one stray redirection, in the worktree this comparison runs in.
+  # Without the guard every uninstalled name on the list digests to that file, the
+  # drift line accuses a program nobody touched, and the successor is refused for
+  # it: [49]'s defect — a note accusing a session that wrote nothing — reached
+  # through a different door.
+  #
+  # Driven on a witness written by hand rather than on the shipped list, because
+  # which names a machine happens to have is exactly what this must not depend on.
+  mkdir -p "$RALPH_TEST_DIR/witness" "$RALPH_TEST_DIR/cwd"
+  printf 'ralph-no-such-program\t-\t-\n' >"$RALPH_TEST_DIR/witness/path"
+
+  pack_run 'cd "'"$RALPH_TEST_DIR"'/cwd" && printf "surprise\n" >./-
+    gate__path_moved "'"$RALPH_TEST_DIR"'/witness" || printf "(nothing moved)\n"'
+  assert_success
+  assert_output_contains "(nothing moved)"
+  refute_output_contains "ralph-no-such-program"
+
+  # The paired witness: the same file under a name the comparison really is about
+  # still moves it, so what is measured above is the `-` and not a comparison that
+  # stopped working.
+  printf 'ralph-no-such-program\t%s/cwd/-\tdeadbeef.1\n' "$RALPH_TEST_DIR" \
+    >"$RALPH_TEST_DIR/witness/path"
+  pack_run 'gate__path_moved "'"$RALPH_TEST_DIR"'/witness" || printf "(nothing moved)\n"'
+  assert_success
+  assert_output_contains "ralph-no-such-program"
+  refute_output_contains "(nothing moved)"
+}
+
+@test "a run whose programs did not move says nothing about them" {
+  # The line [45] drew between the two channels: the notes are coverage and are on
+  # every receipt, this is an event. A silence here says no such event was
+  # recorded, which is all it ever claimed — and a sentence on every green
+  # iteration is the one nobody reads by the third night.
+  use_tickets 01-alpha
+
+  run_loop
+  assert_success
+
+  refute_file_contains "$(gate_receipt_path 01-alpha)" \
+    "a program this pack runs by name changed"
+  refute_file_contains "$FEATURE_DIR/run.log" "path-drift"
+}
+
+# Two recorders in front of everything, passing through to the real thing: what
+# they record is every program this pack resolved through the PATH being judged.
+gate_path_recorders() {
+  local name dir="$RALPH_TEST_DIR/recorder"
+  mkdir -p "$dir"
+  for name in git dirname; do
+    {
+      printf '#!/usr/bin/env bash\n'
+      printf 'printf "%%s\\n" "%s" >>"%s/ran"\n' "$name" "$SHIM_STATE"
+      printf 'exec "$(PATH="${PATH#*:}" command -v %s)" "$@"\n' "$name"
+    } >"$dir/$name"
+    chmod +x "$dir/$name"
+  done
+  printf '%s\n' "$dir"
+}
+
+@test "a PATH entry that is not an absolute directory refuses the run before it runs a program" {
+  # `.`, `..`, a bare `bin`, or the empty string a stray colon leaves behind: none
+  # of them names *a* directory. It is a different directory in every shell this
+  # pack starts — the pilot's, the worktree an iteration works in ([13]), the
+  # `bash -c` of TEST_CMD, a successor's job shell — so no baseline covers it, and
+  # a session's own committed, judged, green `./git` would be executed by the next
+  # command that ran in that tree with the witness reporting `git` unmoved.
+  #
+  # And the refusal has to land **before** the first program is resolved through
+  # the PATH it is refusing, which is why `loop.sh` computes `RALPH_DIR` with
+  # parameter expansion instead of `dirname`. The recorders measure exactly that:
+  # a refusal handed down after a planted program has already run is not one.
+  use_tickets 01-alpha
+  recorder="$(gate_path_recorders)"
+
+  run env PATH="$recorder:.:$PATH" bash "$PACK_DIR/loop.sh"
+  assert_failure 2
+  assert_output_contains 'PATH carries the entry "."'
+  refute_file_exists "$SHIM_STATE/ran"
+}
+
+@test "the same recorders run when the PATH is absolute, so the refusal is what stopped them" {
+  # The paired witness, and it earns its runtime: a preflight that refused every
+  # PATH, or a recorder that never recorded anything, would pass the test above
+  # exactly as well.
+  use_tickets 01-alpha
+  recorder="$(gate_path_recorders)"
+
+  run env PATH="$recorder:$PATH" bash "$PACK_DIR/loop.sh"
+  assert_success
+  assert_file_contains "$SHIM_STATE/ran" "git"
+}
+
+@test "a PATH entry holding a tab cannot travel in the witness, so it is refused too" {
+  # The witness is tab-separated, so `/dir<TAB>x/git` reads back as three
+  # fragments of two fields: the comparison would never match again, the drift
+  # line would fire every iteration, and no successor would ever be armed on that
+  # machine — silently. Not a session reaching anywhere (a session cannot change
+  # the pilot's PATH); refused for [39]'s reason, which is that naming what cannot
+  # be addressed beats pretending to have addressed it.
+  use_tickets 01-alpha
+  odd="$RALPH_TEST_DIR/od$(printf '\t')d"
+  mkdir -p "$odd"
+
+  run env PATH="$odd:$PATH" bash "$PACK_DIR/loop.sh"
+  assert_failure 2
+  assert_output_contains "whose name holds a tab or a newline"
+  assert_equal "$(claude_call_count)" "0"
+}
+
+@test "an empty PATH entry is refused the same way, and it is the one nobody types" {
+  # A trailing or doubled colon means `.` to every shell there is, and it arrives
+  # by accident — `PATH="$PATH:"` in a profile — rather than by decision. A check
+  # that split on `:` and stopped at the last non-empty field would pass the test
+  # above and miss this one entirely.
+  use_tickets 01-alpha
+
+  run env PATH="$PATH:" bash "$PACK_DIR/loop.sh"
+  assert_failure 2
+  assert_output_contains 'PATH carries the entry ""'
+}

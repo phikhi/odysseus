@@ -678,6 +678,110 @@ FAKE
   assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-residue"
 }
 
+# ── the programs a fresh shell would run ([52]) ──────────────────────────────
+
+@test "a run leaving a program it did not start with arms nothing" {
+  # The queued line carries this run's PATH verbatim, and a successor is a fresh
+  # shell that has hashed nothing: every name on that line is resolved again days
+  # later, in a repository a session wrote in all night, with no human in the
+  # room. Measured on the 30/08 pass — the run that was planted in makes 0 calls
+  # through the plant and the next one makes 204.
+  #
+  # A refusal to arm and not a caveat on the arming line, which is the half [52]
+  # had to decide: a sentence next to a job that was queued anyway is a sentence
+  # nobody is there to read, and being nobody-there is the whole premise of [09].
+  pack_run '
+    programs="$(printf "this pack runs \140git\140 as /tmp/mine/git and ran it as /usr/bin/git when this run started\n")"
+    scheduler_arm seven_day '"$(sched_soon 200000)"' endpoint "" "$programs" ||
+      printf "(not armed: rc=%s)\n" "$?"'
+  assert_success
+  assert_output_contains "/tmp/mine/git"
+  assert_output_contains "a fresh shell days from now resolves those names the same way"
+  assert_output_contains "(not armed: rc=6)"
+  assert_equal "$(at_call_count)" "0"
+
+  # The paired witness: the same instant with nothing moved is armed, so what is
+  # measured above is the programs and not one of the four guards under them.
+  pack_run 'scheduler_arm seven_day '"$(sched_soon 200000)"' endpoint "" ""'
+  assert_success
+  assert_output_contains "armed a one-shot successor"
+  assert_equal "$(at_call_count)" "1"
+}
+
+@test "the programs are asked about before the configuration they would answer for" {
+  # Ordering, and it is a guarantee rather than a style: `gate_frontier_residue`
+  # asks *git* what git's configuration says, so a `git` a session planted on this
+  # run's PATH does not get past that check — it writes that check's answer. The
+  # refusal that names the substituted program has to come first, or a night is
+  # refused for the reason the plant chose to give.
+  pack_run '
+    residue="$(printf "cfg\tcore.fsmonitor\n")"
+    programs="$(printf "this pack runs \140git\140 as /tmp/mine/git and ran it as /usr/bin/git when this run started\n")"
+    scheduler_arm seven_day '"$(sched_soon 200000)"' endpoint "$residue" "$programs" ||
+      printf "(not armed: rc=%s)\n" "$?"'
+  assert_success
+  assert_output_contains "(not armed: rc=6)"
+  assert_output_contains "/tmp/mine/git"
+  refute_output_contains "could not put it back"
+}
+
+@test "each refusal has its own word, or a morning reader cannot tell them apart" {
+  # [53]'s rule applied to the sixth: every refusal was journalled `weekly-pause`
+  # until then, which is the exact word of a project that resumes by hand. A
+  # planted `git` and a project that chose `WEEKLY_RESUME=human` are two different
+  # mornings.
+  pack_run 'scheduler_outcome 6; scheduler_outcome 2; scheduler_outcome 1'
+  assert_success
+  assert_output_contains "successor-blocked-path"
+  assert_output_contains "successor-blocked-residue"
+  assert_output_contains "weekly-pause"
+}
+
+@test "a real run whose session planted a program queues nothing for the morning" {
+  # The end-to-end half, and it is the one that covers the wiring. A **green**
+  # iteration plants a passthrough `git` in a directory that is already on the
+  # pilot's PATH — no write-surface declares it, no rollback reaches it, no tree
+  # the scope-guard compares contains it — and then the weekly wall goes up.
+  # Without the pilot handing the witness to the scheduler, a successor is queued
+  # here with that PATH frozen on its command line.
+  mine="$RALPH_TEST_DIR/mine-bin"
+  mkdir -p "$mine"
+  export PATH="$mine:$PATH"
+
+  use_tickets 01-alpha
+  set_config USAGE_CACHE_TTL 0
+  set_config STERILE_K 5
+  usage_respond "$(sched_all_clear)" "$(sched_weekly_wall "$(sched_soon 200000)")"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+target=""
+IFS=: read -ra dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  case "$d" in *mine-bin) target="$d"; break ;; esac
+done
+if [ -n "$target" ] && [ ! -e "$target/git" ]; then
+  real="$(PATH="${PATH#*:}" command -v git)"
+  cat >"$target/git" <<PLANT
+#!/usr/bin/env bash
+exec "$real" "\$@"
+PLANT
+  chmod +x "$target/git"
+fi
+printf 'alpha\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 6
+  [ -x "$mine/git" ] || fail "the fake never planted anything, so this measures nothing"
+  assert_output_contains "$mine/git"
+  assert_output_contains "a fresh shell days from now resolves those names the same way"
+  assert_equal "$(at_call_count)" "0"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-path"
+}
+
 # ── the preflight ────────────────────────────────────────────────────────────
 
 @test "a SCHEDULER outside the set is refused, not read as no mechanism at all" {
