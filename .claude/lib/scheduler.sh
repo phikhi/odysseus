@@ -42,6 +42,56 @@
 # successor *will* run — it says what it queued, with whatever that mechanism
 # cannot promise, and the row in docs/frontiere-de-confiance.md says the same.
 #
+# ## The three ends of a weekly wall, and the third one is a state
+#
+# A run stopped by a weekly window exits 6 whatever happens next, so the journal
+# is the only thing that tells a morning reader which of three things happened.
+# Arming sits at the **end** of `loop_main`, after a drain that lasts as long as
+# the slowest session in flight ([13], [28]), and a run killed inside that window
+# never reaches this file at all:
+#
+#   budget-wall successor-armed       the wall was hit and something is queued
+#   budget-wall successor-blocked-*   the wall was hit and nothing is, with the
+#     or budget-wall weekly-pause     reason in the word — see scheduler_outcome
+#   budget-wall                       alone: the run was killed between the wall
+#                                     and this module, during the drain
+#
+# The third one is a state and not a gap, and it is written down here because it
+# is the one nothing can print: the process that would have logged it is gone.
+# `budget-wall` with nothing under it is a run that was killed, never a run that
+# decided — and until [53] measured it, the pack assumed that case left the
+# journal silent altogether.
+#
+# ## What the queued line carries, and what it checks before it trusts it
+#
+# `at` takes a command line and runs it in a shell with no login environment, so
+# everything a successor needs is on that line — and everything on that line was
+# chosen by a dying run, in a repository a session has been writing to all night.
+# Two of the things it names live in a zone a session reaches:
+#
+#   the log      `<feature_dir>/successor.log`, beside `run.log` because that is
+#                the file a human opens in the morning — moving it out of reach
+#                was the other exit and [10] refused it for `run.log` on the
+#                ground that holds here too. The redirection is the **first**
+#                thing the job's shell does, before `loop.sh`, so before every
+#                preflight and every gate this pack owns; and a redirection on an
+#                `at` line has nowhere to put a guard. So the line runs a
+#                `bash -c` that tests the target first and falls back saying so
+#                (`scheduler__wake`, [53]). Measured before it was written: the
+#                name turned into a directory makes the job exit 1 and `loop.sh`
+#                never starts, the name turned into a link into the sealed
+#                `.claude/` makes this pack write through it at an instant when
+#                no run exists to be judged.
+#   the tracker  `FEATURE`, which this line did not carry until [53]. The config
+#                ships `FEATURE="${FEATURE:-}"`, so a run started with one in its
+#                environment armed a successor that exits 2 on an empty tracker
+#                while its own journal said `successor-armed`. It travels under
+#                the name it really has, which is [31]'s rule for `RALPH_CONFIG`
+#                applied to the second selector the environment gives. It also
+#                settles a twin defect: the log path is computed with the dying
+#                run's `FEATURE`, so the two agreeing is what keeps one feature's
+#                successor out of another feature's directory.
+#
 # ## The chain, ordered by reboot survival
 #
 # A weekly wall is days out, so the wait can cross a reboot. `at` keeps its queue
@@ -175,6 +225,43 @@ scheduler_caveat() {
 
 # ── the instant ──────────────────────────────────────────────────────────────
 
+# How far out each window this pack prices may honestly reset, in seconds. A
+# `five_hour` window resets within five hours and a `seven_day` one within seven
+# days, by what the words mean: this is a ceiling those words carry, not a clamp
+# on arithmetic.
+#
+# One table and not a `case` per reader, because it has two readers and they must
+# not drift apart: `scheduler_deadline` holds the instant a wall hands over to it,
+# and `scheduler_armed_at` holds the instant a *marker* claims ([53]). A window
+# added here widens both, or neither.
+scheduler__ceilings() {
+  printf 'five_hour\t18000\n'
+  printf 'seven_day\t604800\n'
+  printf 'seven_day_opus\t604800\n'
+}
+
+# The ceiling of one window, or non-zero for a name this pack does not know —
+# which is a refusal and never the widest one, for the reason every default in
+# this module is a refusal ([27]).
+scheduler__ceiling() {
+  local name seconds
+  while IFS="$(printf '\t')" read -r name seconds; do
+    [ "$name" = "${1:-}" ] || continue
+    printf '%s\n' "$seconds"
+    return 0
+  done <<CEILINGS
+$(scheduler__ceilings)
+CEILINGS
+  return 1
+}
+
+# The widest of them, derived rather than typed a second time: it is the furthest
+# instant *this pack* could have written into a marker, and a bound typed by hand
+# would be a bound that stops matching the table the day a window is added.
+scheduler__ceiling_max() {
+  scheduler__ceilings | awk -F'\t' '$2 > max { max = $2 } END { print max + 0 }'
+}
+
 # May this run arm a successor at that instant, and when. Sets two variables in
 # the caller's shell and returns non-zero when it may not:
 #
@@ -214,14 +301,10 @@ scheduler_deadline() {
       ;;
   esac
 
-  case "$window" in
-    five_hour) ceiling=18000 ;;
-    seven_day | seven_day_opus) ceiling=604800 ;;
-    *)
-      RALPH_SUCCESSOR_WHY="not arming a successor: ${window:-an unnamed window} is not a window this pack knows how to price, so nothing here can say how far out its reset may honestly be"
-      return 1
-      ;;
-  esac
+  if ! ceiling="$(scheduler__ceiling "$window")"; then
+    RALPH_SUCCESSOR_WHY="not arming a successor: ${window:-an unnamed window} is not a window this pack knows how to price, so nothing here can say how far out its reset may honestly be"
+    return 1
+  fi
 
   now="$(date +%s)"
   span=$((reset - now))
@@ -260,20 +343,43 @@ scheduler_deadline() {
 # tree lock is what that costs.
 #
 # Nothing removes it: a successor that wakes finds its own marker in the past and
-# writes over it.
+# writes over it. One that never wakes — `atrun` disabled, the case the frontier
+# table assumes rather than fixes — leaves an instant in the past that blocks
+# nothing and that nobody used to count. `gate_leftovers` says it at the start of
+# the next run since [53], on the terms it says the other two on: a line, never a
+# sweep and never a red.
 
-scheduler__marker() {
+# Public since [53], because it has a second caller and a private name with two
+# callers is a lie: `gate_leftovers` counts a marker nobody woke, the way it
+# counts a temporary directory and an exclusion guard nobody released.
+scheduler_marker_path() {
   local lock
   lock="$(ralph_tree_lock_path)" || return 1
   [ -n "$lock" ] || return 1
   printf '%s/ralph.successor\n' "${lock%/*}"
 }
 
-# The instant a successor is already armed at for this tree, or non-zero when
-# there is none and when the one there is has already passed.
+# The instant a successor is already armed at for this tree. Non-zero when there
+# is none, when the one there is has already passed, and — since [53] — when it
+# claims an instant no window this pack prices could have produced.
+#
+# That third bound is the answer to what "a forged marker ends the night with a
+# human" left open, and it is a bound rather than a check on *who wrote the file*
+# because nothing here can answer that question. `.git/` is out of the sweeps and
+# not out of reach ([22]): a session reaches it from a green iteration with
+# `git rev-parse --git-common-dir`, measured. What can be answered is what this
+# pack could have *written* — every marker it writes carries an instant that
+# passed `scheduler_deadline`, so it is at most the widest ceiling a priced
+# window carries. Beyond that the file was written by something else, and
+# honouring it hands one line of a session's choosing every night from here to
+# whenever it says: measured at 5.8 days on the 30/08 pass, nights one and two
+# refused, marker intact, `run.log` saying `weekly-pause` both times.
+#
+# The direction [09] chose is kept and only bounded: a forged marker still
+# *prevents* an arming rather than causing one, which is the cautious side.
 scheduler_armed_at() {
   local marker at now
-  marker="$(scheduler__marker)" || return 1
+  marker="$(scheduler_marker_path)" || return 1
   [ -f "$marker" ] || return 1
   at="$(awk -F'\t' 'NR == 1 { print $1 }' "$marker" 2>/dev/null || true)"
   case "$at" in
@@ -281,12 +387,13 @@ scheduler_armed_at() {
   esac
   now="$(date +%s)"
   [ "$at" -gt "$now" ] || return 1
+  [ "$((at - now))" -le "$(scheduler__ceiling_max)" ] || return 1
   printf '%s\n' "$at"
 }
 
 scheduler__mark() {
   local marker
-  marker="$(scheduler__marker)" || return 1
+  marker="$(scheduler_marker_path)" || return 1
   printf '%s\t%s\t%s\n' "$1" "$2" "$(ralph_now)" >"$marker" 2>/dev/null || return 1
   return 0
 }
@@ -295,6 +402,53 @@ scheduler__mark() {
 
 scheduler__quote() {
   printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"
+}
+
+# The shell a successor runs before it runs anything of this pack, and the only
+# place a guard on the redirection can sit ([53]).
+#
+# `at` takes a command line, and `cmd >>log` on one has nowhere to put a test:
+# the redirection happens in the job's shell before the first byte of `loop.sh`,
+# so no preflight, no lock and no gate of this pack has been reached yet when the
+# name is resolved. A `bash -c` that tests the target and then execs is therefore
+# the only shape available — the check has to be *in the job*.
+#
+# Three clauses, and each of them is a measured way the name was not the file it
+# was queued as:
+#
+#   -L on either  a symlink, on the path or on the directory holding it: the
+#                 append lands wherever a session pointed it. Measured on
+#                 `.claude/settings.json`, which is sealed against a session
+#                 ([24], [31]) and not against this job — 153 bytes of JSON
+#                 turned into 1240 and every later `claude` broken.
+#   -f and -O     a directory, a socket, a file this user does not own: the shell
+#                 says `Is a directory`, the job exits 1, and `loop.sh` never
+#                 starts at all — into `at`'s mail, which is the silence the
+#                 redirection existed to avoid.
+#   : >>          and the ordinary reasons the two above do not name: a full
+#                 disk, a read-only mount, a directory that is gone.
+#
+# `$1` is the log the dying run wanted, `$2` the fallback beside the tree lock,
+# `$3` the loop. **A refusal is never fatal**: the point of this job is that
+# `loop.sh` starts, so an unusable log costs the log and a sentence and never the
+# night — which is the defect this replaces, taken by the other end.
+#
+# The sentence travels in `RALPH_SUCCESSOR_NOTE`, which `loop_main` journals: the
+# fallback log is in the git directory, out of a session's sweeps and out of a
+# human's habits, so the reader who matters is reached through `run.log` and not
+# through the file that was written instead.
+#
+# One line, because a queued command is read as one line everywhere it is read —
+# by `at -c`, by the shim that records it, by the test that executes it.
+#
+# Where the next guard goes: this is the job's own preflight, and it is the place
+# for anything that has to be true *before* `loop.sh` is trusted to check it.
+scheduler__wake() {
+  local usable pick run
+  usable='ralph_wake_usable() { [ -n "$1" ] && [ ! -L "$1" ] && [ ! -L "${1%/*}" ] && { [ ! -e "$1" ] || { [ -f "$1" ] && [ -O "$1" ]; }; } && ( : >>"$1" ) 2>/dev/null; };'
+  pick='out=""; note=""; if ralph_wake_usable "$1"; then out="$1"; else note="the log this successor was queued with is not a plain file this user owns ($1) — a session can write that path, and this job resolves it before any gate of this pack exists"; ralph_wake_usable "$2" && out="$2"; fi;'
+  run='[ -z "$out" ] || exec >>"$out" 2>&1; if [ -n "$note" ]; then RALPH_SUCCESSOR_NOTE="$note; wrote to ${out:-nowhere: this output goes wherever the scheduler puts it} instead"; export RALPH_SUCCESSOR_NOTE; printf "ralph: %s\\n" "$RALPH_SUCCESSOR_NOTE"; fi; exec "$3"'
+  printf '%s %s %s\n' "$usable" "$pick" "$run"
 }
 
 # The command line a successor runs. Public because a test has to be able to read
@@ -306,27 +460,36 @@ scheduler__quote() {
 # because `at` mails a job's output and a headless box with no MTA loses it in
 # silence. The log sits beside `run.log` on purpose: it is the file a human opens
 # in the morning, and a successor's first words belong next to the dead run's
-# last ones.
+# last ones — and since [53] the job checks that name before it writes through
+# it, because that directory is a zone a session writes in.
 #
-# Three variables and no more. `PATH` so the successor finds the same `claude`
+# Four variables and no more. `PATH` so the successor finds the same `claude`
 # and the same `git` this run found; `RALPH_CONFIG` under the name it really has
 # ([31]: a run started with another value must not silently hand its successor
-# the default); `RALPH_PROJECT_ROOT` only when this run was given one.
+# the default); `FEATURE` for the same reason and it is the same rule ([53]: the
+# config ships `FEATURE="${FEATURE:-}"`, so a run pointed at a tracker by its
+# environment armed a successor that exits 2 on an empty one);
+# `RALPH_PROJECT_ROOT` only when this run was given one.
 scheduler_command() {
-  local root cfg log shell
+  local root cfg log alt marker shell
   root="$(ralph_project_root)"
   cfg="${RALPH_CONFIG:-$root/.claude/ralph.config.sh}"
   log="$(ralph_feature_dir)/successor.log"
+  alt=''
+  if marker="$(scheduler_marker_path)"; then alt="$marker.log"; fi
   shell="$(command -v bash 2>/dev/null || printf '/bin/bash')"
 
   printf 'PATH=%s' "$(scheduler__quote "${PATH:-}")"
   printf ' RALPH_CONFIG=%s' "$(scheduler__quote "$cfg")"
+  printf ' FEATURE=%s' "$(scheduler__quote "${FEATURE:-}")"
   [ -z "${RALPH_PROJECT_ROOT:-}" ] ||
     printf ' RALPH_PROJECT_ROOT=%s' "$(scheduler__quote "$RALPH_PROJECT_ROOT")"
-  printf ' %s %s >>%s 2>&1\n' \
+  printf ' %s -c %s ralph-successor %s %s %s\n' \
     "$(scheduler__quote "$shell")" \
-    "$(scheduler__quote "$root/.claude/loop.sh")" \
-    "$(scheduler__quote "$log")"
+    "$(scheduler__quote "$(scheduler__wake)")" \
+    "$(scheduler__quote "$log")" \
+    "$(scheduler__quote "$alt")" \
+    "$(scheduler__quote "$root/.claude/loop.sh")"
 }
 
 # An epoch as a local wall-clock stamp. BSD spelling first, because that is the
@@ -377,10 +540,39 @@ scheduler__submit() {
 
 # ── arming ───────────────────────────────────────────────────────────────────
 
+# The word the run journal gets for what `scheduler_arm` just did, out of the
+# code it returned. In this module and not in the pilot because the reasons are
+# this module's, and it is a **table of words and not of sentences** on purpose:
+# `run.log` is a journal a human greps, and a sentence there would be a sentence
+# to keep in step with the one already logged.
+#
+# It exists because until [53] every refusal was journalled `weekly-pause`, which
+# is the exact word of a project that chose `WEEKLY_RESUME=human`. A morning
+# reader could not tell "this project resumes by hand" from "a marker in the git
+# directory has been refusing every night since Tuesday" — the sentence that
+# named the marker being a `scheduler__log`, so stdout, so dead with the process.
+scheduler_outcome() {
+  case "${1:-0}" in
+    0) printf 'successor-armed\n' ;;
+    1) printf 'weekly-pause\n' ;;
+    2) printf 'successor-blocked-residue\n' ;;
+    3) printf 'successor-blocked-instant\n' ;;
+    4) printf 'successor-blocked-marker\n' ;;
+    5) printf 'successor-blocked-mechanism\n' ;;
+    *) printf 'successor-blocked\n' ;;
+  esac
+}
+
 # Arm a one-shot successor at the reset of the window that stopped this run.
 # Prints the lines a human reads in the morning, one per line, and returns
 # non-zero when nothing was armed — which is the `pause-hebdo` fallback and not
 # an error: the run has already decided to stop.
+#
+# The non-zero it returns says *which* refusal it was, and `scheduler_outcome`
+# turns that into the word the journal gets ([53]). A code and not a variable,
+# because the pilot reads this through a command substitution and a variable set
+# in a subshell dies there — the same trap that made the reclaim lines of [10]
+# invisible to the run that wrote them.
 #
 # Called by the pilot **after the last iteration has been drained** ([13], [28]),
 # never from an iteration: the point of a successor is to stop spending the
@@ -413,23 +605,23 @@ scheduler_arm() {
 $residue
 RESIDUE
     scheduler__log "not arming a successor: a fresh run pins the configuration it finds as its own baseline, so it would take that as the project's own and never say it again — a human has to look first"
-    return 1
+    return 2
   fi
 
   if ! scheduler_deadline "$window" "$reset" "$source"; then
     scheduler__log "$RALPH_SUCCESSOR_WHY"
-    return 1
+    return 3
   fi
 
   if at="$(scheduler_armed_at)"; then
     scheduler__log "not arming a successor: one is already armed for this working tree at $(scheduler__stamp "$at" '%Y-%m-%dT%H:%M:%S%z' || printf '%s' "$at") — two of them would be two runs racing for one tree lock"
-    return 1
+    return 4
   fi
 
   chain="$(scheduler_chain)"
   if [ -z "$chain" ]; then
     scheduler__log "no one-shot scheduler on this machine (tried: $(scheduler_candidates | tr '\n' ' ' | sed 's/ *$//')) — this run stops on the wall and a human resumes it"
-    return 1
+    return 5
   fi
 
   armed=''
@@ -445,7 +637,7 @@ CHAIN
 
   if [ -z "$armed" ]; then
     scheduler__log "every one-shot scheduler on this machine refused the successor — this run stops on the wall and a human resumes it"
-    return 1
+    return 5
   fi
 
   scheduler__mark "$RALPH_SUCCESSOR_AT" "$armed" ||

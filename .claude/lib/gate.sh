@@ -199,6 +199,7 @@ gate_leftovers() {
   local rc=1
   if gate__tmp_leftovers; then rc=0; fi
   if gate__stale_guards; then rc=0; fi
+  if gate__stale_successor; then rc=0; fi
   return "$rc"
 }
 
@@ -249,6 +250,39 @@ gate__stale_guards() {
   [ "$n" -gt 0 ] || return 1
   printf '%s exclusion guard(s) left in %s by an earlier run:%s — the owner is gone, nothing here removes them, and the next caller that needs one takes it over without a word\n' \
     "$n" "$dir" "$names"
+  return 0
+}
+
+# And what a successor nobody woke leaves beside the tree lock ([53]).
+#
+# `<gitdir>/ralph.successor` is written by the run that arms a successor and
+# removed by no one: a successor that wakes writes over its own marker, and one
+# that never wakes leaves an instant in the past. That is the case the frontier
+# table assumes rather than fixes — `at` answers for its queue and not for the
+# job, and macOS ships `atrun` disabled — so it is the ordinary outcome on a box
+# nobody enabled, not an exotic one.
+#
+# Inert, exactly like the two above: `scheduler_armed_at` refuses a marker whose
+# instant has passed, so it blocks nothing and this is a line and never a red.
+# Counted for the reason they are counted — this pack keeps a document about what
+# it does not look at, and a file nobody counts is a file nobody notices.
+#
+# The instant, not the file's age: this marker names the moment it was armed for,
+# which is the only thing that says whether it is still doing its job. And the
+# path comes from the module that owns the name rather than being spelled out
+# here, which is why that name stopped being private ([53]).
+gate__stale_successor() {
+  local marker at mech when now
+  marker="$(scheduler_marker_path 2>/dev/null)" || return 1
+  [ -f "$marker" ] || return 1
+  IFS="$(printf '\t')" read -r at mech when <"$marker" || true
+  case "${at:-}" in
+    '' | *[!0-9]*) at=0 ;;
+  esac
+  now="$(date +%s)"
+  [ "$at" -le "$now" ] || return 1
+  printf 'a one-shot successor marker is still in %s: armed %s with %s for an instant that has passed, so nothing is waiting on it — a successor that never woke leaves exactly this, and nothing here removes it\n' \
+    "${marker%/*}" "${when:-at an hour it did not record}" "${mech:-an unrecorded mechanism}"
   return 0
 }
 

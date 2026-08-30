@@ -13,6 +13,11 @@
 # ── Run target ───────────────────────────────────────────────────────────────
 
 # Tracker directory the run grinds: .scratch/<FEATURE>/issues/
+#
+# Empty here on purpose, so a run can be pointed at a tracker from its
+# environment. What that costs is paid for you since [53]: a one-shot successor
+# is queued with this run's own `FEATURE` on its command line, so it grinds the
+# tracker this run ground rather than waking up on an empty one.
 FEATURE="${FEATURE:-}"
 
 # Model used by delivery sessions. Alias (sonnet/opus/haiku) or full model id.
@@ -235,6 +240,11 @@ SCHEDULER="${SCHEDULER:-auto}"
 # capability baseline and no retry brief from the run that armed it. And a run
 # that is leaving a git configuration source somewhere it did not find it does
 # not arm one at all, because a fresh run would pin that as the project's own.
+#
+# When nothing is armed, the run journal says which of the reasons it was:
+# `weekly-pause` for this key set to `human`, and a `successor-blocked-*` word for
+# a residue, an instant nothing measured, a marker already in place, or a machine
+# with no scheduler on it.
 WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
 
 # ── Per-ticket concurrency ───────────────────────────────────────────────────

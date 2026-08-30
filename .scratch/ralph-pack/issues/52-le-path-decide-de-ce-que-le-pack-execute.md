@@ -104,3 +104,24 @@ Sonde conservée : `.scratch/ralph-pack/sondes/passe-30-08/r5-le-path-du-pilote.
 - **Ne pas armer un vrai binaire dans une sonde sans passthrough.** Le `git` planté
   par `R5a` réexécute le vrai ; un shim cassé ferait rougir la suite au lieu de
   mesurer la portée.
+
+## Ce que [53] a laissé ici (livré le 30/08/2026)
+
+- **La ligne mise en file a changé de forme.** Elle ne finit plus par une
+  redirection : elle exécute `bash -c '<scheduler__wake>' ralph-successor <log>
+  <repli> <loop.sh>`. `scheduler__wake` est le **préflight du job** — le shell qui
+  tourne avant `loop.sh`, donc avant tout préflight et tout gate du pack — et
+  c'est l'endroit prévu pour ce que ce ticket doit vérifier au réveil. Le
+  commentaire de la fonction le dit ; y loger la réponse plutôt que d'en bâtir une
+  seconde.
+- **Trois contraintes pour y ajouter quelque chose** : la sortie doit rester **une
+  seule ligne** (le shim d'`at` enregistre `command: <une ligne>` et les tests
+  relisent par `sed`) ; les chemins arrivent en positionnels — `$1` le log, `$2`
+  le repli, `$3` `loop.sh` — donc un argument ajouté décale la numérotation, à
+  mettre **après** `$3` ; le shell du job est bash par chemin absolu et pas `sh`.
+- **`scheduler.sh:322` a bougé.** Le `PATH` est toujours lu une seule fois, dans
+  `scheduler_command`, mais le numéro de ligne de `R5c` est périmé.
+- **La ligne porte maintenant `FEATURE` aussi**, et le refus d'armer a un code de
+  retour par raison (`scheduler_outcome` en fait un mot de journal). Un refus
+  d'armer que ce ticket ajouterait prend **un code neuf** et un mot neuf, pas un
+  des cinq existants.

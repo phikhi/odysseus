@@ -3418,19 +3418,19 @@ mutation "09 a reset in the past is armed" "$SCHEDULER_LIB" \
 # "Never +7 days" is a ceiling the window carries. Without it a clock that is
 # wrong buys a successor at any instant the endpoint cares to name.
 mutation "09 a weekly window has no ceiling of its own" "$SCHEDULER_LIB" \
-  's#    seven_day \| seven_day_opus\) ceiling=604800 ;;#    seven_day | seven_day_opus) ceiling=99999999 ;;#' \
+  's#  printf \x27seven_day\\t604800\\n\x27#  printf \x27seven_day\\t99999999\\n\x27#' \
   test/scheduler.bats "further out than its window"
 
 # The paired witness one line down: with a single shared ceiling both windows
 # would pass the entry above and a session window would be armable a week out.
 mutation "09 a session window is priced like a weekly one" "$SCHEDULER_LIB" \
-  's#    five_hour\) ceiling=18000 ;;#    five_hour) ceiling=604800 ;;#' \
+  's#  printf \x27five_hour\\t18000\\n\x27#  printf \x27five_hour\\t604800\\n\x27#' \
   test/scheduler.bats "held to five hours"
 
 # A window name this pack does not know, given the widest ceiling instead of a
 # refusal — which is the fail-open this whole module is written against.
 mutation "09 an unknown window is priced at a week" "$SCHEDULER_LIB" \
-  's#    \*\)\n      RALPH_SUCCESSOR_WHY="not arming a successor: \$\{window:-an unnamed window\} is not a window[^\n]*"\n      return 1\n      ;;#    *) ceiling=604800 ;;#' \
+  's#CEILINGS\n  return 1\n\}#CEILINGS\n  scheduler__ceiling_max\n}#' \
   test/scheduler.bats "cannot price"
 
 # The instant from a session's own stream, held to what a pause costs. Without
@@ -3463,13 +3463,13 @@ mutation "09 nothing records that a successor was armed" "$SCHEDULER_LIB" \
 
 # What a successor runs. Anything but the loop is a job that takes neither lock.
 mutation "09 the successor is not a run of this loop" "$SCHEDULER_LIB" \
-  's#"\$\(scheduler__quote "\$root/\.claude/loop\.sh"\)" \\#"\$(scheduler__quote "\$root/.claude/lib/select.sh")" \\#' \
+  's#"\$\(scheduler__quote "\$root/\.claude/loop\.sh"\)"#"\$(scheduler__quote "\$root/.claude/lib/select.sh")"#' \
   test/scheduler.bats "takes the run lock"
 
 # `at` mails a job's output, and a headless box has no MTA: without the redirect
 # a successor that ran leaves nothing a human can read.
 mutation "09 the queued job output goes nowhere" "$SCHEDULER_LIB" \
-  's#  printf \x27 %s %s >>%s 2>&1\\n\x27 \\#  printf \x27 %s %s\\n\x27 \\#' \
+  's#\[ -z "\$out" \] \|\| exec >>"\$out" 2>&1;#:;#' \
   test/scheduler.bats "lands beside the run journal"
 
 # The decision, mutated the way it would really be undone: by handing the
@@ -3516,8 +3516,8 @@ mutation "09 the wall arms nothing" "$LOOP" \
 
 # The journal word. A morning reader has to tell "something will pick this up"
 # from "nothing will" without the console output of a process that ended hours ago.
-mutation "09 the journal does not tell an armed run from a stopped one" "$LOOP" \
-  's#    loop_journal_append - successor-armed 0 0 0#    loop_journal_append - weekly-pause 0 0 0#' \
+mutation "09 the journal does not tell an armed run from a stopped one" "$SCHEDULER_LIB" \
+  's#    0\) printf \x27successor-armed\\n\x27 ;;#    0) printf \x27weekly-pause\\n\x27 ;;#' \
   test/scheduler.bats "arms exactly one successor"
 
 mutation "09 the scheduler keys are not refused at the door" "$LOOP" \
@@ -3535,6 +3535,65 @@ mutation "09 the cloud skill is refused without its reason" "$SCHEDULER_LIB" \
 mutation "09 a WEEKLY_RESUME outside the set is read as human" "$SCHEDULER_LIB" \
   's#      rc=1\n      ;;\n  esac\n\n  return "\$rc"#      ;;\n  esac\n\n  return "\$rc"#' \
   test/scheduler.bats "outside the set is refused, not read as human"
+
+# ── [53] what the queued line carries, and what the job checks before it trusts it
+
+# The guard the job runs before `loop.sh`. Without it the redirection is the
+# first thing the job's shell does and it resolves a name a session writes: a
+# directory there makes the job exit 1 and the successor never starts at all.
+mutation "53 the successor writes through whatever name it was queued with" "$SCHEDULER_LIB" \
+  's#usable=\x27ralph_wake_usable\(\) \{ \[ -n "\$1" \][^\n]*\x27#usable=\x27ralph_wake_usable() { [ -n "\$1" ]; };\x27#' \
+  test/scheduler.bats "turned into a directory"
+
+# And the other half of the same clause: a check with nowhere to fall back to
+# refuses the log and takes the night with it.
+mutation "53 a refused log has nothing to fall back to" "$SCHEDULER_LIB" \
+  's# ralph_wake_usable "\$2" && out="\$2"; fi;\x27# fi;\x27#' \
+  test/scheduler.bats "turned into a directory"
+
+# The fallback lives in the git directory, where nobody looks, so the sentence
+# has to reach the file a human opens. Without this line the successor wrote
+# somewhere else all night and said so nowhere a reader goes.
+mutation "53 the refused log is never named in the journal" "$LOOP" \
+  's#    loop_journal_append - successor-log-refused 0 0 0#    :#' \
+  test/scheduler.bats "reaches the file a human opens"
+
+# The second selector the environment gives ([31] for the first). Without it a
+# run pointed at its tracker by its environment arms a successor that wakes into
+# `exit 2, FEATURE is empty` — and journals `successor-armed` doing it.
+mutation "53 the queued line does not carry the tracker" "$SCHEDULER_LIB" \
+  's#  printf \x27 FEATURE=%s\x27 "\$\(scheduler__quote "\$\{FEATURE:-\}"\)"\n##' \
+  test/scheduler.bats "the tracker this run ground"
+
+# The bound on what a marker may claim. Without it the instant a session writes
+# into `.git/ralph.successor` decides how many nights are refused.
+mutation "53 a marker may claim any instant at all" "$SCHEDULER_LIB" \
+  's#  \[ "\$\(\(at - now\)\)" -le "\$\(scheduler__ceiling_max\)" \] \|\| return 1\n##' \
+  test/scheduler.bats "could have produced"
+
+# And the bound derived from the table rather than typed: read as zero, every
+# marker is beyond it and the fence stops fencing.
+mutation "53 the marker bound is not the widest ceiling of the table" "$SCHEDULER_LIB" \
+  's#\$2 > max \{ max = \$2 \} END \{ print max \+ 0 \}#END { print 0 }#' \
+  test/scheduler.bats "already armed for this tree"
+
+# The word the journal gets. Every refusal said `weekly-pause` until [53], which
+# is the exact word of a project that chose to resume by hand.
+mutation "53 every refusal is journalled with the same word" "$SCHEDULER_LIB" \
+  's#    4\) printf \x27successor-blocked-marker\\n\x27 ;;#    4) printf \x27weekly-pause\\n\x27 ;;#' \
+  test/scheduler.bats "which refusal it was"
+
+# A marker nobody woke — the ordinary outcome wherever `atrun` is disabled —
+# counted at the start of the next run, the way the other two leftovers are.
+mutation "53 a marker nobody woke is counted by nobody" "$GATE" \
+  's/^gate__stale_successor\(\) \{/gate__stale_successor() { return 1;/m' \
+  test/scheduler.bats "nobody woke is counted"
+
+# The paired witness: counted on the instant and not on the file, or every night
+# that armed something would report its own live marker as a leftover.
+mutation "53 a marker still waiting for its instant is counted too" "$GATE" \
+  's#  \[ "\$at" -le "\$now" \] \|\| return 1#  :#' \
+  test/scheduler.bats "nobody woke is counted"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
