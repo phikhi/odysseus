@@ -62,6 +62,7 @@
 #   curl_call_count                how many times the endpoint was asked
 #   at_exit CODE                   `at` exit code
 #   at_calls                       recorded `at` invocations
+#   at_call_count                  how many successors were queued
 #
 # Kept bash 3.2 compatible, like the pack itself.
 
@@ -798,6 +799,13 @@ at_exit() {
 
 at_calls() {
   cat "$SHIM_STATE/at.calls" 2>/dev/null
+}
+
+# How many successors were queued. Zero is the answer a test needs most often
+# here ([09]: almost every guard on arming is a refusal to arm), and `at_calls`
+# cannot say it — an empty recording and a missing file read the same.
+at_call_count() {
+  cat "$SHIM_STATE/at.count" 2>/dev/null || printf 0
 }
 
 # The shell an iteration runs in: a child of the pilot ([13]). A test that means

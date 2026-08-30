@@ -19,7 +19,10 @@
 #
 # 6 is deliberately not 4. Every other guard is a decision this run took about
 # itself; this one is a wall that lifts on its own at a known instant, which is
-# the difference a one-shot successor is scheduled on ([09]).
+# the difference a one-shot successor is armed on ([09]). It stays 6 whether one
+# was armed or not: the code says why this run stopped, and what got armed is a
+# line in the journal — `successor-armed` or `weekly-pause` — because a reader who
+# has to act on the difference is reading the journal and not a status.
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
 # FEATURE points at the wrong tracker, or because every ticket is still in
@@ -320,6 +323,10 @@ loop_preflight() {
   # And [15]'s, which decides whether a run that needed a review it does not have
   # ever says so, and how many sightings it takes before a human is asked.
   capability_preflight || rc=1
+  # And [09]'s, for the reason the budget's is here: these two keys decide what a
+  # run does at the one stop that lifts on its own, and a value read as "no
+  # mechanism" looks exactly like a machine that has none.
+  scheduler_preflight || rc=1
   return "$rc"
 }
 
@@ -1213,6 +1220,44 @@ loop__finish() {
   return 0
 }
 
+# ── the successor ────────────────────────────────────────────────────────────
+
+# The pilot's half of [09]: what a run stopped by a wall that lifts on its own
+# hands to a scheduler, and what it writes down about it.
+#
+# Everything the decision rests on is the pilot's and could not be an iteration's.
+# `RALPH_BUDGET_WINDOW`, `RALPH_BUDGET_RESET` and `RALPH_BUDGET_SOURCE` are set by
+# `budget_check` in *this* shell, which is why there is no second call to the
+# endpoint here ([08]); `gate_frontier_residue` is read off the run's own witness,
+# which dies on the line below.
+#
+# Journalled either way, and with two different words. A morning reader has to be
+# able to tell "this stopped and something will pick it up" from "this stopped and
+# nothing will", without reading the console output of a process that ended hours
+# ago — that is the whole difference between an AFK night and a lost one.
+#
+# A `while` with a heredoc and never a pipe, for the reason the reclaim loop
+# spells out: the run keeps its copy of the journal in a variable of this process
+# and a pipeline's right-hand side is a subshell.
+loop__arm_successor() {
+  local lines line residue rc=0
+  residue="$(gate_frontier_residue || true)"
+  lines="$(scheduler_arm "${RALPH_BUDGET_WINDOW:-}" "${RALPH_BUDGET_RESET:-}" \
+    "${RALPH_BUDGET_SOURCE:-}" "$residue")" || rc=$?
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    loop_log "$line"
+  done <<SUCCESSOR
+$lines
+SUCCESSOR
+  if [ "$rc" = 0 ]; then
+    loop_journal_append - successor-armed 0 0 0
+  else
+    loop_journal_append - weekly-pause 0 0 0
+  fi
+  return 0
+}
+
 loop_main() {
   cd "$(ralph_project_root)"
 
@@ -1445,7 +1490,7 @@ RECLAIMED
         # A weekly limit is days out. Sleeping in-process for days is what the
         # one-shot successor of [09] exists to replace, and until it lands the
         # honest answer is a stop a human can read in the morning.
-        loop_log "the weekly usage limit blocks this run (${RALPH_BUDGET_WINDOW:-unknown}, said by the ${RALPH_BUDGET_SOURCE:-endpoint}) — stopping rather than holding a process open for days; a one-shot successor at the reset belongs to [09]"
+        loop_log "the weekly usage limit blocks this run (${RALPH_BUDGET_WINDOW:-unknown}, said by the ${RALPH_BUDGET_SOURCE:-endpoint}) — stopping rather than holding a process open for days; a one-shot successor is armed at the reset once the iterations in flight are drained ([09])"
         loop_journal_append - budget-wall 0 0 0
         stop_code=6
         continue
@@ -1534,6 +1579,18 @@ RECLAIMED
   done
 
   rm -f "${RALPH_TRACKER_LOG:-}"
+  # The one stop that lifts on its own at a known instant ([08]), and the only one
+  # a successor is armed on. Here rather than where the wall was seen, and that
+  # placement is the whole of what [13] left this ticket: `stop_code=6` starts a
+  # drain, so at this line every iteration in flight has been collected, marked
+  # and journalled. Arming at the wall would have queued a successor while a
+  # `claude` per slot was still spending the quota it exists to save ([28]).
+  #
+  # Before the run's frontier witness is removed, because `gate_frontier_residue`
+  # is read off it — and that is a refusal to arm, not a note.
+  if [ "${stop_code:-0}" = 6 ]; then
+    loop__arm_successor
+  fi
   rm -rf "${RALPH_FRONTIER_COMMON:-}"
   retro_close
   # Last, after every iteration has been collected and journalled, and never a

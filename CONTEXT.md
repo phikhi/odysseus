@@ -261,12 +261,16 @@ _À éviter_ : driver, connecteur, plugin.
 _(Ajouté par le durcissement v2, ticket [17] — révise [07].)_
 
 **Successeur one-shot**:
-Le run programmé **une seule fois** au reset de la fenêtre de budget bloquante, qui reprend la delivery après un mur hebdo — préservant l'AFK sans dormir un process des jours. Singleton (un seul à la fois), protégé par le verrou de run.
+Le run programmé **une seule fois** au reset de la fenêtre de budget bloquante, qui reprend la delivery après un mur hebdo — préservant l'AFK sans dormir un process des jours. C'est un **run neuf** : il n'hérite ni de la copie de l'index de leçons, ni du témoin de capacités, ni du brief de reprise, et il relit sa ligne de base dans l'arbre. Armé par le **pilote après drainage** de la dernière itération, jamais depuis une itération. Singleton par un marqueur à côté du verrou d'arbre, protégé par le verrou de run.
 _À éviter_ : cron (récurrent), relance, reprise.
 
 **Chaîne de fallback (scheduler)**:
-L'ordre auto-détecté des mécanismes de programmation one-shot que la boucle essaie (`at` → systemd/launchd → cron auto-effaçant → skill `schedule` → repli humain), figé dans `SCHEDULER`.
-_À éviter_ : ordonnanceur, planificateur.
+L'ordre auto-détecté des mécanismes de programmation one-shot que la boucle essaie, **ordonné par survie au reboot** : `at` (file sur disque) avant un timer transient `systemd-run` (tmpfs, meurt au redémarrage), puis le repli humain. Une seule entrée sur macOS, qui n'a pas de systemd. Figé dans `SCHEDULER` : nommer un mécanisme prend celui-là ou rien, jamais le suivant. Le skill cloud `schedule` est **hors de cette chaîne** et refusé au préflight s'il y est écrit.
+_À éviter_ : ordonnanceur, planificateur, cron auto-effaçant (envisagé, non livré).
+
+**Repli hebdo (`pause-hebdo`)**:
+La sortie propre quand rien n'est armé — mécanisme absent, `WEEKLY_RESUME=human`, instant qu'aucune mesure ne porte, ou résidu de configuration que le run laisse derrière lui. Même code de sortie que le mur (`6`) et une ligne de journal distincte : `weekly-pause` contre `successor-armed`.
+_À éviter_ : échec, abandon (le run a fini ce qu'il pouvait finir).
 
 ### L'audit a posteriori
 

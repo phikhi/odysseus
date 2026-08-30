@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/scheduler.sh`, `test/scheduler.bats`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Un mur hebdo programme un successeur one-shot au `resets_at` de la fenêtre bloquante — **jamais `+7j`**.
-- [ ] La chaîne de scheduler est auto-détectée et ordonnée par survie au reboot (`at` avant `systemd-run` transient ; variantes par plateforme Linux/macOS) ; le skill cloud `schedule` n'est **pas** dans la chaîne locale.
-- [ ] Sans scheduler disponible, la boucle sort proprement en `pause-hebdo` (repli humain).
-- [ ] Anti-double-run : le successeur est singleton et protégé par le verrou de run ; deux successeurs ne se chevauchent jamais.
-- [ ] Un fake `at` reçoit exactement une programmation, avec la bonne échéance (vérifié via le seam).
+- [x] Un mur hebdo programme un successeur one-shot au `resets_at` de la fenêtre bloquante — **jamais `+7j`** : le plafond est porté par la fenêtre (`five_hour` 5 h, `seven_day*` 7 j), pas par une soustraction.
+- [x] La chaîne de scheduler est auto-détectée et ordonnée par survie au reboot (`at` avant `systemd-run` transient ; variantes par plateforme Linux/macOS) ; le skill cloud `schedule` n'est **pas** dans la chaîne locale, et l'écrire dans `SCHEDULER` est refusé au préflight avec sa raison.
+- [x] Sans scheduler disponible, la boucle sort proprement en `pause-hebdo` (repli humain) — même `exit 6`, ligne de journal `weekly-pause`.
+- [x] Anti-double-run : marqueur singleton à côté du verrou d'arbre, et le verrou de run comme filet — asserté en **exécutant** la commande mise en file contre un verrou tenu.
+- [x] Un fake `at` reçoit exactement une programmation, avec la bonne échéance (vérifié via le seam), arrondie à la minute supérieure.
 
 ## Comments
 
@@ -70,3 +70,196 @@
   le franchit à coup sûr, là où un run relancé à la main est relancé par un humain
   qui a lu le reçu. À décider ici, avec le reste : ce que le successeur relit et ce
   qu'il hérite.
+
+## Livraison, le 29/08/2026
+
+`.claude/lib/scheduler.sh` (neuf) et `test/scheduler.bats` (neuf, 30 tests), plus
+les écarts de write-surface listés plus bas.
+
+### La décision que [14], [15] et [46] avaient laissée ici
+
+**Un successeur est un run neuf et n'hérite rien.** La ligne mise en file porte
+`PATH`, `RALPH_CONFIG` sous le nom qu'il a réellement, `RALPH_PROJECT_ROOT` s'il
+y en a un, le chemin de `loop.sh`, et une redirection. Rien d'autre.
+
+L'autre sortie — transmettre une ligne de base — a été refusée sur l'argument de
+[40] et pas sur l'effort : transmettre veut dire un fichier, et **la ligne de
+commande d'un job en file est lisible par tout ce qui tourne sous cet
+utilisateur** (`at -c` l'imprime). Le nom de ce fichier serait donc un nom qu'une
+session peut apprendre, c'est-à-dire exactement le canal que [40] a fermé. La
+limite est assumée telle qu'écrite dans `docs/frontiere-de-confiance.md` : ce
+qu'un run a vu et n'a pas eu le temps de dire n'est redit par personne.
+
+**Un seul cas est refermé plutôt qu'assumé, et c'est celui que [46] a nommé.**
+Quand le run laisse une source de configuration ailleurs qu'il ne l'a trouvée,
+`gate_frontier_residue` la nomme et **rien n'est armé** — repli humain. Le
+raisonnement : un run neuf épingle ce qu'il trouve, donc le successeur adopterait
+le résidu comme celui du projet et ferait exécuter par git, dans l'arbre de
+process du pilote, à chaque rafraîchissement d'index, un programme qu'une session
+a choisi. Et l'humain que ce successeur remplace est précisément celui qui aurait
+lu le reçu. Prévenir sur la ligne d'armement aurait été moins cher et faux : la
+ligne serait lue au matin, après la nuit.
+
+### Ce qui a été construit
+
+- **`scheduler_candidates` / `scheduler_chain`** : la liste ordonnée par
+  plateforme (pure, la plateforme est un **argument** avec un défaut — l'ordre
+  *est* la garantie, et une garantie testée sur la machine qui fait tourner la
+  suite est testée sur une des deux plateformes promises), puis le filtre par
+  `command -v`. `at` avant `systemd-run` parce que l'un spoole sur disque et
+  l'autre vit dans `/run` (tmpfs). Une seule entrée sur macOS.
+- **`scheduler_deadline`** : quatre gardes, et chacun est une façon dont le reset
+  n'est pas un instant que quelque chose a mesuré — lisible, futur, dans le
+  plafond de **sa propre fenêtre** (`five_hour` 5 h, `seven_day*` 7 j, un nom
+  inconnu refusé), et le plafond `BUDGET_MAX_PAUSE` en plus quand la source est
+  `stream`. « Jamais +7 j » est donc un plafond que la fenêtre porte, pas un
+  calcul qu'on s'interdit. Répond par variables (`RALPH_SUCCESSOR_AT`,
+  `RALPH_SUCCESSOR_WHY`) comme `budget_check`, la refus et l'instant étant deux
+  réponses à une question.
+- **`scheduler_arm`** : `WEEKLY_RESUME` → résidu → instant → singleton → chaîne →
+  soumission. Imprime les lignes du matin sur stdout, rend non-zéro quand rien
+  n'a été armé (ce qui est le repli, pas une erreur).
+- **`scheduler_caveat`** : ce que le mécanisme choisi *ne peut pas* promettre,
+  sur la ligne d'à côté. `at` répond de la file et jamais du job ; `atrun` est
+  livré désactivé sur macOS ; un timer transient meurt au reboot et un `--user`
+  au logout sans linger.
+- **Le marqueur singleton** `<gitdir>/ralph.successor`, à côté du verrou d'arbre
+  et pour sa raison ([22]) : hors de portée d'un `git add -A`, d'un `git clean`
+  et d'un `rm -rf .scratch`, et déjà par arbre de travail, ce qui est la
+  granularité d'un successeur. Rien ne l'efface : un successeur qui se réveille
+  trouve son propre marqueur dans le passé et écrit par-dessus.
+- **`gate_frontier_residue`** (gate.sh) : la différence symétrique de [46] un
+  niveau au-dessus — contre le témoin du **run** et sur les sources partagées
+  seulement. La moitié `tree` en est exclue exprès : un `.gitignore` qu'une
+  session écrit est du travail de projet, et le run suivant est *censé* le
+  recevoir.
+- **Le pilote** : `scheduler_preflight` dans `loop_preflight`, et
+  `loop__arm_successor` en queue de `loop_main`, **après la boucle** (donc après
+  drainage : `stop_code=6` déclenche un drain) et **avant** que le témoin de
+  frontière du run ne soit détruit, puisque le résidu se lit dessus.
+
+### Décisions à connaître avant de rouvrir ce code
+
+- **Le code de sortie reste `6`, armé ou non.** Un septième code se serait
+  propagé dans l'en-tête de `loop.sh`, dans [08], et dans tout consommateur.
+  Ce que le code dit est *pourquoi ce run s'est arrêté* ; ce qui a été armé est
+  une ligne de journal — `successor-armed` contre `weekly-pause` — parce qu'un
+  lecteur qui doit agir sur la différence lit le journal et pas un statut.
+- **On arme sur les *deux* causes d'`exit 6`, et ce sont les gardes qui les
+  séparent.** Le mur hebdo passe ; la fenêtre de session dont le reset est
+  illisible est refusée par le garde « lisible ». Une fenêtre de session dont le
+  reset est *lisible mais plus loin que `BUDGET_MAX_PAUSE`* est armée, et c'est
+  voulu : c'est exactement le cas qu'un successeur résout mieux qu'un arrêt.
+- **Pas de sonde `atrun` sur macOS.** Elle demande `launchctl`, elle n'est pas
+  testable à travers le seam du harnais, et un contrôle qui répondrait
+  « activé » sur une machine où le démon vient d'être arrêté serait le faux vert
+  que ce dépôt refuse. À la place, la phrase de `scheduler_caveat`, avec sa
+  variante macOS. Conséquence : sur un mac sans `atrun`, `at` prend la
+  soumission, rien ne tourne, et la seule chose qui le dit est cette phrase.
+- **Ni LaunchAgent auto-désinstallant ni crontab auto-effaçant**, tous deux dans
+  la recherche : ce sont des patterns communautaires, l'un installe un `.plist`
+  dans le `~/Library` d'un humain et l'autre a une course d'édition de crontab
+  que rien ici ne sérialise. Le repli humain est préférable à un mécanisme dont
+  le mode de panne est « la ligne reste et se rejoue dans un an ».
+- **`at -t` prend des minutes entières, et l'arrondi est vers le haut.** Vers le
+  bas réveille le run *avant* que le mur ne se lève : il retrouve la même fenêtre,
+  s'arrête, et réarme. Le test le fixe à 30 s après la minute pleine — pris
+  sur l'horloge, l'arrondi haut et bas coïncident une fois sur soixante et la
+  mutation rapporterait `ok` cinquante-neuf fois puis mentirait.
+
+### Écarts de write-surface (assumés, listés)
+
+La write-surface déclarée est `.claude/lib/scheduler.sh` + `test/scheduler.bats`.
+Ont aussi été touchés, aucun de façon évitable :
+
+- `.claude/loop.sh` — le préflight, l'appel après drainage, la ligne du mur (qui
+  disait « belongs to [09] »), et l'en-tête des codes de sortie. Rien de ce
+  ticket n'est atteignable sans un appelant.
+- `.claude/lib/gate.sh` — `gate_frontier_residue`, ~10 lignes, ajoutées **après**
+  `gate__frontier_share` : une fonction neuve placée plus haut aurait pu rendre
+  ambiguë une ancre de mutation existante ([46]).
+- `.claude/ralph.config.sh.example` — commentaires de `SCHEDULER` et
+  `WEEKLY_RESUME` seulement, les valeurs étaient déjà là et sont inchangées.
+- `test/helpers/harness.bash` — `at_call_count`, à côté de `at_calls`/`at_exit` :
+  zéro est la réponse dont ce fichier a le plus besoin, et un enregistrement vide
+  se lit comme un fichier absent.
+- `test/budget.bats` — le test du mur hebdo assertait `[09]` dans la sortie ;
+  il asserte maintenant que la passation a eu lieu (`at_call_count` = 1).
+- `test/mutate.sh` — 30 entrées.
+- `docs/frontiere-de-confiance.md` — deux lignes neuves ; `CONTEXT.md` — les deux
+  entrées d'auto-chaînage corrigées (elles décrivaient une chaîne à cinq maillons
+  qui n'a jamais été livrée) et une entrée `Repli hebdo`.
+
+### Pièges rencontrés
+
+- **Un test qui fait échouer `at` fait tomber la chaîne sur `systemd-run`**, et
+  sur une machine Linux qui en a un, la suite armerait un vrai timer transient.
+  Le test qui met `at_exit 1` épingle donc `SCHEDULER=at`. Ce piège vaut pour
+  toute entrée future qui casse une soumission.
+- **Le filtre de chaîne ne se teste pas en comptant sur l'absence de systemd** :
+  la suite tourne sur les deux plateformes. Il se teste en retirant `at` du
+  `PATH` dans un sous-shell.
+- **`'' | *[!0-9]*)` apparaît deux fois** dans `scheduler.sh` (le garde de
+  l'instant et celui du marqueur). L'entrée de mutation ancre sur la ligne
+  suivante, sans quoi elle aurait édité la première par hasard — la forme exacte
+  des deux ancres non uniques que [29] avait fabriquées.
+- **La sonde de résidu bout en bout ne doit pas armer `core.fsmonitor` pour de
+  vrai** : git l'exécuterait à chaque rafraîchissement d'index de la suite.
+  `help.browser` est sur la liste dérivée de [46] et n'est exécuté par rien ici.
+  Elle a aussi besoin de `USAGE_CACHE_TTL=0` : le cache de 180 s de [08] ne fait
+  poser qu'une seule question par run, donc le second corps de `usage_respond`
+  n'aurait jamais été servi et le mur ne se serait jamais levé.
+- **`assert_output_contains` matche littéralement** (`case` avec `"$1"` cité),
+  donc l'ancienne assertion `"[09]"` de `budget.bats` continuait de passer avec
+  le nouveau message : elle était devenue vraie pour une autre raison. Remplacée.
+
+### Ce que ce ticket laisse aux autres
+
+- **[08]** : `RALPH_BUDGET_WINDOW/RESET/SOURCE` sont désormais lus **en queue de
+  `loop_main`**, longtemps après que `budget_check` les a posés. Ce sont des
+  variables du shell du pilote ; un changement qui déplacerait `budget_check`
+  dans un sous-shell ou une itération casserait l'armement en silence.
+- **[13] / [28]** : l'armement est en queue de `loop_main`, donc après drainage.
+  Un `exit` anticipé sur `stop_code=6` armerait pendant qu'un `claude` par slot
+  brûle encore le quota que le successeur existe pour économiser. Aucune mutation
+  ne peut rendre ce placement rouge — ce qui le porte est la structure
+  (`stop_code` déclenche un drain) plus l'assertion « exactement un ».
+- **[16]** : la boucle humaine est l'autre point d'entrée et ne doit **jamais**
+  armer — un successeur programmé pendant qu'un humain draine remettrait deux
+  runs sur un arbre. `SCHEDULER` et `WEEKLY_RESUME` appartiennent au chemin AFK.
+- **[19]** : deux objets neufs à balayer/provisionner — `successor.log` dans
+  `.scratch/<feature>/` (à couvrir par le `.gitignore` que [19] écrit, comme
+  `run.log`) et le marqueur `<gitdir>/ralph.successor`, qu'un successeur qui ne
+  s'est jamais réveillé laisse derrière lui. Et la confirmation forcée de
+  l'installeur doit écrire `SCHEDULER` / `WEEKLY_RESUME` : les deux clés sont
+  refusées au préflight si elles sont vides ou hors du jeu.
+- **[30] / [46]** : `gate_frontier_residue` est un nouveau lecteur du manifeste
+  du témoin de run. Un ticket qui change la forme de ce manifeste doit le garder.
+- **[10] / [45]** : un mur budget ne produit aucun reçu — il n'y a pas
+  d'itération à raconter — donc ce que ce ticket écrit ne vit que dans `run.log`
+  et sur stdout. Si un jour un reçu de *run* existe, l'armement y appartient.
+- **Tempête d'armement** : un successeur qui se réveille et retrouve le mur
+  réarme, mais seulement si l'endpoint donne un reset **futur** ; un reset déjà
+  passé est refusé, donc la chaîne se termine. Un endpoint qui répondrait chaque
+  fois « une semaine de plus » armerait chaque semaine, ce qui est le
+  comportement voulu et pas une boucle.
+
+### Chiffres
+
+- `bash test/run.sh` = **577 tests, 0 failures, 6 skips** opt-in (547 avant, +30,
+  tous dans `test/scheduler.bats`).
+- `bash test/mutate.sh` = **556 mutations, 0 `not ok`** (526 avant, +30) — aucun
+  nom toléré, canari compris. Le passage à blanc (`-n`) rendait déjà 556/0, donc
+  **aucune ancre n'a dérivé**, y compris celles de [46], [41], [44] et [30] dans
+  `gate.sh` et `loop.sh`, que ce ticket a rouverts. Ce qui l'explique : la
+  fonction neuve de `gate.sh` a été posée après `gate__frontier_share` et les
+  ajouts de `loop.sh` sont un appel de préflight, une fonction neuve et un `if`
+  en queue de `loop_main` — aucune ligne porteuse d'une garantie existante n'a
+  bougé.
+- Un seul `not ok` au premier passage, et il faut le dire parce qu'il a la forme
+  d'un piège connu : `DRIFTED 09 a second successor is armed over the first`,
+  « no test matches -f … ». Le filtre citait une phrase de l'**assertion**
+  (`for this working tree`) et pas du **nom** du test (`for this tree`). C'est le
+  cas que l'en-tête de `mutate.sh` demande d'interroger en premier — « aucun test
+  n'a tourné » avant « aucun test n'a rougi » — sans quoi il se serait lu comme un
+  test creux. Filtre corrigé, entrée rejouée `ok`.
