@@ -20,6 +20,11 @@
 #   - **two successors are two runs racing for one tree lock.** The marker is the
 #     fence, the lock is the net, and the net is tested by running the queued
 #     command against a held lock.
+#   - **the queued line is read in a repository a session wrote in all night**
+#     ([53]). Its log path and its tracker are two things a session reaches, and
+#     the three defects that came of it are invisible to any assertion on the
+#     *text* of the line — the tests for them execute it, the way the test for
+#     the run lock already did.
 #
 # The platform half is tested as a pure function on both names rather than on
 # whichever machine runs the suite: the ordering *is* the guarantee, and a
@@ -80,6 +85,46 @@ sched_queued_command() {
 # moving into the tree, where a session writes.
 sched_marker() {
   printf '%s/.git/ralph.successor' "$PROJECT_DIR"
+}
+
+# And the log a successor falls back to when the one it was queued with is not a
+# file it can write ([53]) — beside the marker, out of reach of a `git add -A`, a
+# `git clean` and an `rm -rf .scratch`.
+sched_fallback_log() {
+  printf '%s.log' "$(sched_marker)"
+}
+
+# A config whose `FEATURE` comes from the environment and from nowhere else,
+# which is the only way to ask what the queued line carries.
+#
+# The pin the harness writes into the config has to come *out* of it: a
+# `FEATURE="${FEATURE:-}"` appended after the pin reads the shell variable the pin
+# has just set, and stages nothing at all.
+sched_feature_from_the_environment_only() {
+  local cfg="$RALPH_CONFIG_FILE" stripped="$RALPH_TEST_DIR/config.no-feature"
+  grep -v '^FEATURE=' "$cfg" >"$stripped"
+  printf 'FEATURE="${FEATURE:-}"\n' >>"$stripped"
+  mv "$stripped" "$cfg"
+  git -C "$PROJECT_DIR" add -A
+  git -C "$PROJECT_DIR" commit -q -m "test: FEATURE from the environment only"
+}
+
+# Arm one successor on a weekly wall and leave the queued command line in
+# `$sched_cmd`, ready to be executed the way the queue would execute it — with
+# the marker of the run that armed it removed, so the successor is not refused by
+# its own fence.
+#
+# A function and not a `run`, because the caller needs the line: `run` would
+# overwrite `$output` before the caller could read it.
+sched_arm_one() {
+  use_tickets 01-alpha
+  set_config USAGE_CACHE_TTL 0
+  usage_respond "$(sched_weekly_wall "$(sched_soon 200000)")"
+  run_loop
+  assert_failure 6
+  assert_equal "$(at_call_count)" "1"
+  rm -f "$(sched_marker)"
+  sched_cmd="$(sched_queued_command)"
 }
 
 # ── the chain, ordered by reboot survival ────────────────────────────────────
@@ -225,7 +270,7 @@ systemd-run"
   assert_failure 6
   assert_output_contains "not an instant this run can wait for"
   assert_equal "$(at_call_count)" "0"
-  assert_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-instant"
 }
 
 @test "a reset in the past is refused, or a woken run would arm another one" {
@@ -273,7 +318,7 @@ systemd-run"
   assert_output_contains "no one-shot scheduler on this machine"
   assert_output_contains "a human resumes it"
   assert_equal "$(at_call_count)" "0"
-  assert_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-mechanism"
   assert_ticket_status 01-alpha ready-for-agent
 }
 
@@ -286,6 +331,10 @@ systemd-run"
   assert_failure 6
   assert_output_contains "this project resumes a weekly wall by hand"
   assert_equal "$(at_call_count)" "0"
+  # And the one refusal the word `weekly-pause` really means, which is what
+  # keeps the five `successor-blocked-*` words above from being five spellings
+  # of one thing.
+  assert_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
 }
 
 @test "a scheduler that refuses the submission is a fallback, not a silent success" {
@@ -302,7 +351,7 @@ systemd-run"
   assert_output_contains "at would not take the successor"
   assert_output_contains "every one-shot scheduler on this machine refused"
   refute_output_contains "armed a one-shot successor"
-  assert_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-mechanism"
   refute_file_exists "$(sched_marker)"
 }
 
@@ -347,15 +396,91 @@ systemd-run"
   # `at` mails a job's output; a headless box with no MTA loses it silently. This
   # is piège n°4 of the scheduling research, and it costs the whole point of the
   # feature — a successor that ran and left no trace is a night nobody can read.
+  #
+  # Run and not read since [53]: the redirection moved into a `bash -c` that
+  # decides where to write, so a line still naming `successor.log` is no longer
+  # evidence that anything is written there.
+  sched_arm_one
+  printf '%s' "$sched_cmd" | grep -q "successor.log" || fail "no log on the line: $sched_cmd"
+  printf '%s' "$sched_cmd" | grep -q "2>&1" || fail "stderr is not captured: $sched_cmd"
+
+  run bash -c "$sched_cmd"
+  assert_file_contains "$FEATURE_DIR/successor.log" "run start (feature=$RALPH_TEST_FEATURE"
+}
+
+@test "a successor log turned into a directory costs the log, never the night" {
+  # [53], measured on the 30/08 pass (R3a). The redirection is the first thing
+  # the job's shell does, so before this a name that was not a file made the job
+  # exit 1 with `Is a directory` — into `at`'s mail, which is the silence the
+  # redirection existed to avoid — and `loop.sh` never started at all. A session
+  # writes that directory all night; the log is hers to break, the night is not.
+  sched_arm_one
+
+  rm -f "$FEATURE_DIR/successor.log"
+  mkdir -p "$FEATURE_DIR/successor.log"
+
+  # Executed and never read: the whole defect is invisible on the text of the
+  # line, which is unchanged.
+  run bash -c "$sched_cmd"
+  assert_file_contains "$(sched_fallback_log)" "run start (feature=$RALPH_TEST_FEATURE"
+  assert_file_contains "$(sched_fallback_log)" "is not a plain file this user owns"
+  [ -d "$FEATURE_DIR/successor.log" ] ||
+    fail "the job wrote through the name instead of refusing it"
+}
+
+@test "a successor log pointed into the sealed zone is not written through" {
+  # R3b/R3d: the name replaced by a link to `.claude/settings.json`, which is
+  # sealed against a session ([24], [31]) and not against this job — the writer
+  # here is the pack itself, at an instant when no run exists to judge anything.
+  # Measured end to end from a green iteration: 153 bytes of JSON became 1240,
+  # and every later `claude` read a broken file.
+  sched_arm_one
+
+  sealed="$PROJECT_DIR/.claude/settings.json"
+  before="$(wc -c <"$sealed" | tr -d ' ')"
+  rm -f "$FEATURE_DIR/successor.log"
+  ln -s "$sealed" "$FEATURE_DIR/successor.log"
+
+  run bash -c "$sched_cmd"
+  assert_equal "$(wc -c <"$sealed" | tr -d ' ')" "$before"
+  assert_file_contains "$(sched_fallback_log)" "run start (feature=$RALPH_TEST_FEATURE"
+}
+
+@test "the reason a successor could not use its log reaches the file a human opens" {
+  # The fallback is in the git directory, where nobody looks, so a fallback
+  # nobody hears about is a successor writing where its own reader will not go.
+  # The sentence travels in the environment because the job has not sourced a
+  # line of this pack when it decides — it is the only channel there is.
+  sched_arm_one
+
+  rm -f "$FEATURE_DIR/successor.log"
+  mkdir -p "$FEATURE_DIR/successor.log"
+
+  run bash -c "$sched_cmd"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-log-refused"
+}
+
+@test "the successor is queued with the tracker this run ground" {
+  # R4a: the shipped config is `FEATURE="${FEATURE:-}"`, so a run pointed at its
+  # tracker by its environment armed a successor that woke into `exit 2, FEATURE
+  # is empty` — while its own journal said `successor-armed` and its marker sat
+  # in the git directory refusing the next arming. [31]'s rule for `RALPH_CONFIG`
+  # applied to the second selector the environment gives.
   use_tickets 01-alpha
+  set_config USAGE_CACHE_TTL 0
+  sched_feature_from_the_environment_only
   usage_respond "$(sched_weekly_wall "$(sched_soon 200000)")"
 
-  run_loop
+  run env FEATURE="$RALPH_TEST_FEATURE" bash "$PACK_DIR/loop.sh"
   assert_failure 6
-
   cmd="$(sched_queued_command)"
-  printf '%s' "$cmd" | grep -q "successor.log" || fail "no log on the line: $cmd"
-  printf '%s' "$cmd" | grep -q "2>&1" || fail "stderr is not captured: $cmd"
+  rm -f "$(sched_marker)"
+
+  # The queue hands a job no environment of its own, so this is what the wake
+  # really looks like — and the run it wakes has to name the same tracker.
+  run env -u FEATURE bash -c "$cmd"
+  refute_file_contains "$FEATURE_DIR/successor.log" "FEATURE is empty"
+  assert_file_contains "$FEATURE_DIR/successor.log" "run start (feature=$RALPH_TEST_FEATURE"
 }
 
 # ── the singleton, and the lock behind it ────────────────────────────────────
@@ -390,7 +515,7 @@ systemd-run"
   assert_failure 6
   assert_output_contains "one is already armed for this working tree"
   assert_equal "$(at_call_count)" "0"
-  assert_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-marker"
 }
 
 @test "a marker whose instant has passed is not a successor" {
@@ -406,6 +531,66 @@ systemd-run"
   assert_failure 6
   assert_equal "$(at_call_count)" "1"
   assert_file_contains "$(sched_marker)" "$reset"
+}
+
+@test "a marker no window this pack prices could have produced is not a successor" {
+  # R2b, and the two words it corrected in the frontier table: "the night" was
+  # singular and it was not. Nothing removes the marker and it was held against
+  # `now` alone, so the instant written in it decided *how many* nights — and a
+  # session reaches `.git/` from a green iteration ([22]) with
+  # `git rev-parse --git-common-dir`.
+  #
+  # The bound is what this pack could have written and not who wrote the file,
+  # because nothing here can answer the second question: every marker it writes
+  # carries an instant that passed `scheduler_deadline`, so it is inside the
+  # widest ceiling a priced window carries. Thirty days is outside it.
+  use_tickets 01-alpha
+  reset="$(sched_soon 200000)"
+  printf '%s\tat\t2026-08-29T00:00:00Z\n' "$(sched_soon 2592000)" >"$(sched_marker)"
+  usage_respond "$(sched_weekly_wall "$reset")"
+
+  run_loop
+  assert_failure 6
+  assert_equal "$(at_call_count)" "1"
+  assert_file_contains "$(sched_marker)" "$reset"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-armed"
+}
+
+@test "the journal says which refusal it was, not only that nothing was armed" {
+  # The other half of R2b: two nights refused by that marker with `run.log`
+  # reading `weekly-pause` both times — the exact word of a project that chose
+  # WEEKLY_RESUME=human — the sentence naming the marker being a `scheduler__log`,
+  # so stdout, so gone with the process. A reader who cannot tell a choice from a
+  # file in the git directory cannot act on either.
+  use_tickets 01-alpha
+  printf '%s\tat\t2026-08-29T00:00:00Z\n' "$(sched_soon 100000)" >"$(sched_marker)"
+  usage_respond "$(sched_weekly_wall "$(sched_soon 200000)")"
+
+  run_loop
+  assert_failure 6
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-marker"
+  refute_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
+}
+
+@test "a successor marker nobody woke is counted at the start of the next run" {
+  # `at` answers for its queue and not for the job, and macOS ships `atrun`
+  # disabled — so "queued and never ran" is the ordinary outcome on a box nobody
+  # enabled, and the marker it leaves was counted by nobody: `gate_leftovers`
+  # looked at `$TMPDIR` ([36]) and at the feature's guards ([49]), never at the
+  # git directory. Inert once its instant has passed, so this is a line and never
+  # a red — the terms the other two are counted on.
+  printf '%s\tat\t2026-08-29T00:00:00Z\n' "$(($(date +%s) - 100))" >"$(sched_marker)"
+  usage_respond "$(sched_all_clear)"
+
+  run_loop
+  assert_output_contains "a one-shot successor marker is still in"
+  assert_output_contains "armed 2026-08-29T00:00:00Z with at"
+
+  # The paired witness: a marker still waiting for its instant is a successor and
+  # not a leftover, or every armed night would report itself as one.
+  printf '%s\tat\t2026-08-29T00:00:00Z\n' "$(sched_soon 100000)" >"$(sched_marker)"
+  run_loop
+  refute_output_contains "a one-shot successor marker is still in"
 }
 
 @test "the marker lands out of reach of a git add -A and of an rm -rf .scratch" {
@@ -490,7 +675,7 @@ FAKE
   assert_output_contains "this run is leaving help.browser somewhere it did not find it"
   assert_output_contains "a human has to look first"
   assert_equal "$(at_call_count)" "0"
-  assert_file_contains "$FEATURE_DIR/run.log" "weekly-pause"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-residue"
 }
 
 # ── the preflight ────────────────────────────────────────────────────────────

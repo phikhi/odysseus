@@ -21,8 +21,10 @@
 # itself; this one is a wall that lifts on its own at a known instant, which is
 # the difference a one-shot successor is armed on ([09]). It stays 6 whether one
 # was armed or not: the code says why this run stopped, and what got armed is a
-# line in the journal — `successor-armed` or `weekly-pause` — because a reader who
-# has to act on the difference is reading the journal and not a status.
+# line in the journal — `successor-armed`, `weekly-pause` when the project resumes
+# by hand, or one of the `successor-blocked-*` words that says which refusal it
+# was ([53]) — because a reader who has to act on the difference is reading the
+# journal and not a status.
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
 # FEATURE points at the wrong tracker, or because every ticket is still in
@@ -1231,10 +1233,14 @@ loop__finish() {
 # endpoint here ([08]); `gate_frontier_residue` is read off the run's own witness,
 # which dies on the line below.
 #
-# Journalled either way, and with two different words. A morning reader has to be
-# able to tell "this stopped and something will pick it up" from "this stopped and
-# nothing will", without reading the console output of a process that ended hours
-# ago — that is the whole difference between an AFK night and a lost one.
+# Journalled either way, and the word says which refusal it was ([53]). A morning
+# reader has to be able to tell "this stopped and something will pick it up" from
+# "this stopped and nothing will", without reading the console output of a process
+# that ended hours ago — that is the whole difference between an AFK night and a
+# lost one. And "nothing will" has reasons a reader has to act on differently: a
+# project that resumes by hand is a choice, a marker in the git directory that
+# refuses every night is not. The word comes from `scheduler_outcome` rather than
+# from an `if` here, because the reasons belong to the module that has them.
 #
 # A `while` with a heredoc and never a pipe, for the reason the reclaim loop
 # spells out: the run keeps its copy of the journal in a variable of this process
@@ -1250,11 +1256,7 @@ loop__arm_successor() {
   done <<SUCCESSOR
 $lines
 SUCCESSOR
-  if [ "$rc" = 0 ]; then
-    loop_journal_append - successor-armed 0 0 0
-  else
-    loop_journal_append - weekly-pause 0 0 0
-  fi
+  loop_journal_append - "$(scheduler_outcome "$rc")" 0 0 0
   return 0
 }
 
@@ -1285,6 +1287,24 @@ loop_main() {
   trap 'loop_request_stop' TERM INT
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
+
+  # What this run's own shell had to say before this run existed ([53]). A
+  # successor is started by a queued line whose redirection resolves in a zone a
+  # session writes in, so the job tests that name before it writes through it
+  # (`scheduler__wake`) — and when it refuses, the sentence travels here in the
+  # environment, which is the only channel a shell that has not sourced this file
+  # yet shares with it.
+  #
+  # Journalled and not only logged, because the file it fell back to is in the git
+  # directory, where nobody looks, and `run.log` is the one a human opens. It
+  # comes out of the environment, so a human starting a run by hand can put a
+  # sentence in their own journal with it; that is all it can do — nothing here
+  # reads it to decide anything, the way nothing reads the journal to decide
+  # anything ([10]).
+  if [ -n "${RALPH_SUCCESSOR_NOTE:-}" ]; then
+    loop_log "$RALPH_SUCCESSOR_NOTE"
+    loop_journal_append - successor-log-refused 0 0 0
+  fi
 
   # What the runs before this one left outside the repository. Said here rather
   # than in a document, for the reason every zone nobody guards is said out loud
