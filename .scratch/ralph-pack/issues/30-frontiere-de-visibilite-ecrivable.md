@@ -141,3 +141,16 @@ Trois trous, tous dans le mécanisme et aucun dans la doctrine : les règles ép
 - **Et une entrée de mutation de ce ticket a dû être ré-ancrée, pour la raison exacte que l'en-tête de `test/mutate.sh` documente.** `30 a restore that was only attempted reports success` visait la ligne `[ "$(gate__frontier_current "$name")" = "$pinned" ]` ; `gate__config_restore` finit par la même comparaison et vit **plus haut** dans le fichier, donc la substitution sans `/g` serait allée sur la mauvaise fonction en laissant ce test intact. Elle est maintenant ancrée sur le `esac` qui la précède. La garantie n'a pas bougé : la remise vérifie toujours son résultat.
 
 - **[09], le 29/08/2026 : le résidu de ce ticket a maintenant un lecteur, et une conséquence.** `gate_frontier_residue` est une fonction publique neuve, placée après `gate__frontier_share` — la même différence symétrique un niveau plus haut : contre le manifeste du témoin de **run** et sur les sources **partagées** seulement (`.git/info/exclude`, `core.excludesFile`, le fichier global, les clés `cfg`, `.git/info/attributes`). C'est ce qui la fait dire « résidu » et pas « mouvement » : au moment où on la lit, toute remise qui pouvait tirer a tiré, donc ce qui diffère encore est ce qu'aucune remise n'a atteint. La moitié `tree` en est exclue exprès — un `.gitignore` qu'une session écrit est du travail de projet, et le run suivant est censé le recevoir. Le lecteur est `loop__arm_successor` : **un run qui laisse un résidu n'arme aucun successeur**, parce qu'un run neuf épingle la configuration qu'il trouve et adopterait donc le résidu comme celui du projet, en silence. Deux choses à savoir avant de toucher au manifeste : un ticket qui en change la **forme** (les trois colonnes `kind<TAB>name<TAB>digest`) casse ce lecteur en plus des deux existants ; et le témoin du run doit rester vivant jusqu'à la queue de `loop_main`, l'armement se lisant dessus avant le `rm -rf`.
+
+- **[50], le 30/08/2026 : ce que `gate_newly_hidden` force dans l'arbre jugé arrive
+  maintenant aussi dans l'historique.** Ce ticket a fermé « une session ne peut pas
+  élargir l'angle mort dans lequel elle est jugée » ; il restait ouvert par l'autre
+  bout — une session pouvait changer **ce que son itération commite** en écrivant une
+  règle d'ignore. Sondé (`sondes/ticket-50/p1`, P1b) : la session écrit `build/out.txt`
+  puis ajoute `build/` au `.gitignore`, les deux dans sa surface ; l'itération est
+  verte, la règle est commitée, le fichier ne l'est pas, le ticket est `resolved`. Un
+  faux livré en deux lignes, plus délibéré que le cas gardé de [24]. `git add --force`
+  dans `failures_make_durable` rend exactement ce qui serait arrivé sans la règle de la
+  session — le miroir de la garantie de ce ticket, et il vaut la peine de le lire comme
+  tel : la liste `gate_newly_hidden` a désormais **deux** consommateurs qui doivent
+  découper la zone de la même façon, le snapshot et le commit.

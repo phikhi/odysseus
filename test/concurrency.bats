@@ -772,6 +772,91 @@ GITSHIM
   assert_equal "$output" ""
 }
 
+@test "it does not delete a path the fold never put on the branch" {
+  # The other side of that walk, and it took a file with it ([50]). "Is this path in
+  # HEAD" was asked alone, and "no" was read as "the iteration deleted it" — so an
+  # approved path the durable commit could not stage answered exactly like a
+  # deletion, and this function removed it from the tree a human looks at, `rmdir -p`
+  # taking the directory too. A file no run had ever committed, destroyed by a run
+  # that had just said out loud it could not commit it.
+  #
+  # At the module, and that is the finding rather than a shortcut. The end-to-end
+  # case that opened [50] — a guarded path a project ignores — is *committed* since
+  # the same ticket, so it no longer reaches this branch at all; what is left are
+  # the residual refusals, which live in the window between the judged tree and the
+  # commit and are unreachable from a full-loop test. A first draft of this test ran
+  # through the loop and passed on both sides of the fix.
+  #
+  # All three answers in one run, because the finding is that there are three and
+  # the walk only ever had two: on the branch now, on the branch a moment ago, and
+  # on neither side. The first two are asserted for the reason the whole file
+  # exists — a walk that did nothing at all would satisfy the third perfectly.
+  pack_run '
+    cd "$(ralph_project_root)"
+    mkdir -p .claude/cache src
+    printf "on the branch\n" >src/alpha.txt
+    printf "about to go\n" >src/gone.txt
+    git add -A -- src/alpha.txt src/gone.txt >/dev/null 2>&1
+    git commit -q -m "test: two paths the branch carries"
+    tip="$(git rev-parse HEAD)"
+    git rm -q -- src/gone.txt
+    git commit -q -m "test: the fold took one of them off"
+    printf "about to go\n" >src/gone.txt
+    printf "local notes\n" >.claude/cache/keep.txt
+    git add -f -- .claude/cache/keep.txt >/dev/null 2>&1
+    printf "a stale reversal\n" >src/alpha.txt
+    concurrency__refresh ".claude/cache/keep.txt
+src/alpha.txt
+src/gone.txt" "$tip"'
+  assert_success
+
+  assert_file_contains "$PROJECT_DIR/.claude/cache/keep.txt" "local notes"
+  assert_file_contains "$PROJECT_DIR/src/alpha.txt" "on the branch"
+  refute_file_exists "$PROJECT_DIR/src/gone.txt"
+
+  # And the index at that name is left alone too, which is the same rule at the
+  # other end of the function: `git reset -- <path>` sets the entry back to HEAD, so
+  # walking the whole approved list would unstage a human's own staged edit at a
+  # name this run just declined to commit.
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  assert_output_contains ".claude/cache/keep.txt"
+}
+
+@test "a path the iteration deleted goes out of the tree the run was started in" {
+  # The deletion the refresh above exists to apply, end to end, and it had no test
+  # at all before [50] — which is how the walk came to read "not in HEAD" as "the
+  # iteration deleted it" for every path that answered that way. The branch loses
+  # the file, so the tree a human looks at has to lose it too, or a `git commit -a`
+  # in the morning puts it back.
+  use_tickets 01-alpha
+  mkdir -p "$PROJECT_DIR/src"
+  printf 'legacy\n' >"$PROJECT_DIR/src/legacy.txt"
+  harness__commit "test: a tracked file for the session to delete"
+  perl -pi -e 's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/*`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket whose surface covers it"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+rm -f src/legacy.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  refute_output_contains "src/legacy.txt"
+  refute_file_exists "$PROJECT_DIR/src/legacy.txt"
+  # And nothing left staged behind the deletion, which is the state the second half
+  # of the refresh exists to avoid — the loop's own bookkeeping aside.
+  run bash -c "git -C '$PROJECT_DIR' status --porcelain -- . ':(exclude).scratch' ':(exclude)receipts'"
+  assert_equal "$output" ""
+}
+
 # ── the sweep, with siblings in flight ───────────────────────────────────────
 
 @test "the liveness sweep does not reclaim a claim this run is holding" {
