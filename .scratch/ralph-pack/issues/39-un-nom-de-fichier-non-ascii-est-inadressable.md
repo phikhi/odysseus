@@ -149,3 +149,27 @@ propriétaire et **perdu la ligne** par laquelle on la retirait. Une entrée qu'
   elles ont d'abord rendu `VACUOUS` — voir les trouvailles 2 et 4 : ce sont ces deux
   `VACUOUS` qui ont trouvé le trou du chemin à espace et celui de
   `concurrency__refresh`.
+
+## Relu par [50], le 30/08/2026 — la ligne de gap lit deux choses au lieu d'une
+
+Ce ticket a eu raison de refuser d'asserter le **statut** du `git add` (un chemin que la
+session a supprimé d'un arbre jamais commité ne matche rien des deux côtés), et il a
+posé le contrôle sur le **résultat** seul. Le résultat seul accuse la suite de tests du
+projet : `TEST_CMD` tourne après que l'arbre a été jugé, donc un fichier livré qu'elle
+réécrit diffère de l'arbre jugé tout en étant dans le commit avec des octets plus
+récents. C'est une trouvaille, mais celle de `gate_unjudged_changes`, qui la nomme déjà
+à chaque itération et à qui le pack refuse explicitement d'en faire un verdict.
+
+`failures_make_durable` retient donc maintenant les chemins dont le `git add` a échoué
+(`refused`) et n'accuse que ceux qui **diffèrent aussi** de l'arbre jugé. Les deux
+moitiés ont chacune leur test et leur entrée de mutation. Le cas le plus bruyant de
+cette ligne a par ailleurs disparu plutôt que d'être adouci : depuis [50] le staging
+force, donc un chemin gardé qu'un projet ignore est commité au lieu d'être nommé ici.
+
+Et deux entrées de mutation de ce ticket ont dû être ré-ancrées (`--force` ajouté au
+corps de boucle). Le premier jet les recalibrait en rejoignant la liste en un mot ;
+l'une est sortie **VACUOUS sur un test sain**, parce que
+`$(printf '%s' "$changed" | tr '\n' ' ')` est un **no-op sur une liste à un seul
+élément** — `$changed` n'a pas de saut de ligne final — et le test module qui la nomme
+ne change qu'un chemin. Les deux sont revenues au découpage en mots, et le commentaire
+de `failures.sh` est passé au-dessus de la boucle pour que le corps reste ancrable.

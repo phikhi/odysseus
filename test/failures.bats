@@ -632,20 +632,48 @@ FAKE
   assert_equal "$output" ""
 }
 
-@test "a path the gate approved and git would not stage is named, not dropped" {
-  # The general form of the defect [39] found on one name: the durable commit takes
-  # what the scope-guard approved and hands it to `git add`, which has reasons of
-  # its own to refuse — and every one of them lands under a `|| true`. So the
-  # property is not "everything approved is committed", which this pack cannot
-  # promise: it is that a path which was approved and did not make it into the
-  # commit is *named*, exactly as the rollback names what it could not put back.
+@test "the durable commit leaves no staged reversal on an ignored guarded path" {
+  # The twin of the test above, on the family [50] added to what this commit
+  # carries, and it has to be driven at the module for the reason that one gives:
+  # since [13] the durable commit runs in a throwaway worktree, so the index it puts
+  # back goes with the worktree and no end-to-end assertion can see this line.
   #
-  # Staged on a case that is neither hypothetical nor about odd names: a project
-  # that gitignores a directory its own GUARDED_PATHS names. The snapshot forces
-  # that directory in, so the gate judges the file and approves it; `git add`
-  # without `-f` refuses an ignored path; and the iteration used to go `resolved`
-  # with the work absent from the history and not one line about it. Committing it
-  # anyway is a decision this ticket did not take — see its comments.
+  # The two halves are one decision. The commit now forces an ignored path in; an
+  # index that could not take the same path would describe that very path as
+  # *deleted* — the exact state this block exists to prevent, reintroduced by
+  # repairing the other end.
+  use_tickets 01-alpha
+  set_config GUARDED_PATHS "vendor"
+  printf 'vendor/\n' >>"$PROJECT_DIR/.gitignore"
+  harness__commit "test: the project ignores its own guarded directory"
+
+  pack_run '
+    cd "$(ralph_project_root)"
+    pre="$(git rev-parse HEAD)"
+    base="$(gate_tree_snapshot)"
+    mkdir -p vendor
+    printf "written\n" >vendor/thing
+    failures_make_durable 01-alpha "$pre" "$base" "$(gate_tree_snapshot)"'
+  assert_success
+  assert_output_contains "committed"
+
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  assert_output_contains "vendor/thing"
+  run bash -c "git -C '$PROJECT_DIR' diff --cached --name-only"
+  assert_equal "$output" ""
+}
+
+@test "a guarded path the project ignores reaches the history" {
+  # The decision [50] took, on the case that opened it. A project that gitignores a
+  # directory its own GUARDED_PATHS names: the snapshot forces that directory into
+  # the judged tree ([24]), the scope-guard approves the file, and `git add` without
+  # `-f` refuses an ignored path. The iteration used to go `resolved` with the work
+  # absent from the history — named since [39], committed since this ticket.
+  #
+  # Held here rather than in a comment: the durable commit stages through the same
+  # lens the tree was judged through. Anything else leaves an iteration that is
+  # green, marked, and empty, which is this pack's own definition of a false
+  # delivered ([35]).
   use_tickets 01-alpha
   set_config GUARDED_PATHS "vendor"
   # Written here rather than through gate.bats's `ignore_paths`: the fixture
@@ -662,14 +690,130 @@ FAKE
   run_loop
   assert_success
   assert_ticket_status 01-alpha resolved
+  # And not merely named on the way past: the gap line of [39] is about work that
+  # did not make it, so it has nothing to say about this path any more.
+  refute_output_contains "vendor/thing was approved by the gate and could not be staged"
 
-  assert_output_contains "vendor/thing was approved by the gate and could not be staged"
   run git -C "$PROJECT_DIR" ls-tree -r --name-only HEAD
-  refute_output_contains "vendor/thing"
-  # The rest of the iteration is committed all the same: one path git refused is
-  # not a reason to drop the others, which is what the single `git add -A -- $changed`
-  # did before this ([39]) — it fails the whole call on one bad pathspec.
+  assert_output_contains "vendor/thing"
+  # The neighbour, because one path git refused used to take every other path out
+  # of the commit with it ([39]) — a single `git add` fails the whole call.
   assert_output_contains "src/alpha.txt"
+  assert_equal "$(worktree_dirt)" ""
+}
+
+@test "a file the session wrote and then hid by its own rule reaches the history" {
+  # The third forcing, and the one that is not the project's doing ([30]): what a
+  # `.gitignore` written *during* the iteration took out of sight is forced into the
+  # judged tree too, so that a session cannot widen the blind spot it is judged
+  # through. Symmetrically, since [50], it cannot change what its iteration commits
+  # by writing an ignore rule either — without the force this was a false delivered
+  # any session could buy in two lines, and a more deliberate one than the guarded
+  # case above.
+  #
+  # The rule itself is committed, which is the ordinary git answer and worth
+  # asserting: a tracked path is not affected by a later ignore rule, so the project
+  # keeps both the file and the rule it wrote about future ones.
+  use_tickets 01-alpha
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `build/*`, `.gitignore`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that delivers into a directory it then ignores"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p build
+printf 'built\n' >build/out.txt
+printf 'build/\n' >>.gitignore
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  run git -C "$PROJECT_DIR" ls-tree -r --name-only HEAD
+  assert_output_contains "build/out.txt"
+  assert_output_contains ".gitignore"
+}
+
+@test "a path the gate approved and git would not stage is named, not dropped" {
+  # What [39] holds, kept after [50] took the force away from its loudest case. The
+  # property is not "everything approved is committed", which this pack cannot
+  # promise — git has reasons of its own to refuse and every one lands under a
+  # `|| true`: it is that a path which was approved and did not make it into the
+  # commit is *named*, exactly as the rollback names what it could not put back.
+  #
+  # Driven at the module, and the reason is the one the twin above carries: the
+  # trigger has to sit between the tree the gate judged and the commit, which is a
+  # window no full-loop test can reach into. A file the run cannot read is what is
+  # left once the ignore rules are forced through — `git add` fails on the open(),
+  # and the work is not in the commit.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    pre="$(git rev-parse HEAD)"
+    base="$(gate_tree_snapshot)"
+    mkdir -p src
+    printf "written\n" >src/alpha.txt
+    printf "written\n" >src/beta.txt
+    tree="$(gate_tree_snapshot)"
+    chmod 000 src/alpha.txt
+    failures_make_durable 01-alpha "$pre" "$base" "$tree" || printf "(refused)\n"
+    chmod 644 src/alpha.txt'
+  assert_output_contains "src/alpha.txt was approved by the gate and could not be staged"
+
+  # And the neighbour goes in all the same, for the reason [39] wrote this loop one
+  # path at a time.
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  assert_output_contains "src/beta.txt"
+  refute_output_contains "src/alpha.txt"
+}
+
+@test "a path the session deleted is not accused of not being staged" {
+  # The other half of the same line, and the reason its status is not read alone
+  # ([39] said so and [50] kept it): a path the session deleted out of a tree that
+  # was never committed makes `git add` refuse the pathspec — it matches nothing —
+  # while nothing whatsoever was lost. Reading the refusal as a finding would put a
+  # gap line on every iteration that removes a file it had only ever written into an
+  # uncommitted tree.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    pre="$(git rev-parse HEAD)"
+    mkdir -p src
+    printf "written\n" >src/alpha.txt
+    base="$(gate_tree_snapshot)"
+    rm -f src/alpha.txt
+    printf "written\n" >src/beta.txt
+    failures_make_durable 01-alpha "$pre" "$base" "$(gate_tree_snapshot)"'
+  assert_success
+  assert_output_contains "committed"
+  refute_output_contains "could not be staged"
+}
+
+@test "a delivered file the suite rewrote after the gate is not accused either" {
+  # And the half that answers the other way ([50]). `TEST_CMD` runs after the tree
+  # was judged, so a delivered file it rewrites differs from the judged tree while
+  # sitting in this commit with newer bytes. Read on the result alone, that is
+  # indistinguishable from work git refused — and it is not the same finding at all:
+  # the work is in the history, the tree simply moved, and `gate_unjudged_changes`
+  # already names that every iteration. This line accuses git, so it asks git.
+  use_tickets 01-alpha
+  pack_run '
+    cd "$(ralph_project_root)"
+    pre="$(git rev-parse HEAD)"
+    base="$(gate_tree_snapshot)"
+    mkdir -p src
+    printf "written\n" >src/alpha.txt
+    tree="$(gate_tree_snapshot)"
+    printf "rewritten by the suite\n" >src/alpha.txt
+    failures_make_durable 01-alpha "$pre" "$base" "$tree"'
+  assert_success
+  refute_output_contains "could not be staged"
+
+  run bash -c "git -C '$PROJECT_DIR' show HEAD:src/alpha.txt"
+  assert_output_contains "rewritten by the suite"
 }
 
 @test "a rollback is not a reset --hard: work nobody in this run made stands" {

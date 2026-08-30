@@ -91,3 +91,28 @@ Trois trouvailles dans ce livrable, toutes dans la moitié « déclarer la zone 
 - **[33] — refermé le 04/08/2026, et il change ce que « chemin gardé » veut dire.** Toute liste que le pack se passe à lui-même voyage désormais **un chemin par ligne**, `GUARDED_PATHS` comprise — la clé se rédige donc une ligne par chemin, ce qui est écrit dans `ralph.config.sh.example`. Et les chemins gardés et scellés sont lus **littéralement** des deux côtés du mécanisme : pathspecs `:(literal)` au forçage, `gate__under_path` (et non plus `gate_in_surface`) pour l'exclusion de la ligne de zone et pour `gate_is_sealed`. Le prix, assumé et testé : un `GUARDED_PATHS` rédigé comme un glob — `vendor/*` — ne garde plus rien, mais la ligne de zone le nomme au lieu de se taire. La phrase de ce ticket « les chemins gardés sont pris par force » n'était vraie que pour un chemin sans espace ni métacaractère avant cette date. Le constat d'origine :
 - **[33] — les chemins gardés sont forcés par un `for path in $(gate_guarded_paths)`.** Un `GUARDED_PATHS` dont un chemin porte une **espace** est découpé en pathspecs qui ne matchent rien, et le `|| true` qui protège le cas légitime (un projet nomme un chemin qu'il n'a pas encore) avale exactement cette erreur. Un projet dont le répertoire gardé porte une espace n'a donc **aucun** garde, depuis ce ticket-ci et non depuis [30] — c'est simplement [30] qui a fait passer une seconde liste par la même boucle, où la sonde l'a trouvé. Et la ligne de zone se taît sur ces chemins, parce qu'elle les exclut par comparaison de chaîne entière : les deux moitiés du mécanisme ne découpent pas la liste de la même façon.
 - **[35] — `LENSES` éteint plus que ce que ce ticket a écrit d'elle.** La règle posée ici est qu'une clé de config est un interrupteur et qu'il faut dire ce qu'elle ne peut pas éteindre. `LENSES` annonce éteindre le jugement subjectif — et la boucle le dit à chaque itération, ce qui est le bon comportement. Elle éteint en plus le refus d'un **diff vide** ([06]), qui est déterministe et n'a rien à voir avec le palier : une session qui n'écrit rien est alors `resolved`. La question de ce ticket avait la bonne forme ; il fallait la reposer chaque fois qu'un contrôle déterministe est ajouté à l'intérieur d'un mécanisme optionnel.
+
+## Relu par [50], le 30/08/2026 — l'asymétrie gardé/commité est fermée
+
+Ce ticket a laissé une phrase qui n'était vraie qu'à moitié : « sous `GUARDED_PATHS` le
+scope-guard le voit ». Il le voyait, l'approuvait, et le **rollbackait sur rouge** ; sur
+vert, `failures_make_durable` faisait `git add` sans `-f` et git refusait le chemin
+ignoré. Trois verdicts sur quatre traitaient la zone gardée, le quatrième — le seul où
+le travail est censé survivre — ne faisait rien. Sondé au défaut : un projet qui ignore
+`.claude/` avec le `GUARDED_PATHS` par défaut sort `resolved` **sans aucun commit ni
+fold**, la seule ligne de journal étant la ligne de gap de [39].
+
+Depuis [50], le commit durable stage à travers la même lentille que le snapshot :
+`git add -A --force` sur la liste approuvée. Ce que ça change pour ce ticket-ci :
+
+- Le « ne pas réparer ça en mettant `--force` partout » du commentaire ci-dessus reste
+  vrai **du snapshot** et n'a jamais valu du **commit**. Les deux listes sont
+  différentes : le snapshot force une zone entière, le commit force ce qui est déjà
+  dans la liste approuvée — donc déjà jugé, déjà dans la write-surface d'un ticket.
+- Le cas armé de ce ticket, `.claude/settings.local.json`, reste hors d'atteinte, et
+  c'est le scellement de [31] qui le tient et non le forçage : un chemin scellé n'est
+  jamais approuvé, donc jamais dans la liste que le commit force.
+- Le prix nouveau, écrit dans `docs/frontiere-de-confiance.md` : un `GUARDED_PATHS`
+  rédigé large rend commitable toute la zone ignorée qu'une write-surface couvre, et un
+  `.scratch` gardé *et* ignoré ferait entrer `.scratch/<autre-feature>/` dans
+  l'historique — `gate_is_bookkeeping` ne connaît que la feature courante.

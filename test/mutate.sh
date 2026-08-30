@@ -591,8 +591,11 @@ mutation "07 a green iteration is not made durable" "$LOOP" \
   's/      if failures_make_durable "\$ticket" "\$pre" "\$base" "\$\{RALPH_GATE_TREE:-\}"; then/      if true; then/' \
   test/failures.bats "never takes away what an earlier gate"
 
+# Re-anchored by [50], which added `--force` and a status test to this line. The
+# guarantee is unchanged and still carried here: the commit is built path by path
+# out of the approved list, never from the tree as a whole.
 mutation "07 the durable commit takes the whole tree, not what the gate approved" "$FAILURES" \
-  's/    GIT_INDEX_FILE="\$idx" git add -A -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/    GIT_INDEX_FILE="\$idx" git add -A >\/dev\/null 2>\&1 || true/' \
+  's/    if ! GIT_INDEX_FILE="\$idx" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then/    if ! GIT_INDEX_FILE="\$idx" git add -A >\/dev\/null 2>\&1; then/' \
   test/failures.bats "nothing else is"
 
 mutation "07 the durable commit does not move the branch" "$FAILURES" \
@@ -2159,8 +2162,9 @@ mutation "13 every fold rebuilds the commit instead of fast-forwarding" "$CONCUR
   's/  if \[ "\$tip" = "\$start" \]; then/  if false; then/' \
   test/concurrency.bats "fast-forward onto the very commit"
 
+# Re-anchored by [50], which gave the refresh the pre-fold tip as a second argument.
 mutation "13 the tree the run was started in is left behind the branch" "$CONCURRENCY" \
-  's/  \[ "\$rc" = 0 \] && concurrency__refresh "\$changed"\n//' \
+  's/  \[ "\$rc" = 0 \] && concurrency__refresh "\$changed" "\$tip"\n//' \
   test/concurrency.bats "follows the branch"
 
 mutation "13 a green iteration that never reached the branch is resolved anyway" "$LOOP" \
@@ -3168,8 +3172,16 @@ mutation "39 the restore's admissions go into its own return value" "$GATE" \
 # any other name, so the accented test says nothing about this line. What this line
 # carries is the [33] half — and it carries it whole, `git add` refusing the entire
 # call on one bad pathspec, so the mutated iteration commits nothing at all.
+# Recalibrated by [50], which added `--force` and a status test to the loop body.
+#
+# The first recalibration was a different mutation — rejoining the list into one
+# whitespace word one line below, so the anchor would stop moving — and its twin
+# came back VACUOUS on a healthy test: `$(... | tr '\n' ' ')` is a **no-op on a
+# one-element list**, and the module test that names that twin changes exactly one
+# path. The guarantee here is that the list is not word-split, so the mutation has
+# to word-split it.
 mutation "39 the durable commit stages a line of words" "$FAILURES" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    GIT_INDEX_FILE="\$idx" git add -A -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  GIT_INDEX_FILE="\$idx" git add -A -- \$changed >\/dev\/null 2>\&1 || true/' \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    if ! GIT_INDEX_FILE="\$idx" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then\n      refused="\$refused\$path\n"\n    fi\n  done <<CHANGED\n\$changed\nCHANGED/  GIT_INDEX_FILE="\$idx" git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
   test/failures.bats "commits a path whose name carries a space"
 
 # Its twin at the other end of the same function: the caller's index is restaged
@@ -3180,13 +3192,13 @@ mutation "39 the durable commit stages a line of words" "$FAILURES" \
 # line. The first draft of this entry named the end-to-end test and came back
 # VACUOUS: it was measuring `concurrency__refresh`, one module over.
 mutation "39 the index is put back from a line of words" "$FAILURES" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    git add -A -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  git add -A -- \$changed >\/dev\/null 2>\&1 || true/' \
-  test/failures.bats "no staged reversal"
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
+  test/failures.bats "no staged reversal, a name with a space included"
 
 # What that `|| true` costs when it fires, which is the general form of the defect
 # above: approved, absent from the commit, and silent.
 mutation "39 a path git refused to stage is dropped without a word" "$FAILURES" \
-  's/    failures__in_list "\$path" "\$changed" \|\| continue\n    failures__gap "\$ticket: \$path was approved by the gate and could not be staged — it is not in this commit"/    failures__in_list "\$path" "\$changed" || continue\n    :/' \
+  's/    failures__in_list "\$path" "\$refused" \|\| continue\n    failures__gap "\$ticket: \$path was approved by the gate and could not be staged — it is not in this commit"/    failures__in_list "\$path" "\$refused" || continue\n    :/' \
   test/failures.bats "git would not stage is named"
 
 # The last caller [33] had missed: the rollback rejoined the restored paths into
@@ -3201,7 +3213,7 @@ mutation "39 the unstaging is handed a line of words" "$FAILURES" \
 # exists to prevent — a delivered path left staged as a deletion in the tree a
 # human looks at in the morning.
 mutation "39 the tree refresh unstages a line of words" "$CONCURRENCY" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done <<PATHS\n\$changed\nPATHS/  (cd "\$root" \&\& git reset -q -- \$(printf \x27%s\x27 "\$changed" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true/' \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done <<PATHS\n\$acted\nPATHS/  (cd "\$root" \&\& git reset -q -- \$(printf \x27%s\x27 "\$acted" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true/' \
   test/failures.bats "commits a path whose name carries a space"
 
 # The residue, at the one consumer that answers about it with a count rather than a
@@ -3693,6 +3705,62 @@ mutation "52 a name nothing answers for is digested as a file" "$GATE" \
 mutation "52 the binary that owns both halves of the judgement is not watched" "$GATE" \
   's#    git claude at systemd-run#    git at systemd-run#' \
   test/gate.bats "never the directories"
+
+# ── [50] a guarded path a project ignores, approved and never committed ──────
+#
+# The decision this ticket took: the durable commit stages through the same lens
+# the tree was judged through. Without it the gate judged the two forced families
+# ([24] and [30]), approved them, rolled them back on red — and on green, the one
+# outcome where the work is supposed to survive, committed nothing at all.
+
+mutation "50 the durable commit obeys ignore rules the gate did not" "$FAILURES" \
+  's/    if ! GIT_INDEX_FILE="\$idx" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then/    if ! GIT_INDEX_FILE="\$idx" git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1; then/' \
+  test/failures.bats "a guarded path the project ignores reaches the history"
+
+# Its twin, and they are one decision: an index that cannot take the path the
+# commit just took describes that path as deleted. Named against a module test for
+# the reason [39] found the hard way — since [13] this index goes with the
+# worktree, so no full-loop assertion can see it.
+mutation "50 the index is put back without the force the commit used" "$FAILURES" \
+  's/    git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/    git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1 || true/' \
+  test/failures.bats "no staged reversal on an ignored guarded path"
+
+# The gap line reads a status *and* a result, and neither answers alone. Drop the
+# status and the project's own test suite is accused: `TEST_CMD` runs after the
+# tree was judged, so a delivered file it rewrote differs from the judged tree
+# while sitting in the commit with newer bytes.
+mutation "50 the gap line reads the result without the status" "$FAILURES" \
+  's/    failures__in_list "\$path" "\$refused" \|\| continue\n    failures__gap "\$ticket: \$path was approved/    failures__in_list "\$path" "\$changed" || continue\n    failures__gap "\$ticket: \$path was approved/' \
+  test/failures.bats "the suite rewrote after the gate is not accused"
+
+# And the other way round: drop the result and a path the session deleted out of a
+# tree that was never committed is accused of not being staged, `git add` having
+# refused a pathspec that matched nothing on either side.
+mutation "50 the gap line reads the status without the result" "$FAILURES" \
+  's/  done <<MISSED\n\$\(git -c core.quotePath=false diff-tree -r --name-only "\$newtree" "\$tree" 2>\/dev\/null\)\nMISSED/  done <<MISSED\n\$refused\nMISSED/' \
+  test/failures.bats "deleted is not accused of not being staged"
+
+# The other half of the ticket, one module over: the refresh asked "is this path in
+# HEAD" alone and read "no" as "the iteration deleted it", so a path the commit
+# could not stage was deleted out of the tree a human looks at — `rmdir -p` taking
+# the directory with it.
+mutation "50 the tree refresh reads a path it never committed as a deletion" "$CONCURRENCY" \
+  's/      if \[ -z "\$tip" \] \|\|\n        \[ -z "\$\(cd "\$root" && git ls-tree "\$tip" -- ":\(literal\)\$path" 2>\/dev\/null\)" \]; then\n        continue\n      fi\n//' \
+  test/concurrency.bats "never put on the branch"
+
+# Same rule at the other end of the same function: `git reset -- <path>` sets the
+# index entry back to HEAD, so walking the whole approved list unstages a human's
+# own staged edit at a name this run declined to commit.
+mutation "50 the tree refresh unstages what it did not touch" "$CONCURRENCY" \
+  's/  done <<PATHS\n\$acted\nPATHS\n  return 0/  done <<PATHS\n\$changed\nPATHS\n  return 0/' \
+  test/concurrency.bats "never put on the branch"
+
+# And the value that makes the question answerable at all. Without the tip the
+# refresh cannot tell a deletion from a path that was never on the branch, so it
+# treats every one of them as the second and the tree stops following the branch.
+mutation "50 the fold does not tell the refresh where the branch was" "$CONCURRENCY" \
+  's/  \[ "\$rc" = 0 \] && concurrency__refresh "\$changed" "\$tip"/  [ "\$rc" = 0 ] \&\& concurrency__refresh "\$changed"/' \
+  test/concurrency.bats "goes out of the tree the run was started in"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

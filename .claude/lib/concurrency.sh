@@ -464,7 +464,11 @@ concurrency_integrate() {
     concurrency__replay "$ticket" "$tip" "$commit" "$changed" || rc=1
   fi
 
-  [ "$rc" = 0 ] && concurrency__refresh "$changed"
+  # The tip read inside the guard, before either shape moved the ref: the refresh
+  # needs to know what the fold actually *did* to the branch, and "is this path in
+  # HEAD" alone cannot tell a path the fold removed from a path that was never on
+  # the branch at all ([50]).
+  [ "$rc" = 0 ] && concurrency__refresh "$changed" "$tip"
   state_guard_release "$guard"
   return "$rc"
 }
@@ -551,8 +555,20 @@ PATHS
 # iteration delivered is overwritten. That is the loss the durable commit already
 # took in the shared tree, and it is narrower here — only the paths a gate
 # approved, never the rest of the tree.
+#
+# Which makes the second argument load-bearing rather than an optimisation ([50]).
+# The walk used to ask one question — is this path in `HEAD`? — and read "no" as
+# "the iteration deleted it", so it deleted it here too. A path the durable commit
+# could not stage is not in `HEAD` either, and it answered that question exactly
+# like a deletion: probed on the case that opened [50], the main tree's own
+# `.claude/cache/keep.txt` was removed, and `rmdir -p` took the directory with it —
+# a file no run had ever committed, destroyed by a run that had just said out loud
+# it could not commit it. The pre-fold tip settles it: what the fold removed from
+# the branch was on the branch a moment ago, and what was on neither side is a path
+# this function has nothing true to say about — it is left alone, in the tree and
+# in the index both.
 concurrency__refresh() {
-  local changed="$1" root idx path line n=0
+  local changed="$1" tip="${2:-}" root idx path line n=0 acted=''
   root="$(ralph_project_root)"
   [ -n "$changed" ] || return 0
 
@@ -569,11 +585,20 @@ concurrency__refresh() {
     # asked about `src/zone1.txt` and got an answer about a file that is not it.
     line="$(cd "$root" && git ls-tree HEAD -- ":(literal)$path" 2>/dev/null)" || line=""
     if [ -z "$line" ]; then
+      # Not on the branch now. Only a deletion if it was on the branch before the
+      # fold — otherwise nothing this run committed put it there or took it away,
+      # and the file sitting at that name belongs to whoever wrote it ([50]).
+      if [ -z "$tip" ] ||
+        [ -z "$(cd "$root" && git ls-tree "$tip" -- ":(literal)$path" 2>/dev/null)" ]; then
+        continue
+      fi
       rm -f "$root/$path" 2>/dev/null || true
       rmdir -p "$root/$(dirname "$path")" 2>/dev/null || true
     else
       (cd "$root" && GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null) || true
     fi
+    acted="$acted$path
+"
     n=$((n + 1))
   done <<PATHS
 $changed
@@ -590,11 +615,17 @@ PATHS
   # a *deletion* by this line — which is precisely the state the whole function
   # exists to avoid, on the one path that reached it, and a `git commit -a` in the
   # morning would have undone the night's work on that file.
+  #
+  # Over what the walk above *acted on* and not over the whole list ([50]): a path
+  # the fold neither put on the branch nor took off it has no index entry this run
+  # is entitled to move either, and `git reset -- <path>` sets that entry back to
+  # HEAD — which would quietly unstage a human's own staged edit at a name this run
+  # just declined to commit. Same rule at both ends of the function.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     (cd "$root" && git reset -q -- ":(literal)$path" 2>/dev/null) || true
   done <<PATHS
-$changed
+$acted
 PATHS
   return 0
 }

@@ -127,3 +127,15 @@
   1. **À ajouter à la validation des préconditions**, à côté de `FEATURE`/`TEST_CMD`/`TYPECHECK_CMD`/dépôt git. C'est le seul refus de la liste qui ne se lit pas dans un fichier : il faut inspecter le `PATH` de l'humain qui lance l'install, et le message doit nommer l'entrée fautive comme le fait `gate_path_preflight`. Un opérateur dont le profil porte un deux-points en trop verra sinon un `exit 2` la première nuit et pas au moment de l'install.
   2. **Ne rien figer.** Poser un `PATH` minimal pour le pack a été explicitement refusé par [52] : un projet a le droit d'avoir son `claude` et son `git` où il veut, et un pack qui choisirait le sien casserait toute installation non standard en silence. L'installeur diagnostique, il ne réécrit pas.
   3. **Un `node_modules/.bin` absolu reste accepté** — c'est ce que fait `npm run`, donc c'est une façon ordinaire de démarrer un run — mais il est surveillé comme les autres répertoires écrivables. Un projet dont le `TEST_CMD` réinstalle des dépendances à chaque itération verra donc des lignes de dérive sur les programmes que le pack exécute *si* cette réinstallation change `git`, `awk` ou `claude` ; en pratique elle ne les touche pas. À mentionner seulement si l'installeur détecte un `PATH` pointant dans l'arbre du projet.
+
+- **Contrainte écrite par [50], le 30/08/2026.** L'installeur provisionne le
+  `.gitignore` du projet cible, et depuis [50] cette écriture décide de ce qui entre
+  dans l'historique du projet : le commit durable stage en `git add --force` sur les
+  chemins approuvés, donc un chemin **gardé** que le projet ignore est commité au lieu
+  d'être nommé et perdu. Deux conséquences pour ce ticket. D'une part, un projet qui
+  ignore `.claude/` — la convention Claude Code — reçoit bien le code que la boucle lui
+  livre, ce qui était faux avant : c'est un argument pour ne *pas* retirer cette règle
+  du `.gitignore` provisionné, et pour le dire à l'humain plutôt que de le décider en
+  silence. D'autre part, la confirmation forcée que ce ticket possède est le seul
+  endroit qui puisse attraper un `GUARDED_PATHS` rédigé large : `.` y rendrait
+  commitable toute la zone ignorée qu'une write-surface couvre.

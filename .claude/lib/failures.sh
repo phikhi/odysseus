@@ -1065,7 +1065,7 @@ failures_preserve_attempt() {
 # of megabytes.
 failures_make_durable() {
   local ticket="$1" pre="$2" base="$3" tree="${4:-}"
-  local changed idx head newtree commit path
+  local changed idx head newtree commit path refused=''
 
   if [ -z "$base" ]; then
     failures__gap "$ticket: no pre-session snapshot — nothing made durable"
@@ -1102,9 +1102,32 @@ failures_make_durable() {
   # so one path git refused took every other path out of the commit with it, under a
   # `|| true` written for the one that was refused; and a pathspec is a pattern, so a
   # file really named `zone[1].md` was staged as `zone1.md` or as nothing at all.
+  #
+  # `--force`, and it is the decision [50] was opened to take rather than a flag
+  # ([39] found the case and deliberately left it). Staged through the same lens
+  # the tree was *judged* through, which is the whole of the argument: an ignored
+  # path can only be in this list because `gate_tree_snapshot` forced it in, and it
+  # forces exactly two families — the project's own `GUARDED_PATHS` ([24]) and what
+  # a rule written during this iteration took out of sight ([30]). Everything else
+  # ignored was skipped by the plain `git add -A` at the top of that snapshot, so it
+  # is in no tree here and cannot reach this line. Without the flag the gate judged
+  # those two families, approved them, and rolled them back on red — and on green,
+  # the one outcome where the work is supposed to survive, did nothing at all. What
+  # it costs is written down in `docs/frontiere-de-confiance.md`; the short version
+  # is that a sealed path can never be approved, so the file a project ignores
+  # `.claude/` *for* is not reachable from here.
+  # The status is kept rather than swallowed, and it is half of a verdict and not a
+  # verdict ([39] is right that asserting it alone proves nothing): a refusal on a
+  # path the session deleted out of a tree that was never committed loses nothing,
+  # because there is nothing on either side. Paired further down with the result,
+  # which is the other half. Written above the loop rather than inside it so that
+  # the body stays one anchorable shape for `test/mutate.sh`.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    GIT_INDEX_FILE="$idx" git add -A -- ":(literal)$path" >/dev/null 2>&1 || true
+    if ! GIT_INDEX_FILE="$idx" git add -A --force -- ":(literal)$path" >/dev/null 2>&1; then
+      refused="$refused$path
+"
+    fi
   done <<CHANGED
 $changed
 CHANGED
@@ -1117,22 +1140,30 @@ CHANGED
   fi
 
   # What the gate approved and this tree does not carry, named rather than dropped
-  # ([39]). Asserting that `git add` succeeded would prove nothing here — it is
-  # under a `|| true` by necessity, a path the session deleted out of a tree that
-  # was never committed matching nothing on either side — so what is checked is the
-  # result: the paths that still differ between what is about to be committed and
-  # the tree the gate judged. Before this, a name `git add` refused left the file
-  # out of the history with a green iteration and not one line about it, and the
-  # loudest case was the one that opened this ticket: a name outside pure ASCII,
-  # refused for the shape it arrived in.
+  # ([39]). Neither half of this answers on its own, which is why both are asked.
+  # The *status* alone accuses a path the session deleted out of a tree that was
+  # never committed: git refuses the pathspec, nothing is lost, and the `|| true`
+  # above exists for exactly that. The *result* alone accuses the project's own
+  # test suite: `TEST_CMD` runs after the tree was judged, so a delivered file it
+  # rewrote differs from the judged tree while sitting in this commit with newer
+  # bytes — a finding, but somebody else's, and it is already named every iteration
+  # by `gate_unjudged_changes`. Both together say the one thing this line is for:
+  # git would not take this path, and the work is not in the commit. Before [39] it
+  # was silent, and the loudest case was a name outside pure ASCII, refused for the
+  # shape it arrived in.
   #
-  # Netted against `changed` rather than read whole, and that is not a detail: a run
-  # started on a tree that already had uncommitted work has paths where `base` and
-  # `HEAD` differ and no session touched them, and accusing those would be this
-  # gap line saying something false on every dirty repository.
+  # `refused` is built out of `changed`, so this is netted the way [39] netted it
+  # and for the same reason: a run started on a tree that already had uncommitted
+  # work has paths where `base` and `HEAD` differ that no session touched, and
+  # accusing those would be this gap line saying something false on every dirty
+  # repository.
+  #
+  # What used to be its loudest case is gone rather than quieter: since [50] the
+  # staging above forces, so a guarded path the project ignores is committed
+  # instead of named here.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    failures__in_list "$path" "$changed" || continue
+    failures__in_list "$path" "$refused" || continue
     failures__gap "$ticket: $path was approved by the gate and could not be staged — it is not in this commit"
   done <<MISSED
 $(git -c core.quotePath=false diff-tree -r --name-only "$newtree" "$tree" 2>/dev/null)
@@ -1169,9 +1200,16 @@ MISSED
   # The real index still describes the state before the commit, which would show
   # up as a staged deletion. Same paths, so nothing else staged is disturbed, and
   # one literal pathspec per line for the reason the staging above carries.
+  #
+  # `--force` here too, and the two are one decision and not two ([50]): the commit
+  # above now carries a guarded path the project ignores, so an index that could
+  # not take the same path would describe that very path as deleted — the exact
+  # state this block exists to prevent, reintroduced by fixing the other half. The
+  # two calls succeed and fail together, being the same call on the same conditions,
+  # so the index still ends up agreeing with the commit either way.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    git add -A -- ":(literal)$path" >/dev/null 2>&1 || true
+    git add -A --force -- ":(literal)$path" >/dev/null 2>&1 || true
   done <<CHANGED
 $changed
 CHANGED
