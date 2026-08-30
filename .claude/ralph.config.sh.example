@@ -212,12 +212,29 @@ HUMAN_CHECKPOINT_EVERY="${HUMAN_CHECKPOINT_EVERY:-0}"
 # ── Weekly wall & one-shot successor ─────────────────────────────────────────
 
 # Scheduler used to arm the successor: auto | at | systemd-run | none.
-# `auto` probes the chain ordered by reboot survival.
+#
+# `auto` walks the chain for this platform, ordered by **reboot survival** and
+# not by taste: a weekly reset is days out, `at` keeps its queue on disk and
+# survives a restart, a transient `systemd-run` timer lives in tmpfs and does
+# not. macOS has no systemd, so the chain there is `at` alone. Naming one
+# mechanism uses that one or nothing — a project that asked for `at` and silently
+# got something else has been told the wrong thing about its own night.
+#
+# `none` is a declaration and not a failure: the run stops on the wall and says
+# so. The cloud `schedule` skill is not on this list and is refused with a reason
+# if you write it — it is a routine on Anthropic infrastructure, needs a
+# claude.ai login rather than an API key, and has no access to this repository.
 SCHEDULER="${SCHEDULER:-auto}"
 
 # What to do when the weekly cap blocks the run: schedule | human.
-# `schedule` arms a one-shot successor at the reset (never more than 7 days
-# out); `human` escalates instead of scheduling.
+# `schedule` arms a one-shot successor at the reset of the window that blocked
+# the run — never a computed "+7 days", and never on an instant nothing measured;
+# `human` stops on the wall and leaves the resume to a person.
+#
+# Whichever it is, a successor is a **new run**: it inherits no lesson index, no
+# capability baseline and no retry brief from the run that armed it. And a run
+# that is leaving a git configuration source somewhere it did not find it does
+# not arm one at all, because a fresh run would pin that as the project's own.
 WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
 
 # ── Per-ticket concurrency ───────────────────────────────────────────────────

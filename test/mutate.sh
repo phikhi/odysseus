@@ -234,6 +234,9 @@ CAPABILITY=".claude/lib/capability.sh"
 LANGLIB=".claude/lib/lang.sh"
 BUDGET=".claude/lib/budget.sh"
 CONCURRENCY=".claude/lib/concurrency.sh"
+# Not `SCHEDULER`: that one is a configuration key this pack reads, and a file
+# path under its name would read like one here.
+SCHEDULER_LIB=".claude/lib/scheduler.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
@@ -3359,6 +3362,179 @@ mutation "46 the capability witness says nothing a document can keep" "$CAPABILI
 mutation "46 the drift never reaches the run journal" "$LOOP" \
   's/      loop_journal_append "\$drift_subject" "\$\{drift_outcome:-capability-drift\}" 0 0 0/      :/' \
   test/capability.bats "iteration a run stops on"
+
+# ── [09] the one-shot successor ──────────────────────────────────────────────
+#
+# Two halves, and they fail differently. The **chain** is about what a night
+# survives — a reversed order still works every week nobody reboots. The
+# **instant** is about arming on something nothing measured, which is [27]'s
+# fallback that disarms itself, wearing a different hat.
+
+# The ordering, which is the whole of the chain's guarantee. Reversed, the
+# transient timer in tmpfs is tried first and a reboot during the wait takes the
+# successor with it.
+mutation "09 the chain is not ordered by reboot survival" "$SCHEDULER_LIB" \
+  's#  printf \x27at\\n\x27\n  case "\$platform" in\n    Darwin\) ;;\n    \*\) printf \x27systemd-run\\n\x27 ;;\n  esac#  case "\$platform" in\n    Darwin) ;;\n    *) printf \x27systemd-run\\n\x27 ;;\n  esac\n  printf \x27at\\n\x27#' \
+  test/scheduler.bats "survives a reboot"
+
+# The platform half: a mac has no systemd, and trying one there is a mechanism
+# that can only ever fail.
+mutation "09 the chain offers systemd on a mac" "$SCHEDULER_LIB" \
+  's#    Darwin\) ;;\n    \*\) printf \x27systemd-run\\n\x27 ;;#    *) printf \x27systemd-run\\n\x27 ;;#' \
+  test/scheduler.bats "no systemd"
+
+# `none` as a declaration. Without it a project that said it has no scheduler is
+# handed one anyway.
+mutation "09 SCHEDULER=none is not a declaration" "$SCHEDULER_LIB" \
+  's#    none\) return 0 ;;#    none) ;;#' \
+  test/scheduler.bats "is a declaration"
+
+# And the other side of that key: a project that named one mechanism falls
+# through to the next, so it is told its night survives a reboot when it does not.
+mutation "09 naming one mechanism falls through to the next" "$SCHEDULER_LIB" \
+  's#    at \| systemd-run\)\n      printf \x27%s\\n\x27 "\$\{SCHEDULER:-\}"\n      return 0\n      ;;#    at | systemd-run) ;;#' \
+  test/scheduler.bats "never the next one down"
+
+# The chain probing the machine at all. Without it every candidate is "available"
+# and the first submission is where a missing binary is discovered.
+mutation "09 the chain does not ask what this machine has" "$SCHEDULER_LIB" \
+  's#    command -v "\$mech" >/dev/null 2>&1 \|\| continue\n##' \
+  test/scheduler.bats "does not have is not in the chain"
+
+# ── [09] the instant, and the four ways it is not one
+
+# `exit 6` has two causes and only one carries an instant ([08]). Without this
+# guard the empty field is arithmetic and the successor is armed at the epoch 0.
+mutation "09 a reset nothing measured is armed anyway" "$SCHEDULER_LIB" \
+  's#    \x27\x27 \| \*\[!0-9\]\*\)\n      RALPH_SUCCESSOR_WHY="not arming a successor: the reset of the window#    zzz-never-matches)\n      RALPH_SUCCESSOR_WHY="not arming a successor: the reset of the window#' \
+  test/scheduler.bats "nothing measured"
+
+# A reset already past. Arming on it wakes a run into the same wall, which arms
+# again — an arming storm rather than a night.
+mutation "09 a reset in the past is armed" "$SCHEDULER_LIB" \
+  's#  if \[ "\$span" -le 0 \]; then#  if [ "\$span" -le -999999999 ]; then#' \
+  test/scheduler.bats "in the past"
+
+# "Never +7 days" is a ceiling the window carries. Without it a clock that is
+# wrong buys a successor at any instant the endpoint cares to name.
+mutation "09 a weekly window has no ceiling of its own" "$SCHEDULER_LIB" \
+  's#    seven_day \| seven_day_opus\) ceiling=604800 ;;#    seven_day | seven_day_opus) ceiling=99999999 ;;#' \
+  test/scheduler.bats "further out than its window"
+
+# The paired witness one line down: with a single shared ceiling both windows
+# would pass the entry above and a session window would be armable a week out.
+mutation "09 a session window is priced like a weekly one" "$SCHEDULER_LIB" \
+  's#    five_hour\) ceiling=18000 ;;#    five_hour) ceiling=604800 ;;#' \
+  test/scheduler.bats "held to five hours"
+
+# A window name this pack does not know, given the widest ceiling instead of a
+# refusal — which is the fail-open this whole module is written against.
+mutation "09 an unknown window is priced at a week" "$SCHEDULER_LIB" \
+  's#    \*\)\n      RALPH_SUCCESSOR_WHY="not arming a successor: \$\{window:-an unnamed window\} is not a window[^\n]*"\n      return 1\n      ;;#    *) ceiling=604800 ;;#' \
+  test/scheduler.bats "cannot price"
+
+# The instant from a session's own stream, held to what a pause costs. Without
+# it a forged `rate_limit_event` buys a successor days out ([08], [23]).
+mutation "09 an instant a session wrote is not capped" "$SCHEDULER_LIB" \
+  's#  if \[ "\$source" = stream \] && \[ "\$span" -gt "\$\{BUDGET_MAX_PAUSE:-21600\}" \]; then#  if false; then#' \
+  test/scheduler.bats "a session wrote"
+
+# `at` takes whole minutes, so the rounding has a direction and only one of them
+# is safe: down wakes the run *before* the wall lifts.
+mutation "09 the deadline is rounded down to the minute" "$SCHEDULER_LIB" \
+  's#\+ 59\) / 60 \* 60#+ 0) / 60 * 60#' \
+  test/scheduler.bats "rounded up to the minute"
+
+# ── [09] the singleton, and what a successor is handed
+
+mutation "09 a second successor is armed over the first" "$SCHEDULER_LIB" \
+  's#  if at="\$\(scheduler_armed_at\)"; then#  if false; then#' \
+  test/scheduler.bats "already armed for this tree"
+
+# The paired witness: a marker read as live for ever wedges every run after the
+# first weekly wall, and passes the entry above.
+mutation "09 a marker whose instant has passed still blocks" "$SCHEDULER_LIB" \
+  's#  \[ "\$at" -gt "\$now" \] \|\| return 1#  [ -n "\$at" ] || return 1#' \
+  test/scheduler.bats "instant has passed"
+
+mutation "09 nothing records that a successor was armed" "$SCHEDULER_LIB" \
+  's#  scheduler__mark "\$RALPH_SUCCESSOR_AT" "\$armed" \|\|\n    scheduler__log "armed a successor and could not record it[^\n]*"#  :#' \
+  test/scheduler.bats "out of reach of a git add"
+
+# What a successor runs. Anything but the loop is a job that takes neither lock.
+mutation "09 the successor is not a run of this loop" "$SCHEDULER_LIB" \
+  's#"\$\(scheduler__quote "\$root/\.claude/loop\.sh"\)" \\#"\$(scheduler__quote "\$root/.claude/lib/select.sh")" \\#' \
+  test/scheduler.bats "takes the run lock"
+
+# `at` mails a job's output, and a headless box has no MTA: without the redirect
+# a successor that ran leaves nothing a human can read.
+mutation "09 the queued job output goes nowhere" "$SCHEDULER_LIB" \
+  's#  printf \x27 %s %s >>%s 2>&1\\n\x27 \\#  printf \x27 %s %s\\n\x27 \\#' \
+  test/scheduler.bats "lands beside the run journal"
+
+# The decision, mutated the way it would really be undone: by handing the
+# successor one of this run's own workspaces ([40] — a queued command line is
+# readable by anything running as this user).
+mutation "09 the successor is handed one of this run own secrets" "$SCHEDULER_LIB" \
+  's#  printf \x27 RALPH_CONFIG=%s\x27 "\$\(scheduler__quote "\$cfg"\)"#  printf \x27 RALPH_CONFIG=%s\x27 "\$(scheduler__quote "\$cfg")"\n  printf \x27 RALPH_RETRO_STATE=%s\x27 "\$(scheduler__quote "\$\{RALPH_RETRO_STATE:-\}")"#' \
+  test/scheduler.bats "names nothing of this run"
+
+# ── [09] the residue a fresh run would adopt, and the human fallback
+
+mutation "09 the run-level residue is never read" "$GATE" \
+  's/^gate_frontier_residue\(\) \{/gate_frontier_residue() { return 1;/m' \
+  test/scheduler.bats "named as a residue"
+
+mutation "09 the pilot does not hand the residue to the scheduler" "$LOOP" \
+  's#  residue="\$\(gate_frontier_residue \|\| true\)"#  residue=""#' \
+  test/scheduler.bats "queues nothing for the morning"
+
+mutation "09 a residue does not stop the arming" "$SCHEDULER_LIB" \
+  's#  if \[ -n "\$residue" \]; then#  if false; then#' \
+  test/scheduler.bats "whatever the instant says"
+
+mutation "09 a project that resumes by hand is scheduled for anyway" "$SCHEDULER_LIB" \
+  's#  if \[ "\$\{WEEKLY_RESUME:-schedule\}" != schedule \]; then#  if false; then#' \
+  test/scheduler.bats "by hand"
+
+# Every mechanism refused and the run says it armed one: the false green of this
+# module, and the only one that would let an AFK night end in silence.
+mutation "09 a refused submission reads as an armed successor" "$SCHEDULER_LIB" \
+  's#  if \[ -z "\$armed" \]; then#  if false; then#' \
+  test/scheduler.bats "not a silent success"
+
+# "Armed" read as "will run". `at` answers for its queue and never for the job.
+mutation "09 arming claims more than a submission" "$SCHEDULER_LIB" \
+  's/^scheduler_caveat\(\) \{/scheduler_caveat() { return 0;/m' \
+  test/scheduler.bats "cannot promise"
+
+# ── [09] the wiring, in the pilot
+
+mutation "09 the wall arms nothing" "$LOOP" \
+  's#  if \[ "\$\{stop_code:-0\}" = 6 \]; then\n    loop__arm_successor\n  fi#  :#' \
+  test/scheduler.bats "arms exactly one successor"
+
+# The journal word. A morning reader has to tell "something will pick this up"
+# from "nothing will" without the console output of a process that ended hours ago.
+mutation "09 the journal does not tell an armed run from a stopped one" "$LOOP" \
+  's#    loop_journal_append - successor-armed 0 0 0#    loop_journal_append - weekly-pause 0 0 0#' \
+  test/scheduler.bats "arms exactly one successor"
+
+mutation "09 the scheduler keys are not refused at the door" "$LOOP" \
+  's#  scheduler_preflight \|\| rc=1#  :#' \
+  test/scheduler.bats "outside the set is refused, not read as no mechanism"
+
+mutation "09 a SCHEDULER outside the set is read as no mechanism" "$SCHEDULER_LIB" \
+  's#      rc=1\n      ;;\n  esac\n\n  case "\$\{WEEKLY_RESUME:-schedule\}" in#      ;;\n  esac\n\n  case "\$\{WEEKLY_RESUME:-schedule\}" in#' \
+  test/scheduler.bats "outside the set is refused, not read as no mechanism"
+
+mutation "09 the cloud skill is refused without its reason" "$SCHEDULER_LIB" \
+  's#    schedule \| routines\)#    zzz-never-matches)#' \
+  test/scheduler.bats "cloud skill by name"
+
+mutation "09 a WEEKLY_RESUME outside the set is read as human" "$SCHEDULER_LIB" \
+  's#      rc=1\n      ;;\n  esac\n\n  return "\$rc"#      ;;\n  esac\n\n  return "\$rc"#' \
+  test/scheduler.bats "outside the set is refused, not read as human"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

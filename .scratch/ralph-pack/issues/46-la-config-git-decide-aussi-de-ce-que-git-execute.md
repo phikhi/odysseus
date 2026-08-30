@@ -296,3 +296,22 @@ Les trois entrées rejouées pour de vrai après correction : `ok`, `ok`, `ok`.
 Aucun nom toléré des deux côtés, canari compris. Les trois `DRIFTED` du premier
 passage à blanc étaient des ancres de [44], [41] et [15] : garanties vérifiées
 puis ré-ancrées, aucune n'avait perdu son propriétaire.
+
+- **[09], le 29/08/2026 : le résidu que ce ticket a nommé et assumé n'est plus
+  franchi par un successeur programmé.** Ce ticket écrivait : « une clé qu'une
+  session supprime, ou qui répond depuis hors dépôt, n'est pas remise — nommée,
+  rouge, et rouge pour tout le reste du run », et laissait à [09] la question de
+  ce qu'un successeur en hérite. Réponse livrée : **rien n'est armé**. Une
+  fonction publique neuve, `gate_frontier_residue`, pose la même différence
+  symétrique un niveau plus haut — contre le manifeste du témoin de **run**, sur
+  les sources partagées seulement — et le pilote la lit en queue de `loop_main`.
+  Le raisonnement est le vôtre : un run neuf épingle la configuration qu'il
+  trouve, donc un successeur adopterait `core.fsmonitor` comme celui du projet et
+  le ferait exécuter par git dans l'arbre de process du pilote à chaque
+  rafraîchissement d'index, toute la nuit, sans un mot — et l'humain que ce
+  successeur remplace est celui qui aurait lu le reçu. Deux notes pour la suite :
+  la fonction a été placée **après** `gate__frontier_share` parce qu'une fonction
+  neuve plus haut peut rendre une ancre de mutation ambiguë (le piège que ce
+  ticket-ci a écrit) ; et l'entrée de mutation `46 the configuration half of the
+  frontier is never read` rend aussi ce lecteur aveugle, ce qui est correct — les
+  deux lisent `gate__config_manifest`.

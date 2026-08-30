@@ -1456,6 +1456,35 @@ LEDGER
   return 0
 }
 
+# What this **run** is leaving of the shared frontier somewhere it did not find
+# it, as `kind<TAB>name`. Non-zero when it is leaving nothing, which is every
+# ordinary night.
+#
+# The same symmetric difference as `gate_frontier_moved`, one level up: against
+# the run's witness rather than an iteration's pin, and over the shared sources
+# only. That is the whole of what makes it mean "residue" — everything a restore
+# could put back has been put back by then, source by source, so what is still
+# different is what no restore reached: a value that answers from the operator's
+# `~/.gitconfig` or from the machine's, a key a session removed, a global excludes
+# file outside the repository ([30], [46]).
+#
+# The tree half is deliberately out: a `.gitignore` a session wrote is ordinary
+# project work, it is committed or rolled back with everything else, and the next
+# run is *supposed* to be handed it.
+#
+# Its reader is [09], which asks it before arming a one-shot successor. A fresh
+# run pins the configuration it finds, so this list is exactly what a successor
+# would adopt as the project's own and never mention again.
+gate_frontier_residue() {
+  local common="${RALPH_FRONTIER_COMMON:-}" left
+  [ -n "$common" ] && [ -f "$common/manifest" ] || return 1
+  left="$( { gate__ignore_shared_manifest; gate__config_manifest;
+    cat "$common/manifest"; } |
+    LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
+  [ -n "$left" ] || return 1
+  printf '%s\n' "$left"
+}
+
 # The `.gitignore` files of the working tree this session moved, on one line, and
 # non-zero when it moved none.
 #

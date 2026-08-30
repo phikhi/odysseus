@@ -258,10 +258,14 @@ budget_wait_for_exit() {
 
   run_loop
   # Exit 6 and not 4: this is the one stop that lifts on its own at a known
-  # instant, which is what a one-shot successor is scheduled on ([09]).
+  # instant, which is what a one-shot successor is armed on ([09]). The code stays
+  # 6 whether one was armed or not — what got armed is a line in the journal — so
+  # this test asserts the handover happened and test/scheduler.bats asserts what
+  # it handed over.
   assert_failure 6
   assert_output_contains "the weekly usage limit blocks this run (seven_day"
-  assert_output_contains "[09]"
+  assert_output_contains "armed a one-shot successor"
+  assert_equal "$(at_call_count)" "1"
   assert_equal "$(claude_call_count)" "0"
   assert_ticket_status 01-alpha ready-for-agent
   assert_file_contains "$FEATURE_DIR/run.log" "budget-wall"
