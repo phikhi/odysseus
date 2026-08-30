@@ -74,3 +74,48 @@ encore vu comme **deux** ids qui ne résolvent rien.
   comme une clause de l'interface des backends depuis [37]. Ce ticket peut la
   changer ; s'il le fait, c'est cette phrase-là qu'il faut réécrire, pas seulement
   le backend local — un adaptateur distant lit ce contrat et rien d'autre.
+
+- **Le sondage que le commentaire ci-dessus réclamait est fait, le 30/08/2026, et
+  il tranche la moitié « porter » de la décision.** Sonde jetable (deux `pack_run`,
+  reproduction en trois lignes ci-dessous), plus `s3-saut-de-ligne.bats` rejouée sur
+  `82acfcf`. **Il n'y a qu'un producteur cassé, pas deux.**
+
+  Le lecteur **git** de `issues/` est déjà correct depuis [39] + [49]. Le nom arrive
+  sur **une seule ligne**, cité par git quoi que dise `core.quotePath` —
+  `sed -n l` rend `A\t".scratch/demo/issues/99-a\nb.md"$` — et
+  `failures_protect_tracker` le nomme puis refuse de vouer :
+
+      ralph: 01-alpha: ".scratch/demo/issues/99-a\nb.md" moved in the tracker under
+        a name this guard cannot address — nothing was put back for it
+      ralph: 01-alpha: a path in the tracker moved under a name this guard cannot
+        address — nothing here can vouch for the tracker, so the iteration cannot be green
+
+  Le lecteur **glob** est le seul qui casse : `tracker_ids` et `tracker_frontier`
+  rendent `01-alpha|99-a|b|`, et `failures_quarantine_strays` annonce
+  `quarantined 99-a, b` en laissant le fichier intact.
+
+  **Conséquence pour la décision.** « Porter » (transport NUL) n'achète plus que la
+  capacité de **broyer** un ticket qu'un autre garde du même run refuse déjà de
+  vouer — donc une itération qui ne peut pas être verte — et que [07]/[21] mettent
+  de toute façon en quarantaine puisqu'une session l'a créé. La moitié « porter »
+  est donc sans motif : **refuser au producteur glob**, à voix haute, et l'écrire.
+  La clause d'interface « un id par ligne » de `lib/tracker.sh` **ne change pas** ;
+  ce ticket lui en ajoute une, additive : *un backend ne rend jamais un id qui
+  contient un saut de ligne*. `lib/tracker.sh` reste hors de la write-surface.
+
+  **Et une chose que ni la sonde s3 ni ce ticket ne disaient** : dans un run réel
+  les deux lecteurs parlent en même temps sur le même nom. L'itération est rouge
+  (le garde git refuse de vouer) **et** la frontière est polluée par deux fantômes
+  irréclamables. Le test du correctif doit couvrir les deux, sinon il prouve la
+  moitié de la panne.
+
+  **Conséquence pour l'ordre** : l'arête `[48] → [18]` passe de forte à moyenne (une
+  clause additive, pas une réécriture de contrat), et les arêtes `[48] → [16]` et
+  `[48] → [11]` tombent à zéro — aucun format ne change, et personne ne bâtit contre
+  des ids fantômes.
+
+  Reproduction :
+
+      before="$(failures_tracker_tree)"
+      printf '...' >"$(ralph_feature_dir)/issues/99-a"$'\n'"b.md"
+      failures_protect_tracker 01-alpha "$before"
