@@ -315,3 +315,22 @@ puis ré-ancrées, aucune n'avait perdu son propriétaire.
   ticket-ci a écrit) ; et l'entrée de mutation `46 the configuration half of the
   frontier is never read` rend aussi ce lecteur aveugle, ce qui est correct — les
   deux lisent `gate__config_manifest`.
+
+## Note de la passe transversale du 30/08/2026
+
+**La phrase que ce ticket a fait écrire au tableau a un second cas, et il n'avait
+aucun propriétaire.** « La ligne "rien ne le fera ici" reste vraie de ce qui est
+écrit *comme donnée* ; elle ne couvre pas ce que le pack exécute ensuite » — le
+premier cas était `~/.gitconfig`, ce ticket. Le second est le **`PATH`**, et il
+est en amont : `gate_frontier_common` *demande à git* ce que la configuration dit,
+donc un `git` interposé ne contourne pas ce témoin, il le fabrique. Mesuré
+(`sondes/passe-30-08/r5`) : 204 appels du run suivant à travers un `git` posé par
+une session depuis une itération verte, dont `rev-parse --git-dir`,
+`worktree list` et `config --get core.excludesFile`. Ticket **[52]**, qui doit
+trancher entre un témoin (modèle [15]), un refus d'armer (modèle exact de
+`gate_frontier_residue`, votre propre raisonnement appliqué au second genre) et un
+préflight.
+
+`gate_config_keys` reste juste sur son périmètre ; ce que la passe ajoute est la
+mesure de l'asymétrie — 53 entrées de configuration surveillées, et `PATH` lu une
+seule fois dans tout le pack, pour le recopier dans la ligne mise en file ([09]).

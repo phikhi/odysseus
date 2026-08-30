@@ -115,3 +115,22 @@ Correctif : une seule fonction, `capability_is_kind`, avec `grep -qxF`. Le test 
 - **[09], le 29/08/2026 : le témoin reste par run, et c'est maintenant une décision écrite plutôt qu'une conséquence.** L'auto-chaînage ne transmet **rien** : un successeur reprend l'état courant comme sa propre ligne de base et ne redira jamais ce que le run mort a vu. Refusé de transmettre pour l'argument de [40] — la ligne de commande d'un job en file est lisible par `at -c`, donc le nom d'un fichier de ligne de base y serait un nom qu'une session peut apprendre. Ce qui est refermé à la place : quand le run laisse une source de **configuration** ailleurs qu'il ne l'a trouvée (`gate_frontier_residue`, la moitié [46] de la porte que ce ticket a ouverte), **rien n'est armé** et un humain reprend la main. Une dérive de *capacité* ne bloque pas l'armement, elle : elle ne rougit rien nulle part, et bloquer une nuit sur une lecture qui ne rougit pas serait une asymétrie que rien ne justifie — mais elle est dans `run.log` depuis [46], donc l'humain qui lit au matin la voit à côté de la ligne d'armement.
 
 - **Et la porte que ce ticket a ouverte sans la mesurer entièrement a maintenant son propriétaire livré.** `--setting-sources user` suppose un `$HOME` que la session ne peut pas écrire ; ce ticket a montré qu'elle le peut, pour une *capacité*. [46] a mesuré l'autre moitié : un `core.fsmonitor` dans `~/.gitconfig` est une commande qui tourne dans le process **du pack** (252 exécutions sur un run de deux itérations). Celle-là **rougit** l'itération, contrairement à la capacité — la différence est ce que la clé décide, et elle est écrite au tableau de confiance.
+
+## Note de la passe transversale du 30/08/2026
+
+**Le témoin ne couvre pas les répertoires du `PATH`, et la distinction qui
+l'explique mérite d'être écrite** : ce ticket regarde ce qu'un `claude` frais
+**charge** (`.claude/*` dans l'arbre principal et dans le `$HOME` de l'opérateur).
+Un répertoire du `PATH` n'est pas chargé, il est **exécuté** — par le pack
+lui-même, et non par la session. Mesuré (`sondes/passe-30-08/r5`) : un `git` posé
+par une session depuis une itération verte est invisible au run courant (bash
+avait déjà hashé `git`) et sert **204** appels du run suivant, sans une ligne, sans
+un reçu, sans une dérive de capacité.
+
+Ticket **[52]**. S'il choisit la sortie « témoin », c'est **votre** forme qu'il
+reprendra — ligne de base prise par le pilote avant la première session,
+recomparée par itération, `receipt_gap` **et** ligne de `run.log` (la moitié que
+[46] a dû réparer ici). Deux réserves à lui passer : un `PATH` de développeur bouge
+tout seul (`npm i -g`, `brew upgrade`), donc la barre doit être **calculée** comme
+la vôtre l'est, et le témoin est **par run**, donc un binaire posé entre deux runs
+est la ligne de base du suivant — la même asymétrie que `LEARNINGS.md`.

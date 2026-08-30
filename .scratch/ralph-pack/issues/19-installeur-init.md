@@ -100,3 +100,24 @@
 - **Deux contraintes de [46], livré le 29/08/2026.** (a) L'installeur ne doit écrire **aucune** clé de `gate_config_keys` dans la configuration git d'un dépôt pendant qu'un run tourne : la frontière de [30]/[46] est épinglée par run, donc un `git config core.autocrlf …` posé en cours de nuit est un rouge légitime sur une itération innocente. S'il faut en poser une, c'est avant le run ou par une clé de `ralph.config.sh`, pas par `git config`. (b) Le balayage de `$TMPDIR` n'hérite d'aucun répertoire supplémentaire — le témoin de run de [41] (`ralph-frontier.XXXXXX`) porte maintenant une copie de plus (`attributes`) mais reste un répertoire par run.
 
 - **Trois contraintes de [09], livré le 29/08/2026.** (a) **Deux clés à écrire** dans `ralph.config.sh` : `SCHEDULER` (`auto` \| `at` \| `systemd-run` \| `none`) et `WEEKLY_RESUME` (`schedule` \| `human`). Toutes deux sont refusées au préflight si elles sont vides ou hors du jeu — une valeur absente serait lue comme « pas de mécanisme », c'est-à-dire un run qui s'arrête pour de bon à son premier mur hebdo en ayant l'air d'un run qui programme un successeur. (b) **Deux objets neufs, hors de `$TMPDIR` cette fois.** `.scratch/<feature>/successor.log` — la sortie du job programmé, à côté de `run.log`, à couvrir par le `.gitignore` que cet installeur écrit et pour la même raison (`at` poste la sortie d'un job et une machine sans MTA la perd, donc la redirection n'est pas optionnelle) ; et `<gitdir>/ralph.successor`, le marqueur singleton, qu'un successeur qui ne s'est **jamais réveillé** laisse derrière lui indéfiniment. Ce n'est pas un blocage — il porte un instant, et un instant passé est lu comme périmé — mais c'est un objet de plus dans la liste « laissé par un run qui n'a pas fini, balayé par personne avant [19] ». (c) **La confirmation forcée de cet installeur est le seul endroit qui peut attraper un `SCHEDULER=none` non voulu** : c'est une déclaration légitime (« cette machine n'a pas de scheduler »), donc rien en aval ne la conteste, et une nuit sur deux s'arrêterait pour de bon sans que personne l'ait choisi.
+
+## Note de la passe transversale du 30/08/2026
+
+- **`successor.log` doit être dans le `.gitignore` que vous écrivez** — [09] le
+  disait déjà — mais la passe ajoute la raison de ne pas s'arrêter là : c'est le
+  seul objet de `.scratch/<feature>/` dans lequel **le pack écrit depuis hors de
+  tout run**, et un nom qu'une session transforme en répertoire ou en lien décide
+  soit que le successeur ne démarre pas, soit où sa sortie atterrit (mesuré :
+  `.claude/settings.json`, scellé, 153 → 1240 octets). Le propriétaire du
+  correctif est [53] ; ce qui vous revient est de ne pas *créer* ce chemin à
+  l'installation d'une façon qui le rende plus facile à détourner.
+- **`<gitdir>/ralph.successor` n'est balayé par personne.** `gate_leftovers`
+  compte `$TMPDIR` ([36]) et les `*.guard` morts de la feature ([49]) ; le
+  répertoire git n'est regardé par rien. Un marqueur périmé est inerte, mais c'est
+  un objet de plus dans la zone que vous êtes le seul à pouvoir nettoyer entre
+  deux runs.
+- **Vous êtes le seul composant qui vive hors d'un run, donc le seul endroit
+  possible pour un préflight de `PATH`** si [52] choisit cette sortie : refuser de
+  démarrer quand `PATH` contient un répertoire écrivable **sous l'arbre du
+  projet** (`.`, `node_modules/.bin`, un chemin relatif) — le cas où l'exposition
+  n'est plus « hors du dépôt » mais dans l'arbre que la session écrit.
