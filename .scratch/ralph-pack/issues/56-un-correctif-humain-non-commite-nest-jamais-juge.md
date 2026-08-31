@@ -98,3 +98,18 @@ de choses faites.
 - **`session_writes` du harnais écrit la write-surface du ticket** : un fichier
   témoin posé *dans* cette surface serait fabriqué par la session AFK elle-même et
   la sonde serait verte des deux côtés.
+
+## Ce que [57] laisse à ce ticket (écrit le 31/08/2026, à sa livraison)
+
+- **L'instantané autour de `human_loop__session` que ce ticket vise a un voisin
+  immédiat** : [57] pose déjà une question en tête de la boucle `while :;` de
+  `human_loop__drain_one`, c'est-à-dire exactement après le retour d'une session et
+  avant que le menu ne soit ré-offert. C'est le point de convergence que ce ticket
+  et [55] cherchent, et il est déjà occupé — regarder ce qui y est avant d'ouvrir un
+  second endroit.
+- **[57] a mesuré pourquoi ce n'est pas `human_loop_main`** : la frontière de ticket
+  rate le cas où un humain répond `o` deux fois sur le même ticket, et un contrôle
+  posé aux deux endroits est du code mort à un des deux — aucune mutation ne peut
+  les distinguer.
+- **`human_loop__drain_one` rend maintenant quatre codes** (0, 1, 3, 4). Le `4`
+  arrête le drain entier ; le traiter avant le `*)` du `case` de `human_loop_main`.

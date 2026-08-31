@@ -83,9 +83,17 @@ state_guard_take() {
   # displace a guard that is now live, rename or not, because neither step checks
   # that the guard is still the one it inspected. The filesystem has no
   # compare-and-swap to express that in bash. Two of the three callers are covered
-  # downstream — the run and tree locks are re-checked for ownership on every
-  # iteration (`*_is_ours`), and a claim is a test-and-set on the ticket's own
-  # status, so a stolen guard costs a re-read and not a wrong answer.
+  # downstream — the run and tree locks are re-asked for ownership (`*_is_ours`)
+  # by `loop.sh` on every iteration and by `human-loop.sh` before every ticket of
+  # the sink, and a claim is a test-and-set on the ticket's own status, so a
+  # stolen guard costs a re-read and not a wrong answer.
+  #
+  # That sentence named one caller until [57], and the pack had two entry points
+  # since [16]: it was written when `loop.sh` was the only thing that took these
+  # locks, and it went on reading like a property of the pack after the drain
+  # started taking them and never asking again. Naming both is not tidiness —
+  # this paragraph is the reason this race is left open, so it has to say who
+  # actually closes it.
   #
   # The third has nothing downstream and it was added after this paragraph was
   # written ([47] via [49]): the ticket-open guard is the whole of the mutual
@@ -203,6 +211,12 @@ run_lock_held_by() {
 #
 # No lock recorded means there is nothing to hold, not a lock that was lost: the
 # libs are drivable outside a run, and that case is not a failure.
+#
+# Two callers since [57], and the second is the one with the most to lose:
+# `loop.sh` asks on every iteration, `human-loop.sh` before every ticket it
+# drains, because that loop opens an unjudged `claude` in the operator's own tree.
+# Public rather than `state__` for that reason and not by accident — a name two
+# modules call is an interface (`test/layering.bats`).
 run_lock_is_ours() {
   local lock="${RALPH_RUN_LOCK:-}"
   [ -n "$lock" ] || return 0
@@ -288,7 +302,10 @@ tree_lock_release() {
 # Same question as run_lock_is_ours, and it has to be asked separately. `.git/`
 # is out of reach of a stray `git clean`, not of a session that deletes the
 # directory outright — and a tree lock that vanished means a second run can start
-# here, which is the whole destruction this lock exists to prevent.
+# here, which is the whole destruction this lock exists to prevent. Separately,
+# because the two answers can differ: the run lock sits in the tree a session
+# writes to and this one does not, so an `rm -rf .scratch` takes one and leaves
+# the other. Both entry points ask both ([57]).
 tree_lock_is_ours() {
   local lock="${RALPH_TREE_LOCK:-}"
   [ -n "$lock" ] || return 0
