@@ -325,8 +325,12 @@ La 2ᵉ boucle bash, **HITL**, sœur de la ralph loop, qui **draine le puits `re
 _À éviter_ : ralph loop (réservé à l'AFK), boucle de review.
 
 **Raison d'escalade (`Escalation:`)**:
-La ligne posée sur un ticket au moment de l'escalader (`decision` / `too-big` / `failed-impl` / `spec-gap` / `sign-off` / `session-timeout` / `nothing-delivered`), jeu fermé, qui permet à la boucle humaine de router le ticket vers le bon traitement. Les deux dernières sont arrivées avec le pack et disent la même chose sous deux formes : **rien n'a été jugé**, donc `failed-impl` enverrait lire un verdict qui n'existe pas — la session a été coupée par un délai ([23]), ou elle a répondu sans rien changer dans l'arbre ([35]).
+La ligne posée sur un ticket au moment de l'escalader (`decision` / `too-big` / `failed-impl` / `spec-gap` / `sign-off` / `session-timeout` / `nothing-delivered`), jeu fermé, qui permet à la boucle humaine de router le ticket vers le bon traitement. Les deux dernières sont arrivées avec le pack et disent la même chose sous deux formes : **rien n'a été jugé**, donc `failed-impl` enverrait lire un verdict qui n'existe pas — la session a été coupée par un délai ([23]), ou elle a répondu sans rien changer dans l'arbre ([35]). Une raison est un mot que la boucle **AFK** écrit en renonçant : le jeu reste fermé à sept, et [16] n'en a pas ouvert de huitième — ce qu'un humain a besoin de distinguer se dit au **guichet**, pas dans le tracker.
 _À éviter_ : cause, motif, label (réservé au triage).
+
+**Guichet (desk)**:
+La question qu'un ticket du puits pose à un humain, dérivée de sa raison d'escalade **et des preuves qui existent** ([16]). Une raison n'est pas une table de routage : `decision` arrive de trois façons — un débordement contractuel (avec une branche `failed/<id>`), un run mort au plafond de reclaim (sans branche, seulement des lignes `reclaimed-*`), et un ticket qu'une session a écrit dans le tracker et que la quarantaine a escaladé (rien du tout). Huit guichets, cinq **traitements** (les cinq skills que le critère nomme) : `grilling` en sert quatre. Un guichet ne coûte rien côté écriture, une raison si — c'est pour ça que la distinction vit ici.
+_À éviter_ : file, catégorie, raison (c'est l'autre axe).
 
 ### Les langues
 

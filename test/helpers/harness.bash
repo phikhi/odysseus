@@ -521,6 +521,35 @@ wait
 MIDDLE
 }
 
+# Two recorders in front of everything, passing through to the real thing: what
+# they record is every program the pack resolved through the PATH being judged.
+# The marker lands in `$SHIM_STATE/ran`, and its *absence* is the assertion — a
+# refusal handed down after a planted program has already run is not a refusal.
+#
+# Here rather than in one of the two files that use it, and for the reason
+# `write_middle_shell` is here: the pack has two entry points since [16] and both
+# owe the same guarantee ([52] — the refusal lands before the first name is
+# resolved through the PATH being refused). A second copy would be a second place
+# for the staging to drift from what it is supposed to stage, and only one of the
+# two would be measuring anything.
+#
+# `dirname` is one of the two on purpose: it is the program a bootstrap reaches
+# for, and computing `RALPH_DIR` with parameter expansion instead is exactly what
+# these recorders exist to hold in place.
+harness_path_recorders() {
+  local name dir="$RALPH_TEST_DIR/recorder"
+  mkdir -p "$dir"
+  for name in git dirname; do
+    {
+      printf '#!/usr/bin/env bash\n'
+      printf 'printf "%%s\\n" "%s" >>"%s/ran"\n' "$name" "$SHIM_STATE"
+      printf 'exec "$(PATH="${PATH#*:}" command -v %s)" "$@"\n' "$name"
+    } >"$dir/$name"
+    chmod +x "$dir/$name"
+  done
+  printf '%s\n' "$dir"
+}
+
 # Wait for a file to appear, so a test never races a background process.
 #
 # It counts *tries*, not seconds, and that is fine for what it is for — waiting on

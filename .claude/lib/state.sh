@@ -151,13 +151,24 @@ ralph_run_lock_path() {
   printf '%s/.run.lock\n' "$(ralph_feature_dir)"
 }
 
+# The optional note is what a refused rival is told about *who* holds this, and
+# it exists because there are two holders now ([16]): an AFK run, and a human
+# draining the sink. Both take this lock, deliberately — you grind or you drain —
+# but "another run already holds this" sent to a scheduled successor that woke up
+# under a human's hands is a sentence that names the wrong thing, and the
+# operator goes looking for a run that is not there.
+#
+# Defaulted rather than required, so that every existing caller keeps saying
+# exactly what it said before.
 run_lock_acquire() {
-  local lock owner
+  local lock owner note="${1:-another run}"
   lock="$(ralph_run_lock_path)"
 
-  if ! state_guard_take "$lock" "run lock"; then
+  if ! state_guard_take "$lock" "run lock" "$note"; then
     owner="$(state_guard_holder "$lock" || echo unknown)"
-    printf 'ralph: another run already holds %s (pid %s)\n' "$lock" "$owner" >&2
+    note="$(state_guard_note "$lock" 2>/dev/null || echo '')"
+    printf 'ralph: %s already holds %s (pid %s)\n' \
+      "${note:-another run}" "$lock" "$owner" >&2
     return 1
   fi
 

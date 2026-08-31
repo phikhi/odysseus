@@ -32,3 +32,27 @@
 ## Comments
 
 - **Contrainte posée par [10], livré le 07/08/2026 : la troisième couche existe maintenant, et elle a une place réservée dans le reçu.** Le reçu d'audit est **par itération finale** (livrée ou escaladée) et **par ticket** ; le playthrough est par feature et matériel. Les quatre couches sont distinctes et le restent : un playthrough écrit dans un reçu ferait de la preuve de fin de feature un paragraphe d'un document par ticket, que la rétention (`RECEIPTS_RETENTION_DAYS`) efface. Ce que ce ticket a le droit de faire, et c'est la façon de les relier sans les mélanger : la section « What to read » du reçu référence des **objets et des chemins**, jamais du contenu — un playthrough persisté y a sa ligne, comme le commit et la branche `failed/`.
+
+- **Contrainte posée par [16], livré le 31/08/2026 : la décision sur `Failures:` se
+  prend par chemin de réinjection, et celui-ci est le tien.** [26] avait laissé ouverte
+  la question « qui remet le compteur à zéro », en l'écrivant au-dessus de
+  `tracker_field` dans `lib/tracker.sh` : `tracker_mark_resolved` le vide,
+  `tracker_mark_ready` non. [16] l'a tranchée **pour le puits humain** et
+  **délibérément pas dans l'opération** : `mark_ready` a un second appelant
+  (`failures_reslice`, qui marque un parent en attente de ses enfants), et vider le
+  compteur dedans aurait pris la décision pour ce ticket-ci et pour le re-slice depuis
+  un ticket qui ne les regardait pas.
+  Ce qui est donc disponible pour toi : une opération d'adaptateur
+  `tracker_clear_failures ID` (elle *retire* le champ plutôt que d'écrire `0`, la même
+  geste que `mark_resolved`, parce que `bump_failures` lit un champ absent et un `0` de
+  la même façon et qu'un ticket portant `Failures: 0` se lit, pour un humain, comme un
+  ticket qui a été tenté sans échouer). Et ce qui reste à décider ici : **une réinjection
+  hybride après un playthrough rouge remet-elle le budget de retries à zéro ?**
+  Attention au sens de l'erreur — sans le zéro, un ticket réinjecté avec `Failures: 3`
+  sous `RETRY_N=2` est escaladé à sa **première** tentative, sans retry ; avec le zéro
+  sur un chemin qui boucle, c'est `RETRY_N` qui cesse de borner quoi que ce soit.
+- **Et ce que [16] a construit et que tu hérites** : si ce ticket ouvre un troisième
+  point d'entrée ou une seconde boucle, `router_may_sign_off` est le refus qui garde
+  `resolved` hors de portée de tout ce qui n'est pas un `sign-off`, et il est **à côté
+  de la transition et pas dans le menu qui l'offre**, précisément pour qu'un second
+  appelant en hérite au lieu de le recopier.

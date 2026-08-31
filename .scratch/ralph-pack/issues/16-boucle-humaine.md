@@ -6,12 +6,12 @@
 
 **Write-surface:** `.claude/human-loop.sh`, `.claude/lib/router.sh`, `test/human-loop.bats`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `human-loop.sh` draine `ready-for-human` et route par `Escalation:` : `decision`→grilling, `too-big`→to-tickets, `failed-impl`→implement/pair (amorcé `failed/<ticket>` + reçu), `spec-gap`→to-spec, `sign-off`→approbation.
-- [ ] Anti-faux-vert : tout code corrigé repasse le gate via réinjection `ready-for-agent` ; jamais de `resolved` direct sauf `sign-off`.
-- [ ] Exclusion mutuelle avec l'AFK via le verrou de run (on broie **ou** on draine).
-- [ ] L'ordre de traitement = impact de déblocage puis NN.
+- [x] `human-loop.sh` draine `ready-for-human` et route par `Escalation:` : `decision`→grilling, `too-big`→to-tickets, `failed-impl`→implement/pair (amorcé `failed/<ticket>` + reçu), `spec-gap`→to-spec, `sign-off`→approbation.
+- [x] Anti-faux-vert : tout code corrigé repasse le gate via réinjection `ready-for-agent` ; jamais de `resolved` direct sauf `sign-off`.
+- [x] Exclusion mutuelle avec l'AFK via le verrou de run (on broie **ou** on draine).
+- [x] L'ordre de traitement = impact de déblocage puis NN.
 
 ## Comments
 
@@ -140,3 +140,180 @@ Deux choses de plus à lire dans `run.log`, et une à ne jamais faire.
   `successor-blocked-*`, ce n'est pas `weekly-pause` et une boucle humaine qui les
   confondrait présenterait « ce projet reprend à la main » à un opérateur dont la
   machine porte une plante.
+
+## Livraison — 31/08/2026
+
+Deux fichiers neufs (`.claude/human-loop.sh`, `.claude/lib/router.sh`), un fichier de
+test neuf (`test/human-loop.bats`, 27 tests), 20 entrées de mutation, toutes `ok`.
+
+### Ce que la forme a été, et pourquoi
+
+**Drainage interactif qui lance des sessions** — tranché avec Philippe avant d'écrire.
+La boucle prend les deux verrous, parcourt le puits dans l'ordre, imprime un dossier
+par ticket, lit la décision d'un humain sur stdin, et ouvre à la demande une session
+`claude` **interactive** avec le skill routé. Cinq réponses : `o` (ouvrir), `r`
+(réinjecter), `s` (sign-off), `c` (fermer), `n` (suivant), `q` (quitter).
+
+Deux axes séparés, et c'est la décision structurante :
+
+- **la raison** est ce que la boucle AFK a pu savoir au moment où elle a renoncé ;
+- **le guichet** est la question qu'un humain doit trancher, dérivé de la raison **et
+  des preuves qui existent**.
+
+C'est ce qui répond à la question du « sixième guichet » que [26] et [23] posaient
+chacun de leur côté : **aucune sixième raison n'est ouverte**. Une raison est un mot
+que la *boucle AFK* écrit — l'ajouter veut dire changer ce qu'un run enregistre en
+renonçant, ce qui est le ticket de [26] et se déciderait depuis le mauvais bout. Un
+guichet, lui, ne coûte rien côté écriture. Huit guichets, cinq traitements (les cinq
+que le critère nomme) : `grilling` en sert quatre.
+
+### Trouvaille : `decision` a TROIS formes d'arrivée, pas deux
+
+Le ticket en listait deux (débordement contractuel ; run mort à répétition).
+`failures_quarantine_strays` (`failures.sh:594`) escalade **aussi** en `decision`
+tout ticket qu'une session a écrit dans le tracker. C'est la forme la plus fréquente
+en pratique, et c'est celle où il n'y a *rien* à lire : pas de branche, pas de
+`Failures:`, aucun run n'a jamais tourné dessus.
+
+Le routeur les distingue **par les preuves** et jamais par le mot :
+
+| preuve | guichet | ce qu'on demande à l'humain |
+|---|---|---|
+| `failed/<id>` existe | `arbitrate` | deux tickets sur un fichier : lequel le possède ? |
+| pas de branche, `Failures:` > 0 | `triage-host` | ce ticket tue-t-il son run, ou la machine avait-elle un problème ? |
+| pas de branche, pas de `Failures:` | `admit` | ce ticket est-il légitime ? qui l'a écrit ? |
+
+**`session-timeout` est fusionné dans `triage-host`, et [23] demandait que ce soit dit
+à voix haute.** La question humaine est mot pour mot la même ; ce qui diffère est la
+preuve, qui est déjà un axe séparé (un timeout a une branche, un plafond de reclaim
+n'a que le journal). Deux guichets posant une question identique seraient deux noms
+pour une décision.
+
+`nothing-delivered` ([35]) a son guichet à lui (`readable`) et sa question porte les
+**deux** routes : « pourquoi ce ticket ne fait-il rien faire à une session » et, quand
+le ticket est bloqué sur des enfants tous résolus, « ce split vaut-il le ticket
+d'origine ». La seconde est dérivée du tracker seul (`Blocked by:` non vide, tous
+résolus) et non d'un texte de note, qui serait fragile.
+
+`spec-gap` et `sign-off` restent dans le jeu fermé bien que **personne ne les écrive** :
+un ticket qui en porte une a été posé à la main, et le drainage le dit — le lire comme
+« pas une raison du tout » enverrait une demande de sign-off délibérée au guichet des
+tickets que personne n'a validés.
+
+Toute autre `Escalation:` (le retro et `capability_propose` écrivent une **phrase**,
+pas un mot) tombe sur le guichet `request` : ce n'est l'échec de rien, le geste attendu
+est « décider puis écrire le vrai ticket ou fermer », et la réinjection est refusée.
+
+### Les décisions que le ticket demandait explicitement
+
+1. **Le zéro de `Failures:` à la réinjection : oui, et dans le chemin de réinjection,
+   pas dans `tracker_mark_ready`.** `mark_ready` a un second appelant (`failures_reslice`,
+   qui marque un parent en attente de ses enfants) ; le vider dans l'opération prendrait
+   la décision pour [11] et pour le re-slice depuis ce ticket-ci. Nouvelle opération
+   d'adaptateur `tracker_clear_failures`. **La décision est prise *par chemin de
+   réinjection* : [11] doit prendre la sienne** (contrainte écrite dans son ticket).
+2. **Sixième guichet pour `decision` : non — voir ci-dessus.** Guichets oui, raison non.
+3. **`session-timeout` et `nothing-delivered` :** chacune a sa question, et elles ne
+   disent jamais « pourquoi le code est-il faux » (test dédié, `refute_output_contains`).
+
+### Le refus qui ferme le trou de [14]
+
+`router_may_reinject` **refuse** un ticket sans `Write-surface:`. Ce n'est pas un
+avertissement : `gate_in_surface` lit une surface vide comme « rien n'est dans le
+périmètre », donc une itération dépenserait une session, déborderait une surface qui
+n'existe pas, et reviendrait au puits classée `decision` — c'est-à-dire en affirmant
+que deux tickets sont dessinés sur un même fichier. Une session brûlée et un mot faux
+dans le tracker, pour un ticket que personne n'avait encore écrit.
+
+### Le critère anti-faux-vert, sous la forme qu'un contrôle tient
+
+`router_sign_off` est le **seul appelant de `tracker_mark_resolved`** côté humain, et il
+refuse toute raison autre que `sign-off`. Le refus est **à côté de la transition et non
+dans le menu** : un point d'entrée qui oublierait de demander serait un faux vert sans
+rien pour le remarquer, et il y aura un second point d'entrée ([11]).
+
+### Les verrous : les deux, l'arbre d'abord
+
+Le critère ne demande que le verrou de run. Le verrou d'arbre est pris quand même parce
+que la forme retenue met un `claude` **non jugé** dans l'arbre principal : le verrou de
+run est *par feature*, et un run qui broie une **autre** feature replie ses commits ici,
+déplace HEAD ici, stage et dé-stage des chemins ici — la destruction mutuelle de [22]
+par la porte que le verrou de feature n'a jamais fermée. Prix voulu par [09] : un
+successeur qui se réveille pendant un drainage sort en `1`.
+
+Le verrou de run porte désormais une **note libre** (défaut `another run`, donc message
+inchangé pour l'AFK), et un run refusé par un humain lit « a human draining this
+feature's sink already holds … ». **Le verrou d'arbre n'a pas été touché** : sa note
+*est* le nom de la feature et une mutation de [22] s'ancre sur cet appel exact — le
+message reste « another run already holds this working tree (pid N, feature X) » même
+quand le détenteur est un humain. Imprécision connue, écrite au tableau de frontière.
+
+Ça règle aussi la question de la passe du 06/08 : cette boucle écrit dans `issues/` hors
+de toute itération, et **refuser de tourner pendant un run** est la réponse — le registre
+de [13] n'a rien à exempter puisqu'il n'y a aucun run.
+
+### Le défaut que les tests ont trouvé
+
+Première version : `while IFS= read -r id; do … done <<SINK`. Un `while read` alimenté
+par un heredoc sur stdin **donne ce stdin à tout ce qu'il appelle** — la première
+question posée à un humain était donc répondue par la fin de la liste de travail : un
+dossier imprimé, EOF, et un arrêt dont le code de sortie se lit exactement comme un
+humain qui quitte. La liste voyage maintenant sur **fd 3**, stdin reste celui de
+l'humain, et la session routée reçoit le terminal de la même façon.
+
+Et le test qui l'a caché une itération : « next marks nothing at all » passait
+**vacuously** — `n` et EOF laissent le même tracker et le même code de sortie. Il
+refute maintenant `stdin ended`.
+
+### Écarts de write-surface, tous délibérés
+
+La surface déclarée était `.claude/human-loop.sh`, `.claude/lib/router.sh`,
+`test/human-loop.bats`. Ont aussi été touchés :
+
+| fichier | pourquoi |
+|---|---|
+| `.claude/lib/session.sh` | `session_spawn_interactive`. Mis là pour que « le seul endroit du pack qui lance `claude` » reste vrai — c'est ce qui rend les deux invocations vérifiables au même endroit ([20]). |
+| `.claude/lib/tracker.sh` + `tracker-local.sh` | trois opérations neuves : `clear_failures`, `mark_wontfix`, `receipt_path`. Chacune est une décision que l'interface doit exposer, pas un champ qu'un appelant écrit. |
+| `.claude/lib/state.sh` | note optionnelle sur `run_lock_acquire` (défaut conservant le message mot pour mot). |
+| `test/layering.bats` | le glob lit `.claude/*.sh` et non `.claude/loop.sh` : un second point d'entrée hors du glob est un endroit où les `__` d'un lib sont atteignables sans rien pour le dire. Témoin appairé étendu. |
+| `test/helpers/harness.bash` | `gate_path_recorders` déplacé en `harness_path_recorders` : deux points d'entrée doivent la même garantie de [52], et une seconde copie serait un second endroit où la mise en scène dérive. |
+| `test/helpers/shims/claude` | le faux ne lit stdin que sous `-p`. Plus fidèle (un `claude` interactif ne lit pas le tube du parent) **et** nécessaire : sinon il mange les réponses du drainage. Tous les appelants AFK passent `-p`, rien d'autre ne change. |
+| `test/gate.bats` | l'appel au témoin déplacé. |
+| `test/mutate.sh`, `docs/frontiere-de-confiance.md` | imposés par la definition of done. |
+
+### Ce qui n'est tenu par rien, et ce qui n'est pas sous contrat
+
+- **Une session HITL n'est jugée par rien.** Pas de worktree, pas de scope-guard, pas de
+  gate, pas de rollback, pas de scellement. Elle peut écrire tout ce que le scellement
+  interdit ailleurs. Ce qui la tient est **l'absence de `--dangerously-skip-permissions`**,
+  donc un humain qui approuve chaque appel d'outil. Ligne écrite au tableau de frontière,
+  et c'est la plus large du document. La mutation qui ajoute ce drapeau existe.
+- **Le ticket est cité comme donnée** dans le prompt (le guichet `admit` sert des tickets
+  au corps tapé par une session). Atténuation, pas garantie.
+- **`claude "<prompt>"` démarre une conversation amorcée par ce prompt** est une
+  *hypothèse* de ce pack et pas une assertion sur lui : `test/contract-claude.bats` ne
+  peut pas la vérifier — une session interactive veut un terminal et un humain. Dette [20].
+- **Le comportement de Ctrl-C n'est pas testé.** Le drainage échange son handler contre
+  `:` autour d'une session — `:` et non `''`, parce que bash remet un signal *traité* à
+  son défaut chez l'enfant et laisse un signal *ignoré* ignoré : `trap '' INT` aurait rendu
+  `claude` sourd au Ctrl-C. Raisonné et documenté, non mesuré.
+- **Le gate de langue ne tourne pas ici** ([17]) : la prose qu'un humain fait écrire n'est
+  jugée par rien.
+- **« Ce ticket est arrivé sous un autre nom » est reconnu en grepant la phrase que
+  `failures_quarantine_strays` écrit.** Rien ne marque un ticket renuméroté dans un
+  champ, donc le dossier lit de la prose : deux auteurs pour une affirmation, et
+  reformuler cette note éteint la ligne en silence. Ce qui borne le dégât est que ça
+  ne décide qu'une phrase de contexte — jamais un routage, jamais une transition. La
+  sortie propre (un champ posé par la quarantaine) appartient à [27], qui possède la
+  renumérotation.
+
+### Baseline
+
+`bash test/run.sh` = **632 tests, 0 failures, 6 skips** (605 + 27 neufs).
+`bash test/mutate.sh` = **606 mutations, 0 not ok** (586 + 20 neuves).
+
+Une seule ancre a dérivé, et c'était le résultat attendu : `10 writing a receipt
+counts as writing the ticket` s'ancrait sur la liste des lectures du dispatcheur, où
+[16] a inséré `receipt_path`. Garantie revérifiée avant de recaler — `emit_receipt`
+est toujours du côté lecture, donc il ne remet toujours aucun id au registre de
+[13]/[42] — puis rejouée `ok`.

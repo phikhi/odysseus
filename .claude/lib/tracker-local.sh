@@ -241,6 +241,27 @@ tracker_local_mark_ready() {
   tracker_local__set_fields "$1" Status ready-for-agent Claimed --drop Escalation --drop
 }
 
+# Closed, and the escalation reason dropped with it: a `wontfix` still carrying
+# `Escalation: too-big` would read, next time somebody greps the tracker, as a
+# ticket still waiting for a human. `Failures:` goes too — a closed ticket has no
+# retry budget, and leaving the number behind is the cumulative counter [26]
+# removed, in a state nobody looks at.
+tracker_local_mark_wontfix() {
+  tracker_local__set_fields "$1" Status wontfix Claimed --drop Escalation --drop \
+    Failures --drop
+}
+
+# The retry budget back to full, without going through `resolved`.
+#
+# Dropped rather than set to `0`, which is what `mark_resolved` does and has to
+# stay the same gesture: `tracker_local_bump_failures` reads a missing field and a
+# `0` identically, so the two spellings mean the same thing to every reader — and
+# a ticket carrying `Failures: 0` reads, to a human, as a ticket that has been
+# tried and did not fail, which is not what a re-injection says about it.
+tracker_local_clear_failures() {
+  tracker_local__set_fields "$1" Failures --drop
+}
+
 # Hold a ticket until other tickets are resolved. Used by the re-slice: the
 # ticket that was too big waits for the smaller ones it was cut into, and comes
 # back to the frontier once they are all resolved — its own green gate is what
@@ -568,5 +589,18 @@ tracker_local_emit_receipt() {
   mkdir -p "$dir"
   file="$dir/$id.md"
   state_atomic_write "$file" || return 1
+  printf '%s\n' "$file"
+}
+
+# Where the last one can be read — the same name `emit_receipt` publishes, and
+# derived from it rather than restated, so the two cannot drift.
+#
+# Non-zero and silent when there is none, and that includes a receipt
+# `RECEIPTS_RETENTION_DAYS` has swept: a reader is entitled to "there is nothing
+# to read" rather than to a path that does not resolve.
+tracker_local_receipt_path() {
+  local file
+  file="$(ralph_project_root)/receipts/${FEATURE}/${1%.md}.md"
+  [ -f "$file" ] || return 1
   printf '%s\n' "$file"
 }

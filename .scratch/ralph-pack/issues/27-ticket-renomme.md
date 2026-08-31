@@ -89,3 +89,16 @@
   d'itération immobile avant que la quarantaine ne renonce. Et une session qui
   **pose** ce garde éteint `tracker_renumber` pour toute la durée où son propriétaire
   vit, c'est-à-dire la réparation de ce ticket : ligne au tableau de confiance.
+
+- **Contrainte posée par [16], livré le 31/08/2026 : un lecteur dépend maintenant de la
+  phrase que ta quarantaine écrit, et pas d'un champ.** `router_dossier` doit présenter
+  un ticket renuméroté pour ce qu'il est — « ce ticket est arrivé sous un autre nom, en
+  voici l'histoire » — plutôt que comme un tracker incohérent, ce que ton propre
+  commentaire sur [16] demandait. Rien ne marque un ticket renuméroté dans un champ, donc
+  la boucle humaine **grepe la prose** de la note (`reached the tracker as`). Deux
+  auteurs pour une affirmation : reformuler cette note éteint la ligne en silence, et le
+  ticket est alors présenté comme un ticket ordinaire. Le dégât est borné — ça ne décide
+  qu'une phrase de contexte, jamais un routage et jamais une transition — mais la sortie
+  propre est ici, pas là-bas : **un champ posé par la quarantaine au moment où elle
+  renomme** (`Renamed-from:`, ou ce que tu voudras) ferait de la reconnaissance une
+  lecture de champ comme les autres. C'est ta décision, tu possèdes la renumérotation.

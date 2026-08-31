@@ -2545,22 +2545,6 @@ FAKE
   refute_file_contains "$FEATURE_DIR/run.log" "path-drift"
 }
 
-# Two recorders in front of everything, passing through to the real thing: what
-# they record is every program this pack resolved through the PATH being judged.
-gate_path_recorders() {
-  local name dir="$RALPH_TEST_DIR/recorder"
-  mkdir -p "$dir"
-  for name in git dirname; do
-    {
-      printf '#!/usr/bin/env bash\n'
-      printf 'printf "%%s\\n" "%s" >>"%s/ran"\n' "$name" "$SHIM_STATE"
-      printf 'exec "$(PATH="${PATH#*:}" command -v %s)" "$@"\n' "$name"
-    } >"$dir/$name"
-    chmod +x "$dir/$name"
-  done
-  printf '%s\n' "$dir"
-}
-
 @test "a PATH entry that is not an absolute directory refuses the run before it runs a program" {
   # `.`, `..`, a bare `bin`, or the empty string a stray colon leaves behind: none
   # of them names *a* directory. It is a different directory in every shell this
@@ -2574,7 +2558,7 @@ gate_path_recorders() {
   # parameter expansion instead of `dirname`. The recorders measure exactly that:
   # a refusal handed down after a planted program has already run is not one.
   use_tickets 01-alpha
-  recorder="$(gate_path_recorders)"
+  recorder="$(harness_path_recorders)"
 
   run env PATH="$recorder:.:$PATH" bash "$PACK_DIR/loop.sh"
   assert_failure 2
@@ -2587,7 +2571,7 @@ gate_path_recorders() {
   # PATH, or a recorder that never recorded anything, would pass the test above
   # exactly as well.
   use_tickets 01-alpha
-  recorder="$(gate_path_recorders)"
+  recorder="$(harness_path_recorders)"
 
   run env PATH="$recorder:$PATH" bash "$PACK_DIR/loop.sh"
   assert_success

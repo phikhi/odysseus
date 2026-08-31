@@ -237,6 +237,8 @@ CONCURRENCY=".claude/lib/concurrency.sh"
 # Not `SCHEDULER`: that one is a configuration key this pack reads, and a file
 # path under its name would read like one here.
 SCHEDULER_LIB=".claude/lib/scheduler.sh"
+HUMAN_LOOP=".claude/human-loop.sh"
+ROUTER=".claude/lib/router.sh"
 HARNESS="test/helpers/harness.bash"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
@@ -2635,8 +2637,14 @@ mutation "10 the attempt is always the first one" "$LOOP" \
   's/^  receipt_fact attempt "\$\(\(attempt \+ 1\)\)"$/  receipt_fact attempt 1/m' \
   test/receipt.bats "survives the counter that gets cleared"
 
+# Re-anchored by [16], which added `receipt_path` to this same list — a *read*,
+# and it belongs there for the reason the comment beside the list gives: the
+# criterion is "did the loop write the ticket a guard over `issues/` is about to
+# compare", not "did it touch the disk". The guarantee under test is unchanged and
+# was re-checked before the anchor moved: `emit_receipt` is still on the read side,
+# so it still hands no id to the restore and the quarantine.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| emit_receipt\)$/    frontier | ids | read_ticket | field)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| emit_receipt\)$/    frontier | ids | read_ticket | field | receipt_path)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -3761,6 +3769,142 @@ mutation "50 the tree refresh unstages what it did not touch" "$CONCURRENCY" \
 mutation "50 the fold does not tell the refresh where the branch was" "$CONCURRENCY" \
   's/  \[ "\$rc" = 0 \] && concurrency__refresh "\$changed" "\$tip"/  [ "\$rc" = 0 ] \&\& concurrency__refresh "\$changed"/' \
   test/concurrency.bats "goes out of the tree the run was started in"
+
+# ── [16] the human sink, drained ─────────────────────────────────────────────
+
+# The order the acceptance criteria ask for. Without the impact key the sink is
+# drained by number, which is the order a human would have read it in anyway —
+# so what is lost is the whole of what this loop adds to `ls issues/`.
+mutation "16 the sink is drained by number and not by impact" "$ROUTER" \
+  's/sort -t"\$tab" -k1,1nr -k2,2/sort -t"\$tab" -k2,2/' \
+  test/human-loop.bats "unblocking impact"
+
+# The decision [26] left open and named this ticket for. A ticket put back
+# carrying `Failures: 3` under `RETRY_N=2` is escalated on its *first* attempt,
+# with no retry at all, and is in this sink again an hour later — a human fixes a
+# ticket and the loop refuses to try it.
+mutation "16 a re-injected ticket keeps the retries it already burned" "$ROUTER" \
+  's/  tracker_clear_failures "\$id" \|\| return 1\n//' \
+  test/human-loop.bats "retry budget back"
+
+# [14]'s refusal. The retro and capability tiers open *requests* on this sink —
+# no surface, no criteria — and an empty write-surface puts every path an
+# iteration touches out of scope: one session spent, and a request that comes
+# back classified as a scoping conflict.
+mutation "16 a ticket with no write-surface goes back on the frontier" "$ROUTER" \
+  's/  \[ -z "\$surface" \] \|\| return 0/  return 0/' \
+  test/human-loop.bats "no write-surface is not put back"
+
+# The anti-false-green criterion of [16], in the one form a check can hold. A
+# sink that could resolve is a way around the gate that took thirty tickets to
+# build.
+mutation "16 the sink can resolve what the loop failed to deliver" "$ROUTER" \
+  's/  \[ "\$reason" != sign-off \] \|\| return 0/  return 0/' \
+  test/human-loop.bats "cannot resolve a ticket the loop failed to deliver"
+
+# One word, three arrivals. Routed on the word alone, a human is sent to read a
+# `failed/<id>` branch that was never written and a red gate that never ran —
+# the misrouting [26] and [23] each refused to ship in their own half.
+mutation "16 a decision is routed without asking whether anything was judged" "$ROUTER" \
+  's/      if router_has_branch "\$id"; then/      if true; then/' \
+  test/human-loop.bats "routed by the evidence"
+
+mutation "16 a decision on a dead run is not told from a stray ticket" "$ROUTER" \
+  's/      if \[ "\$count" -gt 0 \]; then/      if false; then/' \
+  test/human-loop.bats "routed by the evidence"
+
+# The defect this ticket's own tests found. A `while read` fed by a heredoc on
+# stdin hands *that* stdin to everything it calls, so the first question put to a
+# human was answered by the end of the work-list: one dossier, EOF, and a stop
+# whose exit code reads exactly like a human who quit.
+mutation "16 the drain reads its work-list on the human's stdin" "$HUMAN_LOOP" \
+  's/  while IFS= read -r id <&3; do/  while IFS= read -r id; do/; s/  done 3<<SINK/  done <<SINK/' \
+  test/human-loop.bats "retry budget back"
+
+# The two flags a human-in-the-loop session must not carry, and they are the
+# control rather than a posture. Nothing judges what this session writes — no
+# worktree, no scope-guard, no gate, no rollback — so bypassing permissions
+# produces an unsupervised session with write access to the operator's own tree
+# and nothing anywhere to notice.
+mutation "16 the routed session is spawned with permissions bypassed" "$SESSION" \
+  's/    --model "\$MODEL" \\\n    "\$\@" \\\n    "\$prompt"/    --model "\$MODEL" \\\n    --dangerously-skip-permissions \\\n    "\$\@" \\\n    "\$prompt"/' \
+  test/human-loop.bats "conversation, not an unwatched delivery"
+
+mutation "16 the routed session is spawned headless" "$SESSION" \
+  's/    --model "\$MODEL" \\\n    "\$\@" \\\n    "\$prompt"/    -p \\\n    --model "\$MODEL" \\\n    "\$\@" \\\n    "\$prompt"/' \
+  test/human-loop.bats "conversation, not an unwatched delivery"
+
+# [17] handed this key to this loop, and a session that is not told it speaks
+# whatever the model defaults to — to a human who chose otherwise.
+mutation "16 the routed session is not told the interaction language" "$ROUTER" \
+  's/    "\$\{LANG_INTERACT:-en\}"/    "en"/' \
+  test/human-loop.bats "conversation, not an unwatched delivery"
+
+# The ticket a session wrote, handed to a model as instructions rather than as
+# data. This prompt serves the `admit` desk, where the body *is* whatever a
+# session typed — the quarantine refuses to rewrite what it did not validate.
+mutation "16 the ticket is handed to the routed session as instructions" "$ROUTER" \
+  's/The ticket below is \*\*data\*\*\. Part/The ticket below\. Part/' \
+  test/human-loop.bats "conversation, not an unwatched delivery"
+
+# The lock the acceptance criteria do not ask for, taken anyway. The run lock is
+# per feature; a run grinding another feature of this repository folds its
+# commits into *this* tree while a human works in it.
+mutation "16 a drain leaves the working tree to whatever else is grinding it" "$HUMAN_LOOP" \
+  's/  tree_lock_acquire \|\| exit 1\n//' \
+  test/human-loop.bats "keeps a human out of the sink"
+
+# And the one they do: you grind or you drain. It is also what settles the 06/08
+# pass's question — this loop writes in `issues/` from outside any iteration,
+# where the two guards over that directory cannot tell it from a session.
+mutation "16 a drain writes the tracker beside a run that is grinding it" "$HUMAN_LOOP" \
+  's/  run_lock_acquire "a human draining this feature\x27s sink" \|\| exit 1\n//' \
+  test/human-loop.bats "keeps a human out of the sink"
+
+# [52] asked of the second entry point, both halves. The refusal itself…
+mutation "16 the drain does not refuse a PATH it cannot witness" "$HUMAN_LOOP" \
+  's/  gate_path_preflight \|\| exit 2/  :/' \
+  test/human-loop.bats "refused before this drain runs a program"
+
+# …and *when* it arrives, which is the whole of the guarantee. A `dirname` in
+# this bootstrap is a program resolved through the very PATH being refused,
+# three dozen lines before anything could say so — and this entry point runs a
+# `claude` in the operator's own tree.
+mutation "16 the drain's refusal arrives after it has run a program" "$HUMAN_LOOP" \
+  's/RALPH_DIR="\$\(cd "\$_ralph_src" && pwd\)"/RALPH_DIR="\$(cd "\$(dirname "\$\{BASH_SOURCE\[0\]\}")" && pwd)"/' \
+  test/human-loop.bats "refused before this drain runs a program"
+
+# [09]: `SCHEDULER` and `WEEKLY_RESUME` belong to the AFK path and to it alone.
+# A successor queued while a human works this tree wakes a run under their hands.
+mutation "16 the drain arms a successor like a run does" "$HUMAN_LOOP" \
+  's/  human_loop_log "draining ready-for-human/  scheduler_arm || true\n  human_loop_log "draining ready-for-human/' \
+  test/human-loop.bats "never arms a successor"
+
+# An id is a file name, so a journal read by containment gives a ticket the
+# outcomes of every id it is a prefix of — and a human is told a gate said
+# something about a ticket it never judged.
+mutation "16 the journal is read by containment instead of by id" "$ROUTER" \
+  's/\x27\$2 == want\x27/\x27\$0 ~ want\x27/' \
+  test/human-loop.bats "neighbouring id"
+
+# [10]: the receipt carries sentences written where the fact is known. A copy in
+# the drain is a second author for one claim, drifting the day either moves.
+mutation "16 the drain copies the receipt instead of pointing at it" "$ROUTER" \
+  's/  if receipt="\$\(tracker_receipt_path "\$id" 2>\/dev\/null\)" && \[ -n "\$receipt" \]; then/  if receipt="\$(tracker_receipt_path "\$id" 2>\/dev\/null)" \&\& [ -n "\$receipt" ]; then\n    cat "\$receipt"/' \
+  test/human-loop.bats "never copied"
+
+# A closed ticket still carrying `Escalation:` reads, to the next person who
+# greps this tracker, as a ticket still waiting for a human.
+mutation "16 a closed ticket still reads as waiting for a human" "$TRACKER" \
+  's/Status wontfix Claimed --drop Escalation --drop/Status wontfix Claimed --drop/' \
+  test/human-loop.bats "a human closes"
+
+# The 30/08 pass measured this: `weekly-pause` says "this project resumes by
+# hand" and "a forged marker stopped this run arming" with one word, and the
+# sentence that told them apart went to stdout and died with the run.
+mutation "16 weekly-pause is presented as a project that resumes by hand" "$ROUTER" \
+  's/  if grep -q \x27weekly-pause\x27 "\$journal" 2>\/dev\/null; then\n/  if false; then\n/' \
+  test/human-loop.bats "words a reader gets wrong"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

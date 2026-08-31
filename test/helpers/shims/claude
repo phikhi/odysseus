@@ -86,6 +86,16 @@ want_tools=0
 strict_mcp=0
 setting_sources="user,project,local"
 want_sources=0
+# Whether this call reads a prompt off stdin at all, derived from argv like
+# everything else here ([16]). `claude -p` does; an interactive `claude` seeded
+# with a positional prompt does not — its stdin is the human's terminal.
+#
+# The distinction is not cosmetic for a fake. The human sink drains by reading
+# the operator's decisions on *its* stdin and handing the terminal to a session
+# in between, so a fake that slurped stdin unconditionally would eat the rest of
+# a test's answers and the drain would see EOF one ticket in. Every AFK caller
+# passes `-p`, so nothing else changes shape.
+headless=0
 for arg in "$@"; do
   printf '%s\n' "$arg" >>"$state/claude.calls/$n/argv"
   if [ "$want_model" = 1 ]; then
@@ -100,6 +110,7 @@ for arg in "$@"; do
     setting_sources="$arg"
     want_sources=0
   fi
+  [ "$arg" = "-p" ] && headless=1
   [ "$arg" = "--model" ] && want_model=1
   [ "$arg" = "--tools" ] && want_tools=1
   [ "$arg" = "--setting-sources" ] && want_sources=1
@@ -153,7 +164,8 @@ tools_json="$(printf '%s' "$tools" |
 env >"$state/claude.calls/$n/env"
 
 # Never block on a terminal: a test may run the loop without a pipe on stdin.
-if [ -t 0 ]; then
+# And never read it at all without `-p`: see `headless` above.
+if [ "$headless" = 0 ] || [ -t 0 ]; then
   : >"$state/claude.calls/$n/stdin"
 else
   cat >"$state/claude.calls/$n/stdin"
