@@ -286,6 +286,68 @@ FAKE
   assert_output_contains "b/src/plain.txt"
 }
 
+# How many diff headers this prompt carries for a given path, counted as a literal
+# prefix rather than a pattern — the assertion itself must not repeat the mistake
+# it is measuring. `awk` and not `grep -c` because a count of zero is the answer
+# these tests are looking for in one place, and `grep` calls that a failure under
+# the `set -e` bats runs each test with.
+lens_diff_headers() {
+  awk -v want="diff --git a/${1:-}" \
+    'index($0, want) == 1 { n++ } END { print n + 0 }'
+}
+
+@test "a lens is handed the diff of the file it names, not its neighbour's" {
+  # The last reader in the pack that handed a *path* back to git as a **pathspec**
+  # ([51], family of [33]). A pathspec is wildmatched only as a fallback, so the
+  # defect is not that the file goes missing: `src/zone[1].ts` matches itself
+  # literally *and* drags `src/zone1.ts` in behind it. The lens then reads one
+  # file's change under the heading of another, and pays for it twice against
+  # LENS_DIFF_MAX_LINES. Nothing downstream notices, because a lens's verdict is
+  # checked by nothing ([06]) — which is why this is a test and not a comment.
+  lens_ticket 01-plain 'src/*'
+  session_writes 'src/zone[1].ts' src/zone1.ts
+
+  run_loop
+  assert_success
+
+  local prompt
+  prompt="$(lens_call_stdin standards)"
+
+  # The named file's own diff is there. True on both sides of the fix — a literal
+  # match wins first — so this is the AC and not the discriminator.
+  assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers 'src/zone[1].ts')" "1"
+
+  # The discriminator: the neighbour appears once, under its own name, and not a
+  # second time inside the section of the file that only looks like a pattern.
+  assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers 'src/zone1.ts')" "1"
+
+  # And the whole prompt carries one diff per changed file. The count is asserted
+  # rather than the two paths alone, so an over-match that reached some third file
+  # this scenario does not name would redden this too.
+  assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers '')" "2"
+}
+
+@test "the same two files under ordinary names put one diff each in the prompt" {
+  # The paired witness ([48] asks for it on the same grounds). The test above
+  # measures a count, and a count is exactly the kind of assertion that can be
+  # right about the wrong thing: if `lenses__patch` stopped emitting a diff per
+  # file at all, or if the counter read the prompt wrong, the metacharacter test
+  # would go green on a mechanism that had nothing left to be literal about. This
+  # runs the identical scenario with a name no pathspec can misread, and pins the
+  # same three numbers.
+  lens_ticket 01-plain 'src/*'
+  session_writes src/zoneA.ts src/zone1.ts
+
+  run_loop
+  assert_success
+
+  local prompt
+  prompt="$(lens_call_stdin standards)"
+  assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers 'src/zoneA.ts')" "1"
+  assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers 'src/zone1.ts')" "1"
+  assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers '')" "2"
+}
+
 @test "an iteration that changed nothing never reaches a lens" {
   # A session that reported success having delivered no ticket. [06] refused it
   # here, once per lens, and [35] moved the refusal into the gate — before the fan

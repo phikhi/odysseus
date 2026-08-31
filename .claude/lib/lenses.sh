@@ -460,6 +460,13 @@ lenses_findings() {
 lenses__write_prompt() {
   local name="$1" ticket="$2" base="$3" tree="$4" files max truncated=0
 
+  # This module has three readers of a list, and [51] made each one answer the
+  # question [33] asks — paths or patterns — beside itself rather than once for
+  # the file. This one is paths and nothing matches them: the list is printed into
+  # the prompt for a model to read, so a name carrying a glob character arrives as
+  # what it is. The one that hands an entry back to git is `lenses__patch`. The one
+  # that is deliberately still patterns is `lenses__triggered_by`, where both sides
+  # are globs a human wrote and neither is a path on disk.
   files="$(gate_changed_files "$base" "$tree")" || return 1
   [ -n "$files" ] || return 1
 
@@ -529,6 +536,16 @@ PROMPT
 # already owns. Bounded because a prompt is not a place to put a 200MB diff, and
 # the bound announces itself — a cap nobody is told about reads exactly like
 # having reviewed everything.
+#
+# `:(literal)`, and it is the point where paying per file has a price ([51]). A
+# git pathspec is a pattern, and this is the one reader of `gate_changed_files`
+# that hands an entry of that list back to git as one. A pathspec is wildmatched
+# only as a *fallback*, so a delivered `src/zone[1].ts` does come back — and its
+# neighbour `src/zone1.ts` comes back with it, under the heading of a file that is
+# not the one being diffed. The model then reads one file's change attributed to
+# another, spends the `max` budget twice on it, and the verdict it returns is
+# checked by nothing ([06]: "a lens's verdict tells the truth → Nothing"), so the
+# error surfaces at no point in the run.
 lenses__patch() {
   local base="$1" tree="$2" max="$3" file line written=0
   while IFS= read -r file; do
@@ -541,7 +558,7 @@ lenses__patch() {
       printf '%s\n' "$line"
       written=$((written + 1))
     done <<PATCH
-$(git diff-tree -p --no-color "$base" "$tree" -- "$file" 2>/dev/null)
+$(git diff-tree -p --no-color "$base" "$tree" -- ":(literal)$file" 2>/dev/null)
 PATCH
   done <<FILES
 $(gate_changed_files "$base" "$tree")

@@ -3906,6 +3906,18 @@ mutation "16 weekly-pause is presented as a project that resumes by hand" "$ROUT
   's/  if grep -q \x27weekly-pause\x27 "\$journal" 2>\/dev\/null; then\n/  if false; then\n/' \
   test/human-loop.bats "words a reader gets wrong"
 
+# ── [51] the diff a lens is shown is the file the list named ─────────────────
+#
+# The last reader of a path list in the pack that handed an entry back to git as a
+# pathspec. Aimed at the magic and at nothing else: a pathspec is wildmatched only
+# as a fallback, so the named file comes back either way and only the *over-match*
+# changes. The test counts diff headers for exactly that reason, and its paired
+# witness — the same two files under names no pathspec can misread — has to stay
+# green under this edit.
+mutation "51 the lens diff is fetched by pattern instead of by path" "$LENSES_LIB" \
+  's/ -- ":\(literal\)\$file" 2>\/dev\/null\)/ -- "\$file" 2>\/dev\/null)/' \
+  test/lenses.bats "not its neighbour"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
