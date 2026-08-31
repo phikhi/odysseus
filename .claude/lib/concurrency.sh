@@ -511,7 +511,22 @@ concurrency__replay() {
 
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    line="$(cd "$root" && git ls-tree "$commit^{tree}" -- "$path" 2>/dev/null)" || line=""
+    # `:(literal)`, the last of [33]'s readers to be recalled ([54]) — and not for
+    # the family that ticket was opened on. `git ls-tree` does not wildmatch at
+    # all: it refuses `:(glob)` outright and answers a `src/zone*.txt` with
+    # nothing, so a delivered `src/zone[1].txt` comes back on this line either way.
+    # A **leading colon** is what breaks it. `:` opens pathspec magic, git does not
+    # recognise the short magic `o`, and the question becomes `odd.txt` — a name
+    # nothing carries. `line` is empty *with rc=0*, so the branch below cannot tell
+    # "the session deleted it" from "I did not understand the path", and reads the
+    # first: the `--force-remove` takes a green delivery back off the branch, under
+    # a journal line that says it was folded onto it.
+    #
+    # Only this line. The two neighbours take a file name and not a pathspec, which
+    # is why they were right all along and why `:(literal)` would *break* them —
+    # measured: `git update-index --force-remove -- ':odd.txt'` removes `:odd.txt`,
+    # and the same call with `:(literal):odd.txt` removes nothing at all.
+    line="$(cd "$root" && git ls-tree "$commit^{tree}" -- ":(literal)$path" 2>/dev/null)" || line=""
     if [ -z "$line" ]; then
       (cd "$root" && GIT_INDEX_FILE="$idx" git update-index --force-remove -- "$path" 2>/dev/null) || true
     else

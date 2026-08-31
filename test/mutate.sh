@@ -3918,6 +3918,21 @@ mutation "51 the lens diff is fetched by pattern instead of by path" "$LENSES_LI
   's/ -- ":\(literal\)\$file" 2>\/dev\/null\)/ -- "\$file" 2>\/dev\/null)/' \
   test/lenses.bats "not its neighbour"
 
+# ── [54] the fold replays the path the approved list named ───────────────────
+#
+# The last of [33]'s readers, and the one that hid because it does not write: it
+# asks a question, and the wrong answer is silent. Without the magic a delivered
+# `:odd.txt` is asked about as `odd.txt`, `git ls-tree` answers nothing with rc=0,
+# and the branch below reads that as a deletion — `--force-remove` takes a green
+# delivery back off the branch. Aimed at this call and no other: the two lines
+# under it take a *file name* and not a pathspec, and `:(literal)` there would
+# break them. The paired witness in the test — the same fold with a name carrying
+# glob metacharacters — has to stay green under this edit, because `git ls-tree`
+# does not wildmatch at all.
+mutation "54 the replay asks about a delivered path as a pattern" "$CONCURRENCY" \
+  's/git ls-tree "\$commit\^\{tree\}" -- ":\(literal\)\$path"/git ls-tree "\$commit^{tree}" -- "\$path"/' \
+  test/concurrency.bats "replayed, not removed"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

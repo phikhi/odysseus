@@ -750,6 +750,80 @@ GITSHIM
   assert_equal "$(ticket_field 01-alpha Failures)" ""
 }
 
+@test "a delivered path git reads as pathspec magic is replayed, not removed" {
+  # The last of [33]'s readers of a path list, and the one that got away because it
+  # does not *write*: it asks a question, and the wrong answer is silent ([54]).
+  # `concurrency__replay` asked `git ls-tree` about each approved path with a bare
+  # pathspec, and read an empty answer as "the session deleted this" — so a name
+  # git parses as something other than itself is taken *off* the branch by the very
+  # run that delivered it, under a journal line saying it was folded on.
+  #
+  # The trigger is the leading colon and not the glob metacharacters the ticket was
+  # opened on. `git ls-tree` does not wildmatch at all — it refuses `:(glob)` and
+  # answers a `zone*.txt` with nothing — so `src/zone[1].txt` comes back either way.
+  # It is here as the paired witness: it stays green on both sides of the fix, and
+  # that is what says the family is not the one it looked like. `:odd.txt` is the
+  # one that moves.
+  #
+  # At the module, for the reason [50] had to go there for `concurrency__refresh`:
+  # the replay is only reached above MAX_PARALLEL=1, when a sibling folded first.
+  # At the shipped MAX_PARALLEL=1 the fold is a fast-forward, this function is never
+  # called, and an end-to-end test would pass on both sides of the fix.
+  #
+  # All three answers in one call, because a fix that simply stopped removing
+  # anything would satisfy the first two perfectly: a name git misreads and a name
+  # it reads plainly both have to arrive, and a path the iteration really deleted
+  # still has to go.
+  pack_run '
+    cd "$(ralph_project_root)"
+    mkdir -p src
+    printf "on the branch\n" >src/gone.txt
+    git add -A -- src/gone.txt >/dev/null 2>&1
+    git commit -q -m "test: the branch as this worktree found it"
+    start="$(git rev-parse HEAD)"
+
+    printf "delivered\n" >":odd.txt"
+    printf "delivered\n" >"src/zone[1].txt"
+    printf "delivered\n" >src/plain.txt
+    git rm -q -- src/gone.txt
+    git add -A -- ":(literal):odd.txt" ":(literal)src/zone[1].txt" src/plain.txt >/dev/null 2>&1
+    git commit -q -m "test: what this iteration committed in its worktree"
+    commit="$(git rev-parse HEAD)"
+
+    git reset -q --hard "$start"
+    printf "sibling\n" >src/sibling.txt
+    git add -A -- src/sibling.txt >/dev/null 2>&1
+    git commit -q -m "test: a sibling folded first"
+    tip="$(git rev-parse HEAD)"
+
+    concurrency__replay 01-alpha "$tip" "$commit" ":odd.txt
+src/zone[1].txt
+src/plain.txt
+src/gone.txt"'
+  assert_success
+  assert_output_contains "folded onto the branch over a sibling's commit"
+
+  # The three delivered paths are on the branch, and the deleted one is off it.
+  #
+  # The paired witness first, and the order is deliberate: bats stops at the first
+  # failing assertion, so putting `:odd.txt` above these would hide whether they
+  # survive the mutation. Asked in this order, removing `:(literal)` leaves every
+  # line below green and fails on the colon alone — which is the measurement that
+  # says the family is the pathspec magic and not the glob metacharacters.
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  assert_output_contains "src/zone[1].txt"
+  assert_output_contains "src/plain.txt"
+  refute_output_contains "src/gone.txt"
+  # The sibling's own work was replayed over, not replaced by a merge.
+  assert_output_contains "src/sibling.txt"
+  assert_output_contains ":odd.txt"
+
+  # And with its own bytes: the blob is taken from the answer `git ls-tree` gives,
+  # so a question about the wrong name would put the wrong content at this path.
+  run bash -c "git -C '$PROJECT_DIR' show 'HEAD::odd.txt'"
+  assert_output_contains "delivered"
+}
+
 @test "the tree the run was started in follows the branch" {
   # Not cosmetic: the iterations run elsewhere, so nothing else would ever write
   # these files. A branch that moves while the tree stands still shows every
