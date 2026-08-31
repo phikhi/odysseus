@@ -130,3 +130,44 @@ Rien »), donc l'erreur ne se voit à aucun endroit.
   La case reste **Rien** — [51] ne rend pas un verdict vérifiable — mais sa première
   phrase (« un modèle frais qui juge le diff d'un autre ») supposait une prémisse que
   rien ne tenait, et qui est tenue maintenant.
+
+### Le `lenses_has_tag` laissé à la passe : tranché le 31/08/2026, **pas de ticket**
+
+Ce ticket avait laissé ouvert, explicitement : `lenses_has_tag` lit ses tags par
+`for tag in $(tracker_field "$ticket" 'Tags' …)` non cité — famille [33]/[37], et
+la dernière liste de ce module qui ne passe pas par `gate_authored_list`. La
+passe transversale du 31/08 devait décider s'il valait un ticket. **Non**, et la
+raison est le *sens* de la panne, mesuré plutôt que raisonné :
+
+| `Tags:` | cwd | résultat pour `security` |
+|---|---|---|
+| `security` | — | MATCH |
+| `my security` (espace) | — | MATCH — le découpage **ne perd pas** un mot |
+| `sec*` | vide | pas de match, et le glob reste littéral |
+| `sec*` | contient `security` | MATCH |
+| `*` | contient `security` | MATCH |
+
+Aucun `shopt` dans tout `.claude/`, donc ni `nullglob` ni `failglob` : un motif
+sans correspondance reste littéral et **ne peut pas faire disparaître un tag
+légitime**. Un tag réel est un mot nu, que ni le découpage ni le globbing
+n'altèrent.
+
+Et l'appelant ferme la question : `lenses__triggered_by` fait
+`lenses_has_tag "$ticket" "$tag" && return 0` **puis retombe sur le test de
+surface**. Un faux négatif du prédicat ne supprime donc pas la lentille, il la
+laisse être choisie par l'autre moitié.
+
+**La panne n'existe que dans le sens sûr** — des lentilles en trop, jamais une
+lentille en moins — c'est-à-dire exactement la direction que le module déclare
+sûre à côté de `gate_in_surface` : « approximating towards running the lens is
+the only safe direction for it to be wrong in ». Le coût maximal est une session
+de lentille superflue, qu'il faut un humain écrivant un tag à métacaractère
+**et** un fichier de nom colluant dans le worktree pour déclencher. Les tags sont
+restaurés par [21] avant que les prédicats ne lisent, donc aucune session ne
+l'atteint.
+
+Ce qui reste vrai et qui est le prix écrit : le commentaire de `lenses_has_tag`
+dit « Same shape as a write-surface », et une write-surface voyage un chemin par
+ligne depuis [33] alors que celui-ci se lit encore par découpage de mots. **La
+prochaine réédition de `lenses.sh` doit corriger le commentaire ou la lecture**,
+et un ticket qui rouvre ce fichier hérite de cette phrase.
