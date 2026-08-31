@@ -492,6 +492,165 @@ ANSWERS
   refute_contains "$prompt" "LANG_INTERACT"
 }
 
+# ── what the two refusals read ───────────────────────────────────────────────
+#
+# [16] put both refusals beside the transition rather than in the menu that
+# offers it, so that a second entry point would inherit them ([11]). What they
+# inherited until [55] was a control reading its input off a file the session
+# this loop opens can write: no worktree, no scope-guard, no gate, no rollback,
+# and the menu re-offered the moment the session returns.
+#
+# Every test here is paired, and the pairs are the point: the same drain, the
+# same answers, one line of the routed session different. Without them a refusal
+# that never passes and a pin that refuses everything read exactly like a repair.
+
+@test "a routed session cannot write itself the sign-off the drain refuses" {
+  use_tickets 09-escalated
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/failed-impl/sign-off/' "$tracker/09-escalated.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+s
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 09-escalated ready-for-human
+  assert_output_contains "cannot be signed off"
+  assert_output_contains "a green no check ever gave"
+  # And the human is not left reading a refusal the file in front of them
+  # contradicts: the drift is named, with the value that was there when the
+  # drain took the ticket.
+  assert_output_contains "which is not what it said when this drain took it"
+  # Refused, not rolled back. What the session wrote is still on the ticket —
+  # undoing it is the deletion [21]'s quarantine exists in order not to make,
+  # and the edit may have been the human's own doing.
+  assert_equal "$(ticket_field 09-escalated Escalation)" "sign-off"
+}
+
+@test "a sign-off the drain found on the ticket still resolves, session or no session" {
+  # The paired witness. Same menu, same two answers, same routed session — only
+  # the word was on the ticket before the drain took it. Without this, a pin that
+  # refused every sign-off would pass the test above.
+  mk_ticket 20-approve Status ready-for-human Escalation sign-off \
+    'Write-surface' '`src/approve.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+s
+ANSWERS
+  assert_success
+
+  assert_ticket_status 20-approve resolved
+  assert_output_contains "which only a sign-off may be"
+  refute_output_contains "which is not what it said when this drain took it"
+}
+
+@test "a routed session cannot write itself the write-surface the re-injection wants" {
+  # The same hole at the other refusal, the one [14] asked for: a `retro-*` or a
+  # `capability-*` request is a ticket with no surface and no criteria, and one
+  # appended line turns it into something the frontier accepts.
+  mk_ticket 20-request Status ready-for-human \
+    Escalation 'the retro subagent of an autonomous run asked for a rule this loop must not write itself.' \
+    'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+printf '\n**Write-surface:** `src/anywhere.txt`\n' >>"$tracker/20-request.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+r
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 20-request ready-for-human
+  assert_output_contains "declares no \`Write-surface:\`"
+  assert_output_contains "which is not what it said when this drain took it"
+  assert_equal "$(ticket_field 20-request 'Write-surface')" '`src/anywhere.txt`'
+}
+
+@test "a write-surface the drain found on the ticket still re-injects after a session" {
+  # The paired witness for the re-injection: a session ran, the ticket declared
+  # its surface before the drain took it, and `r` does what it always did.
+  use_tickets 09-escalated
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+r
+ANSWERS
+  assert_success
+
+  assert_ticket_status 09-escalated ready-for-agent
+  assert_output_contains "back on the frontier"
+  refute_output_contains "declares no \`Write-surface:\`"
+}
+
+@test "a routed session cannot route the next session opened on its own ticket" {
+  # The menu is re-offered after a session, so a desk read off the file is a desk
+  # the last session chose — and the desk decides the question, the treatment and
+  # the whole prompt the next one is handed.
+  use_tickets 09-escalated
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/failed-impl/sign-off/' "$tracker/09-escalated.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "2"
+  refute_output_contains "opening a approve session (approve)"
+  assert_contains "$(claude_call_argv 2)" "the gate turned it back"
+  refute_contains "$(claude_call_argv 2)" "asking to be signed off"
+}
+
+@test "a transition on a ticket this drain never pinned is refused" {
+  # Fail-closed, and it is the half of the repair that survives a second entry
+  # point. A transition that fell back to the tracker for an unpinned ticket
+  # would hand [11] the hole rather than the guard — open a routed session, call
+  # `router_sign_off`, be green — with nothing anywhere to say so.
+  mk_ticket 20-approve Status ready-for-human Escalation sign-off \
+    'Write-surface' '`src/approve.txt`' 'Blocked by' None
+
+  pack_run 'router_sign_off 20-approve || printf "refused the sign-off\n"'
+  assert_output_contains "refused the sign-off"
+  assert_output_contains "nothing pinned what its fields said"
+  assert_ticket_status 20-approve ready-for-human
+
+  pack_run 'router_reinject 20-approve || printf "refused the re-injection\n"'
+  assert_output_contains "refused the re-injection"
+  assert_ticket_status 20-approve ready-for-human
+
+  # And the same two calls with the pin taken go through, so what the refusal
+  # names is the missing pin and not a transition that stopped working.
+  pack_run 'router_pin 20-approve; router_sign_off 20-approve; printf "signed off\n"'
+  assert_output_contains "signed off"
+  assert_ticket_status 20-approve resolved
+}
+
 # ── the locks ────────────────────────────────────────────────────────────────
 
 @test "a run grinding this working tree keeps a human out of the sink" {

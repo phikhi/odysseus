@@ -54,9 +54,16 @@
 # form that can be checked: code a human fixed goes back through the gate, and the
 # sink is not a way around it.
 #
+# Both refusals decide on the ticket **as this drain took it** and not as the
+# file reads now ([55]). They ask two questions of one line each, and that line
+# is one the session this loop opens can rewrite between the menu and the answer
+# — see the pin, below.
+#
 # Public API
 #   router_reasons                 the closed set of words `failures.sh` writes
 #   router_is_reason WORD          membership, literally and not as a pattern
+#   router_pin ID                  the ticket's deciding fields, as they stand
+#                                  now — taken before anything opens a session
 #   router_desk ID                 which question this ticket puts
 #   router_treatment DESK          which skill a human reaches for
 #   router_question DESK           the question itself, one line
@@ -107,6 +114,136 @@ router_is_reason() {
   router_reasons | grep -qxF -- "$1"
 }
 
+# ── the ticket, as it stood when this drain took it ──────────────────────────
+#
+# The two refusals at the bottom of this file decide on fields of the ticket —
+# `Escalation:` for the sign-off, `Write-surface:` for the re-injection — and the
+# ticket is a file **the session this loop opens can write**. That path has no
+# worktree, no scope-guard, no gate and no rollback; `docs/frontiere-de-confiance.md`
+# says so in the widest row it has. So both refusals were controls taking their
+# input from the thing they control — the corollary CLAUDE.md has carried since
+# [21], except that everywhere else it is paid for by a snapshot taken before the
+# session, and on this path there was none.
+#
+# Measured on the 31/08 pass rather than argued ([55]): a routed session that
+# runs `perl -pi -e 's/failed-impl/sign-off/'` on its own ticket, a human who
+# types `o` then `s`, and the ticket leaves the sink `resolved` under the line
+# "signed off — resolved without going through the gate", no gate having read a
+# line of that code. The same session writes itself the `Write-surface:` the
+# re-injection insists on ([14]) in one `printf`.
+#
+# Two answers were refused before this one:
+#
+#   restoring the ticket, the way `failures_protect_tracker` does around an AFK
+#   session. An edit made during a routed conversation may be the human's own —
+#   the `admit` desk asks them for exactly that — and undoing it is the deletion
+#   [21]'s quarantine exists in order not to make.
+#
+#   one more sentence in the prompt, which is the false green this pack keeps a
+#   document about: a rule with nothing holding it.
+#
+# What holds it is a **variable in the drain's own process**, read instead of the
+# file by everything that decides. `claude` is a child: it cannot write its
+# parent's shell variables, and this one is not exported, so it is not even a
+# name it knows — the discipline [40] arrived at for the tracker register and
+# [30] for the frontier pin, in the one form where there is nothing on disk to
+# find.
+#
+# **Taken when the ticket is taken, and never refreshed while the drain is on
+# it.** Not at session open, which is the placement that looks equivalent and is
+# not: the menu is re-offered after a session ([57]), so a pin taken at the
+# second `o` would be taken *after* the first session had rewritten the ticket.
+ROUTER__PINNED_ID=''
+ROUTER__PINNED_ESCALATION=''
+ROUTER__PINNED_SURFACE=''
+
+# Pin one ticket. Called once per ticket by whatever drains the sink, before the
+# dossier and before any session — before the dossier included, so that what a
+# human reads and what the transitions decide on are one value.
+#
+# What this costs a legitimate human, written here because this is the only place
+# it is visible: a ticket corrected *while the drain is parked on it* — in the
+# routed conversation, which is a normal use of the `admit` desk, or in another
+# terminal — is not what the refusals read. Nothing is undone and nothing is
+# lost: the correction is on disk, and the refusal says so. What it does not do
+# is take effect in this pass. What stays available is leaving the drain and
+# running it again, which pins every ticket afresh from the corrected file.
+#
+# The id is set last so that a read that failed halfway leaves the ticket
+# unpinned — which every transition refuses — rather than pinned to a value
+# nothing vouches for.
+router_pin() {
+  local id="${1:?router: a ticket id}"
+  ROUTER__PINNED_ID=''
+  ROUTER__PINNED_ESCALATION="$(tracker_field "$id" Escalation 2>/dev/null)" ||
+    ROUTER__PINNED_ESCALATION=''
+  ROUTER__PINNED_SURFACE="$(tracker_field "$id" 'Write-surface' 2>/dev/null)" ||
+    ROUTER__PINNED_SURFACE=''
+  ROUTER__PINNED_ID="$id"
+}
+
+# The pinned value of one field; non-zero when this ticket is not the one this
+# drain pinned, or when the field is not one of the two that are.
+router__pinned() {
+  [ -n "${ROUTER__PINNED_ID:-}" ] || return 1
+  [ "$ROUTER__PINNED_ID" = "${1:-}" ] || return 1
+  case "${2:-}" in
+    Escalation) printf '%s\n' "$ROUTER__PINNED_ESCALATION" ;;
+    Write-surface) printf '%s\n' "$ROUTER__PINNED_SURFACE" ;;
+    *) return 1 ;;
+  esac
+}
+
+# One field, as everything in this file reads it: what this drain pinned, or —
+# for a ticket nothing pinned — what the tracker says now.
+#
+# Presentation falls back and decisions do not, and that asymmetry is the shape
+# of it: a dossier printed for a ticket no drain pinned should show what is on
+# disk, which is what a reader wants, while a *transition* on one is refused
+# outright by `router__is_pinned`.
+router__field() {
+  local id="${1:?router: a ticket id}" name="${2:?router: a field name}" value
+  if value="$(router__pinned "$id" "$name")"; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  tracker_field "$id" "$name" 2>/dev/null
+}
+
+# Whether this ticket was pinned at all, and the refusal when it was not.
+#
+# Fail-closed, and that is the half of this repair that survives the second entry
+# point these refusals were placed beside the transition for ([11]). A transition
+# that fell back to the tracker for an unpinned ticket would hand a new caller
+# the hole rather than the guard — open a routed session, call `router_sign_off`,
+# be green — and nothing would say so. Refusing makes forgetting loud: every
+# transition stops, on the first ticket.
+router__is_pinned() {
+  local id="${1:?router: a ticket id}"
+  [ "${ROUTER__PINNED_ID:-}" != "$id" ] || return 0
+  printf 'ralph: %s cannot be decided on here: nothing pinned what its fields said before a session could be opened on it. `router_pin` is taken once per ticket, before the dossier and before any session — without it, a transition reads `Escalation:` and `Write-surface:` off a file the session it opened may have written, which is the whole of what this refuses.\n' \
+    "$id" >&2
+  return 1
+}
+
+# What the ticket says now, when that is not what this drain pinned — printed by
+# the refusal it explains and nowhere else.
+#
+# Without it a human is refused a re-injection because the ticket "declares no
+# `Write-surface:`" while the file open in front of them declares one, which
+# reads as a broken drain rather than as a control doing its work. Silent when
+# the two agree: a line saying nothing moved, on every ordinary refusal, is noise
+# — and [37]'s rule cuts this way too, a control must not announce having acted
+# on what it left exactly as it was.
+router__say_drift() {
+  local id="$1" name="$2" pinned now
+  pinned="$(router__pinned "$id" "$name")" || return 0
+  now="$(tracker_field "$id" "$name" 2>/dev/null)" || now=''
+  [ "$pinned" != "$now" ] || return 0
+  printf 'ralph: and `%s:` reads `%s` on that ticket now, which is not what it said when this drain took it (`%s`). Something wrote it in between, and the routed session is the one thing on this path that can — nothing judges it, which is what this refusal stands in for. The edit is still there: leave the drain and run it again to decide on the ticket as it now stands.\n' \
+    "$name" "${now:-nothing}" "${pinned:-nothing}"
+}
+
 # ── the desk ─────────────────────────────────────────────────────────────────
 
 # Which question this ticket puts to a human.
@@ -132,9 +269,17 @@ router_is_reason() {
 # separate axis already: a timeout has a `failed/<id>` branch holding what the
 # session had time to write, a reclaim ceiling has nothing but the journal. Two
 # desks putting one question would be two names for one decision.
+#
+# `Escalation:` is read through the pin ([55]) and the desk's two other inputs
+# are not, which is a boundary rather than an oversight. The menu is re-offered
+# after a session, so an unpinned read here would let a session choose the desk —
+# and therefore the question and the prompt — of the *next* session opened on the
+# same ticket. `Failures:` and the `failed/<id>` ref are left as they are: they
+# move which question a human is shown and can never move a transition, and
+# pinning a git ref is a different mechanism for a smaller stake.
 router_desk() {
   local id="${1:?router: a ticket id}" reason count
-  reason="$(tracker_field "$id" Escalation 2>/dev/null)" || reason=''
+  reason="$(router__field "$id" Escalation)" || reason=''
 
   if ! router_is_reason "$reason"; then
     printf 'request\n'
@@ -380,7 +525,7 @@ IDS
 router_dossier() {
   local id="${1:?router: a ticket id}" desk reason surface receipt lines n
   desk="$(router_desk "$id")"
-  reason="$(tracker_field "$id" Escalation 2>/dev/null)" || reason=''
+  reason="$(router__field "$id" Escalation)" || reason=''
   n="$(router_unblocks "$id")"
 
   printf '\n── %s ── %s ── desk: %s ── treatment: %s\n\n' \
@@ -443,7 +588,7 @@ router_dossier() {
     printf '  journal  no line in run.log names it.\n'
   fi
 
-  surface="$(tracker_field "$id" 'Write-surface' 2>/dev/null)" || surface=''
+  surface="$(router__field "$id" 'Write-surface')" || surface=''
   if [ -z "$surface" ]; then
     printf '\n  It declares no `Write-surface:`, so it cannot go back on the frontier as it stands.\n'
   fi
@@ -552,12 +697,20 @@ PROMPT
 # `contract`, which consumes no retry and escalates straight back to this sink as
 # `decision`. One session spent, and a ticket that was a *request* now carrying a
 # word that says two tickets are drawn on one file.
+#
+# **On the pin and not on the file** ([55]). The surface a *session* wrote itself
+# is the surface a session chose, and this refusal is the one [14] asked for
+# precisely because nothing else looks: `retro-*` and `capability-*` are requests
+# and a routed session appending one line turns one into a ticket the frontier
+# accepts.
 router_may_reinject() {
   local id="${1:?router: a ticket id}" surface
-  surface="$(tracker_field "$id" 'Write-surface' 2>/dev/null)" || surface=''
+  router__is_pinned "$id" || return 1
+  surface="$(router__field "$id" 'Write-surface')" || surface=''
   [ -z "$surface" ] || return 0
   printf 'ralph: %s declares no `Write-surface:`, so it cannot go back on the frontier: the scope-guard would put every path a session touches out of scope, the iteration would be classified as a scoping conflict without consuming a retry, and the ticket would come straight back here as `decision`. Decide what it asks for and write the real ticket — with a surface and acceptance criteria — or close it.\n' \
     "$id" >&2
+  router__say_drift "$id" 'Write-surface' >&2
   return 1
 }
 
@@ -600,12 +753,21 @@ router_reinject() {
 # The check is here, beside the transition, and not in the drain that offers the
 # menu: an entry point that forgot to ask would be a false green with nothing to
 # notice it, and there will be a second entry point ([11]).
+#
+# **And it reads the pin and not the ticket** ([55]), which is what makes the
+# sentence above true rather than merely well placed. `sign-off` is a word no
+# producer in this pack writes, so the only ways a ticket carries it are a human
+# who typed it and a session that wrote it — and this loop opens sessions on
+# these very tickets with nothing behind them. Being beside the transition kept a
+# forgetful *caller* out; it did nothing about the file.
 router_may_sign_off() {
   local id="${1:?router: a ticket id}" reason
-  reason="$(tracker_field "$id" Escalation 2>/dev/null)" || reason=''
+  router__is_pinned "$id" || return 1
+  reason="$(router__field "$id" Escalation)" || reason=''
   [ "$reason" != sign-off ] || return 0
   printf 'ralph: %s cannot be signed off: it is on this sink as `%s`, which is a ticket this loop failed to deliver and not one waiting for approval. Whatever comes out of it goes back on the frontier and through the gate — a resolution from here would be a green no check ever gave.\n' \
     "$id" "${reason:-no escalation reason}" >&2
+  router__say_drift "$id" Escalation >&2
   return 1
 }
 

@@ -113,3 +113,35 @@ de choses faites.
   les distinguer.
 - **`human_loop__drain_one` rend maintenant quatre codes** (0, 1, 3, 4). Le `4`
   arrête le drain entier ; le traiter avant le `*)` du `case` de `human_loop_main`.
+
+## Ce que [55] laisse à ce ticket (écrit le 31/08/2026, à sa livraison)
+
+- **L'instantané partagé n'a pas été posé, et c'est une décision écrite plutôt
+  qu'un oubli.** [55] avait le point de convergence dans ses pièges ; ce qu'il a
+  livré est un **pin** — deux variables non exportées du process du drain
+  (`ROUTER__PINNED_ESCALATION`, `ROUTER__PINNED_SURFACE`), prises par
+  `router_pin` en tête de `human_loop__drain_one`, avant le dossier et avant
+  toute session. Trois raisons, à relire avant de bâtir dessus : un hash d'arbre
+  aurait refusé une transition sur le ticket A parce que la session a touché le
+  ticket B (fausse accusation) ; il ne dit pas *quel champ* a bougé, donc il ne
+  peut pas porter la phrase qu'un humain refusé doit lire ; et ce que ce
+  ticket-ci a besoin de savoir n'est pas l'arbre du tracker mais **l'arbre de
+  travail**, qui est un autre objet. Ce qui est partagé est donc le **moment et
+  l'endroit**, pas l'objet : `router_pin ID`, dans `router.sh`, une fois par
+  ticket. Un témoin d'arbre de travail a sa place au même appel — et alors le
+  point de convergence est vraiment un seul endroit.
+- **La frontière du pin, pour ne pas la croire plus large qu'elle n'est.** Il
+  couvre `Escalation:` et `Write-surface:` du **seul** ticket que le drain tient.
+  `Failures:`, la ref `failed/<id>`, le corps du ticket et **tout autre ticket**
+  restent écrits par une session que rien ne juge — mesuré, avec la sonde
+  conservée, et donné à [58].
+- **Les deux transitions sont fail-closed.** `router_may_sign_off` et
+  `router_may_reinject` refusent désormais un ticket que rien n'a épinglé, avec
+  leur propre phrase. Un chemin de réinjection ajouté ici sans `router_pin`
+  devant s'arrêtera sur le premier ticket — bruyamment, ce qui est le but.
+- **Et le prix que [55] a écrit est le voisin direct du tien** : une correction
+  faite *pendant* la conversation routée ne décide pas dans cette passe du drain.
+  Ce ticket-ci va découvrir le même mur d'un autre côté — un correctif de code
+  fait pendant la conversation n'est pas jugé non plus tant que rien ne le
+  commite. Les deux prix se disent dans la même phrase à l'humain ou ils se
+  contrediront.

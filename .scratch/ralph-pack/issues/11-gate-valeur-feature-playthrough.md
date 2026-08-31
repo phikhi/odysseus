@@ -81,3 +81,22 @@
   `while read` par un heredoc **sur stdin** — inoffensif tant que rien de ce qu'il
   appelle ne lit stdin, mortel dès qu'un appel s'y ajoute. C'est le défaut que [16]
   a réparé dans sa boucle principale en passant la liste sur fd 3.
+
+- **Contrainte posée par [55], livré le 31/08/2026 : un point d'entrée qui appelle
+  une transition doit épingler le ticket d'abord.** La forme **(1)** ci-dessus est
+  fermée, et sa réparation te fait un devoir. `router_may_sign_off` et
+  `router_may_reinject` ne lisent plus `Escalation:` ni `Write-surface:` sur le
+  fichier : ils lisent ce que `router_pin ID` a pris, une fois, avant le dossier et
+  avant toute session — parce que la session routée écrit dans cet arbre sans
+  worktree, sans scope-guard, sans gate et sans rollback, et que le menu est
+  ré-offert dès qu'elle rend la main. Les deux refus sont **fail-closed** : une
+  transition sur un ticket que rien n'a épinglé est refusée, avec sa phrase. C'est
+  volontairement bruyant — un repli sur le tracker t'aurait rendu le trou au lieu du
+  garde, en silence et en vert. Donc : `router_pin` avant `router_reinject`, y
+  compris sur un chemin de réinjection hybride qui n'ouvre aucune session (le pin
+  y est gratuit et c'est ce qui rend le refus lisible).
+- **Et la frontière du pin, à ne pas croire plus large qu'elle n'est** : deux
+  champs, du seul ticket tenu. `Failures:` — le compteur que la décision ci-dessus
+  te demande de trancher — n'est **pas** épinglé, et une session routée peut
+  l'écrire. Ça ne change aucune transition aujourd'hui ; ça en changerait une le
+  jour où une réinjection déciderait sur lui.
