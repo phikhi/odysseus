@@ -56,3 +56,28 @@
   `resolved` hors de portée de tout ce qui n'est pas un `sign-off`, et il est **à côté
   de la transition et pas dans le menu qui l'offre**, précisément pour qu'un second
   appelant en hérite au lieu de le recopier.
+
+- **Passe transversale du 31/08/2026 : ce que tu hérites de [16] si tu ouvres un
+  second point d'entrée avant que [55], [56] et [57] ne soient livrés.** La racine
+  de cette passe est que *toutes les garanties du pack sont des propriétés de
+  `loop.sh`, pas du pack* — [16] a ajouté un appelant et n'en a hérité aucune. Les
+  trois formes, sondées et conservées sous
+  `.scratch/ralph-pack/sondes/passe-31-08/` :
+  **(1)** `router_may_sign_off` et `router_may_reinject` sont bien placés — à côté
+  de la transition, pas dans le menu, précisément pour que tu en hérites — mais ils
+  lisent `Escalation:` et `Write-surface:` **sur un ticket que la session routée
+  peut écrire**, sans le snapshot de [21] derrière. En hériter, aujourd'hui, c'est
+  hériter du trou ([55]).
+  **(2)** La réinjection promet « une session fraîche et tout le gate décident
+  maintenant » ; c'est faux pour du travail non commité, qui est l'état par défaut
+  à la sortie d'une conversation ([56]). Si ce ticket ouvre un chemin de
+  réinjection hybride, la question du zéro sur `Failures:` ci-dessus est la
+  *seconde* à poser : la première est **est-ce que ce que l'humain a écrit est
+  seulement dans l'arbre que le worktree de l'itération va porter**.
+  **(3)** `run_lock_is_ours` et `tree_lock_is_ours` n'ont qu'un appelant, et ce
+  n'est pas `human-loop.sh` ([57]). Un troisième point d'entrée doit les appeler,
+  pas les recopier.
+  Et un piège de forme : `human_loop__report_tracker_findings` alimente son
+  `while read` par un heredoc **sur stdin** — inoffensif tant que rien de ce qu'il
+  appelle ne lit stdin, mortel dès qu'un appel s'y ajoute. C'est le défaut que [16]
+  a réparé dans sa boucle principale en passant la liste sur fd 3.
