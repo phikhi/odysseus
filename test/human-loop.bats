@@ -541,6 +541,118 @@ ANSWERS
   refute_output_contains "another run already holds"
 }
 
+# ── the locks, re-asked ──────────────────────────────────────────────────────
+#
+# Taking them is half of it. `loop.sh` asks again on every iteration because the
+# run lock lives where a session can reach it and [12] showed one can delete it;
+# this loop took both and asked once, while being the entry point that opens an
+# unjudged `claude` in the operator's own tree ([57]). Two tickets in the sink is
+# the whole apparatus: the first ticket's routed session takes a lock away, and
+# the question is what the drain does when it reaches the second.
+
+# The two tickets, in the order they will be offered: neither unblocks anything,
+# so the sink is ordered by NN.
+mk_two_ticket_sink() {
+  mk_ticket 20-first Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  mk_ticket 21-second Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/two.txt`' 'Blocked by' None
+}
+
+@test "a routed session that took the run lock away stops the drain" {
+  mk_two_ticket_sink
+  script_claude <<SCRIPT
+#!/usr/bin/env bash
+rm -rf "$(run_lock_dir)"
+exit 0
+SCRIPT
+
+  # `o` opens the session that deletes the lock, and every answer after it is
+  # deliberately still on stdin: the drain must not get as far as reading them.
+  drain <<ANSWERS
+o
+o
+n
+o
+n
+ANSWERS
+  # 4 and not 3: a human who quit and a drain whose lock went out from under it
+  # leave the sink looking identical, and only one of them is coming back.
+  assert_failure 4
+  assert_output_contains "the run lock is gone or not ours any more"
+  assert_output_contains "stopped with 20-first and everything after it still in the sink"
+
+  # The two things a drain that carried on would have done, and both are the
+  # point: a second unjudged session on this very ticket — the menu offers `o`
+  # again the moment a session returns — and then the next ticket of the sink.
+  assert_equal "$(claude_call_count)" "1"
+  [ -z "$(dossier_line 21-second)" ] ||
+    fail "the drain went on to the next ticket after losing the run lock
+--- output ---
+$output"
+
+  # Stopping is not leaking: the lock this drain still held comes back.
+  [ ! -d "$(tree_lock_dir)" ] || fail "the drain kept the working-tree lock on its way out"
+}
+
+@test "a routed session that took the working-tree lock away stops the drain" {
+  # The second question, asked separately, and this is what separately buys: the
+  # run lock is untouched here, so a drain that asked one question for both locks
+  # would answer yes and open a session in a tree a run may now claim.
+  mk_two_ticket_sink
+  script_claude <<SCRIPT
+#!/usr/bin/env bash
+rm -rf "$(tree_lock_dir)"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+o
+n
+ANSWERS
+  assert_failure 4
+  assert_output_contains "the working-tree lock is gone or not ours any more"
+  refute_output_contains "the run lock is gone"
+  assert_equal "$(claude_call_count)" "1"
+  [ -z "$(dossier_line 21-second)" ] ||
+    fail "the drain went on to the next ticket after losing the working-tree lock
+--- output ---
+$output"
+}
+
+@test "the same two tickets, with both locks left alone, are drained to the end" {
+  # The paired witness, and it was checked by hand against each mutation rather
+  # than assumed: without it the two tests above pass just as well against a drain
+  # that stops after one session for any reason at all — a session that ends the
+  # loop, a sink read once and never re-read, a `break` in the wrong place. Same
+  # pair, same answers, one line of the routed session different.
+  mk_two_ticket_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+o
+n
+ANSWERS
+  assert_failure 3
+  refute_output_contains "not ours any more"
+  # Three sessions: two on the first ticket, because the menu is offered again
+  # after one returns, and one on the second.
+  assert_equal "$(claude_call_count)" "3"
+  [ -n "$(dossier_line 21-second)" ] ||
+    fail "the second ticket was never offered even with both locks held
+--- output ---
+$output"
+}
+
 # ── the two structural refusals ──────────────────────────────────────────────
 
 @test "the PATH is refused before this drain runs a program" {

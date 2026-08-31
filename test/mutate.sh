@@ -3933,6 +3933,49 @@ mutation "54 the replay asks about a delivered path as a pattern" "$CONCURRENCY"
   's/git ls-tree "\$commit\^\{tree\}" -- ":\(literal\)\$path"/git ls-tree "\$commit^{tree}" -- "\$path"/' \
   test/concurrency.bats "replayed, not removed"
 
+# ── [57] the drain asks again whether it still holds its locks ───────────────
+#
+# `loop.sh` asks these two at the top of every iteration; the drain took both and
+# asked once, while being the entry point that opens an unjudged `claude` in the
+# operator's own tree. Five entries, because five different things can be taken
+# away: either question on its own, the *position* of the asking, the stop, and
+# the code that carries the stop back out of one ticket.
+#
+# The two questions are separate entries and not one, for the reason the code
+# asks them separately: an `rm -rf .scratch` takes the run lock and leaves the
+# tree lock, so a drain asking one question for both is green against half the
+# ways it loses one.
+
+mutation "57 the drain stops asking about the run lock" "$HUMAN_LOOP" \
+  's/  if ! run_lock_is_ours; then\n    human_loop_log "the run lock is gone or not ours any more — stopping rather than draining beside another run"\n    return 1\n  fi\n//' \
+  test/human-loop.bats "took the run lock away"
+
+mutation "57 the drain stops asking about the working-tree lock" "$HUMAN_LOOP" \
+  's/  if ! tree_lock_is_ours; then\n    human_loop_log "the working-tree lock is gone or not ours any more — stopping rather than opening a session in a tree another run may now claim"\n    return 1\n  fi\n//' \
+  test/human-loop.bats "took the working-tree lock away"
+
+# The same guard, one ticket coarse instead of one decision: asked when a ticket
+# is picked up and not again after a session returns. Both questions survive,
+# both messages survive, the exit code survives — and the menu offers `o` again
+# to a human whose session just deleted a lock, which is the second unjudged
+# `claude` this whole ticket exists to refuse.
+mutation "57 the drain asks at the ticket and not after each decision" "$HUMAN_LOOP" \
+  's/    human_loop__locks_are_ours \|\| return 4\n\n//; s/^  while :; do\n/  human_loop__locks_are_ours || return 4\n  while :; do\n/m' \
+  test/human-loop.bats "took the run lock away"
+
+# It asks, it says so, and it drains on anyway — which is the shape a lost lock
+# had before this ticket, minus the silence.
+mutation "57 a lock the drain no longer holds is said and not acted on" "$HUMAN_LOOP" \
+  's/  human_loop_log "stopped with \$3 and everything after it still in the sink"\n  exit 4\n/  human_loop_log "stopped with \$3 and everything after it still in the sink"\n/' \
+  test/human-loop.bats "took the run lock away"
+
+# And the line that carries the refusal out of one ticket into the drain. Without
+# it a lost lock falls through to `*)`, is counted as a ticket left where it was,
+# and the drain walks on to the next one.
+mutation "57 a lost lock is counted as a ticket left behind" "$HUMAN_LOOP" \
+  's/      4\) human_loop__stop_lost_lock "\$drained" "\$left" "\$id" ;;\n//' \
+  test/human-loop.bats "took the run lock away"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -31,11 +31,20 @@
 #      this working tree
 #   2  cannot run: no config, a PATH nothing here can witness, or no tracker
 #   3  stopped with tickets still in the sink — the human quit, or stdin ended
+#   4  stopped by a guard: one of the two locks this drain took is gone, or is
+#      not ours any more ([57])
 #   5  nothing to drain: the sink was empty when this started
 #
 # 0 and 5 are different for the reason they are different in `loop.sh`: a drain
 # that found nothing because `FEATURE` points at the wrong tracker must not be
 # reported as a sink emptied.
+#
+# 4 is 4 for the same reason, from the other end: it is the number `loop.sh`
+# gives a guard that stopped a run, a lost lock included, and the two entry
+# points lose a lock for the same reasons and owe an operator the same word for
+# it. It is deliberately not 3. A human who quit and a drain that stopped because
+# something took its lock out from under it leave the sink looking identical, and
+# the second is the one nobody may read as "they will come back to it".
 #
 # Kept bash 3.2 compatible, like the rest of the pack.
 set -euo pipefail
@@ -149,6 +158,57 @@ $(tracker_preflight)
 FINDINGS
 }
 
+# ── the locks, re-asked ──────────────────────────────────────────────────────
+
+# Do we still hold what we took? Asked again before every ticket and before every
+# decision taken on one, and never assumed to have stayed true since the start
+# ([57]).
+#
+# `loop.sh` asks these two at the top of every iteration and stops loudly when
+# either answer is no. This loop took both locks and asked once — while being the
+# entry point that puts an *unjudged* `claude` in the operator's own working
+# tree, so the one where losing a lock costs the most. `state.sh` even wrote the
+# guarantee down as a fact of the pack ("re-checked for ownership on every
+# iteration"); it was a fact about one caller.
+#
+# Two questions and not one, because the two answers can differ and each names a
+# different loss. The run lock lives under `.scratch/<feature>/`, which the
+# scope-guard drops as bookkeeping and the rollback leaves alone, and [12] showed
+# a session can delete it. The tree lock lives in `.git/`, out of reach of a
+# `git add -A`, a `git clean` and an `rm -rf .scratch` — not of a session that
+# deletes the directory outright. A routed session is a `claude` with a human in
+# it and no gate, no worktree and no scope-guard behind it: it can do either.
+#
+# A lock that was deleted is not a lock that was stolen, and the question is the
+# same either way: `*_is_ours` compares this process against the recorded owner,
+# so a guard a rival took over after `state_guard_take` found ours stale answers
+# no exactly as an erased one does.
+human_loop__locks_are_ours() {
+  if ! run_lock_is_ours; then
+    human_loop_log "the run lock is gone or not ours any more — stopping rather than draining beside another run"
+    return 1
+  fi
+  if ! tree_lock_is_ours; then
+    human_loop_log "the working-tree lock is gone or not ours any more — stopping rather than opening a session in a tree another run may now claim"
+    return 1
+  fi
+  return 0
+}
+
+# What a lost lock costs the rest of the sink. Separate from the question that
+# found it, because the two live in different scopes: `human_loop__drain_one` is
+# where the lock is noticed and the counters are `human_loop_main`'s, so the
+# refusal travels back as a return code and the tally is printed here.
+#
+# The tally first: a sink that stopped short is exactly when what has already been
+# drained stops being obvious. Then the ticket it stopped on, which is the one an
+# operator has to start from once they have worked out who took the lock.
+human_loop__stop_lost_lock() {
+  human_loop_log "drained $1 ticket(s), left $2 where they were"
+  human_loop_log "stopped with $3 and everything after it still in the sink"
+  exit 4
+}
+
 # ── one ticket ───────────────────────────────────────────────────────────────
 
 # The routed session: `claude` with a human in it, and the only external program
@@ -183,6 +243,7 @@ human_loop__session() {
 #   0  it left the sink
 #   1  it is still in the sink and the drain moves on
 #   3  the human is done with the whole drain
+#   4  a lock this drain took is gone: the whole drain stops
 #
 # The menu is re-offered after a session rather than assumed to have been
 # resolved by it: a grilling that ends in "this ticket should never have existed"
@@ -193,6 +254,25 @@ human_loop__drain_one() {
   router_dossier "$id"
 
   while :; do
+    # Do we still hold what we took? Here, and here only, because this is the one
+    # place both moments meet: the first pass round this loop is the ticket
+    # boundary the criterion asks for, and every later one is a decision already
+    # taken on this ticket — a routed session most of all ([57]).
+    #
+    # A check at the ticket boundary alone would have been the smaller half. The
+    # menu is re-offered after a session, so a session that deleted a lock comes
+    # back to a prompt offering `o` again: a second unjudged `claude` in a tree a
+    # run may now claim, on the same ticket, without ever crossing a boundary. And
+    # a boundary check placed in `human_loop_main` would be dead code behind this
+    # one — nothing runs between this loop's last pass and the next ticket's
+    # first, so no mutation could tell the two apart, and a guarantee no mutation
+    # can remove is a sentence and not a check.
+    #
+    # `r`, `s` and `c` get the same question for the other half of the reason:
+    # they write `issues/` from outside any iteration, which is a thing only the
+    # run lock entitles this loop to do.
+    human_loop__locks_are_ours || return 4
+
     printf '\n  [o]pen a session  [r]e-inject  [s]ign off  [c]lose  [n]ext  [q]uit > '
     if ! IFS= read -r answer; then
       # Not a human, or a human who closed the pipe. Looping here would spin
@@ -319,6 +399,12 @@ human_loop_main() {
         quit=1
         break
         ;;
+      # The one code that ends the drain rather than the ticket. Falling through
+      # to `*)` would count a lost lock as "left where it was" and carry on to the
+      # next ticket — which is the whole of what this stops. Exits ([57]); the
+      # `exit` is this process's, since the loop is fed by a heredoc and not a
+      # pipe and nothing here is a subshell ([47]).
+      4) human_loop__stop_lost_lock "$drained" "$left" "$id" ;;
       *) left=$((left + 1)) ;;
     esac
   done 3<<SINK

@@ -101,3 +101,19 @@ la forme qu'un contrôle tient ».
   vit sous les transitions et pas dans `human-loop.sh`.
 - **[27]**, propriétaire de la renumérotation : le guichet `admit` reste servi
   depuis un corps que la quarantaine refuse de réécrire, et c'est voulu.
+
+## Ce que [57] laisse à ce ticket (écrit le 31/08/2026, à sa livraison)
+
+- **Le vrai point de convergence de cette boucle est le menu, pas la frontière de
+  ticket.** [57] a livré son contrôle en tête de la boucle `while :;` de
+  `human_loop__drain_one` après avoir mesuré que la frontière de ticket rate le cas
+  le plus court : le menu est ré-offert après une session, donc tout ce qu'une
+  session routée laisse derrière elle est déjà en place à la passe suivante — sur le
+  **même** ticket. Un instantané ou un refus posé dans `human_loop_main` aurait le
+  même angle mort. Et [57] a aussi mesuré que les deux emplacements ne peuvent pas
+  coexister : rien ne s'exécute entre la dernière passe du menu d'un ticket et la
+  première du suivant, donc aucune mutation ne les distingue.
+- **`human_loop__drain_one` rend maintenant quatre codes** (0, 1, 3, 4), et le `4`
+  arrête le drain entier via `human_loop__stop_lost_lock`. Une branche ajoutée au
+  `case` de `human_loop_main` sans traiter le `4` avant le `*)` compterait un verrou
+  perdu comme un ticket laissé en place.
