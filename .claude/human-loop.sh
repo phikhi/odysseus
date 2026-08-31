@@ -251,6 +251,17 @@ human_loop__session() {
 # knows which happened.
 human_loop__drain_one() {
   local id="$1" answer
+  # What the transitions will decide on, taken before this loop shows the ticket
+  # to anyone and before it can open a session on it ([55]). `Escalation:` and
+  # `Write-surface:` are two lines of a file the routed session runs beside, in
+  # this tree, with no gate behind it — so from here on `router.sh` reads what
+  # was pinned and not what the file says, and a transition on a ticket nothing
+  # pinned is refused outright.
+  #
+  # Before the dossier and not after it: what a human reads and what the drain
+  # decides on have to be the same value, or the refusal that follows explains
+  # nothing.
+  router_pin "$id"
   router_dossier "$id"
 
   while :; do

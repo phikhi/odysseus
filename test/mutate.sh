@@ -3976,6 +3976,81 @@ mutation "57 a lost lock is counted as a ticket left behind" "$HUMAN_LOOP" \
   's/      4\) human_loop__stop_lost_lock "\$drained" "\$left" "\$id" ;;\n//' \
   test/human-loop.bats "took the run lock away"
 
+# ── [55] the two refusals decide on the ticket the drain took ────────────────
+#
+# [16] placed both refusals beside the transition so a second entry point would
+# inherit them, and they read two lines of a file the session this loop opens can
+# rewrite — no worktree, no scope-guard, no gate, no rollback. Eight entries,
+# because eight different things can be taken away: each refusal's reader, each
+# refusal's fail-closed half, the *position* of the pin, the desk that decides
+# the next prompt, and the sentence that keeps a refused human from reading a
+# drain that looks broken.
+#
+# Every anchor here carries the line under it. `router__field "$id" Escalation`
+# appears three times in this file and `Write-surface` twice: an edit aimed at
+# the interesting token alone would apply to `router_desk`, report `ok` against a
+# test that never lost its guarantee, and hide the one that did.
+
+mutation "55 the sign-off refusal reads the ticket instead of the pin" "$ROUTER" \
+  's/  reason="\$\(router__field "\$id" Escalation\)" \|\| reason=\x27\x27\n  \[ "\$reason" != sign-off \]/  reason="\$(tracker_field "\$id" Escalation 2>\/dev\/null)" || reason=\x27\x27\n  [ "\$reason" != sign-off ]/' \
+  test/human-loop.bats "sign-off the drain refuses"
+
+mutation "55 the re-injection refusal reads the ticket instead of the pin" "$ROUTER" \
+  's/  surface="\$\(router__field "\$id" \x27Write-surface\x27\)" \|\| surface=\x27\x27\n  \[ -z "\$surface" \]/  surface="\$(tracker_field "\$id" \x27Write-surface\x27 2>\/dev\/null)" || surface=\x27\x27\n  [ -z "\$surface" ]/' \
+  test/human-loop.bats "write-surface the re-injection wants"
+
+# The pin, one decision coarse instead of one ticket coarse: taken on every pass
+# of the menu instead of once when the ticket is picked up. Both refusals still
+# read it, both sentences survive, and the value they read is the one the session
+# that just returned wrote — the menu is re-offered the moment it does ([57]).
+mutation "55 the pin is refreshed after every session on the ticket" "$HUMAN_LOOP" \
+  's/  router_pin "\$id"\n  router_dossier "\$id"\n\n  while :; do\n/  router_dossier "\$id"\n\n  while :; do\n    router_pin "\$id"\n/' \
+  test/human-loop.bats "sign-off the drain refuses"
+
+# Fail-closed, which is the half that survives a second entry point: a transition
+# on an unpinned ticket falls back to the tracker instead of refusing, and a
+# caller that opens a routed session and then signs off is green with nothing
+# anywhere to say so.
+mutation "55 an unpinned ticket may still be signed off" "$ROUTER" \
+  's/  router__is_pinned "\$id" \|\| return 1\n  reason=/  reason=/' \
+  test/human-loop.bats "never pinned is refused"
+
+mutation "55 an unpinned ticket may still be re-injected" "$ROUTER" \
+  's/  router__is_pinned "\$id" \|\| return 1\n  surface=/  surface=/' \
+  test/human-loop.bats "never pinned is refused"
+
+# The desk, read off the file again. It decides the question, the treatment and
+# the whole prompt — so a session that rewrites `Escalation:` chooses the desk of
+# the next session opened on the same ticket.
+mutation "55 the desk is read off the ticket the session may have written" "$ROUTER" \
+  's/ reason count\n  reason="\$\(router__field "\$id" Escalation\)"/ reason count\n  reason="\$(tracker_field "\$id" Escalation 2>\/dev\/null)"/' \
+  test/human-loop.bats "route the next session"
+
+# And the two halves of what a refused human is told. Without it the drain
+# refuses a sign-off "because it is on this sink as `failed-impl`" while the
+# ticket open in front of them says `sign-off` — a control doing its job, read as
+# a broken drain.
+mutation "55 a refused sign-off does not say the ticket moved under it" "$ROUTER" \
+  's/  router__say_drift "\$id" Escalation >&2\n//' \
+  test/human-loop.bats "sign-off the drain refuses"
+
+mutation "55 a refused re-injection does not say the ticket moved under it" "$ROUTER" \
+  's/  router__say_drift "\$id" \x27Write-surface\x27 >&2\n//' \
+  test/human-loop.bats "write-surface the re-injection wants"
+
+# And the repair that refuses everything, which is what the two paired witnesses
+# in that file are there to catch: a pin that records nothing leaves both
+# refusals refusing every ticket there is, and the two tests above — the ones
+# about a session writing itself a field — stay green straight through it. These
+# two entries are the only ones that name a witness as the test that must fail.
+mutation "55 the pin records no escalation, so no sign-off ever passes" "$ROUTER" \
+  's/  ROUTER__PINNED_ESCALATION="\$\(tracker_field "\$id" Escalation 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_ESCALATION=\x27\x27\n/  ROUTER__PINNED_ESCALATION=\x27\x27\n/' \
+  test/human-loop.bats "sign-off the drain found"
+
+mutation "55 the pin records no write-surface, so no re-injection ever passes" "$ROUTER" \
+  's/  ROUTER__PINNED_SURFACE="\$\(tracker_field "\$id" \x27Write-surface\x27 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_SURFACE=\x27\x27\n/  ROUTER__PINNED_SURFACE=\x27\x27\n/' \
+  test/human-loop.bats "write-surface the drain found"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
