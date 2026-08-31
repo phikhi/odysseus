@@ -225,3 +225,20 @@ Et deux enseignements de méthode, valables au-delà de ce ticket :
   écrira le correctif : `nn` est calculé **avant** que le corps ne soit lu sur stdin.
 
 - **Contrainte posée par [09], livré le 29/08/2026 : le drainage a un consommateur de plus, et il est en queue de `loop_main`.** L'armement du successeur one-shot est appelé **après la boucle `while`**, donc après que `stop_code=6` a déclenché le drain et que chaque itération en vol a été collectée, marquée et journalisée. C'est ce ticket qui l'a rendu obligatoire : armer là où le mur est vu laisserait un `claude` par slot en train de brûler le quota que le successeur existe précisément pour économiser ([28]). Un `exit` anticipé sur `stop_code=6`, ou tout raccourci qui sortirait de la boucle sans passer par la queue de `loop_main`, casserait les deux à la fois — le drainage *et* l'armement. Aucune mutation ne peut rendre ce placement rouge : ce qui le porte est la structure (`stop_code` déclenche un drain) plus l'assertion « exactement une programmation par run ». Et l'armement lit le témoin de frontière du **run** (`gate_frontier_residue` sur `RALPH_FRONTIER_COMMON`) : il est donc placé avant le `rm -rf` de ce témoin, ce que tout réordonnancement du nettoyage de fin de run doit préserver.
+
+- **Passe transversale du 31/08/2026 : une contrainte de ce ticket a été reçue et
+  jamais dépensée.** [13] avait écrit dans [16], en toutes lettres : « ce qu'un
+  humain a de non commité n'est plus jamais jugé, rollbacké ni commité par la
+  boucle AFK ». Elle est restée dans la liste des contraintes reçues de [16], sans
+  passer dans ses décisions, dans son code, ni au tableau de frontière — pendant
+  que la ligne imprimée par le drain à la touche `r` dit « a fresh session and the
+  whole gate decide now ». Sondé le 31/08 (`sondes/passe-31-08/p2`) : le correctif
+  d'une session routée, non commité, fait brûler les trois itérations du budget en
+  `tests=red` et revient au puits en `Failures: 3` et `failed-impl` — le même
+  correctif commité à la main est vert et `resolved` du premier coup. Ce n'est pas
+  un défaut de l'isolation, qui fait exactement ce qu'elle promet : c'est le prix
+  de l'isolation, énoncé par ce ticket-ci et jamais payé par celui qui l'avait
+  reçu. Propriétaire du correctif : [56]. **La leçon est transversale et elle vaut
+  pour toute contrainte qu'un ticket écrit dans un autre : elle est lue, elle est
+  recopiée dans la liste des contraintes, et rien ne vérifie qu'elle a été
+  dépensée.**

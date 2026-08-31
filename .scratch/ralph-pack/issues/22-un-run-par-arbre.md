@@ -101,3 +101,22 @@
 - **11 mutations vérifiées rouges pour ce ticket** : verrou d'arbre non pris par la boucle, chemin rendu par feature, chemin rendu par dépôt (`--git-common-dir`) au lieu de par arbre, verrou déplacé dans l'arbre qu'il garde, refus qui ne dit pas qui tient, refus qui ne dit pas pourquoi, un seul des deux verrous libéré, reprise d'un garde périmé désactivée, contrôle par itération retiré, `tree_lock_is_ours` toujours vrai, et le verrou de feature devenu superflu derrière le verrou d'arbre. Les quatre plus délicates ont été **inspectées en diff avant d'être crues** : le piège documenté en tête de `mutate.sh` est qu'un `ok` obtenu sur un fichier cassé ne prouve rien, et deux de ces éditions interpolent des `$` dans les deux moitiés de l'expression perl.
 
 - **Passe transversale du 06/08/2026 : le verrou n'est revérifié que par le pilote.** `tree_lock_is_ours` et `run_lock_is_ours` sont posés dans la boucle du pilote, à chaque tour. Depuis [13] ce n'est plus le processus qui écrit : le gate, le commit durable, le repli et le marquage vivent dans le sous-shell de l'itération, qui ne revérifie rien. Un run tué au `SIGKILL` ne déclenche aucun trap, donc les verrous restent posés — mais `state_guard_take` reprend le garde d'un propriétaire mort, donc un run suivant démarre légitimement pendant que l'orphelin commite encore. C'est [44], et c'est la destruction que ce ticket refuse, atteignable en tuant un run.
+
+- **Passe transversale du 31/08/2026 : le verrou d'arbre a deux preneurs et une
+  seule revérification.** La note de la passe du 06/08 ci-dessus disait « le verrou
+  n'est revérifié que par le pilote » ; depuis [16] il faut la relire, parce qu'il
+  y a maintenant **deux** pilotes et qu'un seul repose la question.
+  `run_lock_is_ours` et `tree_lock_is_ours` n'ont chacun qu'un appelant, et c'est
+  `loop.sh` (l. 1468 et 1477) : `human-loop.sh` prend les deux verrous au démarrage
+  et ne les redemande jamais — alors que c'est le point d'entrée qui met un
+  `claude` **non jugé** dans l'arbre principal, donc celui où la destruction que ce
+  ticket refuse coûte le plus cher. Sondé (`sondes/passe-31-08/p4`) : une session
+  routée efface les deux verrous, la session routée suivante les trouve absents
+  pendant que le drain vit encore, et le drain ouvre ce second `claude`, finit le
+  puits et sort normalement **sans une ligne**. Le même effacement côté AFK rend
+  « the run lock is gone or not ours any more after 1 iterations — stopping rather
+  than grinding beside another run ». Conséquence à connaître pour ce ticket :
+  la phrase de `state.sh` qui justifie de laisser une course ouverte dans
+  `state_guard_take` — « the run and tree locks are re-checked for ownership on
+  every iteration » — n'est plus vraie que d'une moitié du pack. Propriétaire :
+  [57].

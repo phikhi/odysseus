@@ -317,3 +317,51 @@ counts as writing the ticket` s'ancrait sur la liste des lectures du dispatcheur
 [16] a inséré `receipt_path`. Garantie revérifiée avant de recaler — `emit_receipt`
 est toujours du côté lecture, donc il ne remet toujours aucun id au registre de
 [13]/[42] — puis rejouée `ok`.
+
+### Passe transversale du 31/08/2026 : trois trouvailles sur ce ticket
+
+Sondes conservées sous `.scratch/ralph-pack/sondes/passe-31-08/`, détail dans
+`.scratch/ralph-pack/passe-transversale-31-08.md`. La racine : **toutes les
+garanties du pack sont des propriétés de `loop.sh`, pas du pack**, et ce ticket a
+ajouté un second appelant sans en hériter aucune.
+
+- **[55] — les deux refus lisent un champ que la session routée écrit.** La
+  section « Le critère anti-faux-vert, sous la forme qu'un contrôle tient » de ce
+  ticket dit vrai sur *où* la question est posée et faux sur *à quoi* :
+  `router_may_sign_off` lit `Escalation:` et `router_may_reinject` lit
+  `Write-surface:`, sur le ticket, dans l'arbre principal, après la session que
+  ce même ticket déclare non jugée. Sondé (P1a) : `Escalation: sign-off` écrit par
+  la session, `o` puis `s`, et le ticket sort **`resolved`** sans qu'aucun gate
+  ait lu ce code. Témoin appairé refusé. Même trou sur la réinjection (P1c), et
+  chaîne complète par le guichet `admit` (P1d).
+- **[56] — une contrainte reçue et jamais dépensée.** [13] avait écrit ici, dans
+  la liste des contraintes : « ce qu'un humain a de non commité n'est plus jamais
+  jugé, rollbacké ni commité par la boucle AFK ». Elle n'est passée ni dans les
+  décisions, ni dans le code, ni au tableau — pendant que la ligne imprimée à la
+  touche `r` dit « a fresh session and the whole gate decide now ». Sondé (P2a) :
+  trois itérations `tests=red`, budget brûlé, retour au puits en `Failures: 3` et
+  `failed-impl`, correctif toujours dans l'arbre et jamais nommé ; commité à la
+  main (P2b), vert et `resolved` du premier coup. **La liste des contraintes d'un
+  ticket n'est pas une liste de choses faites.**
+- **[57] — les verrous ne sont jamais redemandés.** `loop.sh` repose
+  `run_lock_is_ours` et `tree_lock_is_ours` à chaque itération ; ce fichier ne les
+  appelle pas. Sondé (P4a) : la session routée efface les deux verrous, la
+  suivante les trouve absents, le drain ouvre ce second `claude` non jugé et finit
+  le puits **sans une ligne** — là où le chemin AFK s'arrête bruyamment (P4c).
+
+### Deux notes de plus, sans ticket
+
+- **`human_loop__report_tracker_findings` alimente son `while read` par un heredoc
+  sur stdin**, c'est-à-dire la forme exacte du défaut que ce ticket a réparé dans
+  sa boucle principale (« Le défaut que les tests ont trouvé »). Rien de ce qu'il
+  appelle ne lit stdin aujourd'hui — `human_loop_log` est un `printf`,
+  `router_journal` écrit un fichier — donc pas de défaut, mais c'est un piège posé
+  pour [11] et pour quiconque ajoutera un appel dans cette boucle. La liste
+  devrait voyager sur un descripteur comme l'autre.
+- **Un écart de formulation qui compte.** Ce ticket écrit, dans « Ce qui n'est
+  tenu par rien » : « l'absence de `--dangerously-skip-permissions`, donc **un
+  humain qui approuve chaque appel d'outil** ». Le tableau de frontière et
+  `session.sh` disent la chose juste : ce n'est pas « chaque écriture est
+  approuvée », c'est « le mode de permission par défaut s'applique » — un projet
+  dont les `settings.json` pré-autorisent les outils d'écriture les a
+  pré-autorisés ici aussi. C'est la formulation du ticket qui est trop forte.
