@@ -18,8 +18,10 @@
 #                                     and the retry counter
 #   tracker_mark_escalated ID REASON  hand it to the human sink, with a reason
 #   tracker_mark_ready ID             re-inject (re-slice, human fix, wiring)
+#   tracker_mark_wontfix ID           closed by a human, never to be ground
 #   tracker_block_on ID DEPS          hold it until those tickets are resolved
 #   tracker_bump_failures ID          count one failure; new count on stdout
+#   tracker_clear_failures ID         give it its whole retry budget back
 #   tracker_open_ticket SLUG TITLE    create a ticket from stdin; id on stdout
 #   tracker_open_unique SLUG TITLE    the same, unless a ticket already carries
 #                                     this slug; then nothing at all on stdout
@@ -27,6 +29,8 @@
 #                                     id it now carries on stdout
 #   tracker_append_note ID            append a comment from stdin
 #   tracker_emit_receipt ID           write the audit receipt from stdin
+#   tracker_receipt_path ID           where that receipt can be read, if it is
+#                                     still there; non-zero when there is none
 #
 # Marking is the loop's job, after the gate — never the session's.
 #
@@ -61,7 +65,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | emit_receipt)
+    frontier | ids | read_ticket | field | receipt_path | emit_receipt)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -187,8 +191,24 @@ tracker_unclaim() { tracker__dispatch unclaim "$@"; }
 tracker_mark_resolved() { tracker__dispatch mark_resolved "$@"; }
 tracker_mark_escalated() { tracker__dispatch mark_escalated "$@"; }
 tracker_mark_ready() { tracker__dispatch mark_ready "$@"; }
+# Closed by a human, and only ever by a human ([16]). It is a state the local
+# backend already names and no producer ever wrote: a drain that could only
+# re-inject is not a drain, and a request the loop opened for itself — a rule the
+# retro asked for, a capability [15] refused to build — has to be refusable
+# somewhere. Nothing on the AFK path calls it, which is the point.
+tracker_mark_wontfix() { tracker__dispatch mark_wontfix "$@"; }
 tracker_block_on() { tracker__dispatch block_on "$@"; }
 tracker_bump_failures() { tracker__dispatch bump_failures "$@"; }
+# The counter back to zero without going through `resolved`, and the operation
+# exists because the *decision* to clear it is not the backend's ([26] left it to
+# each re-injection path, and [16] is the first one to take it).
+#
+# An operation and not a caller writing the field, for the reason every write in
+# this interface is one: it goes through the dispatcher, so it lands in the
+# register the two guards over `issues/` read ([13], [42]), and a backend that
+# stores the retry budget somewhere other than a ticket field owes it an answer
+# instead of inheriting one that happens to work on markdown.
+tracker_clear_failures() { tracker__dispatch clear_failures "$@"; }
 tracker_open_ticket() { tracker__dispatch open_ticket "$@"; }
 # "Open this, unless one carrying the slug is already there." An operation and not
 # a caller reading `tracker_ids` first, because the read and the write have to be
@@ -206,6 +226,17 @@ tracker_open_unique() { tracker__dispatch open_unique "$@"; }
 tracker_renumber() { tracker__dispatch renumber "$@"; }
 tracker_append_note() { tracker__dispatch append_note "$@"; }
 tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
+# Where the receipt for this ticket can be read, if it is still there — a read,
+# and therefore not noted in the register.
+#
+# It exists because the human sink is the receipt's reader ([10]) and the reader
+# must not know how a backend stores one: on the local backend it is a file under
+# `receipts/<feature>/`, on a remote one it is the pull request the loop opened.
+# A drain that built the path itself would be a second author for that layout,
+# wrong the first time a backend keeps receipts anywhere else — and it would
+# answer "no receipt" on every backend that does not use files, which reads as
+# "nothing was written about this ticket".
+tracker_receipt_path() { tracker__dispatch receipt_path "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

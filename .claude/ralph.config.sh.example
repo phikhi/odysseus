@@ -384,6 +384,11 @@ LENS_DIFF_MAX_LINES="${LENS_DIFF_MAX_LINES:-4000}"
 
 # Language spoken to the human. HITL only — never used by the AFK loop, which is
 # not talking to anybody: no session this loop spawns is told this value.
+#
+# Read in exactly one place, `router_language_rule` in lib/router.sh, which is
+# what `.claude/human-loop.sh` builds the prompt of a routed session with ([16]).
+# A lib on the AFK path that read it would put a human's language into a session
+# nobody is watching, and a test refuses that from both ends.
 LANG_INTERACT="${LANG_INTERACT:-en}"
 
 # Language of durable written prose the agent writes: docs, comments, anything a

@@ -120,3 +120,35 @@
   même question pour la forme qu'il stocke, et dire ce qu'il fait de ce qui n'est pas
   un ticket. Corollaire déjà écrit ailleurs : un garde qui vit sur un ticket voyage
   avec ce ticket, celui qui sérialise l'espace des numéros vit à côté du verrou de run.
+
+- **Contrainte posée par [16], livré le 31/08/2026 : l'interface a trois opérations de
+  plus, et chacune pose une question qu'un backend distant doit répondre pour lui-même.**
+  Elles sont documentées dans l'en-tête de `lib/tracker.sh` avec le reste ; ce qui suit
+  est ce qu'un backend distant ne peut pas hériter du local sans se tromper.
+
+  1. **`tracker_clear_failures ID`** — rendre au ticket tout son budget de retries, sans
+     passer par `resolved`. Le backend local *retire* le champ. Un backend qui range le
+     compteur ailleurs qu'en champ de ticket (un label, un champ personnalisé, un
+     sidecar) doit répondre lui-même : `mark_resolved` doit le vider aussi, sinon c'est
+     le compteur cumulatif que [26] a retiré, reconstruit sous un autre nom.
+  2. **`tracker_mark_wontfix ID`** — fermé par un humain. Un état que le backend local
+     nommait déjà et qu'aucun producteur n'écrivait ; c'est le drainage qui l'écrit
+     maintenant. Il lâche `Escalation:` **et** `Failures:` : un ticket fermé qui porte
+     encore une raison d'escalade se lit, au prochain grep, comme un ticket qui attend
+     toujours un humain.
+  3. **`tracker_receipt_path ID`** — où le reçu de ce ticket se lit, non-zéro et
+     silencieux quand il n'y en a plus. C'est une **lecture**, donc elle ne passe pas au
+     registre de [13]/[42]. Elle existe parce que le puits humain est le lecteur du reçu
+     ([10]) et n'a pas le droit de savoir comment un backend en range un : sur le local
+     c'est un fichier sous `receipts/<feature>/`, **sur toi c'est la pull request**. Un
+     drainage qui construirait le chemin lui-même répondrait « aucun reçu » sur tout
+     backend qui n'utilise pas de fichiers, ce qui se lit comme « rien n'a été écrit sur
+     ce ticket ». Et `RECEIPTS_RETENTION_DAYS` balaye le local : « non-zéro quand il n'y
+     en a plus » est le contrat, pas « le fichier existe ».
+- **Et ce que le puits humain lit sur tes tickets** : `router_desk` distingue les trois
+  arrivées de `decision` par les preuves — l'existence de `failed/<id>` et la valeur de
+  `Failures:`. La branche est une **ref git locale** ; sur un backend distant elle peut
+  vivre ailleurs, et un ticket dont l'arbre de tentative est une PR fermée sera routé sur
+  le guichet `admit` (« aucun run n'a jamais jugé ceci »), ce qui est faux. Si ce ticket
+  déplace la trace forensique, il possède la question de savoir comment le routeur la
+  trouve.

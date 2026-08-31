@@ -1,6 +1,14 @@
 # shellcheck shell=bash
 # Spawning one session, and the only place in the pack that runs `claude`.
 #
+# Two postures, and only two: `session_spawn` for a session nobody is watching —
+# every delivery, every re-slice, every review lens — and
+# `session_spawn_interactive` for the one kind that has a human in it, which the
+# human sink drains with ([16]). They are kept in one file because "the only
+# place" is what makes both invocations checkable in one place, and because the
+# flags one has and the other does not are the difference between the two, not a
+# detail of two call sites.
+#
 # A fresh session: never --continue, never --resume. Those are exactly the flags
 # that would replay history and drag the context toward the dumb zone.
 #
@@ -82,6 +90,67 @@ session_spawn() {
     proc_collect "$reaper" || true
   fi
   return "$rc"
+}
+
+# The other posture, and there are exactly two: a session with a human in it.
+#
+# It is here rather than in the human loop so that "this file is the only place
+# the pack runs `claude`" goes on being true — the sentence at the top of this
+# file is what makes the invocation checkable against the real binary in one
+# place ([20]). What it is *not* is a variant of the call above: every flag that
+# is missing below is missing for a reason, and the differences are the whole of
+# what a human-in-the-loop session is.
+#
+#   no -p                 the human is the other half of the conversation. `-p`
+#                         reads a prompt off stdin and prints one answer; there
+#                         is nothing to converse with.
+#   no --output-format    nobody is parsing this. The stream goes to the
+#   no --verbose          terminal, where a human reads it.
+#   no monitor, no        the two deadlines of [23] and the token ceiling of [04]
+#   soft limit            exist because nobody is watching an AFK session. Here
+#                         somebody is, and a deadline would cut a conversation
+#                         off mid-sentence. A human who wants it over presses
+#                         Ctrl-C.
+#   no                    **and this one is the control, not an omission.**
+#   --dangerously-        Nothing judges what this session writes: it runs in the
+#   skip-permissions      main working tree, there is no worktree, no
+#                         scope-guard, no gate and no rollback on this path. What
+#                         holds it is the project's own permission policy, and a
+#                         human sitting in front of it. Read the limit with it:
+#                         this is not "every write is approved", it is "the
+#                         default permission mode applies" — a project whose
+#                         settings pre-approve the writing tools has pre-approved
+#                         them here too, and this pack neither narrows that nor
+#                         could. Adding that flag here would produce an
+#                         unsupervised session with write access to the
+#                         operator's own tree and nothing anywhere to notice — a
+#                         strictly wider hole than
+#                         anything `docs/frontiere-de-confiance.md` records,
+#                         because every entry in that document is at least about
+#                         a tree the pack throws away.
+#
+# `DISABLE_AUTO_COMPACT` is kept, and it is the one thing both postures share.
+# The dumb zone is a property of a compacted context and not of who is watching:
+# a long grilling that compacts is a conversation whose first half was summarised
+# by the model being grilled. Running into the context wall is the better end,
+# and the human sees it happen.
+#
+# stdin is inherited, deliberately. This runs from a drain that reads the human's
+# decisions on stdin too, and the two take the terminal in turn — the drain reads
+# a line, hands over, and reads again once this returns.
+#
+# What is **not** under contract, said here rather than discovered: `test/
+# contract-claude.bats` checks the pack's assumptions against the real binary, and
+# it cannot check this one — an interactive session needs a terminal and a human.
+# That the real `claude` starts a conversation seeded with a positional prompt is
+# an assumption of this pack, not an assertion about it.
+session_spawn_interactive() {
+  local prompt="${1:?session: a prompt}"
+  shift
+  DISABLE_AUTO_COMPACT=1 claude \
+    --model "$MODEL" \
+    "$@" \
+    "$prompt"
 }
 
 # Pull one field out of the final `result` event. Deliberately not jq: the pack
