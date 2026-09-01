@@ -772,6 +772,234 @@ ANSWERS
   refute_output_contains "cannot go back on the frontier"
 }
 
+# ── what a routed session writes in the tracker ──────────────────────────────
+#
+# [55] gave the two refusals an input a routed session cannot forge, and a
+# refusal guards a **transition**. Writing `**Status:** resolved` straight into a
+# file under `issues/` is not one: the session takes the state the transition
+# would have written and the drain is never in the loop ([58]).
+#
+# Every test here seeds two tickets and answers on the first, because the
+# guarantee is about the second: the fixture writes on the ticket the drain is
+# not looking at, and the drain used to skip it in silence.
+two_in_the_sink() {
+  mk_ticket 20-first Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  mk_ticket 21-second Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/two.txt`' 'Blocked by' None
+}
+
+@test "a routed session cannot resolve the ticket this drain has not reached yet" {
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* .*$/**Status:** resolved/' "$tracker/21-second.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  # Put back, with the escalation reason it had. `resolved` is not "out of this
+  # sink": it is the word a delivered ticket carries, so the ticket had left the
+  # frontier as well, and the AFK run behind this drain answered "nothing to
+  # grind".
+  assert_ticket_status 21-second ready-for-human
+  assert_equal "$(ticket_field 21-second Escalation)" "failed-impl"
+  assert_output_contains "21-second was moved to \`Status: resolved\`"
+  assert_output_contains "put back to \`ready-for-human\`"
+
+  # And it is offered. That is what the silence cost: `human_loop_main` re-reads
+  # `Status:` before every ticket, so a resolved neighbour was dropped from the
+  # work-list without a line on screen or in the journal.
+  [ -n "$(dossier_line 21-second)" ] ||
+    fail "21-second was never offered
+--- output ---
+$output"
+  assert_file_contains "$(journal_file)" "21-second"
+  assert_file_contains "$(journal_file)" "tracker-drift"
+}
+
+@test "a routed session that left the tracker alone moves nothing and is not announced" {
+  # The paired witness, and it is the one that matters: a guard that put every
+  # ticket back on every session would pass every accusing test in this family,
+  # and a report printed after every session reads exactly like a drain that
+  # measured one ([37] from the reading side).
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 21-second ready-for-human
+  assert_ticket_status 20-first ready-for-human
+  refute_output_contains "has been put back to"
+  refute_output_contains "Only \`Status:\` and \`Escalation:\` are watched here"
+  refute_output_contains "left this sink while this drain was running"
+}
+
+@test "the ticket a human is deciding on is named and left exactly as the session wrote it" {
+  # [55]'s decision, and this is where it is held rather than restated: a
+  # correction made during the conversation may be the human's own, and the next
+  # keystroke on that ticket is theirs. So this one is named and never put back —
+  # and what it is being left as has to be said, or `n` reports "left in the
+  # sink" over a ticket that reads `resolved`.
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* .*$/**Status:** resolved/' "$tracker/20-first.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 20-first resolved
+  assert_output_contains "This is the ticket in front of you"
+  assert_output_contains "20-first: left as it now stands, which is not in this sink"
+  refute_output_contains "20-first: left in the sink"
+}
+
+@test "a routed session cannot resolve a ticket waiting on the frontier either" {
+  # The other state a false green has to leave. `30-waiting` is not in this sink
+  # and never will be offered here, so nothing but this would ever mention it —
+  # and `resolved` on it is exactly the delivery no gate gave.
+  two_in_the_sink
+  mk_ticket 30-waiting Status ready-for-agent \
+    'Write-surface' '`src/three.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* .*$/**Status:** resolved/' "$tracker/30-waiting.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 30-waiting ready-for-agent
+  assert_output_contains "30-waiting was moved to \`Status: resolved\`"
+  assert_output_contains "put back to \`ready-for-agent\`"
+}
+
+@test "a state this drain cannot write faithfully is named instead of invented" {
+  # The line the restore stops at, and it is drawn on what can be written without
+  # inventing: `mark_resolved` drops `Failures:` and a claim carries an owner
+  # nothing here measured. `40-done` was `resolved` when this drain started, so
+  # putting it back means writing state nobody took a copy of.
+  #
+  # It is also the residue worth seeing: a session can drag a ticket *into* this
+  # sink, and the next drain will pin the escalation reason it wrote there.
+  two_in_the_sink
+  mk_ticket 40-done Status resolved 'Write-surface' '`src/four.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* .*$/**Status:** ready-for-human\n\n**Escalation:** sign-off/' \
+  "$tracker/40-done.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 40-done ready-for-human
+  assert_output_contains "40-done now reads \`Status: ready-for-human\` and read \`resolved\`"
+  assert_output_contains "is not a state this drain can write without inventing a field"
+}
+
+@test "a ticket a routed session deleted is named, and not skipped in silence" {
+  # The other end of the same window, and the one no restore can answer: a
+  # deleted ticket is not in any snapshot this drain kept. It is also the case
+  # that reaches `human_loop_main`, where the work-list was read before the
+  # session and every skip taken is a ticket that moved during this drain.
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+rm -f "$tracker/21-second.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "21-second is gone from the tracker"
+  assert_output_contains "21-second: not offered"
+  assert_output_contains "1 ticket(s) left this sink while this drain was running"
+  assert_file_contains "$(journal_file)" "tracker-drift"
+}
+
+@test "a ticket a routed session invented is named and left where it is" {
+  # Not deleted, for the reason the quarantine does not delete one: a creation
+  # does not undo, and a human decides. What it gets is a line naming it as a
+  # ticket nothing validated.
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+printf '# 99-invented\n\n**Status:** ready-for-agent\n\n**Write-surface:** `src/anywhere.txt`\n' \
+  >"$tracker/99-invented.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_file_exists "$TRACKER_DIR/99-invented.md"
+  assert_output_contains "99-invented is in the tracker and did not exist when this drain took 20-first"
+}
+
+@test "the tracker of a ticket this drain never pinned cannot be told from a session's writing" {
+  # Fail-closed for [55]'s reason, and the shape matters: with no baseline every
+  # ticket there is reads as one that appeared during the session, so a second
+  # entry point ([11]) that forgot the call would get a report made of nonsense
+  # rather than a missing guard.
+  two_in_the_sink
+
+  pack_run 'router_protect_tracker 20-first || printf "refused\n"'
+  assert_output_contains "refused"
+  assert_output_contains "nothing pinned what this tracker said"
+
+  # And with the pin taken, the same call answers about a tracker nothing moved:
+  # silent, and non-zero.
+  pack_run 'router_pin 20-first; router_protect_tracker 20-first || printf "nothing moved\n"'
+  assert_output_contains "nothing moved"
+  refute_output_contains "did not exist when this drain took"
+}
+
 # ── the locks ────────────────────────────────────────────────────────────────
 
 @test "a run grinding this working tree keeps a human out of the sink" {

@@ -4110,6 +4110,88 @@ mutation "56 the re-injection promises the gate without naming what it reads" "$
   's/ — a fresh session and the whole gate decide now, on this branch as it is committed, which is all this tree carries"/ — a fresh session and the whole gate decide now"/' \
   test/human-loop.bats "the same fix, committed"
 
+# ── [58] a routed session resolves the ticket next to the one being drained ──
+#
+# [55] gave both refusals an input the session cannot forge, and both refusals
+# guard a **transition**. `**Status:** resolved` written straight into a
+# neighbouring ticket file is not one: the ticket left the sink *and* the
+# frontier, `human_loop_main` skipped it in silence, and `grep -c` over the whole
+# of the drain's output returned zero.
+#
+# Nine entries, and two of them are the ones that keep the repair from being a
+# refusal of everything in the other direction — a guard that put *every* moved
+# ticket back would take the human's own ticket out from under them ([55]), and a
+# report printed after every session says nothing at all ([37]). Both are named
+# against the test that catches exactly that.
+
+mutation "58 the pin records no tracker, so nothing a session moved is put back" "$ROUTER" \
+  's/  ROUTER__PINNED_TRACKER="\$\(router__tracker_state\)" \|\| ROUTER__PINNED_TRACKER=\x27\x27\n/  ROUTER__PINNED_TRACKER=\x27\x27\n/' \
+  test/human-loop.bats "resolve the ticket this drain has not reached yet"
+
+mutation "58 the drain says nothing about what a session wrote in the tracker" "$HUMAN_LOOP" \
+  's/  if moved="\$\(router_protect_tracker "\$id"\)"; then\n    printf \x27%s\\n\x27 "\$moved" \| sed \x27s\/\^\/ralph: \/\x27\n  fi\n//' \
+  test/human-loop.bats "resolve the ticket this drain has not reached yet"
+
+# The restore itself, one entry per state it can write. Named and not put back is
+# where the measured defect ends for every ticket the drain never reaches, and
+# `ready-for-agent` is the other state a false green has to leave: a ticket that
+# was on the frontier and reads `resolved` left it with no gate in between.
+mutation "58 a ticket a session took out of this sink is named but never put back" "$ROUTER" \
+  's/    ready-for-human\)\n      tracker_mark_escalated "\$other" "\$was_esc" \|\| return 2\n      ;;\n//' \
+  test/human-loop.bats "resolve the ticket this drain has not reached yet"
+
+mutation "58 a ticket a session took off the frontier is named but never put back" "$ROUTER" \
+  's/    ready-for-agent\)\n      tracker_mark_ready "\$other" \|\| return 2\n      ;;\n//' \
+  test/human-loop.bats "resolve a ticket waiting on the frontier"
+
+# And the line the restore stops at. Writing a state this drain never took a copy
+# of — `mark_resolved` drops `Failures:`, a claim carries an owner — is a second
+# author for state nothing observed, which is worse than the silence it replaces.
+mutation "58 a state this drain never measured is written back anyway" "$ROUTER" \
+  's/    \*\) return 1 ;;\n  esac\n  return 0\n\}/    *) tracker_mark_resolved "\$other" || return 2 ;;\n  esac\n  return 0\n}/' \
+  test/human-loop.bats "cannot write faithfully is named"
+
+# The first of the two witnesses. The ticket a human is deciding on is [55]'s
+# case and stays theirs: a guard that put it back would undo a correction made
+# in the conversation this loop opened, and every accusing entry above would pass
+# against it.
+mutation "58 the ticket the human is deciding on is put back like any other" "$ROUTER" \
+  's/    if \[ "\$other" = "\$id" \]; then\n      # Deliberately not/    if false; then\n      # Deliberately not/' \
+  test/human-loop.bats "the ticket a human is deciding on"
+
+# The second. A report printed after every session is a drain announcing a
+# measurement it never made — [37]'s rule from the reading side.
+mutation "58 the tracker report is printed for a session that moved nothing" "$ROUTER" \
+  's/  \[ "\$said" = 0 \] \|\| return 1\n//' \
+  test/human-loop.bats "left the tracker alone"
+
+# The skip, which is where the silence was. Every skip taken there is a ticket
+# that was in the sink when the work-list was read and is not any more, so it is
+# a change made during this drain and not the two-terminal race [16] chose to
+# lose quietly.
+mutation "58 a ticket that left this sink during the drain is skipped in silence" "$HUMAN_LOOP" \
+  's/    if \[ "\$\(tracker_field "\$id" Status 2>\/dev\/null\)" != ready-for-human \]; then\n      human_loop_log[^\n]*\n      router_journal "\$id" tracker-drift skipped\n      changed=\$\(\(changed \+ 1\)\)\n      continue\n    fi\n/    [ "\$(tracker_field "\$id" Status 2>\/dev\/null)" = ready-for-human ] || continue\n/' \
+  test/human-loop.bats "deleted is named, and not skipped in silence"
+
+mutation "58 the tickets that left this sink without a decision are not counted" "$HUMAN_LOOP" \
+  's/  \[ "\$changed" = 0 \] \|\|\n    human_loop_log "\$changed ticket\(s\) left this sink while this drain was running, without a decision from it"\n//' \
+  test/human-loop.bats "deleted is named, and not skipped in silence"
+
+# And what `n` says about a ticket it is walking away from. The one ticket this
+# guard leaves as the session wrote it is also the one that can be left carrying
+# a state no transition wrote, so "left in the sink" is a sentence that has to be
+# earned rather than printed.
+mutation "58 next reports the ticket left in the sink whatever it now reads" "$HUMAN_LOOP" \
+  's/        if \[ "\$now" = ready-for-human \]; then/        if true; then/' \
+  test/human-loop.bats "the ticket a human is deciding on"
+
+# Fail-closed, for [55]'s reason: with no baseline every ticket in the tracker
+# reads as one that appeared during the session, so a second entry point that
+# forgot the call would get nonsense instead of a missing guard.
+mutation "58 a tracker nothing pinned is read as one this drain took" "$ROUTER" \
+  's/  if \[ "\$\{ROUTER__PINNED_ID:-\}" != "\$id" \]; then\n    printf \x27ralph: %s: nothing pinned[^\n]*\n      "\$id" >&2\n    return 1\n  fi\n//' \
+  test/human-loop.bats "never pinned cannot be told"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
