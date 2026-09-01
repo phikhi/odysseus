@@ -219,7 +219,7 @@ human_loop__stop_lost_lock() {
 # and leave the rest of the sink where it was. What it costs is a line saying so,
 # and the ticket stays exactly where it was: this function marks nothing.
 human_loop__session() {
-  local id="$1" desk rc=0
+  local id="$1" desk rc=0 left
   if [ -z "${MODEL:-}" ]; then
     human_loop_log "$id: MODEL is empty, so there is nothing to open a session with — set it in $RALPH_CONFIG"
     return 1
@@ -233,6 +233,15 @@ human_loop__session() {
 
   if [ "$rc" != 0 ]; then
     human_loop_log "$id: that session ended with status $rc — nothing was marked, the ticket is where it was"
+  fi
+
+  # What that conversation left in the operator's own tree ([56]). Here, right
+  # where the session returns, because this is the one moment at which "what did
+  # *that session* leave" has an answer: the baseline it is measured against was
+  # taken by `router_pin` when the drain took the ticket, and the menu is about
+  # to be re-offered, session included. Silent when the tree matches `HEAD`.
+  if left="$(router_tree_note "$id")"; then
+    printf '%s\n' "$left" | sed 's/^/ralph: /'
   fi
   router_journal "$id" drain-session "$desk"
   return 0
@@ -298,7 +307,13 @@ human_loop__drain_one() {
         ;;
       r | reinject | re-inject)
         if router_reinject "$id"; then
-          human_loop_log "$id: back on the frontier, retry budget cleared — a fresh session and the whole gate decide now"
+          # The sentence names the condition it depends on rather than promising
+          # around it ([56]): what a fresh session receives is a worktree made at
+          # the tip of this branch, so "the whole gate decides" is a statement
+          # about what is committed and about nothing else. It can be said at all
+          # because `router_may_reinject` has just refused if this tree carried
+          # anything `HEAD` does not.
+          human_loop_log "$id: back on the frontier, retry budget cleared — a fresh session and the whole gate decide now, on this branch as it is committed, which is all this tree carries"
           router_journal "$id" drained reinjected
           return 0
         fi

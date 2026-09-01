@@ -3791,8 +3791,13 @@ mutation "16 a re-injected ticket keeps the retries it already burned" "$ROUTER"
 # no surface, no criteria — and an empty write-surface puts every path an
 # iteration touches out of scope: one session spent, and a request that comes
 # back classified as a scoping conflict.
+#
+# The anchor carries the sentence under it, and it has to: `router_dossier` reads
+# the same field into the same variable and asks the same question of it, three
+# functions above, so an edit aimed at the test alone lands there instead ([56]
+# turned the guard into an `if` block and made the two lines identical).
 mutation "16 a ticket with no write-surface goes back on the frontier" "$ROUTER" \
-  's/  \[ -z "\$surface" \] \|\| return 0/  return 0/' \
+  's/  if \[ -z "\$surface" \]; then\n    printf \x27ralph: %s declares no/  if false; then\n    printf \x27ralph: %s declares no/' \
   test/human-loop.bats "no write-surface is not put back"
 
 # The anti-false-green criterion of [16], in the one form a check can hold. A
@@ -3996,7 +4001,7 @@ mutation "55 the sign-off refusal reads the ticket instead of the pin" "$ROUTER"
   test/human-loop.bats "sign-off the drain refuses"
 
 mutation "55 the re-injection refusal reads the ticket instead of the pin" "$ROUTER" \
-  's/  surface="\$\(router__field "\$id" \x27Write-surface\x27\)" \|\| surface=\x27\x27\n  \[ -z "\$surface" \]/  surface="\$(tracker_field "\$id" \x27Write-surface\x27 2>\/dev\/null)" || surface=\x27\x27\n  [ -z "\$surface" ]/' \
+  's/  surface="\$\(router__field "\$id" \x27Write-surface\x27\)" \|\| surface=\x27\x27\n  if \[ -z "\$surface" \]; then\n    printf \x27ralph: %s declares no/  surface="\$(tracker_field "\$id" \x27Write-surface\x27 2>\/dev\/null)" || surface=\x27\x27\n  if [ -z "\$surface" ]; then\n    printf \x27ralph: %s declares no/' \
   test/human-loop.bats "write-surface the re-injection wants"
 
 # The pin, one decision coarse instead of one ticket coarse: taken on every pass
@@ -4050,6 +4055,60 @@ mutation "55 the pin records no escalation, so no sign-off ever passes" "$ROUTER
 mutation "55 the pin records no write-surface, so no re-injection ever passes" "$ROUTER" \
   's/  ROUTER__PINNED_SURFACE="\$\(tracker_field "\$id" \x27Write-surface\x27 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_SURFACE=\x27\x27\n/  ROUTER__PINNED_SURFACE=\x27\x27\n/' \
   test/human-loop.bats "write-surface the drain found"
+
+# ── [56] a fix nobody committed is a fix no gate will read ───────────────────
+#
+# The drain printed "a fresh session and the whole gate decide now" over a fix
+# sitting uncommitted in the operator's own tree, which since [13] is a place no
+# AFK iteration ever looks: the worktree is made at the tip of the branch. Five
+# entries — the two halves of what the drain *says*, the refusal, the witness
+# that tells the session's doing from the human's, and the exemption that keeps
+# the refusal from firing on the drain's own writing.
+#
+# The last one is why the paired witness ("the same fix, committed") has its own
+# entry naming it: a witness that counted this drain's journal and tracker writes
+# would refuse every re-injection there is, and every accusing mutation above
+# would pass against it.
+
+mutation "56 the drain says nothing about what a session left in the tree" "$HUMAN_LOOP" \
+  's/  if left="\$\(router_tree_note "\$id"\)"; then\n    printf \x27%s\\n\x27 "\$left" \| sed \x27s\/\^\/ralph: \/\x27\n  fi\n//' \
+  test/human-loop.bats "left in the working tree is named"
+
+# Said after every session instead of only when there is something to say —
+# [37]'s rule from the reading side, and the shape that makes the sentence above
+# worthless: a drain that always reports a tree it never measured.
+mutation "56 the tree note is printed for a session that left nothing" "$ROUTER" \
+  's/  now="\$\(router__tree_dirt\)" \|\| now=\x27\x27\n  \[ -n "\$now" \] \|\| return 1\n/  now="$(router__tree_dirt)" || now=\x27\x27\n/' \
+  test/human-loop.bats "left the tree as it found it"
+
+# The refusal itself. Without it `r` clears the retry budget and puts the ticket
+# on the frontier over a fix the gate cannot see, which is the measured defect:
+# three iterations red, budget gone, and the ticket back here as `failed-impl`.
+mutation "56 a fix only in the working tree still goes back on the frontier" "$ROUTER" \
+  's/  dirt="\$\(router__tree_dirt\)" \|\| dirt=\x27\x27\n  if \[ -n "\$dirt" \]; then\n/  dirt=\x27\x27\n  if false; then\n/' \
+  test/human-loop.bats "only in the working tree does not go back"
+
+# The witness, taken when the ticket is taken. Without it every uncommitted path
+# reads as the session's doing, and a human is told a conversation wrote the file
+# they had been editing before they started the drain.
+mutation "56 the pin records no working tree, so every path reads as the session's" "$ROUTER" \
+  's/  ROUTER__PINNED_TREE="\$\(router__tree_dirt\)" \|\| ROUTER__PINNED_TREE=\x27\x27\n/  ROUTER__PINNED_TREE=\x27\x27\n/' \
+  test/human-loop.bats "apart from what was already there"
+
+# And the exemption. The drain writes `run.log` and the ticket it is about to
+# mark, both under the feature's own directory; counting them makes the drain
+# refuse itself. Named against the paired witness, because this is the mutation
+# that turns the repair into a refusal of everything.
+mutation "56 the tree witness counts the drain's own writing" "$ROUTER" \
+  's/    if gate_is_bookkeeping "\$path"; then continue; fi\n//' \
+  test/human-loop.bats "the same fix, committed"
+
+# The sentence, which is the other half of what this ticket owed: it named a
+# guarantee it did not have. Left unnamed, a human reads "the whole gate decides
+# now" and has no reason to look at what is committed.
+mutation "56 the re-injection promises the gate without naming what it reads" "$HUMAN_LOOP" \
+  's/ — a fresh session and the whole gate decide now, on this branch as it is committed, which is all this tree carries"/ — a fresh session and the whole gate decide now"/' \
+  test/human-loop.bats "the same fix, committed"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

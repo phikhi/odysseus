@@ -62,8 +62,11 @@
 # Public API
 #   router_reasons                 the closed set of words `failures.sh` writes
 #   router_is_reason WORD          membership, literally and not as a pattern
-#   router_pin ID                  the ticket's deciding fields, as they stand
-#                                  now — taken before anything opens a session
+#   router_pin ID                  the ticket's deciding fields, and the state of
+#                                  the working tree, as they stand now — taken
+#                                  before anything opens a session
+#   router_tree_note ID            what this tree carries that no gate will read,
+#                                  after a routed session
 #   router_desk ID                 which question this ticket puts
 #   router_treatment DESK          which skill a human reaches for
 #   router_question DESK           the question itself, one line
@@ -156,6 +159,7 @@ router_is_reason() {
 ROUTER__PINNED_ID=''
 ROUTER__PINNED_ESCALATION=''
 ROUTER__PINNED_SURFACE=''
+ROUTER__PINNED_TREE=''
 
 # Pin one ticket. Called once per ticket by whatever drains the sink, before the
 # dossier and before any session — before the dossier included, so that what a
@@ -172,6 +176,20 @@ ROUTER__PINNED_SURFACE=''
 # The id is set last so that a read that failed halfway leaves the ticket
 # unpinned — which every transition refuses — rather than pinned to a value
 # nothing vouches for.
+#
+# The working tree is witnessed at the same call, and that is the whole of what
+# [56] shares with this one: not the object — a pin of two ticket fields cannot
+# say anything about a tree — but the **moment and the place**. One call, once
+# per ticket, before the dossier and before any session, so that everything this
+# drain later says about "what happened while it was on this ticket" is measured
+# against one baseline rather than against three.
+#
+# Unlike the two fields above, this witness is **not** what a refusal decides on.
+# It is a *baseline*: the refusal in `router_may_reinject` asks what the tree
+# carries **now**, so that a human who commits in another terminal and presses
+# `r` again is let through. The two behave differently on purpose, and the
+# difference is which question each one answers — a field is what a session may
+# rewrite to fool a control, a tree is what a human is expected to change.
 router_pin() {
   local id="${1:?router: a ticket id}"
   ROUTER__PINNED_ID=''
@@ -179,6 +197,7 @@ router_pin() {
     ROUTER__PINNED_ESCALATION=''
   ROUTER__PINNED_SURFACE="$(tracker_field "$id" 'Write-surface' 2>/dev/null)" ||
     ROUTER__PINNED_SURFACE=''
+  ROUTER__PINNED_TREE="$(router__tree_dirt)" || ROUTER__PINNED_TREE=''
   ROUTER__PINNED_ID="$id"
 }
 
@@ -242,6 +261,132 @@ router__say_drift() {
   [ "$pinned" != "$now" ] || return 0
   printf 'ralph: and `%s:` reads `%s` on that ticket now, which is not what it said when this drain took it (`%s`). Something wrote it in between, and the routed session is the one thing on this path that can — nothing judges it, which is what this refusal stands in for. The edit is still there: leave the drain and run it again to decide on the ticket as it now stands.\n' \
     "$name" "${now:-nothing}" "${pinned:-nothing}"
+}
+
+# ── what this working tree carries that no gate will read ────────────────────
+#
+# The other half of "the ticket as this drain took it", and the one that is not
+# about the ticket at all ([56]).
+#
+# A routed session writes in the **main working tree**, and nothing here commits.
+# Since [13] an AFK iteration runs in a worktree made at the tip of the branch
+# (`concurrency_worktree_add`: `git worktree add --detach "$dir"
+# "$(git rev-parse HEAD)"`), so what is not committed is not there. The gate does
+# not judge the fix — it judges its absence, and the ticket comes back to this
+# sink having burned its whole retry budget on a tree nobody wrote. Measured on
+# the 31/08 pass rather than argued: three iterations `tests=red`, `Failures: 3`,
+# `Escalation: failed-impl`, and the fix still sitting there as `?? src/`; the
+# paired witness — the same fix, committed by hand — is green and `resolved` on
+# the first iteration. The only difference between the two is a `git commit` that
+# nothing in this pack asked for, mentioned, or checked.
+
+# Every path in this working tree that `HEAD` does not carry, one per line.
+#
+# Two producers, because git answers two questions here and neither covers the
+# other: `diff --name-only HEAD` for tracked paths — staged or not, and
+# deletions included, since a file deleted and not committed is present in a
+# worktree made at the tip exactly as an edited one is absent — and `ls-files
+# --others` for what is not tracked at all, which is the shape the measured
+# defect had. `core.quotePath=false` on both, like every producer of a path list
+# in this pack ([39]); the residue git quotes anyway is *named* here rather than
+# judged, which is all this list is for.
+#
+# **Two zones are deliberately out of it, and each one has to say who guards it.**
+#
+#   the feature's own directory     this drain's own writing: the journal, the
+#                                   run lock, and the ticket a transition is
+#                                   about to mark. Counting it would make the
+#                                   drain refuse itself on its second ticket.
+#                                   `gate_is_bookkeeping` and not a second copy
+#                                   of the rule — it is the definition the
+#                                   scope-guard and the rollback already read.
+#                                   What a *routed session* does in there is
+#                                   [55]'s pin, and the window that leaves is
+#                                   [58]'s.
+#   the ignored zone                `--exclude-standard`. It is the zone nothing
+#                                   in this pack judges and no rollback undoes
+#                                   ([24], [30]); a build cache is not a fix
+#                                   somebody forgot to commit, and a drain that
+#                                   refused on one would be refusing on every
+#                                   project that builds.
+#
+# Non-zero when git could not answer, which every caller reads as an empty list —
+# and that is deliberate rather than the "a refused measurement is not an empty
+# delivery" case [34] warns about. The only way both producers fail is a project
+# that is not a git repository at all, where there is no `HEAD` to be short of
+# and no AFK iteration either: `concurrency_worktree_add` needs the same git this
+# just failed to run. Inside a repository they answer.
+router__tree_dirt() {
+  local path
+  {
+    if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+      git -c core.quotePath=false diff --name-only HEAD -- 2>/dev/null
+    fi
+    git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null
+  } | sort -u | while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if gate_is_bookkeeping "$path"; then continue; fi
+    printf '%s\n' "$path"
+  done
+}
+
+# The two halves of that list: what was not there when this drain took the
+# ticket, and what was. One partition and one membership test, rather than two
+# functions that would drift — `-qxF` because a path is a file name and a `.` in
+# one is not a class ([37] on the reading side).
+router__tree_split() {
+  local mode="$1" pinned="$2" path known
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    known=0
+    if printf '%s\n' "$pinned" | grep -qxF -- "$path"; then known=1; fi
+    case "$mode:$known" in
+      new:0 | known:1) printf '%s\n' "$path" ;;
+    esac
+  done
+}
+
+router__count() {
+  awk 'length { n++ } END { print n + 0 }'
+}
+
+# What this tree is carrying that no gate will read, said after a routed session
+# and nowhere else.
+#
+# Two lists and not one, because a human has two different things to do with
+# them: what appeared while this drain was on this ticket is what the
+# conversation just produced, and the rest was already in the tree when the drain
+# took it. Non-zero and **silent** when the tree matches `HEAD` — a line saying
+# nothing was left, printed after every session, is the noise [37] ruled out on
+# the other side: a control must not announce having acted on what it left
+# exactly as it was.
+#
+# The attribution is by path and not by content, which is a limit worth writing
+# down: a path that was already modified when the drain took the ticket and that
+# the session modified *further* is reported as already-there. What decides is
+# not this line but the refusal below, and the refusal fires on it either way.
+router_tree_note() {
+  local id="${1:?router: a ticket id}" now new known n
+  now="$(router__tree_dirt)" || now=''
+  [ -n "$now" ] || return 1
+
+  new="$(printf '%s\n' "$now" | router__tree_split new "$ROUTER__PINNED_TREE")"
+  known="$(printf '%s\n' "$now" | router__tree_split known "$ROUTER__PINNED_TREE")"
+
+  if [ -n "$new" ]; then
+    n="$(printf '%s\n' "$new" | router__count)"
+    printf '%s: that session left %s path(s) in this working tree that `HEAD` does not carry:\n' \
+      "$id" "$n"
+    printf '%s\n' "$new" | sed 's/^/    /'
+  fi
+  if [ -n "$known" ]; then
+    n="$(printf '%s\n' "$known" | router__count)"
+    printf '%s: %s path(s) were already uncommitted when this drain took this ticket:\n' \
+      "$id" "$n"
+    printf '%s\n' "$known" | sed 's/^/    /'
+  fi
+  printf 'Nothing here commits them, and an AFK iteration is made at the tip of this branch: what is not committed is not what a gate reads — its absence is. Re-injection refuses while any of it is there.\n'
+  return 0
 }
 
 # ── the desk ─────────────────────────────────────────────────────────────────
@@ -683,6 +828,12 @@ $(router_language_rule)
 - Whatever code comes out of this conversation goes back through the gate. It is
   re-injected on the frontier and ground by a fresh session; it is never marked
   resolved from here.
+- What goes back through the gate is what is **committed on this branch**, and
+  nothing else. An autonomous iteration runs in a worktree made at the tip, so
+  an uncommitted change is not judged — its absence is. Nothing in this pack
+  commits for you, and the drain refuses to re-inject a ticket while this tree
+  carries anything the branch does not. Say what you left uncommitted; the human
+  decides what to do with it.
 PROMPT
 }
 
@@ -703,15 +854,53 @@ PROMPT
 # precisely because nothing else looks: `retro-*` and `capability-*` are requests
 # and a routed session appending one line turns one into a ticket the frontier
 # accepts.
+#
+# **And the second refusal is about the tree rather than the ticket** ([56]).
+# "A fresh session and the whole gate decide now" is only true of what is
+# committed, so a tree carrying anything `HEAD` does not is a tree where that
+# sentence is a lie — the run judges the fix's absence, burns the retry budget on
+# it, and puts the ticket back here under a word that reads as a gate that turned
+# the fix down.
+#
+# **Refusing rather than warning, and refusing on the whole of it rather than on
+# what appeared since the pin.** The drain cannot tell an unrelated edit from the
+# fix, and *not being able to tell* is the argument: a human who fixes the code
+# and then runs the drain — which is a normal order, arguably the common one —
+# leaves a path that looks exactly like work in progress. A refusal keyed on
+# "what appeared while the drain was on this ticket" would let precisely that
+# case through, silently, which is the case this ticket exists for.
+#
+# The price, and it is the operator's own tree so it has to be said out loud: a
+# human with unrelated work in progress cannot re-inject until they commit it or
+# put it aside. What makes that bearable is that it is re-measured on every
+# press — commit in another terminal, press `r` again, and it goes through — and
+# that [33] already overwrites an uncommitted edit on any path an iteration
+# delivers, so a dirty tree at the moment of handing work to a run is not a state
+# this pack was ever able to protect.
+#
+# What it does **not** refuse: a sign-off. `s` resolves a ticket whose work no
+# gate ever read, which is the whole of what a sign-off is ([16]) — a human
+# vouches for it, and asking them to commit first would be this refusal borrowed
+# for a promise nobody made.
 router_may_reinject() {
-  local id="${1:?router: a ticket id}" surface
+  local id="${1:?router: a ticket id}" surface dirt
   router__is_pinned "$id" || return 1
   surface="$(router__field "$id" 'Write-surface')" || surface=''
-  [ -z "$surface" ] || return 0
-  printf 'ralph: %s declares no `Write-surface:`, so it cannot go back on the frontier: the scope-guard would put every path a session touches out of scope, the iteration would be classified as a scoping conflict without consuming a retry, and the ticket would come straight back here as `decision`. Decide what it asks for and write the real ticket — with a surface and acceptance criteria — or close it.\n' \
-    "$id" >&2
-  router__say_drift "$id" 'Write-surface' >&2
-  return 1
+  if [ -z "$surface" ]; then
+    printf 'ralph: %s declares no `Write-surface:`, so it cannot go back on the frontier: the scope-guard would put every path a session touches out of scope, the iteration would be classified as a scoping conflict without consuming a retry, and the ticket would come straight back here as `decision`. Decide what it asks for and write the real ticket — with a surface and acceptance criteria — or close it.\n' \
+      "$id" >&2
+    router__say_drift "$id" 'Write-surface' >&2
+    return 1
+  fi
+  dirt="$(router__tree_dirt)" || dirt=''
+  if [ -n "$dirt" ]; then
+    printf 'ralph: %s cannot go back on the frontier while this working tree carries %s path(s) `HEAD` does not:\n' \
+      "$id" "$(printf '%s\n' "$dirt" | router__count)" >&2
+    printf '%s\n' "$dirt" | sed 's/^/    /' >&2
+    printf 'ralph: an AFK iteration runs in a worktree made at the tip of this branch, so an uncommitted fix is never judged — its absence is, and the ticket comes back here having spent its whole retry budget on a tree nobody wrote. Commit what belongs to this ticket, or put it aside, and press `r` again: this is asked afresh every time. Not counted: this feature'"'"'s own directory, which is this drain writing, and whatever the project ignores, which is the zone nothing in this pack judges either.\n' >&2
+    return 1
+  fi
+  return 0
 }
 
 # Back to the frontier, and the retry budget cleared — the decision [26] left

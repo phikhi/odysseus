@@ -651,6 +651,127 @@ ANSWERS
   assert_ticket_status 20-approve resolved
 }
 
+# ── the tree the drain hands back to a run ───────────────────────────────────
+#
+# The re-injection printed "a fresh session and the whole gate decide now", and
+# the routed session's prompt promised the same thing. A routed session writes in
+# the main working tree, nothing here commits, and since [13] an AFK iteration
+# runs in a worktree made at the tip of the branch — so what is not committed is
+# not there and the gate judges its absence ([56]).
+#
+# The fixture writes its witness **outside** the ticket's declared write-surface
+# on purpose: `session_writes` hands the AFK delivery session that very surface,
+# so a witness inside it would be manufactured by the AFK session itself and the
+# scenario would come out the same either way.
+routed_session_writes_a_fix() {
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'HUMAN-FIX\n' >src/human-note.txt
+exit 0
+SCRIPT
+}
+
+@test "what a routed session left in the working tree is named, apart from what was already there" {
+  use_tickets 09-escalated
+  # Work in progress that was in the tree before the drain started. Without the
+  # witness taken when the ticket is taken, this is indistinguishable from what
+  # the conversation produced, and the drain would tell a human their session
+  # wrote a file they had been editing all morning.
+  mkdir -p "$PROJECT_DIR/src"
+  printf 'mine\n' >"$PROJECT_DIR/src/wip.txt"
+  routed_session_writes_a_fix
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "that session left 1 path(s) in this working tree"
+  assert_output_contains "src/human-note.txt"
+  assert_output_contains "1 path(s) were already uncommitted when this drain took this ticket"
+  assert_output_contains "src/wip.txt"
+  assert_output_contains "what is not committed is not what a gate reads"
+}
+
+@test "a routed session that left the tree as it found it is not announced to have left something" {
+  # The paired witness. Same drain, same answers, one line of the routed session
+  # different — without it a note printed after every session reads exactly like
+  # a drain that measured one, and [37]'s rule cuts here too: a control must not
+  # announce having acted on what it left exactly as it was.
+  use_tickets 09-escalated
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  refute_output_contains "Nothing here commits them"
+  refute_output_contains "in this working tree that"
+}
+
+@test "a ticket whose fix is only in the working tree does not go back on the frontier" {
+  # The measured defect, from the end that can refuse it: `r` promised a fresh
+  # session and the whole gate, on a fix no worktree made at the tip will ever
+  # carry. Three iterations red, the retry budget gone, and the ticket back here
+  # under `failed-impl` — which reads as a gate that turned the fix down.
+  use_tickets 09-escalated
+  routed_session_writes_a_fix
+
+  drain <<ANSWERS
+o
+r
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 09-escalated ready-for-human
+  assert_output_contains "cannot go back on the frontier while this working tree carries 1 path(s)"
+  assert_output_contains "src/human-note.txt"
+  assert_output_contains "having spent its whole retry budget on a tree nobody wrote"
+  # Refused before anything moved, and the counter says so: `router_reinject`
+  # clears the retry budget before it marks, so a refusal that fell after the
+  # clear would leave a ticket in this sink with its budget already spent.
+  assert_equal "$(ticket_field 09-escalated Failures)" "2"
+}
+
+@test "the same fix, committed, goes back on the frontier" {
+  # The paired witness, and the one that matters most here: a refusal that
+  # refused everything would pass every accusing mutation above it. Same ticket,
+  # same routed session, same file — the only difference is the `git commit`
+  # nothing in this pack used to ask for.
+  #
+  # It is also what keeps the two exempted zones honest. The first drain leaves
+  # `run.log` untracked under the feature's own directory; a witness that counted
+  # this drain's own writing would refuse the second one and never say why.
+  use_tickets 09-escalated
+  routed_session_writes_a_fix
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  git -C "$PROJECT_DIR" add src/human-note.txt
+  git -C "$PROJECT_DIR" commit -q -m 'the human commits the fix'
+
+  drain <<ANSWERS
+r
+ANSWERS
+  assert_success
+
+  assert_ticket_status 09-escalated ready-for-agent
+  assert_output_contains "on this branch as it is committed"
+  refute_output_contains "cannot go back on the frontier"
+}
+
 # ── the locks ────────────────────────────────────────────────────────────────
 
 @test "a run grinding this working tree keeps a human out of the sink" {

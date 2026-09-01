@@ -70,6 +70,34 @@ la boucle `while :;` de `human_loop__drain_one`, pas à la frontière de ticket 
 le menu est ré-offert après une session, donc c'est le seul endroit qui voit *le
 retour* d'une session.
 
+## Ce que [56] laisse à ce ticket (écrit le 01/09/2026, à sa livraison)
+
+- **La fenêtre est posée, et c'est un troisième objet et pas l'instantané
+  partagé.** `router_pin ID` prend maintenant, au même appel que les deux champs
+  de [55], un **témoin de l'arbre de travail** (`ROUTER__PINNED_TREE`), et
+  `router_tree_note ID` le relit au retour de chaque session routée, dans
+  `human_loop__session`. Ce que les trois tickets partagent est donc bien le
+  **moment et l'endroit** — un appel à `router_pin` par ticket, une lecture au
+  retour de session — et **jamais l'objet** : un pin de champs ne dit rien d'un
+  arbre, et un témoin d'arbre ne dit rien d'un champ.
+- **Et ce témoin ne t'aidera pas, ce qui est le point à ne pas se tromper.**
+  `router__tree_dirt` **exclut le répertoire de la feature** par
+  `gate_is_bookkeeping`, et il le fait parce qu'il le doit : le drain y écrit son
+  journal, son verrou de run et le ticket que la transition va marquer, donc un
+  témoin qui compterait cette zone ferait refuser le drain sur son propre
+  deuxième ticket (mutation `56 the tree witness counts the drain's own
+  writing`, vérifiée à la main : huit tests rouges). Un `Status: resolved` écrit
+  sur `21-second.md` tombe exactement dans cette zone : il est dans l'écart entre
+  l'arbre et `HEAD`, et il est **retiré** avant que quoi que ce soit le regarde.
+  Ne pas lire la ligne « le drain sait ce que la session routée a laissé dans
+  l'arbre » comme couvrant le tracker — elle ne le couvre pas, par construction.
+- **Ce que ça te laisse comme choix** : soit un second lecteur au même appel qui
+  regarde *uniquement* `issues/` (l'inverse exact du filtre ci-dessus, et alors
+  il faut décider quoi faire du journal et du verrou que le drain y écrit
+  lui-même), soit le mécanisme de [21] que ton premier critère met déjà en
+  balance. Le premier a l'avantage de coûter une seule fenêtre de plus, prise là
+  où les deux autres sont déjà.
+
 ## Pièges connus, pour celui qui livre
 
 - **`failures_protect_tracker` ne se rappelle pas tel quel.** Il restaure depuis
