@@ -122,3 +122,23 @@
   **base de comparaison**, pas une valeur sur laquelle un refus décide : le refus
   lit toujours l'arbre courant, pour qu'un humain qui commite dans un autre
   terminal et retape `r` passe. Ne pas le lire comme un second pin.
+
+- **Contrainte posée par [58], livré le 01/09/2026 : un troisième objet voyage
+  dans `router_pin`, et celui-là a besoin d'un appelant qui le déclenche au bon
+  moment.** `ROUTER__PINNED_TRACKER` tient le `Status:` et l'`Escalation:` de
+  *chaque* ticket au moment où le drain a pris le sien ;
+  `router_protect_tracker ID` le relit et remet en place tout ticket que la
+  session a sorti du puits ou de la frontière. Trois choses à savoir si ce ticket
+  ouvre un second point d'entrée :
+  - **le pin reste la condition d'entrée**, ici aussi et de la même façon
+    fail-closed : `router_protect_tracker` sur un ticket que rien n'a épinglé
+    **refuse bruyamment** — avec un pin vide, chaque ticket du tracker se lirait
+    comme apparu pendant la session. Donc `router_pin` avant, toujours.
+  - **il se lit au retour d'une session, et nulle part ailleurs.** Un chemin de
+    réinjection qui n'ouvre aucune session n'a rien à protéger : personne n'a
+    écrit dans `issues/` entre le pin et la transition. L'appeler quand même
+    coûte une double lecture du tracker et ne peut rien trouver.
+  - **il écrit dans `issues/`**, donc il n'est légitime que sous le verrou de run
+    — ce que `human_loop_main` tient. Un appel depuis une itération ou depuis le
+    pilote se ferait à côté des deux gardes de [21]/[42], qui ne sauraient pas le
+    distinguer d'une session : mesurer avant, comme pour le témoin d'arbre.

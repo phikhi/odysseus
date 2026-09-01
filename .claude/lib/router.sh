@@ -160,6 +160,7 @@ ROUTER__PINNED_ID=''
 ROUTER__PINNED_ESCALATION=''
 ROUTER__PINNED_SURFACE=''
 ROUTER__PINNED_TREE=''
+ROUTER__PINNED_TRACKER=''
 
 # Pin one ticket. Called once per ticket by whatever drains the sink, before the
 # dossier and before any session — before the dossier included, so that what a
@@ -198,6 +199,7 @@ router_pin() {
   ROUTER__PINNED_SURFACE="$(tracker_field "$id" 'Write-surface' 2>/dev/null)" ||
     ROUTER__PINNED_SURFACE=''
   ROUTER__PINNED_TREE="$(router__tree_dirt)" || ROUTER__PINNED_TREE=''
+  ROUTER__PINNED_TRACKER="$(router__tracker_state)" || ROUTER__PINNED_TRACKER=''
   ROUTER__PINNED_ID="$id"
 }
 
@@ -386,6 +388,223 @@ router_tree_note() {
     printf '%s\n' "$known" | sed 's/^/    /'
   fi
   printf 'Nothing here commits them, and an AFK iteration is made at the tip of this branch: what is not committed is not what a gate reads — its absence is. Re-injection refuses while any of it is there.\n'
+  return 0
+}
+
+# ── what the tracker said when this drain took this ticket ───────────────────
+#
+# The third object taken at that one call, and the one that is about neither the
+# ticket this drain holds nor the working tree ([58]).
+#
+# [55] gave the two refusals an input a routed session cannot forge. But a
+# refusal guards a **transition**, and writing `**Status:** resolved` into a file
+# under `issues/` is not one: the session takes the state the transition would
+# have written, and the drain is not in the loop at all. Measured on the 31/08
+# pass and again on the code [56] delivered — a session routed on `20-first`
+# runs one `perl -pi -e` over `21-second.md`, a human types `o` then `n`, and
+# `21-second` leaves this sink **and** the frontier, with `grep -c '21-second'`
+# over the whole of the drain's output returning 0. The AFK run started behind it
+# exits 5, "nothing to grind": in this tracker a ticket nobody judged and a
+# ticket that was delivered are the same word.
+#
+# **[56]'s witness does not cover this and cannot**: `router__tree_dirt` drops
+# the feature's own directory through `gate_is_bookkeeping`, because a witness
+# that counted it would make the drain refuse itself on its second ticket. A
+# ticket file is in exactly that dropped zone. So this is the second reader at
+# the same call, looking at nothing but what the tracker *says*, which is the
+# other side of the same filter.
+#
+# **What it does about it: it puts the ticket back, and that is a decision
+# against the other one available.** [55] refused to restore, and its argument
+# holds where it was made — on the ticket the drain is parked on, which a human
+# is entitled to correct during the very conversation this loop opened, and
+# undoing that is the deletion [21]'s quarantine exists in order not to make.
+# The argument does not carry to a **neighbour**: nobody asked the human about
+# that ticket, nobody is about to, and the one thing this drain guarantees is
+# that a ticket leaves this sink through a transition of its own or not at all.
+# So the line is drawn where the human's attention is:
+#
+#   the ticket in front of them   named, never restored. It is [55]'s case and
+#                                 its decision stands: the correction may be
+#                                 theirs, and the next keystroke is theirs too.
+#   every other ticket that was   put back to `ready-for-human` with the
+#   in this sink                  `Escalation:` it had, and named.
+#   anything else that moved      named. A ticket that was on the frontier, one
+#                                 that appeared, one that is gone: this drain
+#                                 restores what it is the owner of, and says the
+#                                 rest out loud rather than guarding it badly.
+#
+# The price, written because it is a human's own work being undone: a correction
+# a human asks the routed session to make to a *neighbour's* `Status:` or
+# `Escalation:` is reverted — and named, so it is a keystroke to redo through the
+# menu that records it, not a loss. And a ticket that was in this sink without an
+# `Escalation:` comes back with an empty one, `tracker_mark_escalated` being the
+# one public verb that writes this state.
+#
+# **And two fields are all of it.** `Failures:`, `Blocked by:` and the body of
+# every ticket in this tracker stay written by a session nothing judges — there
+# is no worktree, no scope-guard, no gate and no rollback on this path. That is
+# the widest row of `docs/frontiere-de-confiance.md` and this closes one field of
+# it, not the row.
+
+# Every ticket's `Status:` and `Escalation:`, one line each.
+#
+# `status<TAB>escalation<TAB>id`, with the id last and never first, for the
+# reason `router_sink` puts the id after the field it sorts on ([37]): an id is a
+# file name a session chooses, so everything past the second tab is the id — tabs
+# included — and only the two fields the pack writes itself are read by position.
+router__tracker_state() {
+  local id status escalation tab
+  tab="$(printf '\t')"
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    status="$(tracker_field "$id" Status 2>/dev/null)" || status=''
+    escalation="$(tracker_field "$id" Escalation 2>/dev/null)" || escalation=''
+    printf '%s%s%s%s%s\n' "$status" "$tab" "$escalation" "$tab" "$id"
+  done <<IDS
+$(tracker_ids 2>/dev/null)
+IDS
+}
+
+# Put one ticket back to the state this drain took it in, and only the two states
+# it can write without inventing a field.
+#
+# `tracker_mark_escalated` and `tracker_mark_ready` write exactly what defines
+# `ready-for-human` and `ready-for-agent` — a status, the escalation reason this
+# call supplies or drops, and a `Claimed:` neither state carries. The other
+# states of this tracker are named instead of restored, and that is a decision
+# rather than an omission: `mark_resolved` and `mark_wontfix` also drop
+# `Failures:`, and a claim carries an owner this drain never took a copy of, so
+# putting one of those back means writing fields nobody measured. A restore that
+# invents is worse than the silence it replaces — it is a second author for state
+# nothing observed.
+#
+# The two it does cover are the two that matter, because they are the two a false
+# green has to leave: a ticket is on the frontier or in this sink, and every
+# route to `resolved` that no gate gave starts at one of them.
+#
+#   0  put back
+#   1  not a state this drain can write faithfully
+#   2  it is, and writing it failed
+router__put_back() {
+  local other="${1:?router: a ticket id}" was_status="${2:-}" was_esc="${3:-}"
+  case "$was_status" in
+    ready-for-human)
+      tracker_mark_escalated "$other" "$was_esc" || return 2
+      ;;
+    ready-for-agent)
+      tracker_mark_ready "$other" || return 2
+      ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# What the tracker says now that this drain did not write — put back where this
+# drain owns it, named where it does not. Called at the one moment a routed
+# session has just been able to write: where it returns, against the baseline
+# `router_pin` took when the ticket was taken.
+#
+# Prints what a human has to read and returns non-zero, **silently**, when
+# nothing moved: a report printed after every session is [37]'s rule broken from
+# the reading side, a control announcing having acted on what it left exactly as
+# it was.
+#
+# It writes to the tracker from inside a command substitution, and that is sound
+# where [55]'s note says a pin could not be: a subshell cannot hand its caller a
+# shell variable, and it can perfectly well hand it a file. What it must not do
+# is refresh the pin — the baseline stays the state this drain took, so a second
+# session in the same ticket says the same thing about what is still true.
+#
+# Refuses loudly on a ticket nothing pinned, for [55]'s reason and not for
+# tidiness: with an empty pin every ticket in the tracker reads as one that
+# appeared during the session, and a second entry point ([11]) that forgot the
+# call would get a report made of nonsense instead of a missing guard.
+router_protect_tracker() {
+  local id="${1:?router: a ticket id}" tab line other rest was_status was_esc
+  local now_ids now_status now_esc said=1 rc=0
+  if [ "${ROUTER__PINNED_ID:-}" != "$id" ]; then
+    printf 'ralph: %s: nothing pinned what this tracker said before a session could be opened on it, so nothing here can tell what that session wrote in `issues/` from what was already there. `router_pin` is taken once per ticket, before the dossier and before any session.\n' \
+      "$id" >&2
+    return 1
+  fi
+  tab="$(printf '\t')"
+  now_ids="$(tracker_ids 2>/dev/null)" || now_ids=''
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    other="$(printf '%s' "$line" | cut -f3-)"
+    [ -n "$other" ] || continue
+    was_status="${line%%$tab*}"
+    rest="${line#*$tab}"
+    was_esc="${rest%%$tab*}"
+
+    if ! printf '%s\n' "$now_ids" | grep -qxF -- "$other"; then
+      printf '%s is gone from the tracker, and it was there when this drain took %s. Nothing here can put a ticket back that it never had a copy of.\n' \
+        "$other" "$id"
+      router_journal "$other" tracker-drift gone
+      said=0
+      continue
+    fi
+
+    now_status="$(tracker_field "$other" Status 2>/dev/null)" || now_status=''
+    now_esc="$(tracker_field "$other" Escalation 2>/dev/null)" || now_esc=''
+    [ "$now_status" != "$was_status" ] || [ "$now_esc" != "$was_esc" ] || continue
+
+    if [ "$other" = "$id" ]; then
+      # Deliberately not `router__say_drift`'s sentence, and not a second copy of
+      # it either: that one explains a *refusal* and names the field the refusal
+      # read, this one reports a session's return whether or not a transition is
+      # ever attempted. Two producers of one sentence would leave the older one's
+      # mutation hollow without either guarantee having moved.
+      printf '%s reads `Status: %s` and `Escalation: %s` after that session, where this drain took it as `%s` and `%s`. This is the ticket in front of you, so nothing here put it back: a correction made during the conversation may be yours, and the next decision on it is yours too. Nothing has judged it — a state this drain did not write is a state no gate gave.\n' \
+        "$other" "${now_status:-nothing}" "${now_esc:-nothing}" \
+        "${was_status:-nothing}" "${was_esc:-nothing}"
+      router_journal "$other" tracker-drift held
+      said=0
+      continue
+    fi
+
+    rc=0
+    router__put_back "$other" "$was_status" "$was_esc" || rc=$?
+    case "$rc" in
+      0)
+        printf '%s was moved to `Status: %s` while this drain was on %s, and has been put back to `%s`. A ticket leaves this sink — or the frontier — through a transition of this drain or not at all, and a `Status:` a session wrote is not one: nothing judged that ticket. The rest of what was written in its file is untouched.\n' \
+          "$other" "${now_status:-nothing}" "$id" "$was_status"
+        router_journal "$other" tracker-drift restored
+        ;;
+      2)
+        printf '%s was moved to `Status: %s` while this drain was on %s, and putting it back to `%s` failed. It is where that session left it, and no gate has seen it.\n' \
+          "$other" "${now_status:-nothing}" "$id" "$was_status"
+        router_journal "$other" tracker-drift restore-failed
+        ;;
+      *)
+        printf '%s now reads `Status: %s` and read `%s` when this drain took %s, and nothing here put it back: `%s` is not a state this drain can write without inventing a field it never took a copy of. If it left the frontier, no gate read a line of it.\n' \
+          "$other" "${now_status:-nothing}" "${was_status:-nothing}" "$id" \
+          "${was_status:-nothing}"
+        router_journal "$other" tracker-drift named
+        ;;
+    esac
+    said=0
+  done <<PINNED
+$ROUTER__PINNED_TRACKER
+PINNED
+
+  while IFS= read -r other; do
+    [ -n "$other" ] || continue
+    if printf '%s\n' "$ROUTER__PINNED_TRACKER" | cut -f3- | grep -qxF -- "$other"; then
+      continue
+    fi
+    printf '%s is in the tracker and did not exist when this drain took %s. It is left where it is — a ticket that appeared is not deleted here, for the reason the quarantine does not delete one ([21], [27]) — and nothing has validated a word of it.\n' \
+      "$other" "$id"
+    router_journal "$other" tracker-drift created
+    said=0
+  done <<IDS
+$now_ids
+IDS
+
+  [ "$said" = 0 ] || return 1
+  printf 'Only `Status:` and `Escalation:` are watched here. `Failures:`, `Blocked by:` and the body of every ticket are written by a session nothing on this path judges: no worktree, no scope-guard, no gate, no rollback.\n'
   return 0
 }
 
@@ -822,9 +1041,13 @@ $(router_dossier "$id")
 
 $(router_language_rule)
 - Do not change this ticket's status, and do not edit any ticket at all. The
-  human decides, and the drain marks it afterwards. Unlike an autonomous
-  iteration, nothing here would catch you: there is no snapshot of the tracker
-  around this session and no gate to turn red.
+  human decides, and the drain marks it afterwards. What holds that is thin, and
+  its shape is worth knowing rather than guessing: the drain took every ticket's
+  `Status:` and `Escalation:` before this session started, puts any ticket it
+  finds moved out of the human sink back where it was, and names on screen and in
+  the journal every ticket that moved and it did not move. Unlike an autonomous
+  iteration there is no worktree, no scope-guard and no gate to turn red, so
+  nothing you write in a ticket beyond those two fields is checked by anything.
 - Whatever code comes out of this conversation goes back through the gate. It is
   re-injected on the frontier and ground by a fresh session; it is never marked
   resolved from here.

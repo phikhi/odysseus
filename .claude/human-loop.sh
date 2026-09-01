@@ -219,7 +219,7 @@ human_loop__stop_lost_lock() {
 # and leave the rest of the sink where it was. What it costs is a line saying so,
 # and the ticket stays exactly where it was: this function marks nothing.
 human_loop__session() {
-  local id="$1" desk rc=0 left
+  local id="$1" desk rc=0 left moved
   if [ -z "${MODEL:-}" ]; then
     human_loop_log "$id: MODEL is empty, so there is nothing to open a session with — set it in $RALPH_CONFIG"
     return 1
@@ -243,6 +243,16 @@ human_loop__session() {
   if left="$(router_tree_note "$id")"; then
     printf '%s\n' "$left" | sed 's/^/ralph: /'
   fi
+
+  # And what that conversation wrote in the tracker ([58]). The same moment and
+  # the same baseline as the line above, and a second reader because it has to
+  # be: the tree witness drops this feature's own directory as bookkeeping — it
+  # would otherwise make the drain refuse itself on its second ticket — and a
+  # ticket file is in exactly that dropped zone. This one looks at nothing else.
+  # It puts back what left this sink, and names the rest.
+  if moved="$(router_protect_tracker "$id")"; then
+    printf '%s\n' "$moved" | sed 's/^/ralph: /'
+  fi
   router_journal "$id" drain-session "$desk"
   return 0
 }
@@ -259,7 +269,7 @@ human_loop__session() {
 # and one that ends in a patch have the same exit status, and only the human
 # knows which happened.
 human_loop__drain_one() {
-  local id="$1" answer
+  local id="$1" answer now
   # What the transitions will decide on, taken before this loop shows the ticket
   # to anyone and before it can open a session on it ([55]). `Escalation:` and
   # `Write-surface:` are two lines of a file the routed session runs beside, in
@@ -333,7 +343,18 @@ human_loop__drain_one() {
         fi
         ;;
       n | next | '')
-        human_loop_log "$id: left in the sink"
+        # What is actually being left, and not the sentence that was true when
+        # the sink was read ([58]). This ticket is the one case
+        # `router_protect_tracker` deliberately does not put back — it is the one
+        # a human is deciding on, and a correction made during the conversation
+        # may be theirs — so it is also the only one that can be walked away from
+        # carrying a state no transition of this drain wrote.
+        now="$(tracker_field "$id" Status 2>/dev/null)" || now=''
+        if [ "$now" = ready-for-human ]; then
+          human_loop_log "$id: left in the sink"
+        else
+          human_loop_log "$id: left as it now stands, which is not in this sink: it reads \`Status: ${now:-nothing}\` and no transition of this drain wrote that. Nothing judged it, and the next drain will not offer it."
+        fi
         return 1
         ;;
       q | quit)
@@ -392,7 +413,7 @@ human_loop_main() {
     printf '%s\n' "$notes" | sed 's/^/ralph: /'
   fi
 
-  local sink id rc=0 drained=0 left=0 quit=0
+  local sink id rc=0 drained=0 left=0 quit=0 changed=0
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "nothing to drain: the human sink was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
     exit 5
@@ -415,7 +436,23 @@ human_loop_main() {
     # Re-read rather than trusted: the list was taken before the first decision,
     # and a human with two terminals open is not a race this loop is entitled to
     # lose loudly.
-    [ "$(tracker_field "$id" Status 2>/dev/null)" = ready-for-human ] || continue
+    #
+    # **Skipped is not silent, and that is [58].** Losing quietly against a
+    # second terminal was [16]'s decision and it stands — this loop does not
+    # refuse, does not restore from here and does not stop. But every skip taken
+    # here is a ticket that read `ready-for-human` when `router_sink` ran and does
+    # not any more, which is a change made *during this drain*: the sink was read
+    # at its start and nothing between the two is a state this loop wrote. Saying
+    # nothing about it is how a ticket a routed session resolved left both this
+    # sink and the frontier with `grep -c` over the whole output returning zero.
+    # On the journal as well as the screen, because a drain that has scrolled
+    # past is exactly when this is worth having.
+    if [ "$(tracker_field "$id" Status 2>/dev/null)" != ready-for-human ]; then
+      human_loop_log "$id: not offered — it was in this sink when this drain read it and is not any more. Nothing here moved it."
+      router_journal "$id" tracker-drift skipped
+      changed=$((changed + 1))
+      continue
+    fi
 
     rc=0
     human_loop__drain_one "$id" || rc=$?
@@ -438,6 +475,13 @@ $sink
 SINK
 
   human_loop_log "drained $drained ticket(s), left $left where they were"
+
+  # Counted apart from both, because it is neither: a ticket this drain drained
+  # and one it left in the sink were both decided on, and this one was never
+  # offered ([58]). Silent at zero — the tally of a thing that did not happen,
+  # printed on every ordinary drain, is the noise [37] ruled out.
+  [ "$changed" = 0 ] ||
+    human_loop_log "$changed ticket(s) left this sink while this drain was running, without a decision from it"
 
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "the human sink is empty"
