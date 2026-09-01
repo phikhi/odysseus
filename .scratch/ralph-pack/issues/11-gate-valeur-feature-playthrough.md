@@ -142,3 +142,26 @@
     — ce que `human_loop_main` tient. Un appel depuis une itération ou depuis le
     pilote se ferait à côté des deux gardes de [21]/[42], qui ne sauraient pas le
     distinguer d'une session : mesurer avant, comme pour le témoin d'arbre.
+
+- **Ce que la passe transversale du 01/09 laisse à ce ticket.** Deux contraintes,
+  écrites ici et pas seulement dans leurs tickets ([59] et [61]).
+
+  - **L'arbre jugé n'est pas toujours l'arbre** ([59]). `gate_tree_snapshot`
+    documente un refus qui repose sur `set -e` ; ses onze appelants l'invoquent
+    sous `x="$(…)" || x=""`, ce qui suspend errexit — donc un `git add -A` que
+    git refuse rend un arbre **amputé** (ou vide) avec `rc=0`. Mesuré : un seul
+    fichier illisible dans l'arbre et le tree jugé ne contient plus que
+    `.claude/`. Une branche de gate de plus est une opinion de plus sur cet objet,
+    et une opinion de valeur portée sur un arbre où tout a l'air supprimé n'a
+    aucun sens honnête. **Ne pas ajouter cette branche avant que [59] ait décidé
+    ce que le pack fait d'un refus de git** — ou, si l'ordre change, lire
+    `RALPH_GATE_TREE` en sachant qu'il peut être faux.
+  - **Trois champs du ticket ne sont gardés par personne, et deux d'entre eux
+    décident** ([61]). Le pin de [55] couvre `Escalation:` et `Write-surface:`,
+    l'instantané de [58] couvre `Status:`. `Failures:` reste lu **sur le fichier**
+    par `router_desk`, et il déplace le guichet — donc la question, le traitement
+    et tout le prompt — de la session **suivante** sur le même ticket
+    (`decision` → `admit` ou `triage-host`, mesuré). Le corps aussi : il *est* le
+    prompt d'une session routée future. Un second point d'entrée bâti sur ces
+    entrées hérite du trou et pas du garde, ce que le fail-closed de [55] avait
+    justement refusé de faire.
