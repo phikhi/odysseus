@@ -15,25 +15,25 @@ absence.
 **Write-surface:** `.claude/human-loop.sh`, `.claude/lib/router.sh`,
 `test/human-loop.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Tags:** frontiere-de-confiance
 
-- [ ] **Le drain sait ce que la session routée a laissé dans l'arbre**, et il le
+- [x] **Le drain sait ce que la session routée a laissé dans l'arbre**, et il le
       dit. Un correctif non commité n'est pas un détail d'usage : c'est l'état
       **par défaut** à la sortie d'une conversation avec `claude`.
-- [ ] **La réinjection ne promet plus ce qu'elle ne fait pas.** Trois directions,
+- [x] **La réinjection ne promet plus ce qu'elle ne fait pas.** Trois directions,
       en trancher une et écrire le prix : refuser `r` tant que l'arbre porte des
       modifications non commitées sur des chemins que le ticket nomme ; les
       commiter depuis le drain (et alors dire sous quel auteur, et ce que ça fait
       d'un arbre où l'humain travaillait *aussi* sur autre chose) ; ou garder la
       réinjection telle quelle et **changer la phrase**, en nommant le commit
       comme la condition qu'il est.
-- [ ] **Le retour ne ment plus sur ce qui s'est passé.** Un ticket qui revient
+- [x] **Le retour ne ment plus sur ce qui s'est passé.** Un ticket qui revient
       avec `Failures: 3` et `Escalation: failed-impl` après un correctif jamais
       vu envoie l'humain au guichet `implement`, dont la question est « Why is the
       code wrong » — à propos d'un code que le gate n'a pas lu.
-- [ ] **Une mutation par garantie livrée**, témoin appairé vérifié à la main.
+- [x] **Une mutation par garantie livrée**, témoin appairé vérifié à la main.
 
 ## Ce que la passe du 31/08 a mesuré
 
@@ -145,3 +145,126 @@ de choses faites.
   fait pendant la conversation n'est pas jugé non plus tant que rien ne le
   commite. Les deux prix se disent dans la même phrase à l'humain ou ils se
   contrediront.
+
+## Ce qui a été livré, et les décisions (01/09/2026)
+
+### La direction choisie, et pourquoi les deux autres ont été refusées
+
+**Refuser `r`**, et refuser sur **tout** l'écart entre l'arbre de travail et
+`HEAD` — pas seulement sur les chemins que le ticket nomme, pas seulement sur ce
+qui est apparu depuis que le drain tient ce ticket.
+
+- *Commiter depuis le drain* est refusé pour la raison que le ticket portait
+  déjà : l'arbre principal est celui de l'opérateur, et le seul commit honnête
+  serait un `git add` de chemins choisis par quelqu'un. Le pack n'a aucune
+  liste qui vaille ici — la write-surface du ticket ne couvre pas le cas mesuré
+  (le correctif tombe souvent à côté, et c'est même le signal que la surface est
+  fausse), et un auteur qui n'est ni l'humain ni la session serait un troisième
+  écrivain dans l'historique de l'opérateur.
+- *Changer seulement la phrase* est refusé pour la raison qu'`docs/frontiere-de-confiance.md`
+  existe : une phrase n'est pas une garantie. La phrase a quand même été changée,
+  mais comme conséquence du refus et pas à sa place.
+- *Refuser sur les chemins que le ticket nomme* — la formulation du critère —
+  a été mesurée et écartée : la sonde de la passe a délibérément écrit **hors**
+  de la write-surface, et ce n'est pas un artefact de sonde. Un correctif humain
+  qui tombe à côté de la surface déclarée est exactement le cas où il faut
+  refuser le plus fort.
+- *Refuser sur ce qui est apparu depuis le pin* a été écarté par l'argument qui
+  décide tout ce ticket : **le drain ne sait pas distinguer une édition sans
+  rapport du correctif**, et un humain qui répare le code *puis* lance le drain
+  — un ordre normal, sans doute le plus courant — laisse un chemin qui ressemble
+  exactement à du travail en cours. Un refus indexé sur la fenêtre du drain
+  aurait laissé passer ce cas-là en silence.
+
+### Ce qui a été écrit
+
+- `router__tree_dirt` — un chemin par ligne, l'écart entre l'arbre et `HEAD`.
+  Deux producteurs (`diff --name-only HEAD` pour le suivi, suppressions
+  comprises ; `ls-files --others --exclude-standard` pour le reste),
+  `core.quotePath=false` sur les deux ([39]).
+- `router_pin` prend en plus `ROUTER__PINNED_TREE` — **une base de comparaison,
+  pas une valeur sur laquelle un refus décide**. C'est la différence avec les
+  deux champs de [55], et elle est délibérée : un champ est ce qu'une session
+  réécrit pour tromper un contrôle, un arbre est ce qu'un humain est censé
+  changer. Le refus lit donc toujours l'arbre **courant**, pour qu'un humain qui
+  commite dans un autre terminal et retape `r` passe.
+- `router_tree_note ID` — au retour de chaque session routée, ce qu'elle a
+  laissé, séparé de ce qui était déjà là. Silencieux quand l'arbre égale `HEAD`.
+- Le refus dans `router_may_reinject`, **après** celui de la surface, à côté de
+  la transition et pas dans le menu — pour que [11] en hérite.
+- La phrase de `r` nomme sa condition, et le prompt de la session routée dit la
+  même chose dans le même paragraphe que le prix de [55].
+
+### Le prix, écrit parce que c'est l'arbre de l'opérateur
+
+Un humain avec du travail en cours **sans rapport** ne peut pas réinjecter avant
+de l'avoir commité ou mis de côté. Ce qui le rend tenable : la question est
+reposée à chaque appui, et [33] écrase déjà une édition non commitée sur un
+chemin qu'une itération vient de livrer — un arbre sale au moment où l'on confie
+du travail à un run n'est pas un état que ce pack ait jamais su protéger.
+
+Ce qui n'est **pas** refusé : le sign-off. `s` résout un ticket dont aucun gate
+n'a rien lu, ce qui est toute la définition d'un sign-off ([16]) ; lui emprunter
+ce refus serait le mettre au service d'une promesse que personne n'a faite. Idem
+pour `c`.
+
+### Le troisième critère, tenu sans second mécanisme
+
+Le retour ne peut plus mentir parce que le départ est refusé : un ticket ne peut
+plus revenir en `Failures: 3` / `failed-impl` sur un correctif que le gate n'a
+pas lu, puisqu'il ne peut plus partir dans cet état. Mesuré, sonde conservée
+`.scratch/ralph-pack/sondes/ticket-56/` : le drain refuse, `ready-for-human`,
+`Failures: 2`, et le run AFK suivant sort `exit 5` **sans dépenser une session**
+— contre trois itérations rouges et tout le budget avant. Témoin appairé (`S2`,
+correctif commité entre deux drainages) : `tests=green`, `resolved` à la première
+itération.
+
+### Ce que ça ne tient pas, mesuré
+
+- **Le refus lit un arbre que la session routée écrit aussi.** Elle peut le
+  rendre propre sans que le correctif soit sur la branche — sonde `S3` : elle
+  écrit le fichier puis le reprend, `r` passe, le run rend trois rouges. Ce que
+  ça coûte est le **rapport**, pas la **promesse** : ce qu'un worktree neuf porte
+  est `HEAD`, et personne n'a besoin de le dire au drain. Ce n'est pas un contrôle
+  contre un adversaire, c'est un contrôle contre l'**état par défaut**.
+- **Le refus tombe à l'instant de la promesse et pas pour toujours.** Rien
+  n'empêche un humain de salir l'arbre après avoir réinjecté puis de lancer un
+  run à la main ; ce qui arrive alors est déjà au tableau, ligne [33]
+  (l'itération écrase l'édition non commitée sur les chemins qu'elle livre). Pas
+  de propriétaire ouvert : `loop.sh` est hors write-surface, et la croyance que
+  ce cas exploitait est corrigée par la phrase que `r` imprime.
+- **L'attribution du témoin est par chemin et pas par contenu.** Un chemin déjà
+  modifié quand le drain a pris le ticket, et que la session modifie *encore*,
+  est rapporté comme déjà-là. Ce qui décide n'est pas cette ligne mais le refus,
+  qui tombe dessus dans les deux cas.
+- **Le répertoire de la feature est hors du compte**, donc un « correctif » écrit
+  dans `issues/` n'est pas vu — c'est un ticket et pas du code, il relève de [55]
+  et de [58], et ce dernier a reçu la note pour ne pas croire l'inverse.
+
+### Pièges rencontrés
+
+- **`gate__drop_bookkeeping` est un privé de `gate`** : `router.sh` appelle
+  `gate_is_bookkeeping` dans sa propre boucle. `test/layering.bats` refuse
+  l'autre forme.
+- **Le harnais commite tout** (`use_tickets`, `mk_ticket`, `set_config` passent
+  par `harness__commit`), donc l'arbre de fixture est propre au départ et le
+  refus ne casse aucun test existant. Mais le drain lui-même laisse
+  `.scratch/<feature>/run.log` et `.run.lock/` non suivis dès la première
+  écriture : sans l'exemption, **huit** tests de `human-loop.bats` rougissent, y
+  compris « a re-injected ticket gets its whole retry budget back ». C'est ce qui
+  fait de l'exemption une garantie livrée et pas un détail.
+- **La sonde `P2b` du 31/08 est périmée par cette livraison** : elle commitait
+  *après* le `r`, ce que le refus rend impossible, et elle rend maintenant
+  `exit 5` des deux côtés. La question est reprise par `S2` dans le seul ordre
+  qui existe encore. C'est le piège « une sonde conservée peut poser une question
+  périmée et répondre *rien* », rencontré une seconde fois.
+
+### Contraintes écrites ailleurs
+
+- **[11]** : le refus est à côté de la transition, donc tout appelant de
+  `router_reinject` l'a — et la question qu'il pose n'a de sens que là où un
+  **humain** écrit. Une réinjection hybride déclenchée depuis le pilote doit
+  d'abord mesurer ce que `router__tree_dirt` voit dans cet arbre-là.
+- **[58]** : le témoin d'arbre **exclut** `issues/`, par construction et pour une
+  raison qui ne peut pas être levée ici. Ne pas lire « le drain sait ce que la
+  session a laissé dans l'arbre » comme couvrant le tracker.

@@ -100,3 +100,25 @@
   te demande de trancher — n'est **pas** épinglé, et une session routée peut
   l'écrire. Ça ne change aucune transition aujourd'hui ; ça en changerait une le
   jour où une réinjection déciderait sur lui.
+
+- **Contrainte posée par [56], livré le 01/09/2026 : `router_may_reinject` refuse
+  maintenant sur l'arbre de travail, et tu en hérites sans rien écrire.** La forme
+  **(2)** ci-dessus est fermée : le refus demande ce que l'arbre porte que `HEAD`
+  ne porte pas (`git diff --name-only HEAD` plus `git ls-files --others
+  --exclude-standard`, moins `gate_is_bookkeeping` et moins la zone ignorée) et
+  refuse tant qu'il reste quelque chose. Deux conséquences pour un chemin de
+  réinjection hybride :
+  - il est **à côté de la transition**, donc tout appelant de `router_reinject`
+    l'a. Un chemin qui appellerait `tracker_mark_ready` directement ne l'aurait
+    pas — c'est exactement la raison pour laquelle il n'est pas dans le menu.
+  - la question qu'il pose n'a de sens que **là où un humain écrit**. Une
+    réinjection déclenchée par un playthrough rouge tourne dans l'arbre du
+    pilote, à un moment où le pack lui-même est en train d'écrire ; si ce ticket
+    réinjecte depuis une itération ou depuis le pilote plutôt que depuis un
+    drainage, mesurer d'abord ce que `router__tree_dirt` y voit — un refus qui
+    tomberait sur l'écriture du pack serait un run qui refuse d'avancer et le
+    dit dans une phrase écrite pour un humain.
+  Et le témoin d'arbre pris par `router_pin` (`ROUTER__PINNED_TREE`) est une
+  **base de comparaison**, pas une valeur sur laquelle un refus décide : le refus
+  lit toujours l'arbre courant, pour qu'un humain qui commite dans un autre
+  terminal et retape `r` passe. Ne pas le lire comme un second pin.
