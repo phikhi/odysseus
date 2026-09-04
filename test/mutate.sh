@@ -240,6 +240,11 @@ SCHEDULER_LIB=".claude/lib/scheduler.sh"
 HUMAN_LOOP=".claude/human-loop.sh"
 ROUTER=".claude/lib/router.sh"
 HARNESS="test/helpers/harness.bash"
+# A test file, like the three below it: the rule it holds is about the shipped
+# source, so the only thing that can break it is the check itself ([59]). No
+# `bash -n` runs on it — a `.bats` file is not valid bash — so an entry aimed here
+# has to be a shape that cannot leave the file unparseable.
+LAYERING="test/layering.bats"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
 EXAMPLE=".claude/ralph.config.sh.example"
@@ -466,8 +471,13 @@ mutation "05 the tree is not re-read after the session" "$GATE" \
   's/  RALPH_GATE_TREE="\$\(gate_tree_snapshot\)" \|\| RALPH_GATE_TREE=""/  RALPH_GATE_TREE="\$base"/' \
   test/gate.bats "new file outside"
 
+# Re-anchored by [59], which wrapped the plain add in a status check. The
+# guarantee is unchanged — the snapshot sees files git is not tracking — and the
+# replacement still has to set `rc` and `diag`: the refusal two lines down reads
+# both, and a mutation that left them unset would break the file under `set -u`
+# instead of removing the guarantee.
 mutation "05 the snapshot ignores untracked files" "$GATE" \
-  's/  GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1/  GIT_INDEX_FILE="\$index" git read-tree HEAD >\/dev\/null 2>\&1; GIT_INDEX_FILE="\$index" git add -u >\/dev\/null 2>\&1/' \
+  's/    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?/    GIT_INDEX_FILE="\$index" git read-tree HEAD >\/dev\/null 2>\&1\n    diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -u --ignore-errors 2>\&1 >\/dev\/null)" || rc=\$?/' \
   test/gate.bats "new file outside"
 
 # Same story as the entry above: `-r` appears twice since [29], and the first
@@ -705,12 +715,14 @@ mutation "21 a ticket the session deleted counts as one it created" "$FAILURES" 
   test/failures.bats "deletes the whole tracker"
 
 # Re-aimed by [34], which turned the single `git add` of this branch into a loop
-# passing `:(literal)`. The guarantee is unchanged and still carried — `--force` is
-# what makes the tracker snapshot ignore the project's ignore rules — so the entry
-# follows the line rather than being retired. Anchored on `\n    done` so it cannot
-# match the other branch, whose line ends in `|| true`.
+# passing `:(literal)`, and re-anchored by [59], which put the add inside a status
+# check and made the two branches' add lines byte-identical. The guarantee is
+# unchanged and still carried — `--force` is what makes the tracker snapshot
+# ignore the project's ignore rules — so the entry follows the line rather than
+# being retired. Anchored on `for path in "$@"` so it cannot match the forcing
+# loop, whose head reads a heredoc.
 mutation "21 the tracker snapshot obeys the project's ignore rules" "$GATE" \
-  's/      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1\n    done/      GIT_INDEX_FILE="\$index" git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1\n    done/' \
+  's/    for path in "\$\@"; do\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors/    for path in "\$\@"; do\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors/' \
   test/failures.bats "scratch out of git"
 
 mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
@@ -1102,8 +1114,13 @@ mutation "26 the escalated ticket does not say no verdict was involved" "$FAILUR
 
 # ── [24] the zone git does not show ──────────────────────────────────────────
 
+# Re-anchored by [59]: the forcing loop's add now carries a status check, and its
+# line is byte-identical to the pathspec branch's — so this anchors on the
+# `[ -n "$path" ] || continue` that only the forcing loop has. `diag=""` rather
+# than nothing at all, for the reason the [05] entry above carries: the two lines
+# below read `rc` and `diag`.
 mutation "24 the snapshot obeys the ignore rules on a guarded path" "$GATE" \
-  's/      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/      :/' \
+  's/      \[ -n "\$path" \] \|\| continue\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- ":\(literal\)\$path" 2>&1 >\/dev\/null\)" \|\| rc=\$\?/      [ -n "\$path" ] || continue\n      rc=0\n      diag=""/' \
   test/gate.bats "guarded path is caught"
 
 mutation "24 the guarded paths are a constant, not the configured ones" "$GATE" \
@@ -1263,23 +1280,30 @@ mutation "30 the fixture project has no local excludes, as before" "$HARNESS" \
 # The forcing, cut back into words. Both halves of the old defect come back with
 # it: a space makes two pathspecs out of one path, and a glob character makes
 # whichever path happens to exist.
+# Re-anchored by [59] in two halves rather than as one block: the loop body grew a
+# refusal, so matching the whole of it would make this entry drift again on the
+# next comment edit. The head and the feed are what carry [33] — one path per line
+# — and they are what this puts back into a word-splitting `for`.
 mutation "33 the forced paths are split on whitespace again" "$GATE" \
-  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    for path in \$(gate_guarded_paths) \$hidden; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path" >\/dev\/null 2>&1 \|\| true\n    done/' \
+  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      rc=0\n/    for path in \$(gate_guarded_paths) \$hidden; do\n      rc=0\n/; s/    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    done/' \
   test/gate.bats "name has a space is a guard"
 
 # The same edit, judged by the other producer's test: the guarded paths and what
 # a rule hid during the iteration travel through one loop, so one entry per list
 # rather than one entry for the loop.
 mutation "33 the same, on a path a rule hid during the iteration" "$GATE" \
-  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    for path in \$(gate_guarded_paths) \$hidden; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path" >\/dev\/null 2>&1 \|\| true\n    done/' \
+  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      rc=0\n/    for path in \$(gate_guarded_paths) \$hidden; do\n      rc=0\n/; s/    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    done/' \
   test/gate.bats "name has a space does not buy it"
 
 # The pathspec half. A git pathspec is a pattern too, and it falls back to
 # wildmatch when nothing carries the name literally — so the guard lands on a
 # directory nobody named and the zone line goes quiet about the one it should
 # have named.
+# Re-anchored by [59] on the forcing loop's own `[ -n "$path" ] || continue`: the
+# `|| true` that used to make this line unique is gone, and the pathspec branch
+# now carries the identical add.
 mutation "33 the forcing hands git a pattern instead of a path" "$GATE" \
-  's/ -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/ -- "\$path" >\/dev\/null 2>&1 || true/' \
+  's/      \[ -n "\$path" \] \|\| continue\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- ":\(literal\)\$path"/      [ -n "\$path" ] || continue\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- "\$path"/' \
   test/gate.bats "written as a glob guards nothing"
 
 # The reading half, which has to agree with the forcing: a list of paths read as a
@@ -1350,7 +1374,7 @@ mutation "34 the loop grinds on after a rollback that could not act" "$LOOP" \
 # own guard is that caller: a feature directory named with a glob character would
 # be snapshotted as a different directory altogether.
 mutation "34 the snapshot's pathspec branch hands git a pattern" "$GATE" \
-  's/    for path in "\$\@"; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- ":\(literal\)\$path"/    for path in "\$\@"; do\n      GIT_INDEX_FILE="\$index" git add -A --force -- "\$path"/' \
+  's/    for path in "\$\@"; do\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- ":\(literal\)\$path"/    for path in "\$\@"; do\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- "\$path"/' \
   test/gate.bats "taken literally, not as a pattern"
 
 # ── [29] the tree the gate judges, taken before the gate runs ────────────────
@@ -4191,6 +4215,85 @@ mutation "58 next reports the ticket left in the sink whatever it now reads" "$H
 mutation "58 a tracker nothing pinned is read as one this drain took" "$ROUTER" \
   's/  if \[ "\$\{ROUTER__PINNED_ID:-\}" != "\$id" \]; then\n    printf \x27ralph: %s: nothing pinned[^\n]*\n      "\$id" >&2\n    return 1\n  fi\n//' \
   test/human-loop.bats "never pinned cannot be told"
+
+# ── [59] a refusal from git, read as a tree ──────────────────────────────────
+#
+# The refusal `gate_tree_snapshot` documented rested on `set -e`, and all eleven
+# of its callers take it through `x="$(…)" || x=""` — a form that suspends errexit
+# for the whole call. So the function ran on, `write-tree` handed back the empty
+# or amputated tree, and the caller got `rc=0` and a tree where it believed it was
+# getting nothing. Each entry below removes one half of the return-code refusal
+# that replaced it.
+
+mutation "59 a whole tree git could not read is handed back anyway" "$GATE" \
+  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
+  test/gate.bats "instead of an amputated tree"
+
+# The same edit, against the two run outcomes it produced. Both are consequences
+# of one line and neither is visible at the module: the amputated tree makes every
+# path the forcing did not cover look deleted by the session.
+mutation "59 an amputated tree convicts the session of a deletion" "$GATE" \
+  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
+  test/gate.bats "stops the run instead of accusing the session"
+
+mutation "59 an amputated tree is delivered under a wide surface" "$GATE" \
+  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
+  test/gate.bats "wide write-surface"
+
+# The pathspec branch. Its `if` line is now byte-identical to the forcing loop's,
+# so both entries anchor down to the line that names the branch — the header of
+# this file has already paid twice for an anchor that matched two places.
+mutation "59 a pathspec over something git could not read answers a tree" "$GATE" \
+  's/      if \[ "\$rc" = 1 \] \|\| gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        # On stderr/      if false; then\n        rm -f "\$index"\n        # On stderr/' \
+  test/gate.bats "refuses what git could not read"
+
+# And what that costs the one caller of that branch: the tracker guard reads the
+# empty tree as every ticket deleted — the outage of [49] from the other end.
+mutation "59 one unreadable ticket makes the guard restore every ticket" "$GATE" \
+  's/      if \[ "\$rc" = 1 \] \|\| gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        # On stderr/      if false; then\n        rm -f "\$index"\n        # On stderr/' \
+  test/failures.bats "look deleted"
+
+# And the boundary this ticket got wrong on its first cut, pinned so it cannot
+# come back: refusing every non-zero here refuses a tracker that holds nothing,
+# which is the true answer for a directory a session has just deleted — and
+# without it nothing is restored.
+mutation "59 a tracker that holds nothing is refused instead of read" "$GATE" \
+  's/      if \[ "\$rc" = 1 \] \|\| gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        # On stderr/      if [ "\$rc" != 0 ] || gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        # On stderr/' \
+  test/failures.bats "deletes the whole tracker gets it back"
+
+# The forcing loop, both ways round, anchored on its own `gate__gap` for the
+# reason above. Removing the refusal lets a guarded path git cannot read drop out
+# of the tree in silence; widening it to every non-zero takes the tolerance with
+# it, and a project naming a path it does not have yet loses every snapshot of the
+# night.
+mutation "59 a guarded path git could not read drops out in silence" "$GATE" \
+  's/      if \[ "\$rc" = 1 \] \|\| gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        gate__gap "cannot snapshot the guarded path/      if false; then\n        rm -f "\$index"\n        gate__gap "cannot snapshot the guarded path/' \
+  test/gate.bats "an absent one does not"
+
+mutation "59 a guarded path a project has not created refuses the snapshot" "$GATE" \
+  's/      if \[ "\$rc" = 1 \] \|\| gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        gate__gap "cannot snapshot the guarded path/      if [ "\$rc" != 0 ] || gate__walk_incomplete "\$diag"; then\n        rm -f "\$index"\n        gate__gap "cannot snapshot the guarded path/' \
+  test/gate.bats "guards nothing, and says so"
+
+# The failure git gives no exit code for at all: `rc=0` and a warning, with every
+# path under the directory missing from the tree.
+mutation "59 a directory git could not open is only a warning" "$GATE" \
+  's/^gate__walk_incomplete\(\) \{/gate__walk_incomplete() { return 1;/m' \
+  test/gate.bats "though git only warned"
+
+# And the line that made the difference between an outage and a diagnosis: the
+# run of [59] had zero occurrences of `unreadable` or `permission` in its whole
+# output.
+mutation "59 the refusal does not say what git said" "$GATE" \
+  's/^gate__git_said\(\) \{/gate__git_said() { return 0;/m' \
+  test/gate.bats "instead of an amputated tree"
+
+# And the rule that keeps the refusal reachable at all. `local x="$(f)"` returns
+# the status of `local`, so one caller written that way puts the hole back with
+# every functional test still green — which is why the check reads the source and
+# why it needs a planted violation of its own.
+mutation "59 a declaration that swallows a status is not looked for" "$LAYERING" \
+  's/^layering_masked_status\(\) \{/layering_masked_status() { return 0;/m' \
+  test/layering.bats "has teeth"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

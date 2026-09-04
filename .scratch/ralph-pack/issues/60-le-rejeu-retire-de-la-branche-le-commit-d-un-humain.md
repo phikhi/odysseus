@@ -91,6 +91,28 @@ terminal et retape `r` passe ».
   pack fait d'un refus de git ; ce ticket décide de ce que le **fold** en fait.
   Livrer celui-ci d'abord ferait écrire deux fois la même question.
 
+- **Ce que [59] a décidé, livré le 03/09/2026 — le blocage est levé et voici ce
+  qu'il laisse.** Trois choses, et la troisième change le montage de la sonde.
+
+  - **La règle tranchée** : un refus de git voyage par le **code de retour**, et
+    l'appelant qui le reçoit refuse de conclure plutôt que de conclure sur du
+    partiel. Ce ticket applique la même règle un cran plus loin : « absent du
+    commit » n'est pas une réponse, c'est deux réponses (supprimé, ou refusé au
+    staging), et le rejeu doit poser la seconde question au lieu d'en déduire une.
+  - **Ce qui n'a pas changé, et c'est le cœur de ce ticket** :
+    `failures_make_durable` **dit déjà** qu'il n'a pas pu stager un chemin
+    approuvé (`was approved by the gate and could not be staged`) et commite
+    quand même le reste. [59] n'y a pas touché — c'est un commit forensique de
+    l'itération, pas un arbre jugé —, donc la ligne Q1b reste reproductible telle
+    quelle.
+  - **Le montage de la sonde, en revanche, se relit.** Q1b rend le chemin livré
+    illisible depuis `TEST_CMD`, c'est-à-dire **après** l'arbre jugé. Si la sonde
+    est réécrite pour rendre le fichier illisible *avant* le snapshot du gate,
+    elle ne mesure plus rien de ce ticket : depuis [59] le snapshot refuse et
+    l'itération n'atteint jamais le fold. La fenêtre qui compte ici est celle qui
+    s'ouvre **entre l'arbre jugé et le commit durable**, et `TEST_CMD` /
+    `TYPECHECK_CMD` en sont les deux seuls crochets.
+
 - **Ce qui n'est pas ce ticket.** Le rejeu écrase ce qu'un frère — ou un humain —
   a posé sur un chemin que l'itération livre aussi. C'est le conflit sémantique
   déjà écrit au tableau comme un prix assumé, et il ne se referme pas par un

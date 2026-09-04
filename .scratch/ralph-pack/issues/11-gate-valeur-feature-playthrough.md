@@ -156,6 +156,28 @@
     aucun sens honnête. **Ne pas ajouter cette branche avant que [59] ait décidé
     ce que le pack fait d'un refus de git** — ou, si l'ordre change, lire
     `RALPH_GATE_TREE` en sachant qu'il peut être faux.
+
+    **Levée le 03/09/2026 par la livraison de [59], et voici ce qu'elle laisse
+    exactement.** Le refus voyage maintenant par le code de retour :
+    `RALPH_GATE_TREE` est soit un arbre où se trouve **tout ce que git a pu lire**
+    à travers les règles du spawn, soit la **chaîne vide** — il n'y a plus de
+    troisième valeur, c'est-à-dire plus d'arbre amputé rendu avec `rc=0`. Donc la branche que ce ticket ajoute doit
+    faire une seule chose de plus que juger : **refuser de conclure sur un arbre
+    vide**, comme les huit autres lecteurs (`gate__scope_guard`, `lang_check`,
+    `gate_changed_files`, `gate__nothing_delivered`, `gate_restore_tree`,
+    `gate_unjudged_changes`, `failures_rollback`, `gate__contain_lens_writes`).
+    Une branche de valeur qui lirait un arbre vide comme « rien à juger » et
+    rendrait vert serait le faux livré de [35] par une neuvième porte. Et si elle
+    prend un snapshot **à elle** au lieu de recevoir `RALPH_GATE_TREE`, elle parle
+    d'un autre arbre que les autres branches ([29]) *et* elle peut désormais se
+    voir refuser ce snapshot : `gate_tree_snapshot` rend non-zéro, ce qui doit
+    rougir la branche et pas la faire disparaître.
+
+    **Une contrainte de forme, mécanique depuis [59] et refusée par
+    `test/layering.bats`** : ne jamais écrire `local x="$(gate_tree_snapshot)"`.
+    `local` rend 0 quoi qu'ait répondu la fonction, donc cette forme rachète en un
+    mot-clé tout ce que [59] a livré. Deux instructions : `local x` puis
+    `x="$(…)" || x=""`.
   - **Trois champs du ticket ne sont gardés par personne, et deux d'entre eux
     décident** ([61]). Le pin de [55] couvre `Escalation:` et `Write-surface:`,
     l'instantané de [58] couvre `Status:`. `Failures:` reste lu **sur le fichier**

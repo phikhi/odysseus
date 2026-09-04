@@ -2386,6 +2386,46 @@ FAKE
   assert_output_contains "cannot be vouched for"
 }
 
+@test "one unreadable ticket file does not make every ticket look deleted" {
+  # The tracker guard's half of [59], and it is the outage of [49] reached from
+  # the other end. `failures_tracker_tree` goes through the pathspec branch of
+  # `gate_tree_snapshot`; a single ticket file git cannot open made that branch
+  # answer **the empty tree with `rc=0`**, so `diff-tree before after` marked
+  # every ticket `D`, this guard restored them all, refused the green and put a
+  # note on a ticket accusing a session that had written nothing in there.
+  use_tickets 01-alpha 02-beta
+
+  pack_run '
+before="$(failures_tracker_tree)"
+chmod 000 "$(tracker_local__path 02-beta)"
+rc=0
+failures_protect_tracker 01-alpha "$before" "" || rc=$?
+chmod 644 "$(tracker_local__path 02-beta)"
+printf "rc=%s\n" "$rc"
+printf "note=%s\n" "$(tracker_read_ticket 01-alpha | grep -c "edited the tracker" || true)"
+'
+  assert_success
+
+  # Refused, and refused as a measurement that could not be taken rather than as
+  # an edit somebody made: no ticket is restored, no note is written, and the
+  # line says which of the two it is.
+  assert_output_contains "rc=1"
+  assert_output_contains "note=0"
+  assert_output_contains "cannot read the tracker"
+  refute_output_contains "restored"
+
+  # The paired witness: the same call with both tickets readable vouches for the
+  # tracker and says nothing at all.
+  pack_run '
+before="$(failures_tracker_tree)"
+rc=0
+failures_protect_tracker 01-alpha "$before" "" || rc=$?
+printf "rc=%s\n" "$rc"'
+  assert_success
+  assert_output_contains "rc=0"
+  refute_output_contains "cannot read the tracker"
+}
+
 @test "a claim guard a sibling dropped inside the window is not put back" {
   use_tickets 01-alpha 02-beta
 
