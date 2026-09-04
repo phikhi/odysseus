@@ -205,3 +205,26 @@ La question 5 rejouée sur le code livré (sonde conservée :
   session. Écrit dans son ticket.
 - **[27]** : inchangé. Le guichet `admit` sert toujours un corps que la
   quarantaine refuse de réécrire, et le pin ne touche pas au corps.
+
+### Repris par [61], livré le 04/09/2026
+
+- **`Failures:` est épinglé, et c'est cet argument-ci rendu à son auteur.** Ce
+  ticket avait écarté le champ en écrivant qu'il « déplace la question posée à un
+  humain et ne peut déplacer aucune transition ». La seconde moitié est vraie ; la
+  première est **mot pour mot** la phrase par laquelle `Escalation:` a été
+  épinglée ici — le menu est ré-offert après une session, donc un champ relu sur
+  le fichier laisse la session choisir le guichet, la question, le traitement et
+  tout le prompt de la session **suivante** sur le même ticket. Mesuré sur la
+  passe du 01/09 : deux sessions sur `20-first`, deux guichets, le second choisi
+  par le premier. `ROUTER__PINNED_FAILURES` est pris au même appel `router_pin`,
+  `router_desk` lit par `router__field`, et `router__pinned` répond pour trois
+  champs et non deux.
+- **Piège à connaître avant d'écrire une mutation ici** : vider
+  `ROUTER__PINNED_FAILURES` dans `router_pin` est **VACUOUS** contre le seul cas
+  « la session écrit un compteur », une épingle vide et un champ absent donnant le
+  même guichet. Il faut le cas inverse — le ticket arrive avec `Failures: 1`, la
+  session efface le champ — pour distinguer les deux. Les deux directions sont
+  dans `test/human-loop.bats`.
+- **Ce que le pin ne fait toujours pas** : il décide, il ne restaure pas. Le champ
+  reste sur disque tel que la session l'a écrit, et c'est la décision de ce
+  ticket-ci, inchangée.

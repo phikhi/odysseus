@@ -215,3 +215,30 @@ ne restaure pas — pouvait partir sans un mot.
   un pin vide fait lire *chaque* ticket comme apparu pendant la session, et un
   second point d'entrée ([11]) qui oublierait l'appel recevrait un rapport de
   n'importe quoi au lieu d'un garde manquant.
+
+### Repris par [61], livré le 04/09/2026
+
+- **Le « PERSONNE » écrit ici a été mesuré comme un mécanisme, et il est à moitié
+  refermé.** Ce ticket avait nommé `Failures:`, `Blocked by:` et le corps comme la
+  part que personne ne tient. La passe du 01/09 a montré qu'aucun des trois n'est
+  inerte : `Failures: 9` écrit sur un voisin de la frontière lui retire son budget
+  entier (une itération au lieu de trois, `failed-impl` dès la première, zéro
+  ligne du drain le nommant) ; `Blocked by:` sort un ticket de la frontière pour
+  de bon ; et une ligne écrite dans le corps de `21-second` arrive **verbatim**
+  dans le prompt que le même drain ouvre sur `21-second`.
+- **Ce qui change dans le code de ce ticket.** `router__tracker_state` porte
+  désormais `status<TAB>escalation<TAB>failures<TAB>blocked<TAB>digest<TAB>id` —
+  **id toujours en dernier**, `cut -f6-` et non `-f3-`, et les quatre champs
+  aplatis par `router__flat` avant d'être rangés en colonnes, deux d'entre eux
+  étant des valeurs qu'une session écrit librement (une tabulation dans
+  `Blocked by:` décalerait l'id). `router_protect_tracker` appelle
+  `router__say_unrestored` **uniquement là où les deux états restaurables n'ont
+  pas bougé** : une restauration réécrit le fichier, donc elle déplacerait le
+  digest de la main du drain lui-même.
+- **La phrase de clôture a changé de texte** — « Only `Status:` and `Escalation:`
+  are **put back** here… » au lieu de « are watched here ». Le refute de
+  `test/human-loop.bats` qui la garde a été mis à jour ; le laisser tel quel
+  l'aurait rendu vacueux en silence.
+- **Ce qui reste, et n'est pas refermé** : rien de ces trois-là n'est *défait*, et
+  l'épingle vaut pour un drain — le drain suivant relit `Failures:` sur le
+  fichier, exactement comme l'`Escalation:` fabriquée nommée plus haut.

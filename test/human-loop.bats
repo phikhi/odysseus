@@ -458,6 +458,42 @@ $argv"
   assert_contains "$argv" "09-escalated"
 }
 
+@test "the rules the routed session is handed arrive whole, backticks and all" {
+  # The paragraph telling a session what this drain watches went into an
+  # *unquoted* heredoc, so its field names were command substitutions: the session
+  # received two holes where the names were and the human read
+  # `router.sh: line 1015: Status:: command not found` on every routed session
+  # there was. Nothing turned red — a substitution that fails inside a heredoc
+  # writes to stderr and hands back an empty string — and no test in this file
+  # quoted the paragraph, which is exactly why it shipped ([61]).
+  use_tickets 09-escalated
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  local argv
+  argv="$(claude_call_argv 1)"
+  assert_contains "$argv" "the drain took every ticket's"
+  assert_contains "$argv" '`Status:`, `Escalation:`, `Failures:`, `Blocked by:` and a digest of its whole'
+  assert_contains "$argv" "A counter, a"
+  # The other half of the same defect, and the one a human watches scroll past.
+  refute_output_contains "command not found"
+
+  # And what the quoting had to keep intact. Every value this prompt is built
+  # from now arrives by `printf` rather than by heredoc expansion, so each one is
+  # asserted here instead of assumed: a quoted heredoc that swallowed one of them
+  # would leave a prompt that reads perfectly well and says nothing about this
+  # ticket.
+  assert_contains "$argv" "## The treatment this ticket was routed to: implement"
+  assert_contains "$argv" "## Ticket: 09-escalated"
+  assert_contains "$argv" "the gate turned it back"
+  assert_contains "$argv" "── 09-escalated ──"
+  assert_contains "$argv" "Speak en to the human you are working with"
+}
+
 @test "a session the human ends does not end the drain, and marks nothing" {
   use_tickets 09-escalated
   script_claude <<'SCRIPT'
@@ -846,8 +882,14 @@ ANSWERS
   assert_ticket_status 21-second ready-for-human
   assert_ticket_status 20-first ready-for-human
   refute_output_contains "has been put back to"
-  refute_output_contains "Only \`Status:\` and \`Escalation:\` are watched here"
+  refute_output_contains "Only \`Status:\` and \`Escalation:\` are put back here"
   refute_output_contains "left this sink while this drain was running"
+  # And the three things this drain names without putting them back ([61]). They
+  # are the widest half of the report, so they are also the half that would read
+  # as a measurement on every drain if they were printed unconditionally.
+  refute_output_contains "reads \`Failures:"
+  refute_output_contains "reads \`Blocked by:"
+  refute_output_contains "reads differently after that session"
 }
 
 @test "the ticket a human is deciding on is named and left exactly as the session wrote it" {
@@ -998,6 +1040,204 @@ ANSWERS
   pack_run 'router_pin 20-first; router_protect_tracker 20-first || printf "nothing moved\n"'
   assert_output_contains "nothing moved"
   refute_output_contains "did not exist when this drain took"
+}
+
+# ── the three things nothing here writes back ────────────────────────────────
+#
+# [58] watched `Status:` and `Escalation:` and wrote of the rest that nobody
+# holds it. The 01/09 pass measured that the rest decides: `Failures:` is a retry
+# budget and a desk, `Blocked by:` is the frontier, and a body is the prompt of
+# the next session opened on the ticket. None of the three can be put back — a
+# counter has no verb that writes it, a body is what the quarantine refuses to
+# rewrite — so what [61] delivers is that each one is *named*, and the paired
+# witness above is what keeps that from being a line printed after every session.
+
+@test "a routed session cannot re-desk its own ticket by writing itself a retry count" {
+  # [55]'s own argument, applied to the field [55] left out. `router_desk` reads
+  # `Failures:` to tell `triage-host` from `admit` on a `decision`, and the menu
+  # is re-offered after a session — so an unpinned read lets the first session
+  # choose the desk, the question, the treatment and the whole prompt of the
+  # second session on the same ticket. Measured: two sessions, two desks.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+grep -q '^\*\*Failures:\*\*' "$tracker/20-first.md" ||
+  perl -pi -e 's/^\*\*Escalation:\*\* decision$/**Escalation:** decision\n\n**Failures:** 1/' \
+    "$tracker/20-first.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "2"
+  # The edit is on disk — nothing here undoes it, and that is the other half of
+  # the guarantee: the pin decides, it does not restore.
+  assert_equal "$(ticket_field 20-first Failures)" "1"
+
+  # The second session got the desk the ticket had before the first one wrote.
+  assert_contains "$(claude_call_argv 2)" "No run ever judged this ticket"
+  refute_contains "$(claude_call_argv 2)" "Nothing ever judged a session on this ticket"
+  refute_output_contains "(triage-host)"
+}
+
+@test "a routed session cannot re-desk its own ticket by clearing its retry count" {
+  # The same guarantee from the other end, and the end that keeps the *snapshot*
+  # honest: a pin that recorded nothing would read as `Failures:` absent, which is
+  # what a session clearing the field produces — so the direction above cannot
+  # tell a taken pin from an empty one and this one can. Here the ticket arrives
+  # at `triage-host` and the session drops the count that put it there.
+  mk_ticket 20-first Status ready-for-human Escalation decision Failures 1 \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -0pi -e 's/\n\*\*Failures:\*\* 1\n//' "$tracker/20-first.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(ticket_field 20-first Failures)" ""
+  assert_contains "$(claude_call_argv 2)" "Nothing ever judged a session on this ticket"
+  refute_contains "$(claude_call_argv 2)" "No run ever judged this ticket"
+}
+
+@test "a tab in a field a session writes does not move which ticket the drain names" {
+  # The snapshot reads four fields by position and two of them are values a
+  # session writes freely, so a tab in one would shift every column after it and
+  # the id — which is last for [37]'s reason — would be read out of the middle of
+  # a neighbour's blocker list. Flattened when the snapshot is taken, and the
+  # witness is that the restore still lands on the right ticket.
+  two_in_the_sink
+  mk_ticket 30-waiting Status ready-for-agent \
+    'Write-surface' '`src/three.txt`' 'Blocked by' "$(printf '99\t30-decoy')"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* ready-for-agent$/**Status:** resolved/' \
+  "$tracker/30-waiting.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 30-waiting ready-for-agent
+  assert_output_contains "30-waiting was moved to \`Status: resolved\`"
+  refute_output_contains "30-decoy"
+}
+
+@test "a retry budget a routed session wrote on a ticket waiting on the frontier is named" {
+  # The same field, written on a neighbour, where the pin cannot help: this
+  # ticket is not the one being decided on and no transition of this drain will
+  # touch it. `Failures: 9` under RETRY_N is that ticket's whole budget gone —
+  # measured on the 01/09 pass as one iteration and an immediate `failed-impl`
+  # where the paired witness got three — and until [61] not one line said so.
+  two_in_the_sink
+  mk_ticket 30-waiting Status ready-for-agent \
+    'Write-surface' '`src/three.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+grep -q '^\*\*Failures:\*\*' "$tracker/30-waiting.md" ||
+  perl -pi -e 's/^\*\*Status:\*\* ready-for-agent$/**Status:** ready-for-agent\n\n**Failures:** 9/' \
+    "$tracker/30-waiting.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  # Named, and left exactly as that session wrote it: there is no verb here that
+  # writes a retry count back, and inventing one would put a second author on a
+  # number only a gate ever moved.
+  assert_equal "$(ticket_field 30-waiting Failures)" "9"
+  assert_ticket_status 30-waiting ready-for-agent
+  assert_output_contains "30-waiting reads \`Failures: 9\` after that session"
+  assert_output_contains "how many fresh sessions that ticket gets"
+  assert_file_contains "$(journal_file)" "tracker-drift"
+}
+
+@test "a blocker a routed session wrote on a neighbour is named" {
+  # The field that takes a ticket out of every autonomous run there is: the
+  # frontier is `ready-for-agent`, unclaimed and unblocked, so a number that
+  # never resolves is a ticket nothing will ever pick up — with no escalation, no
+  # claim and, until [61], nothing anywhere naming it.
+  two_in_the_sink
+  mk_ticket 30-waiting Status ready-for-agent \
+    'Write-surface' '`src/three.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Blocked by:\*\* None$/**Blocked by:** 99/' "$tracker/30-waiting.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(ticket_field 30-waiting 'Blocked by')" "99"
+  assert_output_contains "30-waiting reads \`Blocked by: 99\` after that session"
+  assert_output_contains "never enters the frontier"
+  assert_file_contains "$(journal_file)" "tracker-drift"
+}
+
+@test "a line a routed session wrote in a neighbour's body reaches the next prompt, and is named" {
+  # The most direct of the three, and the one no field names. `router_prompt`
+  # quotes a ticket as data — [21]'s and [27]'s decision, and it stands — which
+  # makes the body of a sink ticket the prompt of the next session routed to it.
+  # Measured: a line written into `21-second` by the session routed on `20-first`
+  # arrives verbatim in the prompt the *same* drain opens on `21-second`.
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+grep -q 'INJECTED-BY-A-NEIGHBOUR' "$tracker/21-second.md" ||
+  printf 'INJECTED-BY-A-NEIGHBOUR: written by the session routed on 20-first.\n' \
+    >>"$tracker/21-second.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "2"
+  assert_contains "$(claude_call_argv 2)" "INJECTED-BY-A-NEIGHBOUR"
+  # Left where it is, for the reason the quarantine does not delete a ticket, and
+  # named — which is the whole of what this path can offer.
+  assert_output_contains "21-second reads differently after that session"
+  assert_output_contains "a ticket body is a prompt"
+  assert_file_contains "$(journal_file)" "tracker-drift"
 }
 
 # ── the locks ────────────────────────────────────────────────────────────────

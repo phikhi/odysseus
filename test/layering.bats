@@ -100,6 +100,78 @@ MASKED
   return "$rc"
 }
 
+# Every unescaped backtick in the body of an **unquoted** heredoc, one finding
+# per line.
+#
+# [61]'s defect, as a rule about the source, because that is the only place it is
+# visible. In `cat <<PROMPT` a backtick is a command substitution: the paragraph
+# [58] added to `router_prompt` named two tracker fields the way markdown names
+# them, and what the session received had two holes where the names were while
+# the human watched `router.sh: line 1015: Status:: command not found` scroll past
+# on every routed session. Nothing turned red — a substitution that fails inside a
+# heredoc prints to stderr, hands back an empty string, and the prompt goes out.
+#
+# **Backticks and not `$`, and the asymmetry is the reason.** A `$word` written in
+# prose is caught by `set -euo pipefail`, which both entry points carry: an
+# unbound variable kills the run, loudly, at the first session. A backtick is
+# caught by nothing. The residue this leaves is named rather than guarded — a
+# prose heredoc that writes the name of a variable that *is* set (`$HOME`,
+# `$LANG_ARTIFACT`) still substitutes it in silence, and what stands between that
+# and a prompt is a reader. `docs/frontiere-de-confiance.md` carries the line.
+#
+# The escape is what the rest of the pack already does — `loop.sh`, `lenses.sh`,
+# `retro.sh`, `capability.sh` and `failures.sh` all write \` in prose — so this is
+# a rule and not a migration. `router_prompt` went further and quotes its
+# heredocs outright, which is the only form no future paragraph can break.
+layering_heredoc_prose() {
+  local dir="$1" f found rc=0
+  for f in "$dir"/lib/*.sh "$dir"/*.sh; do
+    [ -e "$f" ] || continue
+    found="$(awk -v name="$(basename "$f")" '
+      BEGIN { inbody = 0; SQ = sprintf("%c", 39) }
+      inbody {
+        line = $0
+        if (dash) sub(/^\t+/, "", line)
+        if (line == delim) { inbody = 0; next }
+        if (quoted) next
+        # Drop every escaped pair first, backslash-backslash included, so that a
+        # `\`` reads as prose and a lone backtick is what is left.
+        probe = $0
+        gsub(/\\./, "", probe)
+        if (index(probe, "`") > 0)
+          printf "%s:%d: an unescaped backtick in the body of an unquoted heredoc, which is a command substitution and not prose\n", name, FNR
+        next
+      }
+      /^[[:space:]]*#/ { next }
+      {
+        p = index($0, "<<")
+        if (p == 0) next
+        rest = substr($0, p + 2)
+        if (substr(rest, 1, 1) == "<") next
+        dash = 0
+        if (substr(rest, 1, 1) == "-") { dash = 1; rest = substr(rest, 2) }
+        quoted = 0
+        if (substr(rest, 1, 1) == "\"" || substr(rest, 1, 1) == SQ) {
+          quoted = 1
+          rest = substr(rest, 2)
+        }
+        if (substr(rest, 1, 1) !~ /[A-Za-z_]/) next
+        delim = ""
+        for (i = 1; i <= length(rest); i++) {
+          c = substr(rest, i, 1)
+          if (c !~ /[A-Za-z0-9_]/) break
+          delim = delim c
+        }
+        inbody = 1
+      }
+    ' "$f")" || found=''
+    [ -n "$found" ] || continue
+    printf '%s\n' "$found"
+    rc=1
+  done
+  return "$rc"
+}
+
 # A copy of the real pack with a violation of each kind planted in it. A copy,
 # not the pack itself: a run interrupted halfway must not leave the repository
 # holding a bogus function.
@@ -123,6 +195,26 @@ layering__planted_pack() {
   # reaching into `loop__arm_successor` — the one call [09] forbids it — is
   # precisely the shape that would go unremarked.
   printf 'probe_second_entry() { loop__arm_successor; }\n' >>"$dest/human-loop.sh"
+  # And [61]'s, with both of its paired witnesses beside it. The escape and the
+  # quote are the two forms that keep prose out of the shell, and a rule that
+  # reported either would be worked around rather than obeyed.
+  cat >>"$dest/lib/state.sh" <<'PLANTED'
+probe_prose_heredoc() {
+  cat <<PROSE
+The drain took every ticket's `Status:` before this session started.
+PROSE
+}
+probe_escaped_heredoc() {
+  cat <<PROSE
+The drain took every ticket's \`Escalation:\` before this session started.
+PROSE
+}
+probe_quoted_heredoc() {
+  cat <<'PROSE'
+The drain took every ticket's `Blocked by:` before this session started.
+PROSE
+}
+PLANTED
   printf '%s\n' "$dest"
 }
 
@@ -138,6 +230,11 @@ layering__planted_pack() {
 
 @test "no declaration swallows the status of what it is assigned from" {
   run layering_masked_status "$RALPH_PACK_ROOT/.claude"
+  assert_success
+}
+
+@test "no unquoted heredoc carries a backtick the shell will run" {
+  run layering_heredoc_prose "$RALPH_PACK_ROOT/.claude"
   assert_success
 }
 
@@ -161,4 +258,14 @@ layering__planted_pack() {
   # And the paired witness of the rule's own boundary: a default value is not a
   # masked status, and the planted one beside it is not reported.
   refute_output_contains "local host="
+
+  run layering_heredoc_prose "$planted"
+  assert_failure
+  assert_output_contains "state.sh:"
+  assert_output_contains "an unescaped backtick in the body of an unquoted heredoc"
+  # One finding and not three. The escaped copy and the quoted copy carry the
+  # same sentence and the same backticks: if either were reported the rule would
+  # be flagging the two forms that fix it, and if the count were not asserted a
+  # rule that reported *every* backtick would pass this test.
+  assert_equal "$(printf '%s\n' "$output" | grep -c 'unescaped backtick')" "1"
 }
