@@ -141,9 +141,22 @@ c'est la seule des trois qui interroge.
   suppression et rend 0). Laissé à la prochaine passe transversale, comme [51] avait
   laissé `lenses_has_tag`, et écrit au tableau.
 
-- **Ce qui borne la gravité, et ce qui ne la borne pas.** Le chemin replay n'est
+  **FERMÉ par [60], livré le 04/09/2026.** La passe du 01/09 a construit le cas
+  atteignable — un humain qui commite dans un autre terminal déplace le tip, un
+  `TEST_CMD` qui rend le chemin illisible après l'arbre jugé produit le refus de
+  `git add` — et le rejeu pose maintenant la seconde question (`$start`), par le
+  **code de retour** des deux `ls-tree` et non par leur vide ([59]). La ligne de
+  [34] est donc fermée ici aussi, pour les deux causes : plus de chemin que git
+  puisse mal lire (`:(literal)`), et plus de refus lu comme un vide.
+
+- **Ce qui borne la gravité, et ce qui ne la borne pas.** ~~Le chemin replay n'est
   atteint qu'au-dessus de `MAX_PARALLEL=1`, donc l'installation par défaut n'y touche
-  pas. Mais quand il est atteint, ce n'est pas une perte de travail non commité : le
+  pas.~~ **FAUX — corrigé par [60], mesuré le 01/09/2026 et livré le 04/09/2026** :
+  le rejeu est atteint dès que le **tip bouge**, et le tip bouge dès qu'un humain
+  commite dans un autre terminal — ce que [56] demande explicitement aux humains de
+  faire. L'installation par défaut y touche. La phrase avait été écrite sans sonde,
+  comme celle que [41] a dû corriger dans le tableau et pour la même raison.
+  Mais quand il est atteint, ce n'est pas une perte de travail non commité : le
   fold construit un arbre où le fichier est **absent** et le pose sur la branche, donc
   une livraison verte est activement **retirée** de la branche par le run lui-même, et
   la ligne de journal dit `folded onto the branch over a sibling's commit` — un
