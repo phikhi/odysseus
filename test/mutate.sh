@@ -4346,6 +4346,105 @@ mutation "60 the fold reports its intention instead of its result" "$CONCURRENCY
   's/  concurrency__log "\$ticket: folded onto the branch over a commit that moved the tip[^\n]*/  concurrency__log "\$ticket: folded onto the branch over a sibling\x27s commit"/' \
   test/concurrency.bats "not taken off the branch"
 
+# ── [61] a heredoc that runs its own prose, and the three fields under it ────
+#
+# One row of `docs/frontiere-de-confiance.md` taken by both ends. The prompt that
+# tells a routed session what this drain watches was built by an **unquoted**
+# heredoc, so the two field names [58] wrote in backticks were command
+# substitutions: two holes in the prompt and `Status:: command not found` at the
+# human, on every routed session, with nothing red anywhere — a substitution that
+# fails inside a heredoc writes to stderr and hands back an empty string. And what
+# that paragraph was describing turned out to be two fields out of four: the
+# 01/09 pass measured `Failures:` moving a desk and a retry budget, `Blocked by:`
+# taking a ticket off the frontier, and a body arriving verbatim in the next
+# prompt.
+#
+# The first three entries are the prompt: one for the quoting, two for the values
+# that now arrive by `printf` rather than by heredoc expansion — a quoted heredoc
+# that swallowed one of those would render a prompt that reads perfectly well and
+# says nothing about this ticket.
+
+mutation "61 the routed prompt is built by a heredoc that runs its own prose" "$ROUTER" \
+  's/  cat <<\x27PROMPT\x27\n- Do not change this ticket\x27s status/  cat <<PROMPT\n- Do not change this ticket\x27s status/' \
+  test/human-loop.bats "arrive whole, backticks and all"
+
+mutation "61 the treatment this ticket was routed to is dropped on the way in" "$ROUTER" \
+  's/    "\$treatment" "\$question" "\$id"\n/    "" "\$question" "\$id"\n/' \
+  test/human-loop.bats "arrive whole, backticks and all"
+
+mutation "61 the dossier is dropped on the way into the prompt" "$ROUTER" \
+  's/    "\$body" "\$dossier" "\$rules"\n/    "\$body" "" "\$rules"\n/' \
+  test/human-loop.bats "arrive whole, backticks and all"
+
+# And the rule that keeps the *rest* of the pack from doing it again, with its own
+# planted violation — the same shape as [59]'s entry above, and for the same
+# reason: it is a property of the source that no functional test can see. The
+# second entry is the boundary rather than the rule, because a check that reported
+# every backtick would flag the two forms that fix it.
+mutation "61 a heredoc that runs its prose is not looked for" "$LAYERING" \
+  's/        if \(index\(probe, "`"\) > 0\)\n/        if (0)\n/' \
+  test/layering.bats "has teeth"
+
+mutation "61 the escape that keeps prose out of the shell is read as the defect" "$LAYERING" \
+  's/        gsub\(\/\\\\\.\/, "", probe\)\n//' \
+  test/layering.bats "has teeth"
+
+# `Failures:`, both ends of it. The desk reads the field to tell `triage-host`
+# from `admit`, and the menu is re-offered after a session — which is [55]'s own
+# argument for pinning `Escalation:`, applied to the field [55] left out. Two
+# entries and two tests, because an empty pin and a cleared field look identical
+# from one direction only.
+mutation "61 the desk reads the retry count off the file a session just wrote" "$ROUTER" \
+  's/      count="\$\(router__field "\$id" Failures\)" \|\| count=\x27\x27\n/      count="\$(tracker_field "\$id" Failures 2>\/dev\/null)" || count=\x27\x27\n/' \
+  test/human-loop.bats "by writing itself a retry count"
+
+mutation "61 the pin has no answer for the retry count, so every read falls back" "$ROUTER" \
+  's/    Failures\) printf \x27%s\\n\x27 "\$ROUTER__PINNED_FAILURES" ;;\n//' \
+  test/human-loop.bats "by writing itself a retry count"
+
+mutation "61 the pin records no retry count, so clearing it re-desks the ticket" "$ROUTER" \
+  's/  ROUTER__PINNED_FAILURES="\$\(tracker_field "\$id" Failures 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_FAILURES=\x27\x27\n/  ROUTER__PINNED_FAILURES=\x27\x27\n/' \
+  test/human-loop.bats "by clearing its retry count"
+
+# The snapshot, and the three comparisons made against it. None of the three can
+# be put back — a retry count has no verb that writes it, a body is what the
+# quarantine refuses to rewrite — so each entry here removes a *naming*, which is
+# the whole of what this path can offer.
+mutation "61 the snapshot records no body, so every ticket reads as rewritten" "$ROUTER" \
+  's/    digest="\$\(router__ticket_digest "\$id"\)" \|\| digest=\x27\x27\n/    digest=\x27\x27\n/' \
+  test/human-loop.bats "left the tracker alone"
+
+mutation "61 a tab a session wrote shifts every column of the snapshot" "$ROUTER" \
+  's/  printf \x27%s\x27 "\$\{1:-\}" \| tr \x27\\t\\n\x27 \x27  \x27\n/  printf \x27%s\x27 "\$\{1:-\}"\n/' \
+  test/human-loop.bats "does not move which ticket"
+
+mutation "61 the id is read from the column it stood in before this ticket" "$ROUTER" \
+  's/    other="\$\(printf \x27%s\x27 "\$line" \| cut -f6-\)"\n/    other="\$(printf \x27%s\x27 "\$line" | cut -f3-)"\n/' \
+  test/human-loop.bats "resolve the ticket this drain has not reached yet"
+
+mutation "61 a retry count a session wrote on a neighbour is not looked at" "$ROUTER" \
+  's/  if \[ "\$now_fail" != "\$was_fail" \]; then\n/  if false; then\n/' \
+  test/human-loop.bats "waiting on the frontier is named"
+
+mutation "61 a blocker a session wrote on a neighbour is not looked at" "$ROUTER" \
+  's/  if \[ "\$now_block" != "\$was_block" \]; then\n/  if false; then\n/' \
+  test/human-loop.bats "a blocker a routed session wrote"
+
+mutation "61 a body a session rewrote is not looked at" "$ROUTER" \
+  's/  if \[ "\$now_digest" != "\$was_digest" \]; then\n/  if false; then\n/' \
+  test/human-loop.bats "reaches the next prompt"
+
+# And the two witnesses. A report printed after every session is [37]'s rule
+# broken from the reading side, and a guard that stopped restoring would pass
+# every accusing entry above it while taking [58] out.
+mutation "61 the three unrestored fields are reported for a session that moved none" "$ROUTER" \
+  's/  return "\$said"\n\}/  return 0\n}/' \
+  test/human-loop.bats "left the tracker alone"
+
+mutation "61 nothing is ever put back, whatever a session moved" "$ROUTER" \
+  's/    if \[ "\$now_status" = "\$was_status" \] && \[ "\$now_esc" = "\$was_esc" \]; then\n/    if true; then\n/' \
+  test/human-loop.bats "resolve the ticket this drain has not reached yet"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -178,12 +178,24 @@
     `local` rend 0 quoi qu'ait répondu la fonction, donc cette forme rachète en un
     mot-clé tout ce que [59] a livré. Deux instructions : `local x` puis
     `x="$(…)" || x=""`.
-  - **Trois champs du ticket ne sont gardés par personne, et deux d'entre eux
-    décident** ([61]). Le pin de [55] couvre `Escalation:` et `Write-surface:`,
-    l'instantané de [58] couvre `Status:`. `Failures:` reste lu **sur le fichier**
-    par `router_desk`, et il déplace le guichet — donc la question, le traitement
-    et tout le prompt — de la session **suivante** sur le même ticket
-    (`decision` → `admit` ou `triage-host`, mesuré). Le corps aussi : il *est* le
-    prompt d'une session routée future. Un second point d'entrée bâti sur ces
-    entrées hérite du trou et pas du garde, ce que le fail-closed de [55] avait
-    justement refusé de faire.
+  - **Trois champs du ticket n'étaient gardés par personne ; [61] les a repris,
+    livré le 04/09/2026, et ce que tu en hérites a changé.** Le pin de [55]
+    couvrait `Escalation:` et `Write-surface:` ; `Failures:` s'y ajoute au **même
+    appel `router_pin`**, et `router_desk` le lit désormais par `router__field`.
+    Donc : *si tu ouvres un troisième point d'entrée, `router_pin` est encore plus
+    obligatoire qu'avant l'appeler avant toute transition et avant tout dossier* —
+    il porte maintenant trois champs, l'arbre de travail et un instantané du
+    tracker à quatre champs plus un digest par ticket. Ce que [61] n'a **pas**
+    fermé et dont tu hérites tel quel : rien n'est *restauré* de `Failures:`, de
+    `Blocked by:` ni du corps — ils sont **nommés** au retour de chaque session
+    routée et laissés là ; et l'épingle vaut pour un drain, le drain suivant
+    relit le fichier.
+  - **Une contrainte de forme de plus, mécanique depuis [61] et refusée par
+    `test/layering.bats`** : dans un heredoc **non cité**, toute backtick doit
+    être échappée (`` \` ``). `playthrough.sh` va construire un prompt de
+    subagent, donc de la prose markdown qui nomme des chemins et des champs entre
+    backticks — c'est exactement le site où ça a cassé (`router_prompt`, [58]).
+    Une backtick non échappée y est une substitution de commande : la prose part
+    au modèle avec un trou, l'humain reçoit un `command not found`, et rien ne
+    rougit. `layering_heredoc_prose` te le refuse ; citer le heredoc
+    (`<<'PROMPT'`) est la forme qui ne peut plus jamais échouer.
