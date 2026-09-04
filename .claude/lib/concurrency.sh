@@ -397,14 +397,22 @@ concurrency_frontier_release() {
 #                 commit `failures_make_durable` wrote becomes the tip, so a run
 #                 at MAX_PARALLEL=1 produces exactly the history it produced
 #                 before this ticket — same tree, same message, same parent.
-#   replay        a sibling folded first. The approved paths are taken out of this
-#                 iteration's commit and written on top of the new tip, so what
-#                 lands is what the scope-guard approved and nothing else. The
-#                 sibling's work is not re-tested against it, and that is the cost
-#                 of serialized integration: two iterations with disjoint surfaces
-#                 can each be green and the combination untested. What bounds it is
-#                 the disjunction above and the next iteration's own suite, which
-#                 runs on the combined tree.
+#   replay        the branch moved since this worktree was made. The approved paths
+#                 are taken out of this iteration's commit and written on top of the
+#                 new tip, so what lands is what the scope-guard approved and
+#                 nothing else. Whoever moved the tip does not get their work
+#                 re-tested against this iteration's, and that is the cost of
+#                 serialized integration: two iterations with disjoint surfaces can
+#                 each be green and the combination untested. What bounds it is the
+#                 disjunction above and the next iteration's own suite, which runs
+#                 on the combined tree.
+#
+#                 "Whoever" and not "a sibling", because this shape is reached at
+#                 the shipped MAX_PARALLEL=1 too ([60]): a human committing in
+#                 another terminal moves the tip, and [56] explicitly asks them to.
+#                 The measured claim in [54] that the replay is out of reach below
+#                 MAX_PARALLEL=2 is false, and everything the replay does to the
+#                 branch it can do to a commit no run of this pack wrote.
 #
 # The ref move is a compare-and-swap on the value read inside the guard, so the
 # guard is a scheduling device and not the correctness. A run that lost its guard
@@ -461,7 +469,7 @@ concurrency_integrate() {
       rc=1
     fi
   else
-    concurrency__replay "$ticket" "$tip" "$commit" "$changed" || rc=1
+    concurrency__replay "$ticket" "$tip" "$commit" "$changed" "$start" || rc=1
   fi
 
   # The tip read inside the guard, before either shape moved the ref: the refresh
@@ -496,9 +504,30 @@ concurrency__wait_for_guard() {
 # approved, and a merge would carry whatever else its worktree happened to hold.
 # A path the session deleted is recorded as deleted, which `git ls-tree` answers
 # by returning nothing for it.
+#
+# Which is why the baseline is a parameter and not a convenience ([60], the half
+# of [50] that was left here). "Absent from this iteration's commit" is not one
+# answer, it is two: the session deleted the path, **or** the durable commit could
+# not stage it — `failures_make_durable` says so out loud, in the very line above
+# this one in the journal, and commits the rest. Read as a deletion, the second
+# one has the fold build a tree where the path is missing and put that on the
+# branch: a commit somebody else made is actively taken off it, and
+# `concurrency__refresh` then removes the file from the tree a human looks at,
+# correctly from its own point of view since the fold really did remove it. The
+# second question settles it, and it is the one `concurrency__refresh` already
+# asks eighty lines down: a path that is in neither the commit nor the baseline is
+# not this iteration's deletion — it is a path this iteration has nothing true to
+# say about, and it is left to whoever wrote it.
+#
+# Both questions are asked by their exit status and not by an empty answer ([59],
+# [34]). `git ls-tree` answers a path a tree does not carry with nothing and
+# `rc=0`, and a tree it cannot read with nothing and `rc=128` — indistinguishable
+# on the output alone, and the two mean opposite things here. A fold that cannot
+# read what its own commit holds refuses the branch rather than concluding "the
+# session deleted it" and removing the path.
 concurrency__replay() {
-  local ticket="$1" tip="$2" commit="$3" changed="$4"
-  local root idx path line newtree new
+  local ticket="$1" tip="$2" commit="$3" changed="$4" start="${5:-}"
+  local root idx path line base newtree new wrote=0 removed=0 kept=0
 
   root="$(ralph_project_root)"
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-fold.XXXXXX")" || return 1
@@ -520,19 +549,44 @@ concurrency__replay() {
     # nothing carries. `line` is empty *with rc=0*, so the branch below cannot tell
     # "the session deleted it" from "I did not understand the path", and reads the
     # first: the `--force-remove` takes a green delivery back off the branch, under
-    # a journal line that says it was folded onto it.
+    # a journal line that says it was folded onto it. Still worth the magic after
+    # [60] gave the branch below a second question, because that question is about
+    # the *baseline* and not about the spelling: a name git misreads is absent from
+    # the baseline too, so it would be kept rather than removed — no longer
+    # destructive, and still not delivered.
     #
     # Only this line. The two neighbours take a file name and not a pathspec, which
     # is why they were right all along and why `:(literal)` would *break* them —
     # measured: `git update-index --force-remove -- ':odd.txt'` removes `:odd.txt`,
     # and the same call with `:(literal):odd.txt` removes nothing at all.
-    line="$(cd "$root" && git ls-tree "$commit^{tree}" -- ":(literal)$path" 2>/dev/null)" || line=""
-    if [ -z "$line" ]; then
-      (cd "$root" && GIT_INDEX_FILE="$idx" git update-index --force-remove -- "$path" 2>/dev/null) || true
-    else
+    if ! line="$(cd "$root" && git ls-tree "$commit^{tree}" -- ":(literal)$path" 2>/dev/null)"; then
+      rm -f "$idx"
+      concurrency__log "$ticket: git would not say whether $path is in this iteration's commit — this iteration is not on the branch"
+      return 1
+    fi
+    if [ -n "$line" ]; then
       (cd "$root" && GIT_INDEX_FILE="$idx" git update-index --add --cacheinfo \
         "$(printf '%s' "$line" | awk '{ print $1 }'),$(printf '%s' "$line" | awk '{ print $3 }'),$path" 2>/dev/null) || true
+      wrote=$((wrote + 1))
+      continue
     fi
+    # The second question, and it is asked of the commit this worktree was made at
+    # ([60]). Nothing this iteration did put the path on the branch and nothing it
+    # did took it off: whatever sits at that name on the tip was put there by
+    # somebody else while this iteration ran, and the fold has no verdict to pass
+    # on it.
+    if ! base="$(cd "$root" && git ls-tree "$start^{tree}" -- ":(literal)$path" 2>/dev/null)"; then
+      rm -f "$idx"
+      concurrency__log "$ticket: git would not say whether $path was on the branch this iteration started from — this iteration is not on the branch"
+      return 1
+    fi
+    if [ -z "$base" ]; then
+      concurrency__log "$ticket: $path is not in this iteration's commit and was not on the branch it started from — not a deletion of this iteration's, leaving it to whoever wrote it"
+      kept=$((kept + 1))
+      continue
+    fi
+    (cd "$root" && GIT_INDEX_FILE="$idx" git update-index --force-remove -- "$path" 2>/dev/null) || true
+    removed=$((removed + 1))
   done <<PATHS
 $changed
 PATHS
@@ -554,7 +608,15 @@ PATHS
     concurrency__log "$ticket: could not move the branch — this iteration is not on it"
     return 1
   fi
-  concurrency__log "$ticket: folded onto the branch over a sibling's commit"
+  # What the fold *did*, and not what it set out to do ([60], the defect [30] paid
+  # for on `core.excludesFile` and [37] on the quarantine). The line this replaces
+  # said "over a sibling's commit" while there was no sibling — the tip had been
+  # moved by a human at another terminal, which is reachable at MAX_PARALLEL=1 —
+  # and it said "folded onto the branch" while the tree it had just written took a
+  # path off it. Three numbers instead, because a fold that removes and a fold that
+  # writes are not the same event, and the morning log is where the difference has
+  # to be visible.
+  concurrency__log "$ticket: folded onto the branch over a commit that moved the tip — $wrote path(s) written, $removed removed, $kept left alone"
   return 0
 }
 

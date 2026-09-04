@@ -4295,6 +4295,57 @@ mutation "59 a declaration that swallows a status is not looked for" "$LAYERING"
   's/^layering_masked_status\(\) \{/layering_masked_status() { return 0;/m' \
   test/layering.bats "has teeth"
 
+# ── [60] the replay takes a human's commit off the branch ────────────────────
+#
+# The half of [50] that was left in `concurrency__replay`, and the same shape as
+# the three entries above it: "absent from the commit" is two answers, and the
+# fold read one. Six entries, because six different things can be taken away —
+# the second question, the value that makes it answerable, the two return-code
+# refusals that keep both questions honest, and the two journal lines that are the
+# only place a human learns a path the gate approved is not on the branch.
+
+mutation "60 the replay reads a path its own commit could not stage as a deletion" "$CONCURRENCY" \
+  's/    if \[ -z "\$base" \]; then\n      concurrency__log/    if false; then\n      concurrency__log/' \
+  test/concurrency.bats "not taken off the branch"
+
+# The same guarantee through the loop, and it is the one that says the replay is
+# reached at MAX_PARALLEL=1: the tip moves because a human commits in another
+# terminal, which [56] asks them to do.
+mutation "60 a human's commit is folded away end to end" "$CONCURRENCY" \
+  's/    if \[ -z "\$base" \]; then\n      concurrency__log/    if false; then\n      concurrency__log/' \
+  test/concurrency.bats "survives an iteration whose durable commit"
+
+# And the value that makes the second question answerable at all — [50]'s entry
+# for the refresh, one function up. Without it the fold refuses every iteration
+# that could not stage something, which is safe and still not delivery.
+mutation "60 the fold does not tell the replay where its baseline is" "$CONCURRENCY" \
+  's/    concurrency__replay "\$ticket" "\$tip" "\$commit" "\$changed" "\$start" \|\| rc=1/    concurrency__replay "\$ticket" "\$tip" "\$commit" "\$changed" || rc=1/' \
+  test/concurrency.bats "survives an iteration whose durable commit"
+
+# Both questions asked by their status and not by an empty answer ([59], [34]).
+# `git ls-tree` gives nothing with rc=0 for a path a tree does not carry and
+# nothing with rc=128 for a tree it cannot read; swallowed, the first refusal
+# removes an approved path and the second keeps a deleted one.
+mutation "60 a commit the fold cannot read answers that the session deleted" "$CONCURRENCY" \
+  's/    if ! line="\$\(cd "\$root" && git ls-tree "\$commit\^\{tree\}" -- ":\(literal\)\$path" 2>\/dev\/null\)"; then\n      rm -f "\$idx"\n      concurrency__log "\$ticket: git would not say whether \$path is in this[^\n]*\n      return 1\n    fi\n/    line="\$(cd "\$root" \&\& git ls-tree "\$commit^{tree}" -- ":(literal)\$path" 2>\/dev\/null)" || line=""\n/' \
+  test/concurrency.bats "refuses the branch instead of removing"
+
+mutation "60 a baseline the fold cannot read answers that it never held the path" "$CONCURRENCY" \
+  's/    if ! base="\$\(cd "\$root" && git ls-tree "\$start\^\{tree\}" -- ":\(literal\)\$path" 2>\/dev\/null\)"; then\n      rm -f "\$idx"\n      concurrency__log "\$ticket: git would not say whether \$path was on the branch[^\n]*\n      return 1\n    fi\n/    base="\$(cd "\$root" \&\& git ls-tree "\$start^{tree}" -- ":(literal)\$path" 2>\/dev\/null)" || base=""\n/' \
+  test/concurrency.bats "refuses the branch instead of removing"
+
+# The two journal lines. A path the gate approved that is not on the branch is
+# what a human has to find in the morning log, and the summary line used to name
+# a sibling that was not there while announcing a fold that had just removed a
+# file — [30] on `core.excludesFile`, [37] on the quarantine.
+mutation "60 the path the fold left alone is not named" "$CONCURRENCY" \
+  's/      concurrency__log "\$ticket: \$path is not in this iteration[^\n]*\n//' \
+  test/concurrency.bats "not taken off the branch"
+
+mutation "60 the fold reports its intention instead of its result" "$CONCURRENCY" \
+  's/  concurrency__log "\$ticket: folded onto the branch over a commit that moved the tip[^\n]*/  concurrency__log "\$ticket: folded onto the branch over a sibling\x27s commit"/' \
+  test/concurrency.bats "not taken off the branch"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

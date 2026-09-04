@@ -667,6 +667,10 @@ FAKE
   run_loop
   assert_success
   assert_output_contains "folded onto the branch"
+  # The replay's own line, which [60] rewrote: this is what says the fast-forward
+  # was taken and not merely that *a* fold happened. The retired wording is refuted
+  # under it so it cannot come back unnoticed.
+  refute_output_contains "over a commit that moved the tip"
   refute_output_contains "over a sibling's commit"
 
   run bash -c "git -C '$PROJECT_DIR' rev-list --count '$before..HEAD'"
@@ -799,9 +803,9 @@ GITSHIM
     concurrency__replay 01-alpha "$tip" "$commit" ":odd.txt
 src/zone[1].txt
 src/plain.txt
-src/gone.txt"'
+src/gone.txt" "$start"'
   assert_success
-  assert_output_contains "folded onto the branch over a sibling's commit"
+  assert_output_contains "folded onto the branch over a commit that moved the tip"
 
   # The three delivered paths are on the branch, and the deleted one is off it.
   #
@@ -822,6 +826,196 @@ src/gone.txt"'
   # so a question about the wrong name would put the wrong content at this path.
   run bash -c "git -C '$PROJECT_DIR' show 'HEAD::odd.txt'"
   assert_output_contains "delivered"
+}
+
+@test "a path the fold's own commit could not stage is left alone, not taken off the branch" {
+  # The half of [50] that was left in this function, and that [54] handed on to the
+  # pass which opened [60]. `concurrency__refresh` was given the pre-fold tip
+  # because "not in HEAD" is two answers; the replay went on asking one question —
+  # "is this path in this iteration's commit?" — and read the empty answer as "the
+  # session deleted it". A path the gate approved and `git add` refused is absent
+  # from that commit in exactly the same way, and `failures_make_durable` says so
+  # out loud and commits the rest. So the fold built a tree without the path and
+  # put that on the branch: somebody else's commit taken off it by a run that had
+  # just announced it could not stage that very path.
+  #
+  # At the module, for the reason [50] and [54] both had to come down here — and
+  # because this is the one place all four answers fit in a single call. A fix that
+  # simply stopped removing anything would satisfy the first one perfectly:
+  #
+  #   src/plain.txt    delivered and staged                → on the branch, session bytes
+  #   src/witness.txt  the paired witness: the same shape as src/human.txt — absent
+  #                    from the baseline, on the tip because somebody else committed
+  #                    it — but staged. It has to land, with the session's bytes.
+  #   src/human.txt    approved, not staged, on the tip     → left alone, their bytes
+  #   src/gone.txt     in the baseline, not in the commit   → a real deletion, off it
+  pack_run '
+    cd "$(ralph_project_root)"
+    mkdir -p src
+    printf "on the branch\n" >src/gone.txt
+    git add -A -- src/gone.txt >/dev/null 2>&1
+    git commit -q -m "test: the branch as this worktree found it"
+    start="$(git rev-parse HEAD)"
+
+    printf "delivered\n" >src/plain.txt
+    printf "delivered\n" >src/witness.txt
+    git rm -q -- src/gone.txt
+    git add -A -- src/plain.txt src/witness.txt >/dev/null 2>&1
+    git commit -q -m "test: what the durable commit could stage, src/human.txt refused"
+    commit="$(git rev-parse HEAD)"
+
+    git reset -q --hard "$start"
+    printf "written by the human\n" >src/human.txt
+    printf "written by the human\n" >src/witness.txt
+    git add -A -- src/human.txt src/witness.txt >/dev/null 2>&1
+    git commit -q -m "test: a human committed in another terminal"
+    tip="$(git rev-parse HEAD)"
+
+    concurrency__replay 01-alpha "$tip" "$commit" "src/plain.txt
+src/witness.txt
+src/human.txt
+src/gone.txt" "$start"'
+  assert_success
+  local journal="$output"
+
+  # The witness first, and the order is [54]'s lesson: bats stops at the first red
+  # assertion, so anything asserted above src/human.txt would say nothing about
+  # whether these survive the mutation.
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  assert_output_contains "src/plain.txt"
+  assert_output_contains "src/witness.txt"
+  refute_output_contains "src/gone.txt"
+  run bash -c "git -C '$PROJECT_DIR' show HEAD:src/witness.txt"
+  assert_output_contains "delivered"
+
+  # The guarantee: on the branch, and with the bytes of whoever put it there. This
+  # iteration never staged it, so it has nothing true to say about its content
+  # either — the conflict [13] documents as the price of the replay is what
+  # src/witness.txt above pays, and this path does not even reach it.
+  run bash -c "git -C '$PROJECT_DIR' ls-tree -r --name-only HEAD"
+  assert_output_contains "src/human.txt"
+  run bash -c "git -C '$PROJECT_DIR' show HEAD:src/human.txt"
+  assert_output_contains "written by the human"
+
+  # Named on its own line rather than left to be inferred from a count: a path the
+  # gate approved and that is not on the branch is what a human needs to find in
+  # the morning log.
+  output="$journal"
+  assert_output_contains "src/human.txt is not in this iteration's commit and was not on the branch it started from"
+  # And the fold reports what it did rather than what it set out to do ([30] on
+  # `core.excludesFile`, [37] on the quarantine). The line this replaces said "over
+  # a sibling's commit" with no sibling anywhere — the tip had been moved by a
+  # human, which is reachable at the shipped MAX_PARALLEL=1 — and said "folded onto
+  # the branch" while the tree it had just written took a path off it.
+  assert_output_contains "folded onto the branch over a commit that moved the tip — 2 path(s) written, 1 removed, 1 left alone"
+  refute_output_contains "over a sibling's commit"
+}
+
+@test "a fold that cannot read what its own commit holds refuses the branch instead of removing" {
+  # [59]'s rule, one function further along ([60]). `git ls-tree` answers a path a
+  # tree does not carry with nothing and rc=0, and a tree it cannot read with
+  # nothing and rc=128 — the same output for two opposite facts, which is [34]'s
+  # line. Swallowed, the first refusal has the fold take an approved path off the
+  # branch and the second has it keep one the session really deleted; both conclude
+  # on an answer git declined to give.
+  #
+  # Both questions, one call each, and neither may move the branch.
+  pack_run '
+    cd "$(ralph_project_root)"
+    mkdir -p src
+    printf "on the branch\n" >src/plain.txt
+    git add -A -- src/plain.txt >/dev/null 2>&1
+    git commit -q -m "test: the branch as this worktree found it"
+    start="$(git rev-parse HEAD)"
+    printf "put there by somebody else\n" >src/other.txt
+    git add -A -- src/other.txt >/dev/null 2>&1
+    git commit -q -m "test: a commit that moved the tip"
+    tip="$(git rev-parse HEAD)"
+
+    concurrency__replay 01-alpha "$tip" 0000000000000000000000000000000000000000 \
+      "src/plain.txt" "$start"'
+  assert_failure
+  assert_output_contains "git would not say whether src/plain.txt is in this iteration's commit"
+  run bash -c "git -C '$PROJECT_DIR' log --format='%s' -1"
+  assert_equal "$output" "test: a commit that moved the tip"
+
+  # And the second question, asked of a baseline git cannot read. src/other.txt is
+  # on the tip and genuinely absent from the commit named here, so without the
+  # status the fold would decide from a refusal that it has nothing to say — and
+  # leave on the branch a path the session may really have deleted.
+  pack_run '
+    cd "$(ralph_project_root)"
+    concurrency__replay 01-alpha "$(git rev-parse HEAD)" "$(git rev-parse HEAD~1)" \
+      "src/other.txt" 0000000000000000000000000000000000000000'
+  assert_failure
+  assert_output_contains "git would not say whether src/other.txt was on the branch this iteration started from"
+  run bash -c "git -C '$PROJECT_DIR' log --format='%s' -1"
+  assert_equal "$output" "test: a commit that moved the tip"
+}
+
+@test "a human's commit survives an iteration whose durable commit could not stage that path" {
+  # [60] end to end, at the shipped MAX_PARALLEL=1 — which is the half of [54]'s
+  # gravity note that measured false. The tip moves because a human commits in
+  # another terminal, which is exactly what [56] asks them to do, so the replay is
+  # reached with no sibling anywhere in the run.
+  #
+  # TYPECHECK_CMD is that second terminal and TEST_CMD is a project suite that
+  # touches permissions. Both run after [29] froze the judged tree and before the
+  # durable commit, and that window is the only place where a path the gate has
+  # already approved can become one `git add` refuses.
+  use_tickets 01-alpha
+  perl -pi -e 's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/*`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket whose surface covers both paths"
+
+  cat >"$SHIM_BIN/human-commits" <<'HUMAN'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+mkdir -p "$root/src"
+printf 'written by the human\n' >"$root/src/shared.txt"
+git -C "$root" add -- src/shared.txt
+git -C "$root" -c user.name=human -c user.email=human@test.invalid \
+  commit -q -m 'human: a fix committed in another terminal'
+exit 0
+HUMAN
+  chmod +x "$SHIM_BIN/human-commits"
+  set_config TYPECHECK_CMD 'human-commits'
+
+  cat >"$SHIM_BIN/perm-tests" <<'PERM'
+#!/usr/bin/env bash
+chmod 000 src/shared.txt 2>/dev/null || true
+exit 0
+PERM
+  chmod +x "$SHIM_BIN/perm-tests"
+  set_config TEST_CMD 'perm-tests'
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+printf 'delivered by the session\n' >src/shared.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  # The durable commit still says what it could not stage — [59] left that line
+  # alone on purpose, and it is what makes this reachable at all.
+  assert_output_contains "src/shared.txt was approved by the gate and could not be staged"
+  assert_output_contains "src/shared.txt is not in this iteration's commit and was not on the branch it started from"
+
+  # The human's commit is still on the branch, with their bytes, and the rest of
+  # the iteration went on it beside them.
+  run bash -c "git -C '$PROJECT_DIR' show HEAD:src/shared.txt"
+  assert_output_contains "written by the human"
+  run bash -c "git -C '$PROJECT_DIR' show HEAD:src/alpha.txt"
+  assert_output_contains "written"
+  # And in the tree a human looks at in the morning. The refresh used to remove
+  # this file from disk as well — correctly, from its own point of view, because
+  # the fold really had taken it off the branch.
+  assert_file_contains "$PROJECT_DIR/src/shared.txt" "written by the human"
 }
 
 @test "the tree the run was started in follows the branch" {
