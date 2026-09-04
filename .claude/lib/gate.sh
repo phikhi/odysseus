@@ -2089,6 +2089,42 @@ gate_unjudged_changes() {
 
 # ── the diff an iteration is judged on ───────────────────────────────────────
 
+# What git said on stderr while an index was being built, as one line.
+#
+# Only ever called on a refusal path, so the extra process costs nothing that
+# matters, and it is a helper rather than a `tr` at three call sites because the
+# whole value of the line is that a human reads git's own words — `Permission
+# denied`, and the name of the file — instead of a sentence this pack invented
+# about a failure it did not diagnose. Empty stays sayable: a refusal with nothing
+# on stderr still has to name itself.
+gate__git_said() {
+  local said
+  said="$(printf '%s\n' "$1" |
+    awk 'length { if (n++) printf " | "; printf "%s", $0 } END { if (n) print "" }')"
+  if [ -n "$said" ]; then
+    printf 'git said: %s\n' "$said"
+  else
+    printf 'git refused it without saying why\n'
+  fi
+}
+
+# Whether git walked only part of the tree it was asked to add — the one failure
+# in here that has no return code at all ([59]).
+#
+# A directory in mode 000 is not an error to `git add`: it answers `rc=0` and a
+# `warning: could not open directory`, and everything under it — tracked files
+# included, measured — is missing from the index without a word downstream. Read
+# off the message because there is nothing else to read, under `LC_ALL=C` at every
+# call site so a translated git cannot make this quietly stop matching. The
+# ignored zone does not reach here: git does not open a directory it is excluding,
+# so a project's unreadable `node_modules` costs nothing (measured).
+gate__walk_incomplete() {
+  case "$1" in
+    *'could not open directory'*) return 0 ;;
+  esac
+  return 1
+}
+
 # Everything in the working tree right now, as a git tree object: tracked or
 # not, committed or not, the guarded paths included whether the project ignores
 # them or not. Built in a throwaway index, so the real one is untouched.
@@ -2117,8 +2153,74 @@ gate_unjudged_changes() {
 # ([30]): the rules obeyed here are the ones the session was handed, so a session
 # cannot widen the blind spot it is judged through. What is left is enumerated
 # instead of judged: see gate_unguarded_ignored.
+#
+# ── a refusal git handed back and this function used to swallow ([59]) ────────
+#
+# Every failure of `git add` in here refuses the whole snapshot, by **return
+# code**, and until [59] not one of them did. The comment in the pathspec branch
+# said the refusal rested on `set -e`; it never was in flight. All eleven callers
+# take the tree through `x="$(gate_tree_snapshot …)" || x=""`, and a command
+# substitution whose status is consumed by `||` **suspends errexit for the whole
+# dynamic extent** of what it runs — measured, not deduced: a `false` in the
+# middle of this function does not take it down. So the function ran to the end,
+# `git write-tree` handed back the empty tree or an amputated one, `[ -n "$tree" ]`
+# found it non-empty, and the caller got `rc=0` and a tree where it believed it was
+# getting a refusal. What that produced in a real run is the whole of [59]: an
+# unreadable file made `git add -A` fail **whole**, so the judged tree held only
+# the forced `GUARDED_PATHS` and the rest of the repository looked deleted by the
+# session — three `scope=red` iterations accusing a session of writing a file it
+# had only chmodded, the retry budget burnt, `failed-impl`, and not one line naming
+# the cause; and under a wide enough write-surface the same amputation came out
+# `resolved` with `HEAD` where it started, which is the false *delivered* of [35]
+# through a door [35] does not cover.
+#
+# So the refusal travels the way [53] wrote the rule down — *a refusal handed back
+# through a command substitution goes by the return code, not by a variable* — and
+# not by asking eleven callers to change a form that is correct. That is the
+# decision this ticket had to take explicitly, against the other one available:
+# hand the tree back and say what is missing. It was refused for the reason the
+# whole of this document keeps refusing it — the consumers of this value are
+# guards, and a guard handed a tree with a hole in it does not know it is holding
+# one. There is no caller here that could act on "here is a tree, minus something".
+#
+# **The price is written because it is real**: a project carrying one unreadable
+# path in its non-ignored tree gets *every* snapshot refused, so every iteration is
+# red at the scope-guard, rolls back nothing, and burns its retries down to
+# `failed-impl` — with the cause named on every line, which is the whole of the
+# difference. The frontier stalls loudly instead of a session being convicted of a
+# deletion it did not make. The ignored zone is out of reach either way and stays
+# there (measured: an unreadable file under a gitignored directory costs `git add`
+# nothing at all, and one under a *forced* guarded path costs the snapshot — which
+# is the right way round, the forcing being what somebody named on purpose).
+#
+# **What is refused and what is not, in one line for both branches: refuse what
+# git could not read, never what is simply not there.** `128`, the code git
+# spells for a pathspec that matched nothing, is swallowed in both — a project is
+# free to name a guarded path it does not have yet, and a tracker a session has
+# just deleted really does hold nothing, which is the answer `failures_protect_
+# tracker` needs in order to put it back ([21]). What stops being swallowed is
+# `1`, which `--ignore-errors` is here to obtain: with it, a file git cannot read
+# is `1` and the index keeps everything else, so the two cases that were both
+# `128` and indistinguishable are now told apart *by a code and not by a message*.
+# This ticket got that boundary wrong first — refusing every non-zero in the
+# pathspec branch, which took out "a session that deletes the whole tracker gets
+# it back" — and the suite is what said so. A fatal that is neither `1` nor a
+# matched-nothing `128` — a held index lock, say — is still swallowed, and saying
+# so is the point: separating it would cost a dependency on git's wording to gain
+# a case nobody has measured.
+#
+# **The one failure git does not give a code for, and it is guarded by a message**
+# ([59]'s fifth criterion). A *directory* in mode 000 is not an error at all:
+# `git add -A` answers `rc=0` with `warning: could not open directory 'x/':
+# Permission denied`, and every path under it — tracked ones included, measured —
+# is silently absent from the tree. A fix built on the return code cannot see it.
+# So this one is read off stderr, with `LC_ALL=C` pinning the wording against a
+# translated git, and the price is that a git which rewords that warning loses this
+# half in silence while the return-code half is untouched. The alternative was to
+# name it in a document and let a run keep judging an amputated tree; between a
+# guard that depends on a string and no guard at all, this pack takes the string.
 gate_tree_snapshot() {
-  local index tree path hidden
+  local index tree path hidden diag rc
   index="$(mktemp "${TMPDIR:-/tmp}/ralph-index.XXXXXX")" || return 1
   rm -f "$index"
   if [ "$#" -gt 0 ]; then
@@ -2128,14 +2230,42 @@ gate_tree_snapshot() {
     # guard ([21]). Left open by [33], which had no caller here to decide for;
     # closed by [34], which had to enumerate every caller anyway.
     #
-    # No `|| true`, unlike the branch below, and the asymmetry is the whole point:
-    # there a named path a project has not created yet is a tolerated case and the
-    # snapshot stands, here a pathspec that matches nothing means the caller cannot
-    # be given the thing it asked to watch. `set -e` takes the function down, the
-    # caller gets no tree, and that is the refusal it needs — a tracker guard handed
-    # an empty tree instead would read it as "the session changed nothing".
+    # The same rule as the branch below, and [59] had to correct its own first
+    # answer to arrive at it: **refuse what git could not read, never what is
+    # simply not there.** The comment that stood here until [59] said the opposite
+    # — that a pathspec matching nothing means the caller cannot be given what it
+    # asked to watch — and that reading is wrong on the one caller this branch has.
+    # `failures_tracker_tree` takes this snapshot twice around a session, and a
+    # session that `rm -rf`s the tracker leaves the second one with nothing to
+    # match: the empty tree is then the **true** answer, the `before` tree is not
+    # empty, and the difference is what makes `failures_protect_tracker` rebuild
+    # the whole directory ([21]). Refusing there restores nothing, which is how the
+    # first cut of this ticket broke `a session that deletes the whole tracker gets
+    # it back` — the guarantee it was written to protect, taken out by the guard.
+    #
+    # The direction the old comment feared is real and it is the *other* one: a
+    # `before` that came back empty while tickets were there would read every later
+    # write as a creation and leave the session's edits alone. That can only happen
+    # if git could not read them, which is exactly what refuses here — measured in
+    # [59]: one unreadable ticket file made this branch answer the empty tree with
+    # `rc=0`, so `diff-tree` marked **every** ticket `D`, the guard restored them
+    # all and refused the green while accusing a session that had written nothing
+    # in there — the outage of [49] reached from the other end.
+    #
+    # `:(literal)` here too, for the reason the branch below carries at length.
     for path in "$@"; do
-      GIT_INDEX_FILE="$index" git add -A --force -- ":(literal)$path" >/dev/null 2>&1
+      rc=0
+      diag="$(LC_ALL=C GIT_INDEX_FILE="$index" git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
+      # `1` is a path git could not read; `128` is a pathspec that matched nothing,
+      # which is a fact about the repository and not a failure to measure it.
+      if [ "$rc" = 1 ] || gate__walk_incomplete "$diag"; then
+        rm -f "$index"
+        # On stderr for the reason the branch below carries: the tree is this
+        # function's stdout, so a diagnosis printed there would be captured into
+        # the caller's variable and thrown away with the failed status.
+        gate__gap "cannot snapshot $path — $(gate__git_said "$diag"), so there is no tree of that path to hand back: what came back would be short of whatever git could not read, and a guard cannot tell that from a path the session deleted" >&2
+        return 1
+      fi
     done
   else
     # Asked before anything is added, and a broken pin refuses the whole snapshot:
@@ -2150,13 +2280,25 @@ gate_tree_snapshot() {
       gate__log 'the pinned ignore rules cannot be read — refusing to snapshot a tree whose visibility nothing vouches for' >&2
       return 1
     fi
-    GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1
+    # `--ignore-errors` so that this answers `1` with everything readable in the
+    # index rather than `128` with an empty one: the status is refused either way,
+    # and what it buys is a diagnosis naming *every* path git could not read
+    # instead of only the first. Refused whole, and that is the point of [59] —
+    # before it, this failure left the index empty, `write-tree` handed back the
+    # empty tree, and the judged tree held nothing but the forced paths below.
+    rc=0
+    diag="$(LC_ALL=C GIT_INDEX_FILE="$index" git add -A --ignore-errors 2>&1 >/dev/null)" || rc=$?
+    if [ "$rc" != 0 ] || gate__walk_incomplete "$diag"; then
+      rm -f "$index"
+      gate__gap "cannot snapshot the working tree — $(gate__git_said "$diag"), so there is no tree to hand back: the one this would have built is short of whatever git could not read, and every guard handed it would read the hole as paths the session deleted" >&2
+      return 1
+    fi
     # One `git add` per path rather than one for all of them: a pathspec that
     # matches nothing makes git refuse the whole call, and a project is free
     # to name a path it does not have yet. A refused pathspec leaves the snapshot
     # exactly as the plain `git add -A` left it, which is the status quo.
     #
-    # One path per line rather than `for path in $list`, and the `|| true` above
+    # One path per line rather than `for path in $list`, and the tolerance below
     # is why it matters ([33]): word splitting turned a path carrying a space
     # into two pathspecs matching nothing, and the tolerance written for a path a
     # project has not created yet swallowed exactly that. Both producers already
@@ -2171,7 +2313,17 @@ gate_tree_snapshot() {
     # and the two halves have to mean the same thing by a guarded path.
     while IFS= read -r path; do
       [ -n "$path" ] || continue
-      GIT_INDEX_FILE="$index" git add -A --force -- ":(literal)$path" >/dev/null 2>&1 || true
+      rc=0
+      diag="$(LC_ALL=C GIT_INDEX_FILE="$index" git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
+      # `1` is a path git could not read, `128` is a pathspec that matched
+      # nothing — the tolerated case this loop was written for, and the only
+      # thing the `|| true` here ever meant to swallow. They were both `128`
+      # until `--ignore-errors`, which is why one silently bought the other.
+      if [ "$rc" = 1 ] || gate__walk_incomplete "$diag"; then
+        rm -f "$index"
+        gate__gap "cannot snapshot the guarded path $path — $(gate__git_said "$diag"), so there is no tree to hand back: a guarded path is one somebody named on purpose, and one that drops out of the tree in silence is the blind spot the forcing exists to close" >&2
+        return 1
+      fi
     done <<FORCED
 $(gate_guarded_paths)
 $hidden

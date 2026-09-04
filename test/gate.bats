@@ -1906,6 +1906,230 @@ FAKE
   refute_output_contains "zone1/payload"
 }
 
+# ── a refusal git handed back and the snapshot used to swallow ([59]) ─────────
+
+@test "a file git cannot read refuses the snapshot instead of an amputated tree" {
+  # The defect [59] was opened on, at the module. `git add -A` fails **whole** on
+  # a file it cannot open — it does not skip it — so the throwaway index came back
+  # empty, `git write-tree` handed back the empty tree, `[ -n "$tree" ]` found it
+  # non-empty and the caller got `rc=0` and a tree. The refusal the comment
+  # described rested on `set -e`, and all eleven callers take this through
+  # `x="$(…)" || x=""`, which suspends errexit for the whole call.
+  use_tickets 01-alpha
+
+  pack_run '
+    printf "readable\n" >readable.txt
+    printf "locked\n" >locked.txt
+    chmod 000 locked.txt
+    rc=0
+    tree="$(gate_tree_snapshot)" || rc=$?
+    chmod 644 locked.txt
+    printf "rc=%s tree=[%s]\n" "$rc" "$tree"'
+  assert_success
+  assert_output_contains "rc=1 tree=[]"
+  assert_output_contains "cannot snapshot the working tree"
+  # git's own words rather than a sentence this pack invented about a failure it
+  # did not diagnose — the run of [59] said nothing at all about the cause.
+  assert_output_contains "locked.txt"
+  assert_output_contains "Permission denied"
+  # The value that made this a defect rather than an outage: the empty tree,
+  # handed back as though the session had emptied the repository.
+  refute_output_contains "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+  # The paired witness: the same call, the same file, readable.
+  pack_run '
+    printf "readable\n" >readable.txt
+    printf "unlocked\n" >unlocked.txt
+    rc=0
+    tree="$(gate_tree_snapshot)" || rc=$?
+    printf "rc=%s found=%s\n" "$rc" \
+      "$(git ls-tree -r --name-only "$tree" | grep -c "^unlocked.txt$" || true)"'
+  assert_success
+  assert_output_contains "rc=0 found=1"
+}
+
+@test "a pathspec branch refuses what git could not read, not what is not there" {
+  # Where this ticket had to correct itself, and the line is not cosmetic. The
+  # comment that stood here said a pathspec matching nothing meant the caller
+  # could not be given what it asked to watch — so the first cut refused every
+  # non-zero, and took out "a session that deletes the whole tracker gets it
+  # back": the `after` snapshot of a tracker somebody `rm -rf`ed matches nothing,
+  # and the empty tree is the true answer that makes the guard rebuild it ([21]).
+  #
+  # What the branch really has to refuse is the other thing, measured in [59]: one
+  # unreadable ticket file made it answer the empty tree with `rc=0`, so `diff-tree`
+  # marked every ticket `D` and the guard restored them all.
+  use_tickets 01-alpha
+
+  pack_run '
+    mkdir -p watched && printf "x\n" >watched/payload
+    chmod 000 watched/payload
+    rc=0
+    tree="$(gate_tree_snapshot watched)" || rc=$?
+    chmod 644 watched/payload
+    printf "rc=%s tree=[%s]\n" "$rc" "$tree"'
+  assert_success
+  assert_output_contains "rc=1 tree=[]"
+  assert_output_contains "cannot snapshot watched"
+  assert_output_contains "Permission denied"
+  refute_output_contains "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+  # The paired witness in both directions. A path that is there comes back as a
+  # tree of that path; a path that holds nothing comes back as the empty tree with
+  # a zero status, which is a fact about the repository and not a refusal.
+  pack_run 'mkdir -p watched && printf "x\n" >watched/payload
+    rc=0; tree="$(gate_tree_snapshot watched)" || rc=$?
+    printf "rc=%s\n" "$rc"
+    git ls-tree -r --name-only "$tree"'
+  assert_success
+  assert_output_contains "rc=0"
+  assert_output_contains "watched/payload"
+
+  pack_run 'rc=0; tree="$(gate_tree_snapshot "no/such/path")" || rc=$?
+    printf "rc=%s empty=%s\n" "$rc" \
+      "$([ "$tree" = "$(git hash-object -t tree /dev/null)" ] && printf yes || printf no)"'
+  assert_success
+  assert_output_contains "rc=0 empty=yes"
+}
+
+@test "a guarded path git cannot read refuses the snapshot; an absent one does not" {
+  # The forcing loop, where the tolerance lives and has to survive: a project is
+  # free to name a guarded path it does not have yet, and that is the `|| true`
+  # this replaced. What it must stop swallowing is the other failure, which wore
+  # the same exit code until `--ignore-errors` told them apart — `1` for a file
+  # git could not read, `128` for a pathspec that matched nothing.
+  #
+  # The unreadable file is in the *ignored* zone on purpose: the plain `git add
+  # -A` never opens it, so only the forced add can fail here and the branch is
+  # measured on its own.
+  use_tickets 01-alpha
+  set_config GUARDED_PATHS "$(printf 'vendor\nnot-here')"
+  ignore_paths 'vendor/'
+
+  pack_run '
+    mkdir -p vendor && printf "x\n" >vendor/payload
+    chmod 000 vendor/payload
+    rc=0
+    tree="$(gate_tree_snapshot)" || rc=$?
+    chmod 644 vendor/payload
+    printf "rc=%s tree=[%s]\n" "$rc" "$tree"'
+  assert_success
+  assert_output_contains "rc=1 tree=[]"
+  assert_output_contains "cannot snapshot the guarded path vendor"
+  assert_output_contains "Permission denied"
+
+  # The paired witness, and it carries the tolerance with it: the same forcing
+  # over a readable `vendor/`, with `not-here` still in the list — a guarded path
+  # the project has not created costs the snapshot nothing.
+  pack_run '
+    mkdir -p vendor && printf "x\n" >vendor/payload
+    rc=0
+    tree="$(gate_tree_snapshot)" || rc=$?
+    printf "rc=%s found=%s\n" "$rc" \
+      "$(git ls-tree -r --name-only "$tree" | grep -c "^vendor/payload$" || true)"'
+  assert_success
+  assert_output_contains "rc=0 found=1"
+}
+
+@test "a directory git could not open refuses the snapshot, though git only warned" {
+  # The failure git gives no exit code for, and the reason [59] kept it as an
+  # acceptance criterion of its own: a directory in mode 000 answers `rc=0` and a
+  # `warning: could not open directory`, and everything under it — tracked files
+  # included — is missing from the tree without a word. A fix built on the return
+  # code alone does not see this one.
+  use_tickets 01-alpha
+
+  pack_run '
+    mkdir -p locked && printf "x\n" >locked/payload
+    git add -A >/dev/null 2>&1 || true
+    chmod 000 locked
+    rc=0
+    tree="$(gate_tree_snapshot)" || rc=$?
+    chmod 755 locked
+    printf "rc=%s tree=[%s]\n" "$rc" "$tree"'
+  assert_success
+  assert_output_contains "rc=1 tree=[]"
+  assert_output_contains "could not open directory"
+
+  # The paired witness: the same directory, readable, and its file is in the tree.
+  pack_run '
+    mkdir -p locked && printf "x\n" >locked/payload
+    rc=0
+    tree="$(gate_tree_snapshot)" || rc=$?
+    printf "rc=%s found=%s\n" "$rc" \
+      "$(git ls-tree -r --name-only "$tree" | grep -c "^locked/payload$" || true)"'
+  assert_success
+  assert_output_contains "rc=0 found=1"
+}
+
+@test "a file the gate cannot read stops the run instead of accusing the session" {
+  # The run [59] measured, narrow surface. The session did not *write*
+  # `CONTEXT.md` — it made it unreadable — and the amputated tree made every path
+  # the forcing did not cover look deleted by the session: three `scope=red`
+  # iterations saying `wrote CONTEXT.md, outside the declared write-surface`, the
+  # retry budget burnt, `Escalation: failed-impl`, and a human sent to answer
+  # "why is this code wrong" about code no gate had read. Not one line in the
+  # whole run said `unreadable` or `permission`.
+  use_tickets 01-alpha
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'alpha\n' >src/alpha.txt
+chmod 000 CONTEXT.md
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  chmod 644 "$PROJECT_DIR/CONTEXT.md" 2>/dev/null || true
+  assert_failure 4
+
+  # The accusation is gone, and the cause is named where the accusation was.
+  refute_output_contains "wrote CONTEXT.md"
+  assert_output_contains "cannot snapshot the working tree"
+  assert_output_contains "Permission denied"
+  assert_output_contains "the scope-guard could not read the working tree"
+  # Back on the frontier with one attempt spent, rather than three iterations
+  # down and escalated to a human as a failed implementation.
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(ticket_field 01-alpha Escalation)" ""
+}
+
+@test "a tree the gate could not read is not delivered under a wide write-surface" {
+  # The other half of the same run, and the one that was a false *delivered*: a
+  # ticket whose surface covers what the amputated tree claims deleted came out
+  # `scope=green`, `failures_make_durable` found nothing to record, the fold had
+  # nothing to do, and the ticket was marked `resolved` with `HEAD` where it
+  # started and the session's work nowhere. That is the defect of [35] through a
+  # door [35] does not cover — `gate__nothing_delivered` compares `base` to the
+  # judged tree, and an amputation *is* a difference.
+  use_tickets 01-alpha
+  perl -pi -e 's|^\*\*Write-surface:\*\* .*|**Write-surface:** `*`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that declares everything"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src
+printf 'alpha\n' >src/alpha.txt
+chmod 000 CONTEXT.md
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  local head_before
+  head_before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+  run_loop
+  chmod 644 "$PROJECT_DIR/CONTEXT.md" 2>/dev/null || true
+  assert_failure 4
+
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(git -C "$PROJECT_DIR" rev-parse HEAD)" "$head_before"
+  assert_output_contains "cannot snapshot the working tree"
+  # What made it a *delivered* rather than a refusal: the word, on the ticket and
+  # in the run's own line.
+  refute_output_contains "-> resolved"
+}
+
 @test "a pin that cannot be read refuses to hand back a tree" {
   # Fail-closed, and it is the pin's whole reason for being: what the checks can
   # see must not depend on what the session left behind. The witness lives in a
