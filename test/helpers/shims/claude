@@ -171,7 +171,23 @@ else
   cat >"$state/claude.calls/$n/stdin"
 fi
 
-if [ -x "$state/claude.script" ]; then
+# The terminal value gate ([11]), recognised the same way a lens and a retro are:
+# by the question the pack actually sent, never by which call this is. There is at
+# most one per run, and it is the last session of it.
+#
+# Answered by the fake **even when a test has installed a scenario**, which is the
+# one place this file overrides `script_claude`, and the reason is the one already
+# written for `lens-*.writes` one screen down: a script replaces the whole fake, so
+# every test that scripts a delivery session and then drains its frontier would get
+# a value gate that answers nothing — and a session that judged nothing closes
+# nothing, so the whole suite would be measuring the escalation path. A test that
+# means to drive this tier scripts it with `playthrough_answer`.
+playthrough=0
+if grep -q 'RALPH-PLAYTHROUGH-VERDICT' "$state/claude.calls/$n/stdin" 2>/dev/null; then
+  playthrough=1
+fi
+
+if [ -x "$state/claude.script" ] && [ "$playthrough" = 0 ]; then
   exec "$state/claude.script" "$@" <"$state/claude.calls/$n/stdin"
 fi
 
@@ -218,7 +234,47 @@ if grep -q 'RALPH-RETRO-NOTHING' "$state/claude.calls/$n/stdin" 2>/dev/null; the
   retro=1
 fi
 
-if [ "$retro" = 1 ]; then
+# `pass` unless a test asked otherwise, and that default is not comfort. This tier
+# is the one the pack gives no off switch — a value gate a project could switch off
+# is a feature closing on nothing — so every test that drives a run to an empty
+# frontier reaches it, and a fake that answered red by default would put the whole
+# suite on the escalation path.
+if [ "$playthrough" = 1 ]; then
+  mkdir -p "$state/claude.playthroughs"
+  printf '%s\n' "$n" >>"$state/claude.playthroughs/calls"
+
+  # The in-band budget signal this one session carries, scriptable on its own: the
+  # window can say `blocked` for the window *after* the one it is spending, and a
+  # gate that answered anyway looked ([43]). Only here, so a test can stage that
+  # without telling the pilot its subscription is spent and measuring a pause.
+  if [ -f "$state/playthrough.rate_limit" ]; then
+    rate_limit="$(cat "$state/playthrough.rate_limit")"
+  fi
+
+  if [ -f "$state/playthrough.refused" ]; then
+    printf '{"type":"system","subtype":"init","session_id":"%s","model":"%s"}\n' \
+      "$session" "$model"
+    printf '{"type":"rate_limit_event","rate_limit_info":%s,"uuid":"uuid-%s-rate","session_id":"%s"}\n' \
+      "$(cat "$state/playthrough.refused")" "$n" "$session"
+    exit 1
+  fi
+
+  # Which value gate of this run this is, so a test can drive two rounds: a red
+  # one that re-injects a wiring ticket, and the green one that follows the
+  # iteration which closed the hole. Counted from the file rather than from a
+  # variable, for the reason the retro's index is: the file is the only thing that
+  # has seen them all.
+  playthrough_index="$(awk 'END { print NR }' "$state/claude.playthroughs/calls")"
+
+  if [ -f "$state/playthrough.answer.$playthrough_index" ]; then
+    answer="$(awk '{ printf "%s\\n", $0 }' "$state/playthrough.answer.$playthrough_index")"
+  elif [ -f "$state/playthrough.answer" ]; then
+    answer="$(awk '{ printf "%s\\n", $0 }' "$state/playthrough.answer")"
+  else
+    answer="the flow was walked end to end.\\nRALPH-PLAYTHROUGH-STEP: the user runs the demo and sees the markers\\nRALPH-PLAYTHROUGH-VERDICT: pass"
+  fi
+
+elif [ "$retro" = 1 ]; then
   mkdir -p "$state/claude.retros"
   printf '%s\n' "$n" >>"$state/claude.retros/calls"
   # Which retro this is, so a test can give two iterations two different answers.

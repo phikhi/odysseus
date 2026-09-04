@@ -286,7 +286,10 @@ FAKE
 
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 02-beta resolved
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
 }
 
 @test "the peak context of a normal session is journalled" {

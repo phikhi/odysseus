@@ -70,7 +70,10 @@ RENDEZVOUS
   # second attempt finds both markers already lying there and passes without the
   # two branches ever having run together. A guarantee undone by a later ticket,
   # in a test nobody had reason to re-read.
-  assert_equal "$(claude_call_count)" "1"
+  # 1 delivery session and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
 }
 
 @test "a red branch does not short-circuit the others" {
@@ -877,7 +880,10 @@ FAKE
   # First attempt red on the sealed write, second one delivers: the ticket is not
   # lost, and the second session never saw the file.
   assert_output_contains "configures the harness itself"
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_ticket_status 01-alpha resolved
   refute_file_exists "$PROJECT_DIR/.claude/settings.local.json"
   refute_file_exists "$SHIM_STATE/inherited"

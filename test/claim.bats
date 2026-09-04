@@ -157,7 +157,10 @@ live_record() {
   assert_ticket_status 01-alpha resolved
 
   # Ground, not just marked: a session really ran for it.
-  assert_equal "$(claude_call_count)" "1"
+  # 1 delivery session and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
   run claude_call_stdin 1
   assert_output_contains "01-alpha"
 }
@@ -283,7 +286,10 @@ live_record() {
   assert_ticket_status 01-alpha resolved
   run ticket_has_field 01-alpha Failures
   assert_failure
-  assert_equal "$(claude_call_count)" "1"
+  # 1 delivery session and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
 
   # The steal is admitted where the person who lost the claim will look, and the
   # record is in it: `unclaim` drops the field, so this note is the last copy.
@@ -331,8 +337,11 @@ FAKE
     assert_failure
   done
 
-  # And really ground each night, not marked from the sweep: three sessions.
-  assert_equal "$(claude_call_count)" "3"
+  # And really ground each night, not marked from the sweep: three deliveries,
+  # plus the terminal value gate each of those three nights closed on ([11]).
+  # Counted apart, so the total says which sessions they were.
+  assert_equal "$(claude_call_count)" "6"
+  assert_equal "$(playthrough_call_count)" "3"
 
   # The end state alone cannot carry this test. Probed while writing it: with the
   # counter cleared on delivery, charging every reclaim leaves no trace by morning,
@@ -365,7 +374,10 @@ FAKE
   assert_ticket_status 01-alpha ready-for-human
   assert_equal "$(ticket_field 01-alpha Escalation)" "failed-impl"
   # One reclaim, one judged attempt, one session spawned for it.
-  assert_equal "$(claude_call_count)" "1"
+  # 1 delivery session and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
 
   run git -C "$PROJECT_DIR" rev-parse --verify "refs/heads/failed/01-alpha"
   assert_success

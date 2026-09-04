@@ -139,3 +139,24 @@
   silence. D'autre part, la confirmation forcée que ce ticket possède est le seul
   endroit qui puisse attraper un `GUARDED_PATHS` rédigé large : `.` y rendrait
   commitable toute la zone ignorée qu'une write-surface couvre.
+
+- **Contrainte posée par [11], livré le 04/09/2026 : les trois clés du gate de
+  valeur sont une confirmation forcée, et un installeur silencieux livre un projet
+  qui ne clôt jamais rien.** `docs/playthroughs/` est déjà dans la liste que ce
+  ticket provisionne (spec §6) ; ce qui s'y ajoute est la configuration. Avec
+  `RUN_CMD` vide, `VISUAL_CMD` vide et `VISUAL_REAL_ASSETS=0` — les trois valeurs
+  livrées dans l'exemple — la frontière se vide, `playthrough_close` refuse avant
+  de dépenser une session, ouvre un ticket sur le puits humain et le run sort en
+  `4` : chaque nuit, avec tout le travail fait et la feature jamais close. C'est
+  voulu (le vert se mérite, [05]), et c'est exactement le genre de valeur que ce
+  ticket doit faire **confirmer à voix haute** au moment de l'installation, au même
+  titre que `TEST_CMD`. Un projet qui n'a pas de commande à donner — une
+  bibliothèque, un pack — doit l'apprendre à l'installation et pas à la fin de sa
+  première nuit.
+- **Et le playthrough écrit dans l'arbre principal sans commiter**, comme
+  `LEARNINGS.md`, `learning-records/`, `docs/adr/` et `receipts/`. Si ce ticket
+  provisionne un `.gitignore`, la question « lesquels de ces artefacts sont
+  versionnés » est la sienne : `docs/playthroughs/<feature>.md` est la preuve de
+  clôture d'une feature, donc probablement le seul des cinq qu'on veut dans
+  l'historique — et le laisser non ignoré et non commité est ce qui fait qu'un
+  humain le voit listé par le refus de `router_may_reinject` au drainage suivant.

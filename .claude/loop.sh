@@ -12,7 +12,10 @@
 #      working tree
 #   2  cannot run: no config, or a config that would make the gate meaningless
 #   4  stopped by a guard: stop requested, iteration cap, sterile run, a lock
-#      this run no longer holds, or a rollback that could not put the tree back
+#      this run no longer holds, a rollback that could not put the tree back, or
+#      a feature the terminal value gate did not close ([11]) — the frontier
+#      emptied and the playthrough was not green and persisted, so this run
+#      ground everything it could and the feature still does not work
 #   5  nothing to grind: the frontier was already empty when the run started
 #   6  the usage budget blocks this run: a weekly limit, or a session window
 #      whose reset this run must not sleep to ([08])
@@ -341,6 +344,10 @@ loop_preflight() {
   # run does at the one stop that lifts on its own, and a value read as "no
   # mechanism" looks exactly like a machine that has none.
   scheduler_preflight || rc=1
+  # And [11]'s, which bounds how many wiring tickets a red playthrough may open
+  # before a human is asked — a value nothing can compare against is a bound on
+  # the one line that decides whether a night keeps grinding.
+  playthrough_preflight || rc=1
   return "$rc"
 }
 
@@ -1408,6 +1415,21 @@ LEFTOVERS
     exit 4
   fi
 
+  # The user flow the terminal value gate will replay, copied here — before a
+  # single session exists, which is the whole of what makes it a control ([11]).
+  # `spec.md` sits in `.scratch/<feature>/`, the zone the scope-guard steps over
+  # and the rollback does not undo, so a delivery session can rewrite it; a value
+  # gate reading the file at the end would be replaying whatever the last session
+  # said this feature promised. Same secret discipline as the three above — a name
+  # in `$TMPDIR` this shell holds and never exports ([30], [40]).
+  #
+  # A run that cannot take it keeps the night and loses the closing: the gate
+  # refuses to conclude on a flow nothing vouches for, and says so then. Refusing
+  # to start would trade a night of delivered tickets for a `mktemp`.
+  if ! playthrough_witness; then
+    loop_log "no witness of this feature's user flow — the terminal value gate will refuse to close the feature at the end of this run, because the spec on disk is a file a session can write ([11])"
+  fi
+
   # The fourth layer's state for this run ([14]): the brief that travels between
   # two attempts at one ticket, and this loop's own copy of the lesson index —
   # taken here, before a single session exists, which is what makes every prompt
@@ -1436,7 +1458,7 @@ LEFTOVERS
 
   local iteration=0 sterile=0 ticket reclaimed rid rdisposition
   local budget_posture='' budget_paused=0 span pin
-  local stop_code=''
+  local stop_code='' playthrough_rc=0
   local RALPH_FRONTIER_PIN=''
   LOOP_SLOTS=''
 
@@ -1595,7 +1617,51 @@ RECLAIMED
         loop__reap 1
         continue
       fi
-      rm -f "${RALPH_TRACKER_LOG:-}"
+
+      # The terminal value gate ([11]), and this is the one place it may run:
+      # the frontier is empty, nothing is in flight, and the next statement
+      # would report a finished night. Every gate above judged an iteration or a
+      # ticket; this one asks whether the **feature** does anything, which is the
+      # question a green per-ticket gate cannot answer — a mechanism built,
+      # tested, reviewed and never connected to the flow a user takes.
+      #
+      # Only on the path to `exit 0`. A run whose frontier was empty from the
+      # start ground nothing and closes nothing, and spending a session plus the
+      # project's own commands on it would charge every misconfigured start for a
+      # feature nobody worked on. What that leaves is written down rather than
+      # implied: a run that dies between its last iteration and this line leaves
+      # the feature unclosed until another ticket is ground.
+      #
+      # Three answers, and the loop does three different things with them. The
+      # journal carries each one, because "the frontier emptied and the run went
+      # on grinding" is otherwise a night whose shape nobody can reconstruct.
+      if [ "$iteration" -gt 0 ]; then
+        playthrough_rc=0
+        playthrough_close || playthrough_rc=$?
+        case "$playthrough_rc" in
+          0)
+            loop_journal_append - playthrough-green 0 0 0
+            ;;
+          1)
+            # A wiring ticket is on the frontier now, so this run has work again.
+            # Back to the top rather than on to the exit: the scan is memoryless,
+            # so the next pass finds it the way it would find a human's.
+            loop_journal_append - playthrough-reinjected 0 0 0
+            continue
+            ;;
+          *)
+            # The feature does not close. Not `exit` here: `stop_code` is what
+            # takes the run through the one teardown that removes the register,
+            # the shared frontier witness and the retro's workspace ([25]).
+            loop_log "the feature does not close: the terminal value gate did not come back green"
+            loop_journal_append - playthrough-blocked 0 0 0
+            stop_code=4
+            continue
+            ;;
+        esac
+      fi
+
+      rm -f "${RALPH_TRACKER_LOG:-}" "${RALPH_PLAYTHROUGH_SPEC:-}"
       rm -rf "${RALPH_FRONTIER_COMMON:-}"
       retro_close
       loop_journal_verify || true
@@ -1640,7 +1706,7 @@ RECLAIMED
     [ "${LOOP_START_REFUSED:-0}" = 0 ] || stop_code=4
   done
 
-  rm -f "${RALPH_TRACKER_LOG:-}"
+  rm -f "${RALPH_TRACKER_LOG:-}" "${RALPH_PLAYTHROUGH_SPEC:-}"
   # The one stop that lifts on its own at a known instant ([08]), and the only one
   # a successor is armed on. Here rather than where the wall was seen, and that
   # placement is the whole of what [13] left this ticket: `stop_code=6` starts a

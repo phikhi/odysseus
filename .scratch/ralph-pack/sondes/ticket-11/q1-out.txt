@@ -1,0 +1,28 @@
+=== rc du run : 0
+=== sortie ---------------------------------------
+ralph: run start (feature=demo backend=local model=test-model)
+ralph: budget: the usage endpoint could not be read (https://api.anthropic.com/api/oauth/usage) — this run is flying on the in-band signal alone, which only ever arrives after a session has already started
+ralph: iteration 1: 01-alpha
+ralph: gate: 01-alpha: no review lens ran (LENSES is empty): nothing here judged this work by anything but its own tests
+ralph: gate: 01-alpha: tests=green typecheck=green scope=green lang=green
+ralph: 01-alpha: committed 1 path(s)
+ralph: 01-alpha: folded onto the branch
+ralph: 01-alpha: lesson recorded — learning-records/0001-une-lecon-ecrite-par-la-sonde.md
+ralph: iteration 1: 01-alpha -> resolved
+ralph: frontier empty after 1 iterations
+=== git status --porcelain -----------------------
+ M .scratch/demo/issues/01-alpha.md
+?? .scratch/demo/run.log
+?? LEARNINGS.md
+?? learning-records/
+?? receipts/
+=== router__tree_dirt (rc=0) --------------------
+learning-records/0001-une-lecon-ecrite-par-la-sonde.md
+LEARNINGS.md
+receipts/demo/01-alpha.md
+=== router_may_reinject --------------------------
+ralph: 01-alpha cannot go back on the frontier while this working tree carries 3 path(s) `HEAD` does not:
+    learning-records/0001-une-lecon-ecrite-par-la-sonde.md
+    LEARNINGS.md
+    receipts/demo/01-alpha.md
+ralph: an AFK iteration runs in a worktree made at the tip of this branch, so an uncommitted fix is never judged — its absence is, and the ticket comes back here having spent its whole retry budget on a tree nobody wrote. Commit what belongs to this ticket, or put it aside, and press `r` again: this is asked afresh every time. Not counted: this feature's own directory, which is this drain writing, and whatever the project ignores, which is the zone nothing in this pack judges either.

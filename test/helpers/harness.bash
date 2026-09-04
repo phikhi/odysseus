@@ -54,6 +54,14 @@
 #   retro_call_count               how many retro subagents were spawned
 #   retro_call_stdin [N]           the prompt the Nth retro was handed
 #   retro_call_argv [N]            argv the Nth retro was spawned with
+#   playthrough_answer LINE ...    the tagged lines the terminal value gate answers
+#   playthrough_answer_nth N ...   what the Nth value gate of the run answers
+#   playthrough_refused [STATUS]   a value-gate session the API refused
+#   playthrough_rate_limit JSON    the in-band event that one session's stream carries
+#   playthrough_call_count         how many value gates were spawned
+#   playthrough_call_stdin [N]     the prompt the Nth one was handed
+#   playthrough_call_argv [N]      argv it was spawned with
+#   playthrough_file               where this feature's playthrough is written
 #   stub_exit NAME CODE            exit code for `stub-cmd NAME`
 #   stub_call_count NAME           how many times it ran
 #   usage_respond JSON [JSON ...]  body served for /api/oauth/usage; several
@@ -267,6 +275,23 @@ harness__install_pack() {
   # test/canary.bats puts the default back with config_default and runs the loop
   # the way a project would get it.
   set_config LENSES none
+
+  # The terminal value gate, configured — and this one is injected *on*, which is
+  # the opposite of the two below and not an inconsistency ([11]). A project can
+  # switch the lens tier and the retro tier off; it cannot switch this one off,
+  # because a value gate with an off switch is a feature closing on nothing. So
+  # the harness cannot make a count of sessions stay a count of sessions by
+  # turning it off — what it can do is give it the three keys a project that
+  # means to finish a feature has to give it, so that a run which drains its
+  # frontier closes the way a configured project's does.
+  #
+  # `stub-cmd` behind both commands, like TEST_CMD and TYPECHECK_CMD, so a test
+  # drives their exit codes and their output with `stub_exit` and reads
+  # `stub_call_count`. `VISUAL_REAL_ASSETS=1` is the claim a project makes about
+  # its own commands; the case where it has not made it is a test of its own.
+  set_config RUN_CMD "stub-cmd run"
+  set_config VISUAL_CMD "stub-cmd visual"
+  set_config VISUAL_REAL_ASSETS 1
 
   # The fourth layer's subagent, off, and it is the same injection for the same
   # reason ([14]). The retro is a `claude` too, so a suite that left it on would
@@ -778,6 +803,68 @@ retro_call_stdin() {
 
 retro_call_argv() {
   claude_call_argv "$(sed -n "${1:-1}p" "$SHIM_STATE/claude.retros/calls" 2>/dev/null)"
+}
+
+# ── scripting the terminal value gate ────────────────────────────────────────
+#
+# Addressed by nothing at all, like the retro: there is at most one playthrough
+# per run and it is the last session of it.
+
+# The tagged lines the value gate answers with, one per argument. No call at all
+# is a green playthrough with one step — the shipped prompt's own shape, and the
+# default every test that only means to drain a frontier gets.
+#
+# Avoid double quotes in an argument, for the reason `retro_answer` gives: the
+# fake puts the answer in a JSON string the way the real binary does.
+playthrough_answer() {
+  printf '%s\n' "$@" >"$SHIM_STATE/playthrough.answer"
+}
+
+# What the Nth value gate of the run answers, for a test that needs two rounds —
+# a red one that re-injects a wiring ticket, and the one that follows the
+# iteration which closed the hole.
+playthrough_answer_nth() {
+  local n="$1"
+  shift
+  printf '%s\n' "$@" >"$SHIM_STATE/playthrough.answer.$n"
+}
+
+# A value gate the API refused ([43] applied to this tier): the in-band event, no
+# verdict, non-zero exit. The feature does not close and nobody is accused.
+playthrough_refused() {
+  local status="${1:-blocked}" window="${2:-five_hour}" reset="${3:-0}"
+  printf '{"status":"%s","resetsAt":%s,"rateLimitType":"%s","isUsingOverage":false}\n' \
+    "$status" "$reset" "$window" >"$SHIM_STATE/playthrough.refused"
+}
+
+# The in-band budget event the value gate's own stream carries, and only that
+# one: the pilot reads the delivery session's posture to decide whether to pause,
+# so `claude_rate_limit` would be staging something else entirely.
+playthrough_rate_limit() {
+  printf '%s' "$1" >"$SHIM_STATE/playthrough.rate_limit"
+}
+
+playthrough_call_count() {
+  if [ -f "$SHIM_STATE/claude.playthroughs/calls" ]; then
+    awk 'END { print NR }' "$SHIM_STATE/claude.playthroughs/calls"
+  else
+    echo 0
+  fi
+}
+
+playthrough_call_stdin() {
+  claude_call_stdin "$(sed -n "${1:-1}p" "$SHIM_STATE/claude.playthroughs/calls" 2>/dev/null)"
+}
+
+playthrough_call_argv() {
+  claude_call_argv "$(sed -n "${1:-1}p" "$SHIM_STATE/claude.playthroughs/calls" 2>/dev/null)"
+}
+
+# Where the artefact lands for this test's feature. Spelled out here rather than
+# asked of the pack: a test that used `playthrough_path` could not catch the pack
+# writing the document somewhere nobody reads it.
+playthrough_file() {
+  printf '%s/docs/playthroughs/%s.md' "$PROJECT_DIR" "$RALPH_TEST_FEATURE"
 }
 
 stub_exit() {
