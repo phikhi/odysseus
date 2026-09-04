@@ -152,3 +152,21 @@
   le guichet `admit` (« aucun run n'a jamais jugé ceci »), ce qui est faux. Si ce ticket
   déplace la trace forensique, il possède la question de savoir comment le routeur la
   trouve.
+
+- **Contrainte posée par [11], livré le 04/09/2026 : le gate de valeur compte ses
+  propres tickets en lisant le slug dans l'id.** `playthrough__injected` compte les
+  tickets `*-playthrough-wiring-*` que la feature porte déjà, et c'est **ce compte**
+  que `PLAYTHROUGH_REINJECT_MAX` borne — délibérément lu dans le tracker plutôt que
+  gardé dans une variable du run, parce qu'un compteur en mémoire se remet à zéro
+  au redémarrage et ne bornerait plus rien sur une nuit qui a planté. Un backend
+  qui numérote **côté serveur** rend des ids qui ne portent pas le slug : le compte
+  resterait à zéro pour toujours, la borne ne bornerait plus rien, et un run
+  pourrait réinjecter à chaque tour. Deux réponses possibles et c'est à ce
+  ticket-là de choisir — rendre un id qui porte le slug, ou ajouter à l'interface
+  d'adaptateur une opération « combien de tickets portent ce préfixe de slug » que
+  le backend local implémente en lisant ses noms de fichiers. Et
+  `tracker_open_unique` est l'autre moitié de la terminaison de ce chemin (le même
+  trou nommé deux fois n'ouvre qu'un ticket, le second tour demande un humain) : un
+  backend qui ne l'implémente pas refuse bruyamment, ce qui est le bon échec, mais
+  il doit répondre à la question plutôt que d'hériter d'une réponse qui marche sur
+  du markdown.

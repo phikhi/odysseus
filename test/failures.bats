@@ -43,8 +43,20 @@ script_session_writing() {
 # the end of the iteration — and, like the tracker, it is what [19]'s installer
 # provisions a `.gitignore` for. A project that commits it instead puts its own
 # audit trail inside reach of a write-surface; that decision is named in [19].
+# What the run left uncommitted in the tree it was started in, its own writing
+# aside. Three producers are excluded by name and nothing else is: the loop's
+# bookkeeping under `.scratch/`, the audit receipts ([10]) and, since [11], the
+# feature's playthrough — all three are written outside the tree an iteration is
+# judged in, so no durable commit was ever going to carry them.
+#
+# `--untracked-files=all`, and that is what makes the exclusions mean what they
+# say: with the default git collapses a wholly untracked directory to one entry,
+# so a run whose only residue was `docs/playthroughs/<feature>.md` came back as
+# `?? docs/` — which no pattern naming the real path can match, and which a
+# pattern naming `docs/` would hide a session's own writing behind.
 worktree_dirt() {
-  git -C "$PROJECT_DIR" status --porcelain | grep -Ev '\.scratch/|receipts/' || true
+  git -C "$PROJECT_DIR" status --porcelain --untracked-files=all |
+    grep -Ev '\.scratch/|receipts/|docs/playthroughs/' || true
 }
 
 git_subjects() {
@@ -103,7 +115,10 @@ HEAD
   assert_output_contains "escalated to the human sink (failed-impl)"
 
   # Every retry is a session of its own: nothing is resumed.
-  assert_equal "$(claude_call_count)" "3"
+  # 3 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "4"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_ticket_status 01-alpha ready-for-human
   assert_equal "$(ticket_field 01-alpha Failures)" "3"
   assert_equal "$(ticket_field 01-alpha Escalation)" "failed-impl"
@@ -150,7 +165,10 @@ HEAD
 
   run_loop
   assert_success
-  assert_equal "$(claude_call_count)" "1"
+  # 1 delivery session and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_ticket_status 01-alpha ready-for-human
   assert_equal "$(ticket_field 01-alpha Failures)" "1"
 }
@@ -184,7 +202,10 @@ FAKE
   # The retry really happened, so the counter really was at 1 in between: without
   # this line the assertion below would hold on a ticket that never failed at all.
   assert_output_contains "01-alpha: gate-red -> fresh retry (1 of 2)"
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_ticket_status 01-alpha resolved
 
   run ticket_has_field 01-alpha Failures
@@ -205,7 +226,10 @@ FAKE
   run_loop
   assert_success
   assert_output_contains "01-alpha: crash -> fresh retry (1 of 1)"
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_ticket_status 01-alpha ready-for-human
   assert_file_contains "$FEATURE_DIR/run.log" "failed"
 }
@@ -229,7 +253,10 @@ FAKE
   assert_failure
 
   # One attempt on it, and the run carries on with the rest of the frontier.
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_ticket_status 02-beta resolved
 }
 
@@ -1304,7 +1331,10 @@ FAKE
   # 01-alpha is out of retries and escalated, so the loop moved on and ground
   # 02-beta with the same session — two calls, which is the whole point.
   assert_ticket_status 01-alpha ready-for-human
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
 }
 
 # ── the ignore frontier, where no gate judged ────────────────────────────────
@@ -2173,7 +2203,10 @@ FAKE
   # past a ticket already marked done and calling the frontier drained.
   assert_ticket_status 02-beta resolved
   assert_file_contains "$PROJECT_DIR/src/beta.txt" "written"
-  assert_equal "$(claude_call_count)" "3"
+  # 3 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "4"
+  assert_equal "$(playthrough_call_count)" "1"
   run bash -c "grep -c 'tracker-write' '$FEATURE_DIR/run.log'"
   assert_equal "$output" "1"
 }
@@ -2684,7 +2717,10 @@ FAKE
   assert_ticket_status 50-self-served ready-for-human
   assert_equal "$(ticket_field 50-self-served Escalation)" "decision"
   refute_file_exists "$PROJECT_DIR/src/anything.txt"
-  assert_equal "$(claude_call_count)" "1"
+  # 1 delivery session and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
 
   # And the ticket that let it happen says so.
   assert_file_contains "$(ticket_file 01-alpha)" "wrote these tickets into the tracker itself"

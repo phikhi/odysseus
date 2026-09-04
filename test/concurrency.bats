@@ -1032,11 +1032,15 @@ FAKE
   assert_file_contains "$PROJECT_DIR/src/alpha.txt" "written"
   # Everything but the loop's own bookkeeping, which is dirty in this tree by
   # design and which [19] provisions a `.gitignore` for: the tracker is written on
-  # every claim and marking, the journal is appended to, and since [10] an audit
-  # receipt lands under `receipts/` for every ticket the loop finished with. Both
-  # are excluded by name and nothing else is — a path the pack leaves untracked
-  # outside those two is still a failure here.
-  run bash -c "git -C '$PROJECT_DIR' status --porcelain -- . ':(exclude).scratch' ':(exclude)receipts'"
+  # every claim and marking, the journal is appended to, since [10] an audit
+  # receipt lands under `receipts/` for every ticket the loop finished with, and
+  # since [11] the feature's playthrough lands under `docs/playthroughs/` when the
+  # frontier empties. The three are excluded by name and nothing else is — a path
+  # the pack leaves untracked outside those three is still a failure here.
+  # `--untracked-files=all` because git otherwise collapses a wholly untracked
+  # directory to one entry, and `?? docs/` matches no exclusion naming the file
+  # under it.
+  run bash -c "git -C '$PROJECT_DIR' status --porcelain --untracked-files=all -- . ':(exclude).scratch' ':(exclude)receipts' ':(exclude)docs/playthroughs'"
   assert_equal "$output" ""
 }
 
@@ -1121,7 +1125,7 @@ FAKE
   refute_file_exists "$PROJECT_DIR/src/legacy.txt"
   # And nothing left staged behind the deletion, which is the state the second half
   # of the refresh exists to avoid — the loop's own bookkeeping aside.
-  run bash -c "git -C '$PROJECT_DIR' status --porcelain -- . ':(exclude).scratch' ':(exclude)receipts'"
+  run bash -c "git -C '$PROJECT_DIR' status --porcelain --untracked-files=all -- . ':(exclude).scratch' ':(exclude)receipts' ':(exclude)docs/playthroughs'"
   assert_equal "$output" ""
 }
 
@@ -1164,7 +1168,10 @@ FAKE
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 02-beta resolved
   # Two sessions and not three: a reclaimed sibling would have been ground again.
-  assert_equal "$(claude_call_count)" "2"
+  # 2 delivery sessions and the terminal value gate the drained
+  # frontier runs ([11]) — counted apart, so the total says which they were.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
 }
 
 # ── the two guards over the tracker, with siblings in flight ─────────────────

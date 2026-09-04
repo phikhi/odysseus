@@ -221,7 +221,10 @@ budget_wait_for_exit() {
   # It came back out, and the ticket was ground after the wall rather than
   # before it: no session was spawned until the window had reset.
   assert_ticket_status 01-alpha resolved
-  assert_equal "$(claude_call_count)" "1"
+  # The delivery session and the terminal value gate the drained frontier runs
+  # ([11]), and no third one: nothing was spawned before the window reset.
+  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(playthrough_call_count)" "1"
   assert_file_contains "$FEATURE_DIR/run.log" "budget-pause"
 }
 

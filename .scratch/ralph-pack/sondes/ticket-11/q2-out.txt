@@ -1,0 +1,22 @@
+rc=4
+ralph: run start (feature=demo backend=local model=test-model)
+ralph: budget: the usage endpoint could not be read (https://api.anthropic.com/api/oauth/usage) — this run is flying on the in-band signal alone, which only ever arrives after a session has already started
+ralph: iteration 1: 01-alpha
+ralph: gate: 01-alpha: no review lens ran (LENSES is empty): nothing here judged this work by anything but its own tests
+ralph: gate: 01-alpha: tests=green typecheck=green scope=green lang=green
+ralph: 01-alpha: committed 1 path(s)
+ralph: 01-alpha: folded onto the branch
+ralph: iteration 1: 01-alpha -> resolved
+ralph: playthrough: playing the feature through on its own assets: stub-cmd run
+ralph: playthrough: a hole this loop must not close by itself (contract): the spec asks for a summary nothing was built for (on 02-playthrough-gap-the-summary-does-not-exist)
+ralph: playthrough: written to /private/var/folders/w0/_rx1_w2d38jb7kcynk3cp82r0000gn/T/ralph-test.1HZFIT/project/docs/playthroughs/demo.md
+ralph: the feature does not close: the terminal value gate did not come back green
+--- tracker:
+01-alpha.md
+02-playthrough-gap-the-summary-does-not-exist.md
+--- escalate direct (rc=0):
+03-playthrough-gap-a-title-from-the-probe
+rc=0
+01-alpha.md
+02-playthrough-gap-the-summary-does-not-exist.md
+03-playthrough-gap-a-title-from-the-probe.md

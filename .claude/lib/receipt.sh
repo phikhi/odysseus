@@ -306,6 +306,18 @@ receipt__evidence() {
   if [ -n "$branch" ]; then
     printf -- '- the attempt, kept before the rollback undid it: `git log -p %s`\n' "$branch"
   fi
+  # The third layer, by path and never by content ([10] on [11]). A receipt is
+  # per ticket and the retention deletes it; a playthrough is per feature and
+  # outlives every receipt, so quoting it here would make the proof that a feature
+  # works a paragraph of a document that expires. Named only when it is there: a
+  # line pointing at a file nobody wrote reads like a document somebody deleted.
+  # The one from the *previous* round is the interesting case rather than an
+  # accident of ordering — a wiring ticket exists because that playthrough was
+  # red, and this is where its reader is told so.
+  if [ -f "$(playthrough_path)" ]; then
+    printf -- '- what this feature does once it runs, as of the last empty frontier: `%s`. Per feature, not per ticket, and it outlives this receipt.\n' \
+      "$(playthrough_path)"
+  fi
   if [ -z "$commit" ] && [ -z "$branch" ] && [ -z "$base" ]; then
     printf -- '- nothing of the work itself: this iteration produced no commit, no diff and no forensic branch. What is left is the verdicts above, the zones below, and the ticket.\n'
   else

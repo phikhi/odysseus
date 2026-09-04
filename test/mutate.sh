@@ -239,6 +239,7 @@ CONCURRENCY=".claude/lib/concurrency.sh"
 SCHEDULER_LIB=".claude/lib/scheduler.sh"
 HUMAN_LOOP=".claude/human-loop.sh"
 ROUTER=".claude/lib/router.sh"
+PLAYTHROUGH=".claude/lib/playthrough.sh"
 HARNESS="test/helpers/harness.bash"
 # A test file, like the three below it: the rule it holds is about the shipped
 # source, so the only thing that can break it is the check itself ([59]). No
@@ -4444,6 +4445,134 @@ mutation "61 the three unrestored fields are reported for a session that moved n
 mutation "61 nothing is ever put back, whatever a session moved" "$ROUTER" \
   's/    if \[ "\$now_status" = "\$was_status" \] && \[ "\$now_esc" = "\$was_esc" \]; then\n/    if true; then\n/' \
   test/human-loop.bats "resolve the ticket this drain has not reached yet"
+
+# ── [11] the terminal value gate ─────────────────────────────────────────────
+#
+# The gate that decides whether a run may say a feature is finished. Its
+# guarantees split in three, and each third fails differently:
+#
+#   the trigger    it runs at an empty frontier, before the successful exit, and
+#                  only there
+#   the verdict    green **and persisted** closes, and nothing else does — a
+#                  refusal, a silence and a red are three different sentences and
+#                  only one of them accuses anybody
+#   the hybrid     an internal hole comes back as a ticket, bounded, deduplicated;
+#                  anything else goes to a human
+#
+# Two of them are edits that would make a run **spin** rather than fail — the
+# bound and the deduplication — so both entries below remove the guard in the
+# direction that still terminates: the first re-injects one ticket too many, the
+# second opens a second ticket for one hole. A mutation that let the loop
+# re-inject for ever would leave this script blocked with a planted defect.
+
+mutation "11 the frontier empties and nothing plays the feature through" "$LOOP" \
+  's/        playthrough_close \|\| playthrough_rc=\$\?\n/        playthrough_rc=0\n/' \
+  test/playthrough.bats "played through before the run reports a night done"
+
+mutation "11 a value gate that did not come back green closes the feature anyway" "$LOOP" \
+  's/        playthrough_close \|\| playthrough_rc=\$\?\n/        playthrough_close || playthrough_rc=0\n/' \
+  test/playthrough.bats "a contractual hole goes to a human"
+
+mutation "11 a run that ground nothing plays the feature through too" "$LOOP" \
+  's/      if \[ "\$iteration" -gt 0 \]; then\n/      if [ 1 = 1 ]; then\n/' \
+  test/playthrough.bats "empty from the start closes nothing"
+
+mutation "11 what the value gate decided leaves no line in the journal" "$LOOP" \
+  's/            loop_journal_append - playthrough-green 0 0 0\n//' \
+  test/loop-happy-path.bats "appends a line to the run journal"
+
+# The user flow it replays, from both ends ([21]'s corollary: a control that reads
+# a file the session can write is not a control). The first entry hands it the file
+# on disk, the second stops the copy from being taken at all — an empty witness and
+# a missing one are the same value read from two different sides, which is [61]'s
+# lesson about mutating a pinned field.
+mutation "11 the flow replayed is the file on disk, which a session can rewrite" "$PLAYTHROUGH" \
+  's/  spec="\$\{RALPH_PLAYTHROUGH_SPEC:-\}"\n/  spec="\$(playthrough__spec_path)"\n/' \
+  test/playthrough.bats "not what a session rewrote"
+
+mutation "11 nothing witnesses the user flow before the first session" "$LOOP" \
+  's/  if ! playthrough_witness; then\n/  if ! true; then\n/' \
+  test/playthrough.bats "played through before the run reports a night done"
+
+mutation "11 the witness is taken and left empty" "$PLAYTHROUGH" \
+  's/  cat "\$\(playthrough__spec_path\)" >"\$file" 2>\/dev\/null \|\| :\n//' \
+  test/playthrough.bats "played through before the run reports a night done"
+
+# The tree, and the pin that is deliberately dropped for the length of the call.
+# Without the second line the gate refuses on every run that ever delivered — the
+# pilot still holds a pin whose directory the iteration's own collection removed —
+# which is a guarantee that would have looked like a working refusal.
+mutation "11 an unreadable repository is read as a feature with nothing wrong" "$PLAYTHROUGH" \
+  's/  tree="\$\(gate_tree_snapshot\)" \|\| tree=\x27\x27\n/  tree="ignored"\n/' \
+  test/playthrough.bats "cannot see the tree it would conclude on"
+
+mutation "11 the value gate judges through the pin of the iteration that is over" "$PLAYTHROUGH" \
+  's/  local RALPH_FRONTIER_PIN=\x27\x27\n//' \
+  test/playthrough.bats "played through before the run reports a night done"
+
+# The material half: the project's own commands, and the claim that makes them
+# worth persisting.
+mutation "11 the feature is judged without ever being run" "$PLAYTHROUGH" \
+  's/  playthrough__bounded "\$dir\/run.out" "\$\{GATE_TIMEOUT:-0\}" "\$RUN_CMD" \|\| runrc=\$\?\n//' \
+  test/playthrough.bats "the material half really runs"
+
+mutation "11 a project that never claimed real assets closes features all the same" "$PLAYTHROUGH" \
+  's/  \[ "\$\{VISUAL_REAL_ASSETS:-0\}" = 1 \] \|\| missing="\$missing VISUAL_REAL_ASSETS"\n//' \
+  test/playthrough.bats "has not claimed real assets"
+
+# The model half: read-only, and silent means red.
+mutation "11 the value gate is spawned with the tools that write" "$PLAYTHROUGH" \
+  's/  session_spawn "\$dir\/prompt" "\$stream" \$\(lenses_posture\) \|\| true\n/  session_spawn "\$dir\/prompt" "\$stream" || true\n/' \
+  test/playthrough.bats "cannot write"
+
+mutation "11 a value gate that answered no verdict at all closes the feature" "$PLAYTHROUGH" \
+  's/      outcome=\x27nothing was judged: the value gate ended without a verdict line, and a session that judged nothing closes nothing\x27\n      rc=2\n/      outcome=\x27nothing was judged\x27\n      rc=0\n/' \
+  test/playthrough.bats "without a verdict closes nothing"
+
+mutation "11 a session the API refused is reported as one that judged and said nothing" "$PLAYTHROUGH" \
+  's/  if \[ "\$verdict" = none \] &&\n    budget_refused "\$\(budget_stream_posture "\$stream" 2>\/dev\/null \|\| true\)"; then\n/  if false; then\n/' \
+  test/playthrough.bats "the API refused"
+
+# And the ordering of that question, which is a guarantee of its own ([43]): the
+# in-band signal can say `blocked` for the window *after* the one this session is
+# spending, so a gate that answered `pass` looked. Asked the other way round, a
+# feature fails to close on a subscription warning about tomorrow — and the two
+# entries are a pair, because removing the branch and reversing its precedence
+# are two different defects with two different symptoms.
+mutation "11 an event about tomorrow outranks the verdict this session gave" "$PLAYTHROUGH" \
+  's/  if \[ "\$verdict" = none \] &&\n    budget_refused/  if budget_refused/' \
+  test/playthrough.bats "while the window was blocked"
+
+# The document, which is the other half of the closing condition.
+mutation "11 a green verdict closes the feature with nothing written down" "$PLAYTHROUGH" \
+  's/  if ! playthrough__write "\$verdict" "\$outcome" "\$tree" "\$stream" "\$runrc" "\$visrc" \\\n/  if false \&\& ! playthrough__write "\$verdict" "\$outcome" "\$tree" "\$stream" "\$runrc" "\$visrc" \\\n/' \
+  test/playthrough.bats "nobody can read tomorrow"
+
+# The hybrid and its two bounds.
+mutation "11 the re-injection budget bounds nothing" "$PLAYTHROUGH" \
+  's/      if \[ "\$class" = internal \] && \[ "\$injected" -lt "\$max" \] &&\n/      if [ "\$class" = internal ] \&\& [ "\$injected" -le "\$max" ] \&\&\n/' \
+  test/playthrough.bats "past its bound"
+
+mutation "11 the wiring tickets already opened are counted by nobody" "$PLAYTHROUGH" \
+  's/playthrough__injected\(\) \{\n  local id n=0\n/playthrough__injected() {\n  local id n=0\n  printf \x270\\n\x27; return 0\n/' \
+  test/playthrough.bats "past its bound"
+
+mutation "11 the same hole opens a second ticket instead of asking a human" "$PLAYTHROUGH" \
+  's/  tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" <<BODY\n/  tracker_open_ticket "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" <<BODY\n/' \
+  test/playthrough.bats "the same hole twice"
+
+mutation "11 a wiring ticket may declare the harness's own configuration" "$PLAYTHROUGH" \
+  's/    if gate_in_surface "\$sealed" "\$surface"; then return 1; fi\n//' \
+  test/playthrough.bats "cover the harness"
+
+mutation "11 a wiring ticket with no write-surface is handed to a session" "$PLAYTHROUGH" \
+  's/  \[ -n "\$surface" \] \|\| return 1\n//' \
+  test/playthrough.bats "no write-surface is not handed"
+
+# And the layer next door ([10]): by path, never by content.
+mutation "11 the receipt says nothing about what the feature does once it runs" "$RECEIPT" \
+  's/  if \[ -f "\$\(playthrough_path\)" \]; then\n/  if false; then\n/' \
+  test/playthrough.bats "names the playthrough by path"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

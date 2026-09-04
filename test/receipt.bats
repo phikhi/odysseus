@@ -678,9 +678,13 @@ FAKE
 
   refute_output_contains "does not hold exactly"
   assert_file_contains "$FEATURE_DIR/run.log" "reclaimed-"
-  # And the file really is what the run says it is.
+  # And the file really is what the run says it is. Four lines: the reclaim, the
+  # two deliveries, and what the terminal value gate decided when the frontier
+  # emptied ([11]) — asserted by name as well as counted, so the number stays
+  # readable when a later ticket adds an event of its own.
+  assert_file_contains "$FEATURE_DIR/run.log" "playthrough-green"
   run bash -c "grep -c 'action=' '$FEATURE_DIR/run.log'"
-  assert_equal "$output" "3"
+  assert_equal "$output" "4"
 }
 
 @test "a receipt that would keep no lines is refused at the door" {

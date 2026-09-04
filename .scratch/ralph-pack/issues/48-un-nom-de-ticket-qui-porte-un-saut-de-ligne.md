@@ -119,3 +119,13 @@ encore vu comme **deux** ids qui ne résolvent rien.
       before="$(failures_tracker_tree)"
       printf '...' >"$(ralph_feature_dir)/issues/99-a"$'\n'"b.md"
       failures_protect_tracker 01-alpha "$before"
+
+- **Contrainte posée par [11], livré le 04/09/2026 : un nouveau producteur d'ids,
+  dont le slug vient d'un modèle.** Le gate de valeur ouvre des tickets
+  (`playthrough-wiring-*`, `playthrough-gap-*`) dont le slug est dérivé d'un titre
+  écrit par un subagent. `playthrough__oneline` retire les caractères de contrôle
+  — sauts de ligne compris — avant `playthrough__slug`, qui ne garde ensuite que
+  `[a-z0-9-]` : aucun saut de ligne n'entre dans un id par ce chemin. À vérifier si
+  ce ticket change la façon dont un id est fabriqué ou lu, parce que ce chemin
+  compte aussi ses propres tickets **en comparant des ids ligne à ligne** ([37]) et
+  que la borne de réinjection repose sur ce compte.

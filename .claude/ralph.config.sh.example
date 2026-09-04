@@ -321,18 +321,50 @@ TRACKER_BACKEND="${TRACKER_BACKEND:-local}"
 WAIT_CI="${WAIT_CI:-auto}"
 
 # ── Feature-level value gate — FORCED CONFIRMATION ───────────────────────────
+#
+# The gate that runs **once**, when the frontier is empty and every ticket of this
+# feature has been delivered, before the run reports a finished night. A fresh
+# session walks the user flow of `.scratch/<feature>/spec.md` against what the two
+# commands below actually answered, and the whole of it is written to
+# `docs/playthroughs/<feature>.md`. That document is a **condition of closing**:
+# no green playthrough, no successful exit ([11]).
+#
+# Forced confirmation, and this is what the phrase costs: with the three keys
+# below unset, a feature cannot be closed at all. The run grinds every ticket,
+# says why it cannot conclude, opens one ticket for a human, and exits 4. That is
+# deliberate and it is the same rule as an empty `TEST_CMD` — green has to be
+# earned, and a value gate nobody wired up must not be indistinguishable from one
+# everything passes.
+#
+# Both commands are bounded by `GATE_TIMEOUT`, which is per phase. A `RUN_CMD`
+# that starts a server and never returns is the normal case: it is stopped at the
+# deadline, its transcript is kept, and being stopped is not counted as a failure.
 
 # Command that renders the visible surface for the fidelity/visual check.
 VISUAL_CMD="${VISUAL_CMD:-}"
 
 # 1 = VISUAL_CMD runs against real assets (real data, real build), not mocks.
 # The value gate only counts a playthrough run on real assets.
+#
+# Nothing in this pack can check that claim, and it is in
+# `docs/frontiere-de-confiance.md` under that name. What the pack holds is the
+# other half: a project that has not made the claim out loud never closes a
+# feature, so the default of `0` is a refusal to conclude and not a check
+# switched off.
 VISUAL_REAL_ASSETS="${VISUAL_REAL_ASSETS:-0}"
 
 # Command that starts the feature end to end for the terminal playthrough.
 RUN_CMD="${RUN_CMD:-}"
 
 # Max times a red playthrough may re-inject a wiring ticket before escalating.
+#
+# A red playthrough is handled hybrid: an **internal** hole — something built and
+# not connected — becomes a wiring ticket a fresh session picks up, and the run
+# goes back to grinding; a **contractual** one, or an unclassified one, goes to a
+# human. This is the bound on the first, counted over the life of the feature from
+# the wiring tickets it already carries, never from a counter that a restart would
+# reset. `0` is legal and means "always ask a human"; anything that is not a
+# number is refused at the preflight.
 PLAYTHROUGH_REINJECT_MAX="${PLAYTHROUGH_REINJECT_MAX:-2}"
 
 # ── Review lenses ────────────────────────────────────────────────────────────

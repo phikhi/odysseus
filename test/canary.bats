@@ -285,6 +285,59 @@ OUT"
   assert_equal "$output" ""
 }
 
+@test "the canary: the feature is played through before the run says it is done" {
+  # The chain, end to end and in one run: frontier → three iterations → gate →
+  # empty frontier → playthrough → exit success ([11] AC5). Every other test in
+  # this file stops at "the tickets are resolved", which is exactly the claim the
+  # value gate exists to distrust — three green gates say three diffs were sound,
+  # and none of them says the feature does anything.
+  seed_hostile_world
+  script_honest_session
+
+  before="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
+  run_loop
+  assert_success
+  loop_output="$output"
+  assert_output_contains "frontier empty after 3 iterations"
+
+  # One value gate, after the last iteration and before the exit — and the
+  # project's own commands really ran, once each, which is the half no model is
+  # asked about.
+  assert_equal "$(playthrough_call_count)" "1"
+  assert_equal "$(stub_call_count run)" "1"
+  assert_equal "$(stub_call_count visual)" "1"
+
+  # And the artefact is there, carrying the verdict the run closed on. Without
+  # this file the run is not entitled to its exit code, which is the whole of the
+  # acceptance criterion.
+  assert_file_exists "$(playthrough_file)"
+  assert_file_contains "$(playthrough_file)" "**Verdict:** pass"
+  assert_file_contains "$(playthrough_file)" "the feature closes"
+  assert_file_contains "$FEATURE_DIR/run.log" "playthrough-green"
+
+  # It is **left in the working tree and not committed**, like the audit receipt
+  # and the lesson index, and that is a property rather than an oversight: the
+  # pack's durable commits are made inside an iteration, on the tree the gate
+  # judged, and this document is written after the last iteration is gone. What
+  # it costs is named where it lands — a human draining the sink afterwards is
+  # told about it by `router_may_reinject`, which lists every path `HEAD` does
+  # not carry and asks for it to be committed or put aside.
+  run git -C "$PROJECT_DIR" status --porcelain --untracked-files=all -- docs/playthroughs
+  assert_output_contains "docs/playthroughs/demo.md"
+  run git -C "$PROJECT_DIR" log --format='%s' --name-only "$before..HEAD" -- docs
+  assert_equal "$output" ""
+
+  # And the session that wrote it had no way to: it is the loop that writes this
+  # file, from tagged lines, and the model that answered them was spawned with the
+  # read-only tool set the review lenses get.
+  run playthrough_call_argv
+  assert_output_contains "Read,Grep,Glob"
+
+  output="$loop_output"
+  refute_output_contains "the feature does not close"
+}
+
 @test "the canary: an overflow is not absolved by having already failed once" {
   # The hole this test was written for: with nothing putting the tree back after
   # a red gate, a second attempt on the same ticket started from a baseline that
@@ -382,11 +435,16 @@ FAKE
   assert_success
 
   journal="$FEATURE_DIR/run.log"
-  # Four lines for three iterations: a ticket that changed hands because its
+  # Five lines for three iterations: a ticket that changed hands because its
   # owner was gone is an event of the run too, and an operator reading this in
-  # the morning has to see it without diffing the tracker.
+  # the morning has to see it without diffing the tracker — and the fifth is the
+  # one event the tickets cannot carry at all ([11]), what the terminal value gate
+  # decided when the frontier emptied.
   run bash -c "awk 'END { print NR }' '$journal'"
-  assert_equal "$output" "4"
+  assert_equal "$output" "5"
+
+  run bash -c "grep -c 'playthrough-green' '$journal'"
+  assert_equal "$output" "1"
 
   run bash -c "grep -c resolved '$journal'"
   assert_equal "$output" "3"

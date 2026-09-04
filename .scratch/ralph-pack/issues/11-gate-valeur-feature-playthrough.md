@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/playthrough.sh`, `test/playthrough.bats`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] À frontière vide, **avant** l'exit succès, un subagent frais rejoue le flux utilisateur du `spec.md` sur les vrais assets et écrit `docs/playthroughs/<feature>.md`.
-- [ ] La clôture de feature (exit succès) n'a lieu que si le playthrough est vert et persisté.
-- [ ] Un trou de câblage **interne** réinjecte un ticket de câblage autonome en `ready-for-agent` ; un trou **contractuel** escalade en `ready-for-human`.
-- [ ] La réinjection est bornée par `PLAYTHROUGH_REINJECT_MAX` (pas de boucle infinie).
-- [ ] Un canari full-loop e2e est maintenu dans le gate comme régression du pack.
+- [x] À frontière vide, **avant** l'exit succès, un subagent frais rejoue le flux utilisateur du `spec.md` sur les vrais assets et écrit `docs/playthroughs/<feature>.md`.
+- [x] La clôture de feature (exit succès) n'a lieu que si le playthrough est vert et persisté.
+- [x] Un trou de câblage **interne** réinjecte un ticket de câblage autonome en `ready-for-agent` ; un trou **contractuel** escalade en `ready-for-human`.
+- [x] La réinjection est bornée par `PLAYTHROUGH_REINJECT_MAX` (pas de boucle infinie).
+- [x] Un canari full-loop e2e est maintenu dans le gate comme régression du pack.
 
 - **Contrainte posée par [26], livré le 29/07/2026 : la réinjection du ticket de câblage doit décider du compteur.** `Failures:` n'est remis à zéro que par `tracker_mark_resolved` (une livraison verte). `tracker_mark_ready` — le chemin qu'utilisera la réinjection de câblage de ce ticket — le laisse en place. Un ticket déjà réinjecté une fois, ou qui avait consommé des retries avant d'être livré puis rouvert par le playthrough, arrivera donc avec un budget entamé et pourra être escaladé à sa première tentative. À trancher ici, explicitement, et à écrire : soit la réinjection remet le compteur à zéro (et alors `PLAYTHROUGH_REINJECT_MAX` est le seul garde-fou contre la boucle infinie — c'est déjà son rôle), soit elle ne le remet pas et le ticket de câblage hérite d'un budget qu'il n'a pas dépensé. Le piège à ne pas rouvrir est écrit dans [26] : remettre le compteur à zéro entre deux retries est exactement ce que `RETRY_N` existe pour empêcher.
 
@@ -199,3 +199,173 @@
     au modèle avec un trou, l'humain reçoit un `command not found`, et rien ne
     rougit. `layering_heredoc_prose` te le refuse ; citer le heredoc
     (`<<'PROMPT'`) est la forme qui ne peut plus jamais échouer.
+
+## Livraison — 04/09/2026
+
+`.claude/lib/playthrough.sh` (nouveau), câblé dans `loop.sh` à l'endroit où la
+frontière se vide, plus une ligne dans `receipt.sh` et un paragraphe dans
+l'exemple de config. `test/playthrough.bats` (22 tests), un test de canari,
+21 entrées de mutation.
+
+### La forme livrée, en une passe
+
+Le pilote, à frontière vide et **après avoir collecté toute itération en vol**,
+appelle `playthrough_close`, qui répond en trois codes parce que le pilote en
+fait trois choses différentes : `0` la feature se clôt (l'`exit 0` d'avant),
+`1` un ticket de câblage est sur la frontière **et la boucle repart** (le scan
+est sans mémoire, donc le tour suivant le trouve comme il trouverait celui d'un
+humain), `2` la feature ne se clôt pas → `stop_code=4`, ce qui fait passer le run
+par le seul teardown qui existe. Chaque issue laisse une ligne au journal
+(`playthrough-green`, `playthrough-reinjected`, `playthrough-blocked`) : « la
+frontière s'est vidée et le run a continué à moudre » n'est reconstituable
+depuis aucun ticket.
+
+La moitié matérielle est **au pack** : `RUN_CMD` puis `VISUAL_CMD`, chacun borné
+par `GATE_TIMEOUT` (par phase depuis [23] — c'est la phase suivante, pas un
+budget de plus), lancés dans la racine du projet, transcriptions capturées. La
+moitié modèle est **en lecture seule** : `lenses_posture`, une seule définition
+([20]), lignes taguées, et c'est le pack qui écrit le document, le ticket et le
+statut. Modèle propose, pack dispose — la règle de [14], appliquée un cran plus
+haut.
+
+### Les décisions, et pourquoi celles-là
+
+- **Un subagent avec `Bash` a été refusé.** Il aurait été une session non
+  supervisée avec droit d'écriture sur l'arbre de l'opérateur — pas de worktree,
+  pas de scope-guard, pas de gate, pas de rollback — donc strictement plus large
+  que toute ligne de `docs/frontiere-de-confiance.md`, dont chaque entrée porte
+  au moins sur un arbre que le pack jette. Le prix est écrit au tableau : « le
+  playthrough tourne sur les vrais assets » n'est tenu par rien, `VISUAL_REAL_ASSETS`
+  est une affirmation du projet cible, et ce que le pack tient à la place est
+  qu'un projet qui ne l'a pas faite **ne clôt aucune feature**.
+- **`Failures:`, la question que [26] puis [16] ont laissée à ce chemin :
+  tranchée par construction.** La réinjection ouvre un ticket **neuf**, donc sans
+  `Failures:` du tout : rien n'est hérité, rien n'est effacé,
+  `tracker_clear_failures` n'est jamais appelé d'ici. `RETRY_N` borne les
+  tentatives sur le ticket de câblage, `PLAYTHROUGH_REINJECT_MAX` borne le nombre
+  de ces tickets, et les deux bornes portent chacune sur une question différente.
+  Rouvrir le ticket déjà livré était l'autre route, mauvaise dans les deux sens,
+  comme [16] l'avait calculé.
+- **La réinjection ne passe par aucune transition, et c'est mesuré.**
+  `router_may_reinject` refuse tant que l'arbre porte quelque chose que `HEAD`
+  n'a pas ; sondé à frontière vide après un run vert ordinaire avec la retro
+  allumée, `router__tree_dirt` répond déjà **trois chemins**, tous écrits par le
+  pack (`LEARNINGS.md`, `learning-records/…`, `receipts/demo/01-alpha.md`). Un
+  chemin de réinjection passant par cette porte aurait refusé sur l'écriture du
+  pack, à chaque run, dans une phrase écrite pour un humain absent — exactement
+  ce que [56] avait demandé de mesurer d'abord. Donc : ouverture d'un ticket neuf
+  par l'adaptateur, comme `capability_propose`. Aucun `Status:` n'est touché,
+  donc `router_pin` n'est pas appelé — le pin est la condition d'une
+  **transition** ([55], [58]), pas d'une écriture — et ce ticket n'ouvre pas un
+  troisième point d'entrée au sens de la passe du 31/08.
+- **Le déclenchement est le chemin de l'`exit 0` et lui seul** (`iteration > 0`).
+  Un run dont la frontière était vide au départ n'a rien moulu et n'a rien à
+  clore ; y dépenser une session et les commandes du projet ferait payer chaque
+  démarrage contre le mauvais tracker. Le résidu est écrit : un run qui meurt
+  entre sa dernière itération et cette ligne laisse la feature non close jusqu'à
+  ce qu'un ticket soit moulu à nouveau.
+- **Le compte des réinjections se lit dans le tracker**, pas dans une variable du
+  run : un compteur en mémoire se remet à zéro au redémarrage, et la borne ne
+  bornerait plus rien sur une nuit qui a planté. Le compte est le nombre de
+  tickets `*-playthrough-wiring-*` que la feature porte déjà ; il est faux dans un
+  seul sens (une session qui en forge un pousse vers l'humain, une session qui en
+  supprime un est remise par le garde de [21]). Le prix : il court sur la vie de
+  la feature et pas sur le run.
+- **Deux préfixes de slug, et c'est la borne qui l'exige.**
+  `playthrough-wiring-*` pour ce qui repart sur la frontière,
+  `playthrough-gap-*` pour ce qui va au puits. Un préfixe unique aurait fait
+  dépenser le budget de réinjection par des escalades — c'est-à-dire par des
+  tickets que personne n'a réinjectés.
+- **Terminaison, en deux gardes plutôt qu'un.** `tracker_open_unique` déduplique
+  sur le slug, donc le même trou nommé deux fois n'ouvre qu'un ticket et le
+  second tour **demande un humain** au lieu de tourner ; et la borne coupe de
+  toute façon. Les deux entrées de mutation correspondantes retirent le garde
+  dans la direction qui **termine encore** : un ticket de trop, jamais une boucle
+  — une mutation qui ferait tourner `mutate.sh` indéfiniment laisserait un défaut
+  planté dans l'arbre.
+- **La write-surface du ticket de câblage vient du modèle, et elle est filtrée.**
+  Refusée si elle est vide (une surface vide est le cas fail-safe du scope-guard :
+  tout ce que la session écrit déborde, donc le ticket serait indélivrable par
+  quiconque) et refusée si elle couvre un chemin scellé (sinon le ticket enverrait
+  une session passer une nuit sur du travail que `gate_is_sealed` rougit à chaque
+  fois). Dans les deux cas, le trou part au puits humain.
+
+### Ce que la question de la frontière de confiance a trouvé, et qui n'était pas dans le ticket
+
+**`spec.md` est écrivable par les sessions qu'on juge.** Il vit dans
+`.scratch/<feature>/`, la zone que `gate_is_bookkeeping` fait enjamber au
+scope-guard et que le rollback ne défait pas ; [21] garde `issues/` *à
+l'intérieur* de cette zone et s'arrête là. Un gate de valeur qui lit le fichier à
+la fin demande « la feature fait-elle ce que la **dernière session** a dit qu'elle
+promettait ». C'est le corollaire que ce projet s'est écrit après [21], mot pour
+mot. Donc `playthrough_witness` : le pilote copie `spec.md` dans `$TMPDIR` sous un
+nom `mktemp` qu'il n'exporte jamais, **avant la première session**, et le gate ne
+rejoue que cette copie — fail-closed, il refuse s'il n'y a pas de témoin plutôt
+que de se replier sur le fichier. Sondé par un test qui fait réécrire la vraie
+spec par la session de livraison : le prompt du gate porte le flux d'origine.
+
+### Pièges rencontrés, à ne pas repayer
+
+- **Le pin d'ignore de l'itération est mort quand le playthrough tourne.**
+  `loop__finish` supprime le répertoire du pin en collectant l'itération, mais le
+  pilote garde `RALPH_FRONTIER_PIN` pointant dessus ; `gate__frontier_pin_broken`
+  répond alors « cassé » et `gate_tree_snapshot` **refuse**. Sans le
+  `local RALPH_FRONTIER_PIN=''` de `playthrough_close`, le gate de valeur aurait
+  répondu « rien n'a pu être mesuré » sur **tout run ayant livré** — un refus qui
+  a l'air de fonctionner. Le `local` d'une variable qu'on ne possède pas est la
+  forme que `proc_countdown` utilise déjà pour sa paire d'ownership.
+- **Un `head` dans le groupe qui écrit le document.** Le `{ … } | state_atomic_write`
+  tourne dans un sous-shell sous `errexit` : un `lenses_findings | head -n N` y
+  prend un SIGPIPE, et le document se serait terminé à cette section-là sans que
+  rien ne le dise. `|| true` sur le **pipeline**, pas sur la dernière commande.
+- **Le harnais ne peut pas éteindre ce palier**, contrairement aux lentilles et à
+  la retro : il est donc injecté **allumé** (`stub-cmd run`, `stub-cmd visual`,
+  `VISUAL_REAL_ASSETS=1`) et le faux `claude` répond `pass` par défaut. Et le faux
+  répond au gate de valeur **même quand un test a installé un scénario** — un
+  script remplace tout le faux, donc les quinze tests qui scriptent une session et
+  vident ensuite leur frontière auraient tous mesuré le chemin de l'escalade. Un
+  test qui veut piloter ce palier utilise `playthrough_answer`.
+- **Trois assertions de comptage de sessions ont bougé de 1** (deux dans
+  `loop-happy-path.bats`, une dans `budget.bats`), plus deux comptes de lignes de
+  journal. Elles sont désormais **appairées** avec `playthrough_call_count` : un
+  nombre qui ne dit que « 3 » resterait vert si le gate de valeur cessait de
+  tourner et qu'une lentille se mettait à tourner.
+
+### Contraintes créées ailleurs — écrites aussi dans les tickets concernés
+
+- **[18] backends distants** : `playthrough__injected` compte les tickets de
+  câblage **en lisant le slug dans l'id**. Un backend qui numérote côté serveur
+  rend des ids qui ne portent pas le slug ; le compte resterait à zéro et
+  `PLAYTHROUGH_REINJECT_MAX` ne bornerait plus rien. Et `tracker_open_unique` est
+  la déduplication qui garantit la terminaison — un backend qui ne l'implémente
+  pas fait refuser bruyamment l'ouverture, ce qui est le bon échec, mais il doit
+  répondre à la question plutôt qu'en hériter.
+- **[19] installeur** : `docs/playthroughs/` est provisionné par [19] (spec §6),
+  et les trois clés du gate de valeur sont une **confirmation forcée** — un
+  installeur qui écrit une config avec `RUN_CMD` vide produit un projet qui ne
+  clôt jamais une feature et sort en `4` chaque nuit. Il doit le dire à voix
+  haute au moment de l'installation.
+- **[48] nom de ticket portant un saut de ligne** : ce chemin ouvre des tickets
+  dont le slug vient d'un titre écrit par un modèle. `playthrough__oneline` retire
+  les caractères de contrôle avant `playthrough__slug`, donc aucun saut de ligne
+  n'entre dans un id par ici.
+
+### Résidus assumés
+
+- `docs/playthroughs/<feature>.md` est écrit dans l'arbre principal et **non
+  commité**, comme `LEARNINGS.md`, `learning-records/`, `docs/adr/` et
+  `receipts/` avant lui. Conséquence pour un humain qui draine ensuite :
+  `router_may_reinject` lui liste ce chemin de plus. Le canari l'asserte, pour que
+  changer ça soit un acte délibéré.
+- Un run tué laisse `ralph-spec.*` (fichier) et `ralph-playthrough.*` (répertoire)
+  dans `$TMPDIR`, que `gate__tmp_leftovers` ne compte pas — sa liste est déjà plus
+  étroite que son critère (`ralph-receipt.*`, `ralph-retro.*` n'y sont pas non
+  plus). Classe [31]/[45], à regarder à la prochaine passe transversale.
+- La borne de transcription (`PLAYTHROUGH_TRANSCRIPT_LINES`, 200) n'est pas une
+  clé de config, délibérément : un projet qui pourrait la mettre à zéro obtiendrait
+  un document sans preuve et un prompt sans matière. Ce qui est coupé est compté à
+  voix haute dans le document.
+
+### Gates
+
+`bash test/run.sh` et `bash test/mutate.sh` — chiffres dans le message de merge.

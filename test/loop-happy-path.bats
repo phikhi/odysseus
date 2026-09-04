@@ -29,7 +29,12 @@ teardown() {
 
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 02-beta resolved
-  assert_equal "$(claude_call_count)" "2"
+  # Two delivery sessions and the terminal value gate ([11]), which runs once the
+  # frontier is empty and before this run is entitled to report a finished night.
+  # The third number is asserted rather than commented: a count that only says "3"
+  # would go on passing if the value gate stopped running and a lens started.
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
 }
 
 @test "resolving a blocker pulls the blocked ticket in, within the same run" {
@@ -40,7 +45,8 @@ teardown() {
 
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 03-blocked resolved
-  assert_equal "$(claude_call_count)" "2"
+  assert_equal "$(claude_call_count)" "3"
+  assert_equal "$(playthrough_call_count)" "1"
 }
 
 @test "the loop leaves tickets it must not touch alone" {
@@ -601,8 +607,16 @@ sleep 30'
   assert_file_contains "$journal" "turns=2"
   assert_file_contains "$journal" "cost=0.01"
 
+  # Two iterations and the line the terminal value gate leaves when the frontier
+  # empties ([11]). It is a line and not a silence on purpose: "the frontier
+  # emptied and this run closed the feature" is the one event a morning reader
+  # cannot reconstruct from the tickets, and the two other outcomes — a wiring
+  # ticket re-injected, a feature that did not close — are how a night that went
+  # on grinding after an empty frontier is readable at all.
+  assert_file_contains "$journal" "playthrough-green"
+
   run bash -c "awk 'END { print NR }' '$journal'"
-  assert_equal "$output" "2"
+  assert_equal "$output" "3"
 
   # Timestamped, and append-only across runs.
   run bash -c "head -1 '$journal' | cut -f1"
