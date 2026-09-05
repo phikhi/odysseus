@@ -520,6 +520,16 @@ LIST
 
 # Ids that were not there before. Not "tickets the loop created": the loop's own
 # creations happen after this check, on purpose.
+#
+# What counts as an id is the backend's answer and never a shape read off the
+# directory here, and [48] is why that matters: a ticket file named
+# `99-a<LF>b.md` used to arrive from `tracker_ids` as **two** ids the tracker does
+# not hold, so the quarantine below escalated neither, renumbered neither, and
+# wrote `quarantined 99-a, b` all the same — an announcement of an action nobody
+# took, on a file left `ready-for-agent`. The backend refuses such a name out
+# loud now, so nothing reaches here; what the session gets for writing one is the
+# other guard's answer, which is that the tracker cannot be vouched for and the
+# iteration cannot be green.
 failures__strays() {
   local seen="$1" id
   while IFS= read -r id; do
@@ -666,6 +676,15 @@ failures__issues_path() {
 # every transient somewhere else — was refused because it is not available to the
 # one that matters: `state_atomic_write` has to write beside its target for the
 # rename to be atomic, and its targets are not all in `issues/`.
+#
+# There is a second way to be neither restored nor quarantined and it never
+# reaches this predicate: a name shaped `<id>.md` that carries a newline ([48]).
+# The tracker's own scans refuse it, so the quarantine does not see it — and the
+# reason that is not a hole is the branch above this one, which fires first: git
+# quotes such a name, `gate_unaddressable` catches it, and the iteration is denied
+# green because nothing here can vouch for the tracker. The file stays where the
+# session put it, on no frontier and in no scan, which is the decision [48] wrote
+# down rather than the omission it looks like.
 failures__is_ticket_path() {
   local path="$1" dir="$2" rest
   case "$path" in

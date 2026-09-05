@@ -601,6 +601,162 @@ TICKET
   assert_ticket_status "02-beta bis" resolved
 }
 
+@test "a ticket whose name carries a newline is handed out by no scan, out loud" {
+  # [48], the limit [37] named rather than closed: one id per line is the
+  # convention *and* the separator, so a file name carrying a newline came out of
+  # both scans as two ids the tracker does not hold — `99-a` and `b` — which
+  # entered the frontier where neither could ever be claimed.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/$(printf "99-a\nb").md"
+printf "ids[%s]\n" "$(tracker_ids | tr "\n" "|")"
+printf "frontier[%s]\n" "$(tracker_frontier | tr "\n" "|")"
+'
+  assert_success
+  refute_output_contains "|99-a|"
+  refute_output_contains "|b|"
+  assert_output_contains "ids[01-alpha|02-beta|03-blocked|04-claimed|05-needs-triage|06-resolved|07-overlaps-alpha|08-no-write-surface|09-escalated|]"
+  assert_output_contains "frontier[01-alpha|02-beta|07-overlaps-alpha|08-no-write-surface|]"
+  # Refused out loud and not skipped: a ticket nobody can reach is worse than a
+  # ticket nobody can grind if nothing says which file to go and rename. The name
+  # is rendered escaped, so the sentence about a newline is not itself cut in two.
+  assert_output_contains 'carries a newline in its name'
+  assert_output_contains '"99-a\nb.md"'
+}
+
+@test "an id carrying a newline resolves to nothing, whoever hands it in" {
+  # The other end of the same rule. Nothing produces such an id any more, so what
+  # is left is a caller that already had one — a human, a stale receipt — and the
+  # answer has to be "no such ticket" rather than the file, or the backend would
+  # hand out through the back door what it refuses at the front.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/$(printf "99-a\nb").md"
+printf "field[%s]\n" "$(tracker_field "$(printf "99-a\nb")" Status || printf "refused")"
+'
+  assert_success
+  assert_output_contains "field[refused]"
+}
+
+@test "the paired witness: the same name on one line is a ticket like any other" {
+  # Without this the test above proves nothing about newlines: a scan that had
+  # simply stopped listing what it does not recognise would satisfy it just as
+  # well, and so would one that had stopped listing anything new at all.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/99-ab.md"
+printf "ids[%s]\n" "$(tracker_ids | tr "\n" "|")"
+printf "frontier[%s]\n" "$(tracker_frontier | tr "\n" "|")"
+'
+  assert_success
+  assert_output_contains "09-escalated|99-ab|]"
+  assert_output_contains "frontier[01-alpha|02-beta|07-overlaps-alpha|08-no-write-surface|99-ab|]"
+  refute_output_contains "carries a newline in its name"
+}
+
+@test "a bare number is not made ambiguous by a file nothing can address" {
+  # The damage a scan-only fix would have left behind, and it is [27]'s: a bare
+  # number is how dependencies are written, `tracker_local__path` refuses one that
+  # two files carry, and every ticket holding `Blocked by: 99` then leaves the
+  # frontier for good. A ghost that no scan sees, no quarantine reaches and no
+  # renumber can move must not be one of those two files.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/99-real.md"
+cp "$dir/01-alpha.md" "$dir/$(printf "99-a\nb").md"
+printf "field[%s]\n" "$(tracker_field 99 Status)"
+'
+  assert_success
+  assert_output_contains "field[ready-for-agent]"
+  refute_output_contains "matches 2 tickets"
+}
+
+@test "the paired witness: two addressable files on one number are still refused" {
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/99-real.md"
+cp "$dir/01-alpha.md" "$dir/99-ab.md"
+printf "field[%s]\n" "$(tracker_field 99 Status || printf "refused")"
+'
+  assert_success
+  assert_output_contains "field[refused]"
+  assert_output_contains "matches 2 tickets"
+}
+
+@test "a number is not held back by a file nothing can address" {
+  # The half that follows from the one above rather than standing on its own: a
+  # file that is not a carrier of `10` cannot also be the reason `10` is taken.
+  # Holding the number back for it would reserve it against nothing, and the
+  # ticket that gets `11` instead is the visible half of an invisible file.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/$(printf "10-a\nb").md"
+printf "opened[%s]\n" "$(printf "**What to build:** x\n" | tracker_open_ticket fresh "Fresh")"
+'
+  assert_success
+  assert_output_contains "opened[10-fresh]"
+}
+
+@test "the paired witness: an addressable file does hold its number back" {
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/10-ab.md"
+printf "opened[%s]\n" "$(printf "**What to build:** x\n" | tracker_open_ticket fresh "Fresh")"
+'
+  assert_success
+  assert_output_contains "opened[11-fresh]"
+}
+
+@test "a slug is not taken by a file nothing can address" {
+  # `open_unique` is the deduplication a capability proposal and the retro's
+  # escalation both go through ([47]). A file no scan shows a human must not be
+  # able to answer "already waiting" on their behalf, for good.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/$(printf "99-x\n-cap").md"
+printf "opened[%s]\n" "$(printf "**What to build:** x\n" | tracker_open_unique cap "Cap")"
+'
+  assert_success
+  assert_output_contains "opened[10-cap]"
+}
+
+@test "the paired witness: an addressable file does take its slug" {
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/99-x-cap.md"
+printf "opened[%s]\n" "$(printf "**What to build:** x\n" | tracker_open_unique cap "Cap")"
+'
+  assert_success
+  assert_output_contains "opened[]"
+}
+
+@test "a renumber does not move a ticket over a file nothing can address" {
+  # The quarantine renumbers what a session added so that a bare number keeps
+  # resolving ([27]). A ghost is not a collision, and renumbering a ticket because
+  # of one would move the ticket every other ticket points at.
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/99-real.md"
+cp "$dir/01-alpha.md" "$dir/$(printf "99-a\nb").md"
+printf "renumbered[%s]\n" "$(tracker_renumber 99-real)"
+'
+  assert_success
+  assert_output_contains "renumbered[99-real]"
+}
+
+@test "the paired witness: a real collision is still renumbered" {
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+cp "$dir/01-alpha.md" "$dir/99-real.md"
+cp "$dir/01-alpha.md" "$dir/99-ab.md"
+printf "renumbered[%s]\n" "$(tracker_renumber 99-real)"
+'
+  assert_success
+  # `100` and not `10`: both files carry 99, so the highest number in the
+  # directory really is 99 and the next free one is past it.
+  assert_output_contains "renumbered[100-real]"
+}
+
 # ── one number at a time ─────────────────────────────────────────────────────
 #
 # Allocating an `NN` reads the directory, takes the max and writes it back, and

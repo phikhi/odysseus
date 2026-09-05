@@ -4574,6 +4574,62 @@ mutation "11 the receipt says nothing about what the feature does once it runs" 
   's/  if \[ -f "\$\(playthrough_path\)" \]; then\n/  if false; then\n/' \
   test/playthrough.bats "names the playthrough by path"
 
+# ── [48] a ticket name that carries a newline ────────────────────────────────
+#
+# The limit [37] named and left open: one id per line is the convention *and* the
+# separator. Both directions of the predicate are written, because a pin is
+# vacuous in one of them and red in the other — a scan that refuses everything
+# satisfies "no ghost id" just as well as the fix does, which is what the paired
+# witnesses are for.
+
+mutation "48 a name carrying a newline is still an id" "$TRACKER" \
+  's/^tracker_local__addressable\(\) \{/tracker_local__addressable() { return 0;/m' \
+  test/tracker-local.bats "handed out by no scan"
+
+mutation "48 nothing is an id any more" "$TRACKER" \
+  's/^tracker_local__addressable\(\) \{/tracker_local__addressable() { return 1;/m' \
+  test/tracker-local.bats "one line is a ticket like any other"
+
+mutation "48 the ghost is gone from the quarantine by luck, not by the backend" "$TRACKER" \
+  's/^tracker_local__addressable\(\) \{/tracker_local__addressable() { return 0;/m' \
+  test/failures.bats "makes no ghost and no false quarantine"
+
+mutation "48 the paired witness would pass on a quarantine that quarantines nothing" "$FAILURES" \
+  's/^failures_quarantine_strays\(\) \{/failures_quarantine_strays() { return 0;/m' \
+  test/failures.bats "on one line is quarantined for real"
+
+mutation "48 the refusal is silent" "$TRACKER" \
+  's/^tracker_local__refuse_name\(\) \{/tracker_local__refuse_name() { return 0;/m' \
+  test/tracker-local.bats "handed out by no scan"
+
+mutation "48 the frontier hands the name out as an id" "$TRACKER" \
+  's/    if ! tracker_local__addressable "\$id"; then\n      tracker_local__refuse_name "\$id"\n      continue\n    fi\n    \[ "\$\(tracker_local__field_of_file "\$file" Status\)" = "ready-for-agent" \]/    [ "\$(tracker_local__field_of_file "\$file" Status)" = "ready-for-agent" ]/' \
+  test/tracker-local.bats "handed out by no scan"
+
+mutation "48 the id list hands the name out as an id" "$TRACKER" \
+  's/  \[ -d "\$dir" \] \|\| return 0\n  for file in "\$dir"\/\*\.md; do\n    \[ -e "\$file" \] \|\| continue\n    id="\$\(basename "\$file"\)"\n    if ! tracker_local__addressable "\$id"; then\n      tracker_local__refuse_name "\$id"\n      continue\n    fi\n/  [ -d "\$dir" ] || return 0\n  for file in "\$dir"\/*.md; do\n    [ -e "\$file" ] || continue\n    id="\$(basename "\$file")"\n/' \
+  test/tracker-local.bats "handed out by no scan"
+
+mutation "48 an id carrying a newline still resolves to its file" "$TRACKER" \
+  's/  tracker_local__addressable "\$id" \|\| return 1\n//' \
+  test/tracker-local.bats "resolves to nothing, whoever hands it in"
+
+mutation "48 a name nothing can address is still a carrier of its number" "$TRACKER" \
+  's/    tracker_local__addressable "\$file" \|\| continue\n    hit="\$file"/    hit="\$file"/' \
+  test/tracker-local.bats "ambiguous by a file nothing can address"
+
+mutation "48 a name nothing can address still holds its number back" "$TRACKER" \
+  's/    tracker_local__addressable "\$hit" \|\| continue\n    return 0/    return 0/' \
+  test/tracker-local.bats "not held back by a file"
+
+mutation "48 a name nothing can address still takes its slug" "$TRACKER" \
+  's/    tracker_local__addressable "\$file" \|\| continue\n    base="\$\(basename "\$file" \.md\)"/    base="\$(basename "\$file" .md)"/' \
+  test/tracker-local.bats "slug is not taken by a file"
+
+mutation "48 a name nothing can address still counts as a collision" "$TRACKER" \
+  's/      tracker_local__addressable "\$hit" \|\| continue\n      carriers=/      carriers=/' \
+  test/tracker-local.bats "not move a ticket over a file"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

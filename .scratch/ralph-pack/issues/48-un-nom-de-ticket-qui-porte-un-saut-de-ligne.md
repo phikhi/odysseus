@@ -13,18 +13,18 @@ encore vu comme **deux** ids qui ne résolvent rien.
 `test/tracker-local.bats`, `test/failures.bats`, `test/mutate.sh`,
 `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Un ticket dont le nom de fichier porte un saut de ligne ne produit plus d'id
+- [x] Un ticket dont le nom de fichier porte un saut de ligne ne produit plus d'id
       fantôme sur la frontière : soit il est adressable, soit il est refusé — mais
       pas « annoncé mis en quarantaine » alors qu'il est resté `ready-for-agent`.
-- [ ] La ligne de journal ne ment plus. Aujourd'hui `failures_quarantine_strays`
+- [x] La ligne de journal ne ment plus. Aujourd'hui `failures_quarantine_strays`
       écrit `quarantined 99-a, b` sans avoir escaladé quoi que ce soit ; un contrôle
       qui annonce avoir agi est exactement ce que `docs/frontiere-de-confiance.md`
       existe pour attraper.
-- [ ] Le test porte le témoin appairé : le même scénario avec un nom d'une seule
+- [x] Le test porte le témoin appairé : le même scénario avec un nom d'une seule
       ligne doit rester vert, sinon il ne prouve rien sur le saut de ligne.
-- [ ] La ligne de `docs/frontiere-de-confiance.md` ouverte par [37] est mise à jour
+- [x] La ligne de `docs/frontiere-de-confiance.md` ouverte par [37] est mise à jour
       avec ce qui tient réellement, ou avec l'aveu que la décision est de refuser.
 
 ## Comments
@@ -129,3 +129,71 @@ encore vu comme **deux** ids qui ne résolvent rien.
   ce ticket change la façon dont un id est fabriqué ou lu, parce que ce chemin
   compte aussi ses propres tickets **en comparant des ids ligne à ligne** ([37]) et
   que la borne de réinjection repose sur ce compte.
+
+- **Livré le 05/09/2026. La décision est *refuser au producteur*, et elle est
+  écrite dans le tableau plutôt que déduite du code.** Un prédicat,
+  `tracker_local__addressable`, et un refus à voix haute,
+  `tracker_local__refuse_name`. Le sondage du 30/08 tenait : il n'y avait qu'un
+  producteur cassé, et « porter » n'aurait acheté que la capacité de broyer un
+  ticket que `failures_protect_tracker` refuse déjà de vouer.
+
+- **La portée est plus large que « les deux scans », et c'est le seul endroit où
+  ce ticket a débordé son énoncé — délibérément.** Le correctif tel que le corps
+  le décrivait (filtrer `tracker_ids` et `tracker_frontier`) laissait un dégât
+  que le défaut d'origine masquait : `tracker_local__path` compte les fichiers du
+  glob `NN-*` pour décider qu'un **numéro nu** est ambigu. Un seul `99-a<LF>b.md`
+  dans le répertoire faisait donc refuser `99`, et tout ticket portant
+  `Blocked by: 99` sortait de la frontière pour de bon — c'est [27], rouvert par
+  un fichier que plus aucun scan ne voit, qu'aucune quarantaine n'atteint et
+  qu'aucun renumber ne peut déplacer. La règle appliquée est donc : *un nom que ce
+  backend ne rend jamais ne décide de rien à la place d'un id qui en est un*,
+  dans les six scans — `frontier`, `ids`, `__path`, `__number_taken`,
+  `__slug_taken`, le compte de porteurs de `__renumber_held`. Chacun a son test et
+  son témoin appairé, chacun a son entrée de mutation.
+
+- **Le résidu, mesuré et laissé tel quel : `tracker_local__next_nn`.** Elle lit
+  `ls` à travers un `sed` qui matche `NN-slug.md` sur une **ligne entière**, donc
+  `12<LF>99-x.md` lui offre `99-x.md` comme s'il était un ticket et le numéro
+  suivant saute au-delà de 99. Ça ne coûte que des numéros sautés : le numéro
+  rendu est de toute façon vérifié contre le répertoire ([27]), et `__path` ne
+  résout plus vers le fichier qui l'a suggéré. Écrit dans le code et dans le
+  tableau plutôt que corrigé, parce que la corriger voudrait dire réécrire la
+  seule fonction du fichier que quatre entrées de mutation ancrent.
+
+- **Ce que la voix coûte, et pourquoi elle est répétée.** Le refus est écrit sur
+  la sortie d'erreur à **chaque** scan qui croise le nom — une dizaine de fois par
+  itération. Un drapeau « déjà dit » dans une variable de module ne marcherait
+  pas : chaque consommateur lit `$(tracker_ids)` **dans un sous-shell**, donc le
+  drapeau serait oublié entre deux appelants et la ligne ne sortirait jamais. Un
+  témoin dans `$TMPDIR` aurait marché et n'a pas été construit : c'est un
+  mécanisme neuf pour un cas rare, et le bruit est le prix d'une panne, pas du
+  cas normal. Le nom est rendu avec son saut de ligne **échappé** (`99-a\nb.md`),
+  sans quoi le message se couperait en deux comme la liste qu'il dénonce.
+
+- **La frontière de confiance, question 5.** Rien de neuf n'est demandé à une
+  session ici : le contrôle ajouté est un prédicat sur un nom de fichier que le
+  backend lit lui-même, pas une règle de prompt. Ce qui *reste* non tenu est
+  inchangé et maintenant écrit : le fichier reste où il est, sur aucune frontière
+  et dans aucun scan, restauré par rien ([21]) et mis en quarantaine par rien
+  ([07]) — ces deux-là ne le voient plus non plus. Si une session l'écrit,
+  `failures_protect_tracker` le nomme et l'itération ne peut pas être verte ; s'il
+  était déjà là au démarrage, **aucun garde ne bouge** et la ligne du producteur
+  est le seul témoin qu'un humain aura.
+
+- **Ce que [11] laissait à vérifier est vérifié, et rien ne bouge pour lui.** Ce
+  ticket ne change pas la façon dont un id est *fabriqué* : `playthrough__oneline`
+  retire les caractères de contrôle avant `playthrough__slug`, donc aucun saut de
+  ligne n'entre dans un id par ce chemin, et la borne de réinjection continue de
+  compter ses tickets en comparant des ids ligne à ligne ([37]). Ce qui change
+  pour lui est favorable et involontaire : un fantôme ne peut plus entrer dans ce
+  compte par un autre chemin.
+
+- **Gates sur le code livré** : `bash test/run.sh` = 712 tests, 0 failures,
+  6 skips opt-in ; `bash test/mutate.sh` = 708 mutations, 0 not ok.
+
+- **Contrainte écrite dans [18].** La clause « un id par ligne » de l'en-tête de
+  `lib/tracker.sh` ne change pas — le fichier est resté hors write-surface — et
+  elle gagne un corollaire additif : *un backend ne rend jamais un id qui contient
+  un saut de ligne, il le refuse à voix haute*. C'est une obligation d'adaptateur,
+  pas un détail du backend local, et elle est écrite dans le ticket [18] et dans
+  la ligne du tableau, faute de quoi personne ne la relirait au bon moment.
