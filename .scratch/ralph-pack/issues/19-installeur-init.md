@@ -188,6 +188,49 @@
   runs d'autres dépôts sur la même machine (`$TMPDIR` est partagé — c'est déjà
   l'hypothèse assumée par `-mtime +0` dans `gate__tmp_leftovers`).
 
+- **[62] livré le 05/09/2026 : la spécification du balayage est
+  `gate_tmp_names`, et elle est publique pour vous.** La note ci-dessus est
+  périmée sur un point — la liste couvre maintenant **dix-sept globs** pour les
+  dix-huit producteurs du pack (`ralph-slot.*` attrape le registre
+  `ralph-slot.writes.*` que le pilote écrit à côté du slot), et ce qui la tient
+  n'est plus une relecture à la main : `test/gate.bats` lit les `mktemp` du pack
+  livré, fait résoudre chaque appel **par le pack** et met chaque nom de premier
+  niveau au contrôle. Un producteur ajouté sans ligne dans la liste rougit ; une
+  ligne que plus rien ne produit rougit aussi. Cinq choses pour ce ticket :
+
+  1. **Appeler `gate_tmp_names`, ne pas recopier ses dix-sept lignes.** C'est
+     exactement la faute de [28] que la note de 2026-08 signalait déjà pour les
+     deux motifs d'origine, et le prix a été mesuré : recopiée à la main, la
+     liste est restée à six noms pendant vingt tickets.
+  2. **Le seuil d'âge reste une contrainte et pas un détail** ([22], [41]) : le
+     pack verrouille un arbre et pas une machine, donc un run d'un autre dépôt
+     possède légitimement un `ralph-gate.*` tout neuf, et le registre de
+     mouvements d'un `ralph-frontier.*` **vivant** est ce qu'un balayage trop
+     zélé détruirait. `-mtime +7` sur ce que `gate_tmp_names` nomme, jamais
+     moins.
+  3. **`ralph-*` a été examiné et refusé, avec le prix écrit** (voir
+     `docs/frontiere-de-confiance.md`, ligne « Ce que le pack **lui-même** laisse
+     hors du dépôt ») : cet espace de noms a deux écrivains, le pack et son
+     propre harnais de test — `ralph-test.*` par test, `ralph-harness.*` pour le
+     cache de templates gardé **sept jours à dessein**, `ralph-mutate.*`,
+     `ralph-contract.*`. Un balayage `ralph-* -mtime +7` détruirait le cache de
+     templates de la suite au moment précis où elle en a besoin. Sur la machine
+     d'un projet cible ces noms n'existent pas ; sur celle d'un développeur du
+     pack, si. Le choix est à écrire ici, pas à déduire.
+  4. **Ce que le balayage rend n'est pas ce que le compte annonce.** Le gros des
+     ~1 Go par ticket vient de `ralph-test.*` et `ralph-harness.*`, c'est-à-dire
+     précisément ce que `gate_tmp_names` ne nomme pas. Un installeur qui balaie
+     la liste du pack rend quelques dizaines de Mo, pas un giga — le dire dans
+     son message plutôt que laisser croire l'inverse.
+  5. **Piège, et il est pour vous seul : la dérivation ne voit que `.claude/**`.**
+     Le test scanne le pack déposé. `init.sh`, `bin/**` et `package.json` sont
+     **hors** de cette zone, donc un `mktemp "${TMPDIR:-/tmp}/ralph-install.…"`
+     écrit ici ne serait vu par aucun des deux tests de [62] : ni compté par le
+     contrôle, ni signalé par la dérivation. Si ce ticket pose un temporaire au
+     premier niveau de `$TMPDIR`, il ajoute lui-même sa ligne à
+     `gate_tmp_names` — ou il étend le balayage du test à ses propres fichiers,
+     ce qui est la version honnête.
+
 - **`Blocked by:` élargi le 05/09/2026, ordre validé par Philippe.** `18, 62`
   s'ajoutent à `01`. [18] est l'ordre déjà validé le 01/09 ; [62] est l'arête de
   la passe du 05/09 — sans lui, le balayage de `$TMPDIR` que ce ticket doit écrire

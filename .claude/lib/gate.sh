@@ -162,12 +162,11 @@ gate_preflight() {
 # What earlier runs left in `$TMPDIR`, said once at the start of a run and never
 # removed here ([36]).
 #
-# This module makes both of the temporary *directories* the pack uses — the gate's
-# own, one per iteration, and the witness holding the pinned ignore rules ([30]) —
-# and both are cleaned up on every path an iteration can take. Every path except
-# one: a run that dies of violence takes none of them, so a `kill -9` leaves a gate
-# directory and a witness behind for good. Naming them is this module's business
-# because their names are; counting them at run start is the loop's.
+# Every path an iteration can take cleans up what it made in there. Every path
+# except one: a run that dies of violence takes none of them, so a `kill -9` leaves
+# a workspace, an index and a witness behind for good. Naming them is this module's
+# business because the gate's own names are; counting them at run start is the
+# loop's.
 #
 # Older than a day, and that is the whole of the concurrency question: the pack
 # takes one lock per tree ([22]) and not one per machine, so another run of another
@@ -195,6 +194,15 @@ gate_preflight() {
 # One finding per line since [49], because the second one is not a sentence about
 # `$TMPDIR` at all: what a killed run leaves in the feature directory is an
 # exclusion guard, and it is counted on liveness rather than on age.
+#
+# The count was six names out of eighteen until [62], which is [31]'s shape and
+# [45]'s: a criterion written in the sentence — *what a killed run left in
+# `$TMPDIR`* — and a list copied by hand beside it. Measured on 05/09/2026, a run
+# killed mid-gate left nine entries and this counted six, and two of the three it
+# had nothing to say about were shipped by [11] the week before. The list below is
+# the criterion now, and `test/gate.bats` derives the same set from the pack's own
+# `mktemp` calls and stages every one of them: a nineteenth producer added without
+# a line here turns that test red rather than going unnoticed for a ticket.
 gate_leftovers() {
   local rc=1
   if gate__tmp_leftovers; then rc=0; fi
@@ -203,15 +211,79 @@ gate_leftovers() {
   return "$rc"
 }
 
+# Every name the pack puts at the top level of `$TMPDIR`, whoever makes it, and
+# the sweeping specification the installer of [19] reads.
+#
+# A list and not the one pattern `ralph-*`, and that is a decision with a price on
+# both sides. The pattern would cover a producer added tomorrow for free, which is
+# exactly what this list has to be tested for; what it would also cover is the
+# pack's *own test harness* — `ralph-test.*` per test, `ralph-harness.*` for the
+# template cache the suite keeps on purpose for seven days, `ralph-mutate.*`,
+# `ralph-contract.*`. That namespace has two writers in the one repository where
+# this pack is developed, so `ralph-*` would report a live cache as the debris of a
+# killed run, and would make the morning line of every test that drives the loop
+# depend on how old the machine's cache is. The criterion is what a *run of this
+# pack* left, and this pack's producers can be enumerated.
+#
+# Enumerated here rather than read out of `.claude/**` at run time, which would be
+# the same list derived one layer better and is refused for the oldest reason in
+# `docs/frontiere-de-confiance.md`: the pack's own source sits in the tree a
+# session writes to, and a control that reads a file a session can write is not a
+# control. The derivation lives in the test, which runs on the source as shipped.
+#
+# Files as much as directories, and since [05] rather than lately — ten of the
+# eighteen calls are a `mktemp` without `-d`: the two throwaway indexes of the
+# judged tree, the four of `failures.sh`, the two of `concurrency.sh`, the flow
+# witness of [11] and the write register the slot's owner keeps beside the slot.
+# That is why the sentence below no longer says "director(ies)" alone. It
+# said that while counting `ralph-slot.writes.*`, and a count whose noun is wrong
+# is a count nobody re-reads.
+#
+# `ralph-slot.writes.*` is under `ralph-slot.*` and takes no line of its own: the
+# glob of the slot catches the register the slot's owner writes beside it.
+gate_tmp_names() {
+  printf '%s\n' \
+    'ralph-slot.*' \
+    'ralph-gate.*' \
+    'ralph-frontier.*' \
+    'ralph-ignore.*' \
+    'ralph-index.*' \
+    'ralph-restore.*' \
+    'ralph-worktree.*' \
+    'ralph-fold.*' \
+    'ralph-refresh.*' \
+    'ralph-tracker.*' \
+    'ralph-failed.*' \
+    'ralph-durable.*' \
+    'ralph-reslice.*' \
+    'ralph-spec.*' \
+    'ralph-playthrough.*' \
+    'ralph-receipt.*' \
+    'ralph-retro.*'
+  return 0
+}
+
 gate__tmp_leftovers() {
-  local tmp="${TMPDIR:-/tmp}" n
-  n="$(find "$tmp" -maxdepth 1 \
-    \( -name 'ralph-gate.*' -o -name 'ralph-ignore.*' \
-    -o -name 'ralph-worktree.*' -o -name 'ralph-slot.*' \
-    -o -name 'ralph-frontier.*' \) -mtime +0 2>/dev/null |
+  local tmp="${TMPDIR:-/tmp}" name n
+  # Built into the positional parameters rather than a word-split expansion: these
+  # are globs, and `for name in $(gate_tmp_names)` would let the shell expand them
+  # against whatever directory the run happens to stand in.
+  set --
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if [ "$#" -eq 0 ]; then
+      set -- -name "$name"
+    else
+      set -- "$@" -o -name "$name"
+    fi
+  done <<NAMES
+$(gate_tmp_names)
+NAMES
+  [ "$#" -gt 0 ] || return 1
+  n="$(find "$tmp" -maxdepth 1 \( "$@" \) -mtime +0 2>/dev/null |
     wc -l | tr -d ' ')"
   [ -n "$n" ] && [ "$n" -gt 0 ] || return 1
-  printf '%s temporary director(ies) from earlier runs are still in %s: a run killed mid-iteration leaves one behind, and nothing here removes them\n' \
+  printf '%s temporary file(s) and director(ies) from earlier runs are still in %s: a run killed mid-iteration leaves them behind, and nothing here removes them\n' \
     "$n" "$tmp"
   return 0
 }

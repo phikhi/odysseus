@@ -4663,6 +4663,49 @@ mutation "48 a name nothing can address still counts as a collision" "$TRACKER" 
   's/      tracker_local__addressable "\$hit" \|\| continue\n      carriers=/      carriers=/' \
   test/tracker-local.bats "not move a ticket over a file"
 
+# ── [62] the sweep list is held to its criterion ─────────────────────────────
+#
+# The list named six of the eighteen names the pack `mktemp`s at the top of
+# `$TMPDIR` — a criterion in the sentence, a list copied by hand beside it, [31]'s
+# shape and [45]'s. What is covered here is therefore not the list: a second copy
+# of it in a test would be the same defect one layer up. It is the *derivation* —
+# `test/gate.bats` reads the shipped pack's own `mktemp` calls, resolves each one
+# through the pack so that a path named by a function is seen too, and puts every
+# top-level name to the control.
+#
+# Both directions, because a list can be wrong on either side: a name taken out of
+# it, and a producer added to a lib without one. The two entries aimed at
+# `$STATE` add a function nothing calls — a mutation that only has to exist in the
+# source for the scan to have to see it.
+
+mutation "62 the sweep list is narrower than what the pack makes" "$GATE" \
+  "s/    'ralph-receipt\.\*' \\\\\n//" \
+  test/gate.bats "top of TMPDIR is counted"
+
+mutation "62 the sweep list carries a name nothing in the pack makes" "$GATE" \
+  "s/    'ralph-slot\.\*' \\\\\n/    'ralph-slot.*' \\\\\n    'ralph-nothing.*' \\\\\n/" \
+  test/gate.bats "top of TMPDIR is counted"
+
+mutation "62 a producer is added and no list follows it" "$STATE" \
+  's/^state_guard_take\(\) \{/state_probe_workspace() { mktemp -d "\$\{TMPDIR:-\/tmp\}\/ralph-newthing.XXXXXX"; }\nstate_guard_take() {/m' \
+  test/gate.bats "top of TMPDIR is counted"
+
+mutation "62 a top-level name is composed outside a mktemp call" "$STATE" \
+  's/^state_guard_take\(\) \{/state_probe_workspace() { mkdir -p "\$\{TMPDIR:-\/tmp\}\/ralph-elsewhere.\$\$"; }\nstate_guard_take() {/m' \
+  test/gate.bats "only a mktemp call"
+
+mutation "62 the find expression is built from no list at all" "$GATE" \
+  's/^gate_tmp_names\(\) \{/gate_tmp_names() { return 0;/m' \
+  test/gate.bats "left behind in TMPDIR"
+
+# And the noun. The sentence said "temporary director(ies)" while counting
+# `ralph-slot.writes.*`, a `mktemp` without `-d`, and ten of the eighteen
+# producers make a file. A count restricted to directories is the reading the old
+# sentence described, and the fixture has to notice it.
+mutation "62 only directories are counted, as the sentence used to say" "$GATE" \
+  's/-maxdepth 1 \\\(/-maxdepth 1 -type d \\(/' \
+  test/gate.bats "left behind in TMPDIR"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

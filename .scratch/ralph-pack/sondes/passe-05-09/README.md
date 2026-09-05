@@ -27,6 +27,16 @@ et aucune n'a besoin d'une mutation appliquée à la main. La passe qui les a
 | `q3` Q3d | `playthrough__injected` au module | **0** : `$(tracker_ids 2>/dev/null)` avale la ligne. `tracker_ids` nu la dit |
 | `q3` Q3e | une session de livraison dépose trois `NN-playthrough-wiring-forged.md` dans `issues/` | la quarantaine de [07] les **nomme** et leur **laisse leur nom** ; `playthrough__injected` rend **3**, donc `PLAYTHROUGH_REINJECT_MAX=2` est franchi : cette feature ne rouvrira plus jamais un ticket de câblage |
 
+**Les verdicts ci-dessus sont ceux d'avant les correctifs.** Rejouée le
+05/09/2026 sur le code livré de [62] (`gate_tmp_names`, dix-sept globs dérivés du
+critère), `q1` Q1b rend **9 entrées laissées, 9 comptées** et la phrase dit
+maintenant `9 temporary file(s) and director(ies) from earlier runs are still
+in …` ; Q1c rend toujours **0**. `q1` Q1a garde son intérêt d'instrument : elle
+liste les producteurs un par un, et la version *testée* de cette mesure vit
+maintenant dans `test/gate.bats` (« every name the pack puts at the top of TMPDIR
+is counted by the sweep list »), où elle est dérivée de la source livrée au lieu
+d'être recopiée.
+
 ## Pièges rencontrés en les écrivant
 
 **Le harnais ne sait pas exprimer « une session subalterne qui répond ET porte un

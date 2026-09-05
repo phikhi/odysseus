@@ -231,6 +231,23 @@
   ([13]/[40]) — et la question « un backend qui numérote côté serveur » disparaît
   avec le scan.
 
+- **Contrainte posée par [62], livré le 05/09/2026 : tout `mktemp` que ces
+  adaptateurs poseront au premier niveau de `$TMPDIR` doit avoir sa ligne dans
+  `gate_tmp_names`.** Un backend distant qui cache des réponses HTTP est le
+  candidat évident (`ralph-github.*`, `ralph-gitlab.*`, un sidecar de claim), et
+  c'est précisément le producteur pour lequel ce ticket a été mis avant les
+  quatre suivants dans la file. Ce n'est pas une consigne à retenir : le test
+  `every name the pack puts at the top of TMPDIR is counted by the sweep list`
+  (`test/gate.bats`) lit les `mktemp` du pack livré, les fait résoudre par le
+  pack et rougit sur un producteur non couvert. Deux formes échappent quand même
+  à la dérivation, et ce ticket est en position de les écrire toutes les deux :
+  un chemin composé en **deux temps** (le répertoire dans une variable sur une
+  ligne, le nom sur la variable à la suivante) et un fichier **hors de
+  `.claude/**`**. Le sidecar de liveness du claim, s'il vit hors de
+  `.scratch/<feature>/`, tombe dans la même question — et la réponse « il est
+  compté » ou « il est ailleurs et voici qui le garde » va dans
+  `docs/frontiere-de-confiance.md`, pas seulement ici.
+
 - **`Blocked by:` élargi le 05/09/2026, ordre validé par Philippe.** `64, 65`
   s'ajoutent à `02, 10`. [64] est l'arête **dure** (le logement d'interface de la
   clause « à voix haute ») ; [65] est l'arête d'opportunité — s'il livre en

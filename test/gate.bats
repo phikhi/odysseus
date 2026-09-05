@@ -2530,19 +2530,204 @@ FAKE
   mkdir -p "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" \
     "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun" \
     "$RALPH_TEST_DIR/tmp/ralph-gate.rightnow"
-  # Two of the three are older than a day, and the third is the reason the count is
-  # asserted rather than the line: the pack locks one tree and not one machine
+  # And a file among the directories, which is what the sentence used to get wrong
+  # ([62]): the register the slot's owner writes is a `mktemp` without `-d`, it was
+  # counted from the day it was added, and the line called the total "temporary
+  # director(ies)" all the same. Staged here so that a count restricted to
+  # directories reads 2 where the pack means 3.
+  : >"$RALPH_TEST_DIR/tmp/ralph-slot.writes.deadrun"
+  # Three of the four are older than a day, and the fourth is the reason the count
+  # is asserted rather than the line: the pack locks one tree and not one machine
   # ([22]), so a run of another repository may own a fresh `ralph-gate.*` at this
-  # very moment. Without the third directory here, "2" would be a constant — the
+  # very moment. Without the fresh directory here, "3" would be a constant — the
   # line would read the same with the age condition taken out ([32]).
   touch -t 202001010000 "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" \
-    "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun"
+    "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-slot.writes.deadrun"
 
   run_loop_own_tmp
-  assert_output_contains "2 temporary director(ies) from earlier runs are still in"
+  assert_output_contains "3 temporary file(s) and director(ies) from earlier runs are still in"
   # Said, not swept.
   [ -d "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" ] ||
     fail "the run removed a leftover it is only supposed to name"
+}
+
+# ── [62] the list is held to its criterion by the code that makes the names ──
+#
+# `gate__tmp_leftovers` counted six names out of eighteen: a criterion in the
+# sentence and a list copied by hand beside it, [31]'s shape and [45]'s. What
+# follows is not that list written out a second time — that would be the same
+# defect one layer up — but the pack's own `mktemp` calls, resolved by the pack,
+# staged one at a time and put to the control.
+
+# Every `mktemp` the shipped pack calls, as `kind<TAB>expression`, `d` for a
+# directory and `f` for a file. Comments dropped; `mktemp` as a bare word in a
+# list of program names (`gate_path_programs`) is not a call and is skipped.
+#
+# A call written in a shape this cannot read lands in the second file instead of
+# being silently skipped, and the test fails on it: a scan that quietly understands
+# less of the pack than it did last month is exactly the failure being fixed.
+tmp_producers_scan() {
+  local calls="$1" unreadable="$2" hit
+  : >"$calls"
+  : >"$unreadable"
+  LC_ALL=C grep -rn 'mktemp' "$PACK_DIR" 2>/dev/null |
+    LC_ALL=C grep -v ':[[:space:]]*#' |
+    while IFS= read -r hit; do
+      case "$hit" in
+        *'mktemp -d "'*) printf 'd\t%s\n' "$(tmp_producers_target "$hit")" >>"$calls" ;;
+        *'mktemp "'*) printf 'f\t%s\n' "$(tmp_producers_target "$hit")" >>"$calls" ;;
+        *'"'*) printf '%s\n' "$hit" >>"$unreadable" ;;
+        *) : ;;
+      esac
+    done
+  return 0
+}
+
+tmp_producers_target() {
+  printf '%s\n' "$1" | sed -n 's/.*mktemp \(-d \)\{0,1\}"\([^"]*\)".*/\2/p'
+}
+
+# Where each call lands, resolved **by the pack** rather than read off the line.
+# `concurrency_worktree_path` names its path through `concurrency__prefix`, so a
+# scan that only understood `${TMPDIR:-/tmp}/…` would be blind to precisely the
+# producer whose module named it properly — and blind in the direction that reads
+# green.
+#
+# Unset variables expand to nothing, which is this resolution's approximation and
+# it errs the right way: `$RALPH_RETRO_STATE/read.*` is a path *inside*
+# `ralph-retro.*` at run time and top level for nobody, and a variable that held
+# `$TMPDIR` itself is the one case it would misread.
+tmp_producers_resolve() {
+  local calls="$1" root="$2" out="$3" script="$RALPH_TEST_DIR/resolve-producers.sh"
+  {
+    printf 'set +u\n'
+    printf 'TMPDIR=%s\n' "$root"
+    printf 'export TMPDIR\n'
+    cat <<'RESOLVE'
+while IFS=$'\t' read -r kind expr; do
+  printf '%s\t' "$kind"
+  eval "printf '%s\n' \"$expr\""
+done
+RESOLVE
+  } >"$script"
+  pack_run ". '$script' <'$calls' >'$out'"
+}
+
+@test "every name the pack puts at the top of TMPDIR is counted by the sweep list" {
+  local root="$RALPH_TEST_DIR/probe"
+  local calls="$RALPH_TEST_DIR/calls" unreadable="$RALPH_TEST_DIR/unreadable"
+  local landed="$RALPH_TEST_DIR/landed" top="$RALPH_TEST_DIR/top"
+  local asked="$RALPH_TEST_DIR/asked" script="$RALPH_TEST_DIR/ask-producers.sh"
+  local kind path rest old total
+
+  tmp_producers_scan "$calls" "$unreadable"
+  [ ! -s "$unreadable" ] ||
+    fail "a mktemp this scan cannot read, so it proves nothing about the names below it:
+$(cat "$unreadable")"
+
+  tmp_producers_resolve "$calls" "$root" "$landed"
+  assert_success
+
+  # Top level of `$TMPDIR` and nothing else: what a call puts *inside* a directory
+  # the pack already owns goes with that directory when it goes.
+  : >"$top"
+  while IFS="$(printf '\t')" read -r kind path; do
+    case "$path" in
+      "$root"/*) ;;
+      *) continue ;;
+    esac
+    rest="${path#"$root"/}"
+    case "$rest" in
+      */*) continue ;;
+    esac
+    printf '%s\t%sAAAAAA\n' "$kind" "${rest%%XXX*}" >>"$top"
+  done <"$landed"
+
+  # The floor, because a scan that found nothing would pass every assertion under
+  # it. Eighteen is what the pack calls today; a ticket that adds a producer moves
+  # it up, and one that removes a producer has to say so here.
+  total="$(wc -l <"$top" | tr -d ' ')"
+  [ "$total" -ge 18 ] ||
+    fail "the scan found $total producers of a top-level \$TMPDIR name, which is fewer than the pack has:
+$(cat "$top")"
+  # And the one whose path comes out of a function, named rather than counted: it
+  # is the shape a textual scan drops without a word.
+  LC_ALL=C grep -q '	ralph-worktree\.' "$top" ||
+    fail "the resolution no longer sees the producer that names its path through a function"
+
+  # One producer at a time in an empty directory, aged past the day the control
+  # asks for — `-mtime +0` is *strictly* more than 24 h, so a residue staged and
+  # questioned in the same second is counted by nobody whatever the list says.
+  old="$(date -v-25H +%Y%m%d%H%M 2>/dev/null || date -d '25 hours ago' +%Y%m%d%H%M)"
+  {
+    printf 'probe=%s\n' "$root"
+    printf 'old=%s\n' "$old"
+    cat <<'ASK'
+while IFS=$'\t' read -r kind name; do
+  rm -rf "$probe"
+  mkdir -p "$probe"
+  if [ "$kind" = d ]; then mkdir "$probe/$name"; else : >"$probe/$name"; fi
+  touch -t "$old" "$probe/$name"
+  if TMPDIR="$probe" gate__tmp_leftovers >/dev/null 2>&1; then
+    printf 'counted %s\n' "$name"
+  else
+    printf 'MISSED  %s\n' "$name"
+  fi
+done
+ASK
+  } >"$script"
+  pack_run ". '$script' <'$top' >'$asked'"
+  assert_success
+
+  ! LC_ALL=C grep -q '^MISSED' "$asked" ||
+    fail "a name the pack puts in \$TMPDIR that gate_tmp_names does not cover:
+$(cat "$asked")"
+
+  # And the same rule read backwards, because a list can also be wider than its
+  # criterion: a name here that no call in the pack produces is a producer renamed
+  # without this list following it, or a line kept for a mechanism that is gone.
+  # The installer of [19] sweeps what this names, so a name nobody makes is not
+  # harmless there the way it is here.
+  local names glob staged matched
+  pack_run 'gate_tmp_names'
+  assert_success
+  names="$output"
+  while IFS= read -r glob; do
+    [ -n "$glob" ] || continue
+    matched=0
+    while IFS="$(printf '\t')" read -r kind staged; do
+      case "$staged" in
+        $glob)
+          matched=1
+          break
+          ;;
+      esac
+    done <"$top"
+    [ "$matched" = 1 ] ||
+      fail "gate_tmp_names carries $glob and no mktemp call in the pack makes a name it matches"
+  done <<NAMES
+$names
+NAMES
+}
+
+@test "only a mktemp call composes a top-level name in TMPDIR" {
+  # The limit of the scan above, made into a rule rather than left as a hope: it
+  # reads `mktemp` calls, so a `mkdir` on a name built straight out of `$TMPDIR`
+  # would put something out there that nothing in this file would ever ask the
+  # control about.
+  #
+  # What it still cannot see is a path composed in two steps — the directory into a
+  # variable on one line, the name onto that variable on the next. That is written
+  # down here and not guarded, and it is why the sweep list is a list of this
+  # pack's names and not a promise that no other name can exist.
+  local hits
+  hits="$(LC_ALL=C grep -rn '\${TMPDIR:-/tmp}/' "$PACK_DIR" 2>/dev/null |
+    LC_ALL=C grep -v ':[[:space:]]*#' |
+    LC_ALL=C grep -v 'mktemp' || true)"
+  [ -z "$hits" ] ||
+    fail "a top-level \$TMPDIR name composed outside a mktemp call, which the derived test above cannot see:
+$hits"
 }
 
 @test "a run says what an earlier run left holding inside the feature directory" {
