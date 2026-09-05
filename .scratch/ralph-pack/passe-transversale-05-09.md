@@ -311,3 +311,32 @@ non un scan.
 À écrire en livrant, pas maintenant : notes dans [11], [18], [19], [27], [43],
 [48], et les lignes du tableau de `docs/frontiere-de-confiance.md` que chaque
 ticket touche.
+
+---
+
+## L'ordre, validé par Philippe le 05/09/2026
+
+**[63] → [62] → [65] → [64] → *passe transversale* → [18] → [19]**
+
+Par le critère du dépôt — **minimiser la reprise**, jamais la gravité en
+exploitation :
+
+1. **[63]** — zéro arête (`retro.sh` + `test/helpers/`), seul **faux livré** des
+   quatre, et son `retro_rate_limit` profite aux trois suivants.
+2. **[62]** — placé tôt **pas** pour son arête vers [19] mais parce qu'il livre le
+   contrôle qui rougit quand un producteur de `$TMPDIR` est ajouté sans être
+   couvert : installé ici, il travaille pour [65], [64], [18] et [19] ; installé
+   juste avant [19], il arriverait après le producteur qu'il aurait dû attraper
+   (un backend distant qui cache des réponses est un candidat évident).
+3. **[65]** — isolé (`playthrough.sh`), et il retire le scan du tracker, ce qui
+   fait **disparaître** la contrainte que [11] avait écrite dans [18] au lieu de
+   la lui laisser.
+4. **[64]** — plus grosse surface des quatre, arête **dure**, collé à [18] qui
+   rouvre `tracker.sh` juste après : l'en-tête de contrat est écrit et rempli
+   dans la foulée.
+5. **La passe transversale** tombe exactement là : quatre livraisons depuis celle
+   du 05/09, et [18] est le ticket qui porte le plus de contraintes héritées.
+6. **[18]** puis **[19]**, inchangé depuis le 01/09.
+
+`Blocked by:` mis à jour en conséquence : `[18] 02, 10, 64, 65` et
+`[19] 01, 18, 62`. [62] et [63] restent `None`.

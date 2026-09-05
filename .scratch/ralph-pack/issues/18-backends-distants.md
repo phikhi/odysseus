@@ -2,7 +2,7 @@
 
 **What to build:** Les implémentations distantes de l'adaptateur de tracker, satisfaisant **la même interface** que `local`, avec la forme d'intégration façonnée par le backend (claim = assignee, reçu = PR, `wait_ci`). La boucle reste agnostique.
 
-**Blocked by:** 02, 10
+**Blocked by:** 02, 10, 64, 65
 
 **Write-surface:** `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `test/tracker-remote.bats`
 
@@ -230,3 +230,11 @@
   ne scanne plus le tracker — probablement le registre d'écritures du pilote
   ([13]/[40]) — et la question « un backend qui numérote côté serveur » disparaît
   avec le scan.
+
+- **`Blocked by:` élargi le 05/09/2026, ordre validé par Philippe.** `64, 65`
+  s'ajoutent à `02, 10`. [64] est l'arête **dure** (le logement d'interface de la
+  clause « à voix haute ») ; [65] est l'arête d'opportunité — s'il livre en
+  cessant de scanner le tracker, la contrainte que [11] avait écrite ici (« un
+  backend qui numérote côté serveur casse la borne ») **disparaît avec le scan**
+  au lieu d'être une obligation de plus pour ce ticket. Ordre complet retenu :
+  [63] → [62] → [65] → [64] → passe transversale → [18] → [19].
