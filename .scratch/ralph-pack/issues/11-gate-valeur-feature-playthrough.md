@@ -399,3 +399,19 @@ pour que la prochaine lecture de `playthrough.sh` les trouve.
   `ralph-spec.*` et `ralph-playthrough.*` s'ajoutent aux douze familles que
   `gate__tmp_leftovers` ne voit pas. C'était déjà écrit au tableau en livrant ; la
   passe l'a chiffré (6 noms vus sur 18, 6 comptés sur 9 après un run tué).
+
+- **Contrainte posée par [63], livré le 05/09/2026 : `playthrough_close` appelle
+  maintenant `budget_refused_silence`, et `playthrough_rate_limit` a un jumeau.**
+  L'ordre que ce ticket avait écrit en toutes lettres (« the verdict outranks the
+  event, in that order and not the other way round ») est devenu du code dans
+  `.claude/lib/budget.sh` ; le commentaire d'ici le cite au lieu de le recopier, et
+  les deux `if [ "$verdict" = none ] && budget_refused …` sont un seul appel. Les
+  deux entrées de mutation de ce ticket sont ré-ancrées dessus et rejouées `ok`
+  (`11 a session the API refused is reported as one that judged and said nothing`,
+  `11 an event about tomorrow outranks the verdict this session gave`) — et une
+  entrée de [63] mutile la garde **partagée** dans `budget.sh` en visant
+  `test/playthrough.bats` justement parce que ce qui doit tenir est que la règle
+  soit *une seule* règle. Côté harnais, `retro_rate_limit` est le jumeau de
+  `playthrough_rate_limit` que ce ticket avait ajouté pour son propre palier :
+  l'asymétrie était la raison pour laquelle le défaut du rétro ne pouvait pas
+  s'écrire.

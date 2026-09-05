@@ -769,13 +769,12 @@ playthrough_close() {
   # feature still does not close — silence never buys a green — but no ticket is
   # opened on a hole nothing found.
   #
-  # **The verdict outranks the event, in that order and not the other way round**,
-  # which is the ordering `lenses_refused_posture` already carries: the in-band
-  # signal can say `blocked` for the window *after* the one this session is
-  # spending, and a gate that answered `pass` looked. Asked the other way round, a
-  # feature would fail to close on a subscription warning about tomorrow.
-  if [ "$verdict" = none ] &&
-    budget_refused "$(budget_stream_posture "$stream" 2>/dev/null || true)"; then
+  # The order the two questions are asked in is `budget_refused_silence`, and it
+  # is asked there rather than restated here since [63]: the verdict outranks the
+  # event. Asked the other way round, a feature would fail to close on a
+  # subscription warning about tomorrow.
+  if budget_refused_silence "$verdict" \
+    "$(budget_stream_posture "$stream" 2>/dev/null || true)"; then
     outcome='nothing was judged: the API refused the value gate its session, so no ticket was opened on anything'
     playthrough__log "$outcome"
     playthrough__write refused "$outcome" "$tree" "$stream" "$runrc" "$visrc" \

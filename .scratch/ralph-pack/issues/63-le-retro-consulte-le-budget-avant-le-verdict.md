@@ -4,18 +4,18 @@
 
 **Blocked by:** None
 
-**Write-surface:** `.claude/lib/retro.sh`, `test/helpers/shims/claude`, `test/helpers/harness.bash`, `test/retro.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
+**Write-surface:** `.claude/lib/budget.sh`, `.claude/lib/lenses.sh`, `.claude/lib/playthrough.sh`, `.claude/lib/retro.sh`, `test/helpers/shims/claude`, `test/helpers/harness.bash`, `test/retro.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Tags:** budget, retro, observability
 
-- [ ] `retro_run` ne consulte `budget_refused` que si la session **n'a rien répondu** — même critère que `lenses_refused_posture` (verdict `none` d'abord) et que `playthrough_close`. Un rétro qui a répondu enregistre sa leçon, son ADR, son escalade et sa capacité, **puis** peut encore faire remonter le posture au pilote si c'est ce qui est décidé (les deux moitiés sont séparables : ce qu'on jette et ce qu'on remonte).
-- [ ] La phrase du reçu ne ment plus : « the API refused the retro session » ne doit être écrite que quand l'API a refusé la session.
-- [ ] **`retro_rate_limit` dans le harnais** — un événement in-band **avec** une réponse, pendant du `playthrough_rate_limit` que [11] a ajouté pour son propre palier. Aujourd'hui `retro_refused` émet l'événement *et* `exit 1` sans réponse, et `claude_rate_limit` est global (il touche la session de livraison, dont le posture est justement ce que le pilote lit) : le cas ne pouvait pas s'écrire.
-- [ ] Un test par chose perdue (leçon, ADR, escalade, capacité) et un test sur la nuit (`$slot/posture` n'est pas écrasé, le run continue), chacun avec son témoin appairé `allowed`.
-- [ ] Entrée de mutation par garantie livrée. **Deux directions** pour l'ordre : une mutation qui remet `budget_refused` en premier, et une qui retire la garde du posture.
-- [ ] La règle est écrite **une fois** quelque part que les trois paliers citent, plutôt qu'une quatrième fois en prose. C'est ce qui a laissé passer celle-ci.
+- [x] `retro_run` ne consulte `budget_refused` que si la session **n'a rien répondu** — même critère que `lenses_refused_posture` (verdict `none` d'abord) et que `playthrough_close`. Un rétro qui a répondu enregistre sa leçon, son ADR, son escalade et sa capacité, **puis** peut encore faire remonter le posture au pilote si c'est ce qui est décidé (les deux moitiés sont séparables : ce qu'on jette et ce qu'on remonte).
+- [x] La phrase du reçu ne ment plus : « the API refused the retro session » ne doit être écrite que quand l'API a refusé la session.
+- [x] **`retro_rate_limit` dans le harnais** — un événement in-band **avec** une réponse, pendant du `playthrough_rate_limit` que [11] a ajouté pour son propre palier. Aujourd'hui `retro_refused` émet l'événement *et* `exit 1` sans réponse, et `claude_rate_limit` est global (il touche la session de livraison, dont le posture est justement ce que le pilote lit) : le cas ne pouvait pas s'écrire.
+- [x] Un test par chose perdue (leçon, ADR, escalade, capacité) et un test sur la nuit (`$slot/posture` n'est pas écrasé, le run continue), chacun avec son témoin appairé `allowed`.
+- [x] Entrée de mutation par garantie livrée. **Deux directions** pour l'ordre : une mutation qui remet `budget_refused` en premier, et une qui retire la garde du posture.
+- [x] La règle est écrite **une fois** quelque part que les trois paliers citent, plutôt qu'une quatrième fois en prose. C'est ce qui a laissé passer celle-ci.
 
 ## Comments
 
@@ -63,3 +63,98 @@
   la file. C'est le seul **faux livré** des quatre trouvailles de la passe, et le
   `retro_rate_limit` qu'il ajoute au harnais profite aux trois suivants. Ordre
   complet retenu : [63] → [62] → [65] → [64] → passe transversale → [18] → [19].
+
+## Livraison (05/09/2026)
+
+- **Sondes rejouées avant d'écrire**, et le défaut reproduit tel qu'il est décrit :
+  `q2a` rc=6, pas de `LEARNINGS.md`, `docs/adr/` vide, `02-beta` jamais tenté, reçu
+  « the API refused the retro session (seven_day) », run arrêté sur
+  « the weekly usage limit blocks this run » ; témoin `q2b` avec `allowed` : leçon
+  `LR-0001`, `docs/adr/0001-who-owns-the-flow-document.md`, ticket `03-retro-…` sur
+  le puits, quatre itérations. Les sondes restent en place, elles ne sont pas des
+  tests (elles finissent par un `false` volontaire).
+
+- **La règle est une fonction, pas une quatrième phrase.**
+  `budget_refused_silence VERDICT POSTURE` dans `.claude/lib/budget.sh` : vrai
+  seulement si la session **n'a rien dit** (`none` ou vide) **et** que la raison est
+  un refus de l'API. Les trois paliers l'appellent — `lenses_refused_posture`,
+  `playthrough_close`, `retro_run` — et les commentaires des deux premiers ne
+  recopient plus la règle, ils la citent. C'était l'AC la plus importante : le
+  défaut n'est pas une ligne mal écrite, c'est une règle connue en trois
+  exemplaires recopiés à la main, dont un était faux (même racine que la passe du
+  05/09 dans son ensemble).
+
+- **Les deux moitiés, tranchées séparément, comme demandé.**
+  1. *Jeter la réponse* — faux dans tous les cas, corrigé : `budget_stream_posture`
+     et la garde sont désormais **après** les sept `retro__said` et le
+     `capability_said`, donc leçon, ADR, escalade et capacité sont enregistrés
+     avant que le budget soit consulté, et `capability_review` est atteint.
+  2. *Remonter le posture au pilote quand le rétro a répondu* — **non**, et c'est la
+     décision du ticket. Trois raisons : (a) c'est ce que font déjà les deux autres
+     paliers — `lenses_refused_posture` ne rend un posture que sur un verdict
+     `none`, et `playthrough_close` ne touche à rien quand le verdict existe, donc
+     dire oui ici remettrait une asymétrie dans le palier qui vient d'en sortir ;
+     (b) l'événement porte sur une **fenêtre**, pas sur cet appel — une session qui
+     a répondu a été servie, et `blocked` y annonce la fenêtre suivante, que ce run
+     ne dépensera peut-être jamais ; (c) l'argument de [08] (« ajouter une raison
+     d'être prudent, jamais en retirer une ») reste tenu par deux canaux que ceci ne
+     touche pas : le posture de la **session de livraison**, qui est la première
+     mesure du mur par ce run, et l'endpoint que `budget_check` redemande — avec
+     `force=1` précisément quand un posture dit refusé. Ce qui est refusé ici, c'est
+     qu'un événement lu dans le flux d'une session **qui a répondu** arrête la nuit.
+     `RALPH_RETRO_QUOTA` reste écrit, mais uniquement sur la branche du vrai refus.
+
+- **`retro_rate_limit` dans le harnais** (`test/helpers/harness.bash` +
+  branche rétro du shim, jumeau exact de `playthrough_rate_limit`). C'est ce qui
+  rend le cas *écrivable* : `retro_refused` est un événement **sans** réponse
+  (`exit 1`), `claude_rate_limit` touche aussi la session de livraison — dont le
+  posture est justement ce que le pilote lit — donc un test écrit avec lui aurait
+  mesuré un run en pause. Le shim n'exécute cette branche que sur un prompt qui
+  porte `RALPH-RETRO-NOTHING`, comme pour les lentilles et le gate de valeur.
+
+- **Le trou de non-vacuité que le témoin appairé ne bouche pas, et le test qui le
+  bouche.** Après correctif, un rétro qui répond produit *la même chose* que
+  l'événement dise `blocked` ou `allowed` — c'est la garantie. Donc un shim qui
+  ignorerait silencieusement `retro.rate_limit` laisserait les cinq tests verts en
+  ne mettant rien en scène : exactement la forme de faux vert de [06] (compteur du
+  fake) et de [11]. Le test « said nothing readable and was refused says so, event
+  and all » ferme ça : même helper, même événement, sur une session dont la réponse
+  n'est pas lisible — là l'événement **est** la raison, le reçu doit le dire, et
+  l'entrée de mutation `63 the retro's stream never carries the event a test staged`
+  vise le shim.
+
+- **Quatre entrées de mutation ajoutées**, les deux directions de l'ordre comprises :
+  `63 the retro asks the budget before it reads the answer` (l'ordre remis à
+  l'envers : `budget_refused_silence none "$posture"`), `63 a retro that answered
+  raises a posture the pilot has an answer for` (la garde du posture retirée :
+  `RALPH_RETRO_QUOTA` écrit inconditionnellement), `63 the ordering holds for the
+  tier that reads it, not the tier that wrote it` (la garde partagée retirée dans
+  `budget.sh`, **visée contre `test/playthrough.bats`** et non contre le rétro : ce
+  qui doit tenir, c'est que la règle est *une seule* règle), et l'entrée shim
+  ci-dessus.
+
+- **Six entrées ré-ancrées** (`DRIFTED` sinon, leçon 3) : les deux de [43] sur
+  `lenses.sh` — dont une **déménage vers `$BUDGET`**, puisque la question du
+  posture n'est plus posée dans `lenses.sh` —, les deux de [11] sur
+  `playthrough.sh`, et les deux de [14] sur `retro.sh` (`answered` ne vaut plus
+  `0`/`1` mais `none`/`said`, pour que le premier argument de
+  `budget_refused_silence` soit du même vocabulaire chez les trois paliers).
+  Toutes rejouées pour de vrai, pas seulement en `-n`.
+
+- **Piège hérité, confirmé** : la sonde passait par `script_claude` et devait poser
+  son propre témoin, parce que le shim écrit `claude.retros/calls` *après* le
+  `exec`. Les tests livrés n'utilisent pas `script_claude` — ils passent par la
+  branche rétro du shim — donc `retro_call_count` y est fiable, et deux d'entre eux
+  l'assertent (`= 2`) pour prouver que les deux itérations ont bien eu leur rétro.
+
+- **Les deux gates, mesurés d'un bloc sur le code livré** : `bash test/run.sh` =
+  **719 tests, 0 failures, 6 skips** (712 + 7 nouveaux ; les 6 skips sont les
+  opt-in réseau/binaire réel, aucun dans le canari) et `bash test/mutate.sh` =
+  **712 mutations, 0 not ok** (708 + 4). Arbre propre après coup, aucun défaut
+  planté. Nouvelle baseline pour le ticket suivant.
+
+- **Contraintes écrites ailleurs** : [43] (la règle est maintenant du code, un
+  quatrième palier doit appeler la fonction), [11] (`playthrough_close` passe par
+  elle ; `playthrough_rate_limit` a un jumeau), [08] (la direction « une raison de
+  plus, jamais une de moins » ne passe plus par le rétro qui a répondu, et par quoi
+  elle passe à la place), [14] (`answered` change de vocabulaire).

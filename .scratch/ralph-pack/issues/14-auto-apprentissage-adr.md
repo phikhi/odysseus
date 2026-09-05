@@ -97,3 +97,22 @@ Deux lecteurs publics ont été ajoutés à `receipt.sh` pour ça (`receipt_bran
 - **[16]** : un humain qui vide `ready-for-human` verra des tickets `retro-*` qu'aucune discovery n'a écrits.
 
 - **Contrainte posée par [15], livré le 25/08/2026 : la *forme* du ticket d'escalade a déménagé, la garantie non.** Le commentaire ci-dessus demandait à [15] de décider s'il passait par ce canal ou en construisait un autre. Il a fait le premier, et pour éviter deux producteurs avec deux formats il a mis la forme dans `capability_propose` (`capability.sh`) : le `**Status:** ready-for-human`, l'ouverture par l'adaptateur de tracker et la dédup contre `tracker_ids`. `retro__escalate` l'appelle et ne garde que ce qui le distingue — le préfixe `retro-` et le corps qui dit pourquoi une règle n'est pas une leçon. Deux conséquences à connaître avant de toucher à ce module : les deux entrées de mutation de ce ticket (`14 an escalated rule lands on the frontier…`, `14 an escalation waiting for a human…`) ancrent maintenant dans `$CAPABILITY` et nomment toujours `test/retro.bats` — rejouées `ok` le 25/08/2026 ; et `retro__prompt` porte une quatrième famille de tags (`RALPH-RETRO-CAPABILITY`), fournie par `capability_prompt` et parsée par `capability.sh`, donc la clause de silence de `retro_run` compte une réponse de plus (`capability_said`) sous peine de rapporter comme muette une session qui a répondu.
+
+- **Contrainte posée par [63], livré le 05/09/2026 : `answered` change de
+  vocabulaire, et la question du budget descend de vingt lignes.** `retro_run`
+  consultait `budget_refused` **avant** les `retro__said` : un rétro qui répondait
+  `LESSON` + `ADR` + `ESCALATE` + `CAPABILITY` sur un flux annonçant `blocked` pour
+  la fenêtre suivante perdait la leçon, l'ADR, le ticket d'escalade, la revue de
+  capacité et la nuit — et le reçu écrivait « the API refused the retro session »
+  pour une session qui avait répondu six lignes taguées. Le `budget_stream_posture`
+  et sa garde sont maintenant **après** les sept `retro__said` et le
+  `capability_said`, à travers `budget_refused_silence` (`.claude/lib/budget.sh`),
+  qui est l'endroit unique où vit l'ordre de [43]. Pour que le premier argument
+  parle le même vocabulaire chez les trois paliers, la variable locale `answered`
+  vaut désormais `none` / `said` et non `0` / `1` : l'entrée de mutation
+  `14 a retro that answered nothing reads as one that found nothing` est ré-ancrée
+  dessus, et `14 a retro the API refused is a lesson that was not there` sur le
+  nouvel appel. Les deux rejouées `ok`. Le harnais a gagné `retro_rate_limit`
+  (événement in-band **avec** réponse, jumeau de `playthrough_rate_limit`) — sans
+  lui le cas n'était pas exprimable, `retro_refused` étant l'événement *plus*
+  `exit 1`.

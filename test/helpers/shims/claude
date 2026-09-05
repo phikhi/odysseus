@@ -283,6 +283,16 @@ elif [ "$retro" = 1 ]; then
   # thing that has seen them all.
   retro_index="$(awk 'END { print NR }' "$state/claude.retros/calls")"
 
+  # The in-band budget signal this one session carries, scriptable on its own —
+  # the value gate's twin, and missing until [63], which is why the one case that
+  # matters here could not be written: an event **with** an answer. `retro.refused`
+  # below is an event *without* one, and `claude_rate_limit` is every session at
+  # once, delivery included, which is a different measurement entirely (the pilot
+  # reads the delivery session's posture to decide whether to pause).
+  if [ -f "$state/retro.rate_limit" ]; then
+    rate_limit="$(cat "$state/retro.rate_limit")"
+  fi
+
   if [ -f "$state/retro.refused" ]; then
     printf '{"type":"system","subtype":"init","session_id":"%s","model":"%s"}\n' \
       "$session" "$model"

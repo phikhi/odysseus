@@ -2535,12 +2535,16 @@ mutation "43 a refused lens is never noticed" "$LENSES_LIB" \
   's/^lenses_refused_posture\(\) \{/lenses_refused_posture() { return 1;/m' \
   test/budget.bats "costs the ticket what a refused delivery session costs"
 
+# Both halves of the ordering, re-anchored by [63]: the question is now asked in
+# one place for all three tiers (`budget_refused_silence`), so what each tier owns
+# is the argument it passes — and the shared half is mutated once, below, against
+# a tier that is not the one that got it wrong.
 mutation "43 a lens that answered is read as refused all the same" "$LENSES_LIB" \
-  's/  \[ "\$\(lenses__verdict "\$stream"\)" = none \] \|\| return 1\n//' \
+  's/budget_refused_silence "\$\(lenses__verdict "\$stream"\)"/budget_refused_silence none/' \
   test/lenses.bats "told apart from every other way"
 
-mutation "43 a stream that says nothing about quota is read as a refusal" "$LENSES_LIB" \
-  's/  budget_refused "\$posture" \|\| return 1\n//' \
+mutation "43 a stream that says nothing about quota is read as a refusal" "$BUDGET" \
+  's/^  budget_refused "\$\{2:-\}"$/  return 0/m' \
   test/budget.bats "without being refused is still an attempt"
 
 # The measurement the pack takes itself, against the claim it reads. Without the
@@ -2786,7 +2790,7 @@ mutation "14 a retro that found nothing writes a record anyway" "$RETRO" \
 # And the other half of the same sentence: a session that said nothing is not a
 # session that found nothing ([06] on a missing verdict).
 mutation "14 a retro that answered nothing reads as one that found nothing" "$RETRO" \
-  's/^  if \[ "\$answered" = 0 \]; then$/  if false; then/m' \
+  's/^  if \[ "\$answered" = none \]; then$/  if false; then/m' \
   test/retro.bats "answers nothing at all"
 
 # The anti-noise half of the index: dedup, supersession, drain-by-promotion, and
@@ -2923,8 +2927,37 @@ mutation "14 the tier switched off says nothing" "$RETRO" \
   test/retro.bats "tier switched off says so"
 
 mutation "14 a retro the API refused is a lesson that was not there" "$RETRO" \
-  's/^  if budget_refused "\$posture"; then$/  if false; then/m' \
+  's/^  if budget_refused_silence "\$answered" "\$posture"; then$/  if false; then/m' \
   test/retro.bats "API refused distils nothing"
+
+# ── [63] the verdict outranks the event, on this tier too ────────────────────
+#
+# Two directions, because they are two different defects with two different
+# symptoms: asking the budget without regard for what the session said throws the
+# answer away, and raising the posture on a session that answered stops the night.
+# One entry each, and neither is covered by the other.
+mutation "63 the retro asks the budget before it reads the answer" "$RETRO" \
+  's/if budget_refused_silence "\$answered" "\$posture"/if budget_refused_silence none "\$posture"/' \
+  test/retro.bats "records the lesson it distilled"
+
+mutation "63 a retro that answered raises a posture the pilot has an answer for" "$RETRO" \
+  's/^  posture="\$\(budget_stream_posture "\$stream" 2>\/dev\/null \|\| true\)"$/  posture="\$(budget_stream_posture "\$stream" 2>\/dev\/null || true)"\n  RALPH_RETRO_QUOTA="\$posture"/m' \
+  test/retro.bats "does not stop the night"
+
+# The shared half, mutated against the value gate rather than the retro: what has
+# to hold is that the rule is one rule, so removing it has to be visible from a
+# tier other than the one [63] found it broken in.
+mutation "63 the ordering holds for the tier that reads it, not the tier that wrote it" "$BUDGET" \
+  's/^  case "\$\{1:-none\}" in$/  case none in/m' \
+  test/playthrough.bats "while the window was blocked"
+
+# And the harness, which is where this case lived before it could be written at
+# all: `retro_refused` is an event without an answer, and there was no way to
+# stage an event *with* one. A shim that dropped the staged event would leave
+# every [63] test above green while measuring a default `allowed` stream.
+mutation "63 the retro's stream never carries the event a test staged" "$SHIM" \
+  's/    rate_limit="\$\(cat "\$state\/retro.rate_limit"\)"/    :/' \
+  test/retro.bats "event and all"
 
 # ── [15] detecting a capability, and never building one ──────────────────────
 #
@@ -4530,7 +4563,7 @@ mutation "11 a value gate that answered no verdict at all closes the feature" "$
   test/playthrough.bats "without a verdict closes nothing"
 
 mutation "11 a session the API refused is reported as one that judged and said nothing" "$PLAYTHROUGH" \
-  's/  if \[ "\$verdict" = none \] &&\n    budget_refused "\$\(budget_stream_posture "\$stream" 2>\/dev\/null \|\| true\)"; then\n/  if false; then\n/' \
+  's/  if budget_refused_silence "\$verdict" \\\n    "\$\(budget_stream_posture "\$stream" 2>\/dev\/null \|\| true\)"; then\n/  if false; then\n/' \
   test/playthrough.bats "the API refused"
 
 # And the ordering of that question, which is a guarantee of its own ([43]): the
@@ -4540,7 +4573,7 @@ mutation "11 a session the API refused is reported as one that judged and said n
 # entries are a pair, because removing the branch and reversing its precedence
 # are two different defects with two different symptoms.
 mutation "11 an event about tomorrow outranks the verdict this session gave" "$PLAYTHROUGH" \
-  's/  if \[ "\$verdict" = none \] &&\n    budget_refused/  if budget_refused/' \
+  's/if budget_refused_silence "\$verdict"/if budget_refused_silence none/' \
   test/playthrough.bats "while the window was blocked"
 
 # The document, which is the other half of the closing condition.
