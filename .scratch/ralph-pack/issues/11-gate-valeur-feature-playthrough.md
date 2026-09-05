@@ -369,3 +369,33 @@ spec par la session de livraison : le prompt du gate porte le flux d'origine.
 ### Gates
 
 `bash test/run.sh` et `bash test/mutate.sh` — chiffres dans le message de merge.
+
+## Ce que la passe transversale du 05/09/2026 a trouvé sur ce palier
+
+Deux constats, deux tickets ouverts. Le ticket reste livré ; ces lignes sont là
+pour que la prochaine lecture de `playthrough.sh` les trouve.
+
+- **[65] — la borne est comptée sur un espace de noms qu'une session écrit.**
+  `playthrough__injected` compte les ids portant `PLAYTHROUGH_SLUG_PREFIX`, et le
+  commentaire justifie de lire le tracker (« a variable resets, a tracker does
+  not ») sans dire qui l'écrit. Mesuré (`../sondes/passe-05-09/q3`, Q3e) : une
+  session de livraison dépose trois `NN-playthrough-wiring-forged.md` dans
+  `issues/`, la quarantaine de [07] les **nomme** et leur **laisse leur nom**,
+  `playthrough__injected` rend **3** — donc avec le défaut `2`, cette feature ne
+  rouvrira plus jamais un ticket de câblage. Direction sûre (le compte ne peut que
+  monter), coût réel : l'autonomie de la nuit, éteinte en silence, avec une phrase
+  qui accuse la borne. Même chose par la déduplication de slug de
+  `tracker_open_unique`.
+
+- **[63] — la question de [43] que ce ticket s'est posée pour lui-même et pas pour
+  le voisin.** La note laissée ici en livrant (« `retro_run` a l'ordre inverse — à
+  regarder à la prochaine passe transversale ») est **confirmée et pire que prévu**
+  : un rétro qui répond `LESSON` + `ADR` + `ESCALATE` avec un flux disant `blocked`
+  perd les cinq choses qu'il produit *et* arrête le run. Et le harnais porte
+  l'asymétrie : `playthrough_rate_limit` existe parce que ce ticket s'est posé la
+  question, `retro_rate_limit` n'existe pas.
+
+- **[62] — les deux `mktemp` de ce module ne sont comptés par personne.**
+  `ralph-spec.*` et `ralph-playthrough.*` s'ajoutent aux douze familles que
+  `gate__tmp_leftovers` ne voit pas. C'était déjà écrit au tableau en livrant ; la
+  passe l'a chiffré (6 noms vus sur 18, 6 comptés sur 9 après un run tué).
