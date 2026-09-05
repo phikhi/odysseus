@@ -21,6 +21,70 @@ tracker_local__issues_dir() {
   printf '%s/issues\n' "$(ralph_feature_dir)"
 }
 
+# ── the one name that is not an id ───────────────────────────────────────────
+#
+# Unix lets a file name carry a newline. An id may not carry one: since [37]
+# every list of ids in this pack travels one id per line and is compared whole
+# lines, which is what closed the space and the glob metacharacter and is also
+# what leaves this open — the convention *is* the separator. Those two facts meet
+# in this directory, whose file names are chosen by a session or by a human, and
+# the meeting used to be silent. `99-a<LF>b.md` came out of the scans below as
+# **two** ids the tracker does not hold; both entered the frontier where neither
+# could be claimed, so the run ground nothing and stopped sterile; and
+# `failures_quarantine_strays` announced `quarantined 99-a, b` having escalated
+# nothing at all, the file itself staying `ready-for-agent` with whatever
+# write-surface the session gave it. A control that reports an action it never
+# took is exactly what `docs/frontiere-de-confiance.md` exists to catch.
+#
+# **The decision is to refuse, and it is written down rather than implied** ([48]).
+# Carrying the name instead needs a NUL-delimited transport — `read -d ''`,
+# `find -print0` — in every reader of every id list, and it was probed before
+# being refused (30/08/2026). The *git* reader of this directory is already
+# correct: git quotes such a name whatever `core.quotePath` says, so it arrives as
+# **one** line, and `failures_protect_tracker` names it and refuses to vouch for
+# the tracker over it ([39] via [21], [49]) — an iteration that meets one cannot
+# be green. Carrying it would therefore buy only the ability to grind a ticket
+# another guard of the same run already refuses, at the price of making every list
+# in the pack NUL-separated for a name no project has.
+#
+# So a name that is not one line is not an id here, and no operation of this
+# backend hands one out (`frontier`, `ids`), resolves one (`__path`), or lets one
+# decide the answer about a name that *is* an id (`__number_taken`,
+# `__slug_taken`, the carrier count of a renumber). What that leaves is a file the
+# pack cannot reach, named out loud rather than skipped in silence, and the trust
+# table carries the line.
+#
+# The one place a name like this still moves something is `tracker_local__next_nn`,
+# and it is left alone knowingly: that function reads `ls` output through a sed
+# that matches `NN-slug.md` on a whole line, so `12<LF>99-x.md` offers it `99-x.md`
+# as if it were a ticket and the next number jumps past 99. It costs skipped
+# numbers and nothing else — the number is still checked against the directory
+# before it is used, and `__path` no longer resolves to the file that suggested it.
+tracker_local__addressable() {
+  # `$'\n'` and not `$(printf '\n')`: a command substitution strips trailing
+  # newlines, so the second spelling would compare against the empty string and
+  # every name would match.
+  case "$1" in
+    *$'\n'*) return 1 ;;
+  esac
+  return 0
+}
+
+# Said by the two scans that would otherwise hand the name out as an id, on every
+# scan that meets one — and the repetition is the decision, not an oversight.
+#
+# A ticket nobody can reach is worse than a ticket nobody can grind if nothing
+# says so, and the line has to survive being printed from a subshell: every
+# consumer reads these lists as `$(tracker_ids)`, so a "say it once" flag kept in
+# a variable would be forgotten between two callers and would quietly say it
+# never. The name is rendered with its newline escaped, because a message that
+# printed the raw name would arrive as two lines and reproduce the very defect it
+# reports.
+tracker_local__refuse_name() {
+  printf 'tracker: "%s" carries a newline in its name — that is not an id this backend hands out and nothing in the pack can address it, so it is on no frontier and no scan of the tracker sees it. Rename it.\n' \
+    "${1//$'\n'/\\n}" >&2
+}
+
 # Accepts `01`, `01-alpha` or `01-alpha.md`.
 #
 # A bare number that matches more than one ticket is refused rather than
@@ -29,6 +93,13 @@ tracker_local__issues_dir() {
 # wrong ticket, and nothing downstream would ever notice.
 tracker_local__path() {
   local id="${1%.md}" dir file hit='' matches=0
+  # Both halves of [48], and the second is the one that matters to a ticket that
+  # did nothing wrong: an id nothing can address resolves to nothing, and a file
+  # nothing can address is not one of the carriers that make a bare number
+  # ambiguous. Without that, one `99-a<LF>b.md` in the directory took `99` — and
+  # every ticket holding `Blocked by: 99` — out of the frontier for good ([27]),
+  # over a file no scan sees and no quarantine can renumber.
+  tracker_local__addressable "$id" || return 1
   dir="$(tracker_local__issues_dir)"
   if [ -f "$dir/$id.md" ]; then
     printf '%s\n' "$dir/$id.md"
@@ -36,6 +107,7 @@ tracker_local__path() {
   fi
   for file in "$dir/$id"-*.md; do
     [ -e "$file" ] || continue
+    tracker_local__addressable "$file" || continue
     hit="$file"
     matches=$((matches + 1))
   done
@@ -148,9 +220,15 @@ tracker_local_frontier() {
   # The glob is lexical, and ids start with NN, so this is min-NN order.
   for file in "$dir"/*.md; do
     [ -e "$file" ] || continue
+    id="$(basename "$file")"
+    # Before the status is even read: a name this backend cannot hand out as an id
+    # is not a ticket of this tracker whatever it says about itself ([48]).
+    if ! tracker_local__addressable "$id"; then
+      tracker_local__refuse_name "$id"
+      continue
+    fi
     [ "$(tracker_local__field_of_file "$file" Status)" = "ready-for-agent" ] || continue
     tracker_local__is_unblocked "$file" || continue
-    id="$(basename "$file")"
     printf '%s\n' "${id%.md}"
   done
 }
@@ -165,6 +243,10 @@ tracker_local_ids() {
   for file in "$dir"/*.md; do
     [ -e "$file" ] || continue
     id="$(basename "$file")"
+    if ! tracker_local__addressable "$id"; then
+      tracker_local__refuse_name "$id"
+      continue
+    fi
     printf '%s\n' "${id%.md}"
   done
 }
@@ -454,6 +536,11 @@ tracker_local__slug_taken() {
   local dir="$1" slug="$2" file base
   for file in "$dir"/*.md; do
     [ -e "$file" ] || continue
+    # A name nothing can address does not hold a slug against an opening ([48]):
+    # `99-x<LF>-cap.md` would otherwise answer "already waiting" for `cap` and
+    # refuse a proposal for good, on behalf of a file no reader of this tracker
+    # will ever show a human.
+    tracker_local__addressable "$file" || continue
     base="$(basename "$file" .md)"
     case "$base" in
       *"-$slug") return 0 ;;
@@ -487,11 +574,17 @@ tracker_local__next_nn() {
 }
 
 # Does any ticket carry this number — as `NN.md` or as `NN-slug.md`.
+#
+# A file this backend cannot address carries nothing, here as everywhere ([48]),
+# and the two halves have to agree: `__path` no longer counts such a file among
+# the carriers of a number, so holding the number back for it would reserve it
+# against nothing and hand the next opening a number further along for no reason.
 tracker_local__number_taken() {
   local dir="$1" nn="$2" hit
   [ ! -f "$dir/$nn.md" ] || return 0
   for hit in "$dir/$nn"-*.md; do
     [ -e "$hit" ] || continue
+    tracker_local__addressable "$hit" || continue
     return 0
   done
   return 1
@@ -555,6 +648,11 @@ tracker_local__renumber_held() {
   if [ ! -f "$dir/$nn.md" ]; then
     for hit in "$dir/$nn"-*.md; do
       [ -e "$hit" ] || continue
+      # The same rule `tracker_local__path` applies, for the same reason it has to
+      # stay the same one ([48]): a file nothing can address is not a carrier, so
+      # renumbering over it would move a ticket no bare number was ever going to
+      # mis-resolve to.
+      tracker_local__addressable "$hit" || continue
       carriers=$((carriers + 1))
     done
   fi

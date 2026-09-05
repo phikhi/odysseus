@@ -170,3 +170,35 @@
   backend qui ne l'implémente pas refuse bruyamment, ce qui est le bon échec, mais
   il doit répondre à la question plutôt que d'hériter d'une réponse qui marche sur
   du markdown.
+
+- **Corollaire additif de « un id par ligne », posé par [48], livré le
+  05/09/2026 : un backend ne rend jamais un id qui contient un saut de ligne, et
+  il refuse à voix haute.** La clause d'interface de [37] **ne change pas** —
+  l'en-tête de `lib/tracker.sh` la dit toujours, et le fichier est resté hors
+  write-surface. Ce que [48] y ajoute est ce qui s'ensuit : un transport une
+  entrée par ligne ne peut pas porter un nom qui contient une fin de ligne, et
+  unix autorise ce nom. Le backend local le refusait de fait en le rendant en
+  **deux** ids que le tracker ne porte pas — dont la frontière était polluée, dont
+  aucun n'était réclamable, et sur lesquels `failures_quarantine_strays` écrivait
+  `quarantined 99-a, b` sans avoir escaladé quoi que ce soit. Il le refuse
+  maintenant explicitement, dans les six scans du backend, et le dit.
+
+  Ce qu'un adaptateur distant doit répondre, et pourquoi ce n'est pas gratuit chez
+  lui : un titre d'issue GitHub ou Jira peut parfaitement contenir un saut de ligne
+  et rien n'oblige un serveur à le refuser. Trois choses en découlent. (1) Ce que
+  `frontier`/`ids` rendent doit être une ligne ou rien — un id dérivé d'un titre
+  doit être normalisé avant d'être rendu, jamais après avoir été lu. (2) Le refus
+  doit être **dit**, pas silencieux : un ticket qui n'apparaît sur aucune frontière
+  et dont rien ne nomme le fichier est pire qu'un ticket inadressable. (3) La
+  question du numéro nu vaut aussi là-bas : `tracker_local__path` ne compte plus un
+  nom inadressable parmi les porteurs d'un `NN`, sans quoi un seul fichier fantôme
+  rendait un numéro ambigu et sortait de la frontière tout ticket portant
+  `Blocked by: NN` ([27]). Un backend qui résout des ids côté serveur doit dire ce
+  qu'il fait quand deux objets prétendent au même identifiant.
+
+  L'arbitrage sous-jacent est celui de [39] et il est identique ici : le transport
+  reste une ligne par entrée, et ce que ça exclut est refusé à voix haute par
+  chaque consommateur, plutôt que de rendre NUL-séparée chaque liste du pack pour
+  un nom qu'aucun projet n'a. La ligne complète est dans le tableau de
+  `docs/frontiere-de-confiance.md`, rangée « Un ticket est identifiable par son
+  `NN` ».

@@ -2611,6 +2611,63 @@ if [ -e "$weird" ]; then printf "verdict=restored\n"; else printf "verdict=gone\
   refute_output_contains "restored 1 ticket file(s)"
 }
 
+@test "a ticket written under a name nothing can address makes no ghost and no false quarantine" {
+  # [48], and both readers of that name in one window because a real run has both
+  # talking at once. The *glob* reader used to answer two ids the tracker does not
+  # hold, so this function escalated neither, renumbered neither, and wrote
+  # `quarantined 99-a, b` all the same — a control announcing an action nobody
+  # took, on a file left `ready-for-agent` with the write-surface the session gave
+  # itself. The *git* reader was already correct and is asserted beside it: what a
+  # session gets for writing such a name is an iteration that cannot be green.
+  use_tickets 01-alpha
+
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+before="$(failures_tracker_tree)"
+seen="$(failures_tracker_snapshot)"
+cp "$dir/01-alpha.md" "$dir/$(printf "99-a\nb").md"
+printf "ids[%s]\n" "$(tracker_ids 2>/dev/null | tr "\n" "|")"
+printf "strays[%s]\n" "$(failures__strays "$seen" 2>/dev/null | tr "\n" "|")"
+qrc=0
+failures_quarantine_strays 01-alpha "$seen" "" || qrc=$?
+printf "quarantine_rc=%s\n" "$qrc"
+prc=0
+failures_protect_tracker 01-alpha "$before" "" || prc=$?
+printf "protect_rc=%s\n" "$prc"
+'
+  assert_success
+  assert_output_contains "ids[01-alpha|]"
+  assert_output_contains "strays[]"
+  # Nothing to quarantine, and — the whole point — nothing announced either.
+  assert_output_contains "quarantine_rc=0"
+  refute_output_contains "quarantined"
+  refute_output_contains "could not give"
+  # The other reader, same name, same window: the iteration is denied green.
+  assert_output_contains "protect_rc=1"
+  assert_output_contains "under a name this guard cannot address"
+}
+
+@test "the paired witness: the same ticket on one line is quarantined for real" {
+  # Without this the test above is satisfied by a quarantine that stopped
+  # quarantining anything at all, which is the failure it is supposed to rule out.
+  use_tickets 01-alpha
+
+  pack_run '
+dir="$(tracker_local__issues_dir)"
+seen="$(failures_tracker_snapshot)"
+cp "$dir/01-alpha.md" "$dir/99-ab.md"
+printf "strays[%s]\n" "$(failures__strays "$seen" | tr "\n" "|")"
+qrc=0
+failures_quarantine_strays 01-alpha "$seen" "" || qrc=$?
+printf "quarantine_rc=%s\n" "$qrc"
+'
+  assert_success
+  assert_output_contains "strays[99-ab|]"
+  assert_output_contains "quarantine_rc=1"
+  assert_output_contains "quarantined 99-ab"
+  assert_ticket_status 99-ab ready-for-human
+}
+
 @test "a tracker the session staged does not stay staged" {
   use_tickets 01-alpha
   set_config STERILE_K 1
