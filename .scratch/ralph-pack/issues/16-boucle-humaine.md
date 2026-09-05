@@ -365,3 +365,14 @@ ajouté un second appelant sans en hériter aucune.
   approuvée », c'est « le mode de permission par défaut s'applique » — un projet
   dont les `settings.json` pré-autorisent les outils d'écriture les a
   pré-autorisés ici aussi. C'est la formulation du ticket qui est trop forte.
+- **Un objet de plus que ce point d'entrée ne dit pas, relevé en livrant [62] le
+  05/09/2026.** `human-loop.sh` n'appelle pas `gate_leftovers`. Un drainage
+  humain démarré après un run AFK tué au `KILL` ne nomme donc **aucun** des
+  résidus que ce run a laissés — ni les dix-sept familles de `$TMPDIR` ([36],
+  [62]), ni les gardes d'exclusion morts de la feature ([49]), ni le successeur
+  jamais réveillé ([53]) —, alors que c'est très exactement la situation dans
+  laquelle un humain vient voir ce qui s'est passé. Même racine que [55], [56] et
+  [57] : les garanties du pack sont des propriétés de `loop.sh` et pas du pack.
+  Pas corrigé par [62], dont la write-surface ne porte pas ce fichier ; à
+  qualifier lors d'une passe transversale — la ligne est inerte (elle ne bloque
+  rien), donc c'est le silence qui est le sujet, pas un faux vert.
