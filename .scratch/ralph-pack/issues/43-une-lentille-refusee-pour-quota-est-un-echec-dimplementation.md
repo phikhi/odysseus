@@ -107,3 +107,20 @@
 `bash test/mutate.sh` : **393 mutations, 2 not ok** (385 → 393 : 8 entrées `43`), les deux `VACUOUS` attendus et sur le même test — `23 a TERM nobody answers hangs the run for ever` et `23 the grace is hard-coded`, tous deux `smart-zone.bats -f "killed after the grace"`. Aucun autre nom.
 
 Les 8 entrées `43` rendent `ok` lancées seules, et les 7 entrées d'autres tickets réancrées aussi (`06` × 2, `08` × 1, `32` × 3, `41` × 1).
+
+- **Contrainte posée par [63], livré le 05/09/2026 : la règle de ce ticket n'est
+  plus une phrase, c'est une fonction.** « Le verdict prime sur l'événement » était
+  écrite en prose ici, réécrite en prose dans `playthrough_close` par [11], et
+  **inversée** dans `retro_run` — qui consultait `budget_refused` avant de lire un
+  seul mot de ce que la session avait répondu. C'est le seul faux livré des quatre
+  trouvailles de la passe du 05/09. Elle vit maintenant dans
+  `budget_refused_silence` (`.claude/lib/budget.sh`), qui prend `VERDICT POSTURE` et
+  n'est vraie que si la session n'a rien dit (`none` ou vide) **et** que la raison
+  est un refus. Trois conséquences : un quatrième palier qui lit une réponse dans un
+  flux **appelle cette fonction** au lieu de recopier l'ordre ; `lenses_refused_posture`
+  ne pose plus la question du posture elle-même, donc l'entrée de mutation
+  « 43 a stream that says nothing about quota is read as a refusal » a déménagé de
+  `$LENSES_LIB` vers `$BUDGET` (elle nomme toujours `test/budget.bats`) ; et
+  « 43 a lens that answered is read as refused all the same » est ré-ancrée sur
+  l'argument passé (`budget_refused_silence none`) plutôt que sur la ligne
+  `[ "$(lenses__verdict …)" = none ]`, qui n'existe plus. Les deux rejouées `ok`.

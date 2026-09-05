@@ -51,6 +51,8 @@
 #   retro_answer LINE ...          the tagged lines the retro subagent answers
 #   retro_answer_nth N LINE ...    what the Nth retro of the run answers
 #   retro_refused [STATUS ...]     a retro session the API refused
+#   retro_rate_limit JSON          the in-band event the retro's stream carries,
+#                                  on a session that answers all the same
 #   retro_call_count               how many retro subagents were spawned
 #   retro_call_stdin [N]           the prompt the Nth retro was handed
 #   retro_call_argv [N]            argv the Nth retro was spawned with
@@ -787,6 +789,21 @@ retro_refused() {
   local status="${1:-blocked}" window="${2:-five_hour}" reset="${3:-0}"
   printf '{"status":"%s","resetsAt":%s,"rateLimitType":"%s","isUsingOverage":false}\n' \
     "$status" "$reset" "$window" >"$SHIM_STATE/retro.refused"
+}
+
+# The in-band budget event the retro session's own stream carries, and only that
+# one — `claude_rate_limit` would tell the delivery session's stream the same
+# thing, and the pilot reads *that* posture to decide whether to pause, so a test
+# using it would be measuring a paused run instead of a refused retro.
+#
+# The case `retro_refused` cannot express, and the reason nobody had written it
+# ([63]): an event **with** an answer. `retro_refused` is the event plus `exit 1`
+# and no answer at all — a session that never started. This one is a session that
+# ran, answered its tagged lines, and was told in passing that a window it may
+# never spend is blocked. The value gate has had its own since [11]
+# (`playthrough_rate_limit`); this tier did not, and the defect lived in the gap.
+retro_rate_limit() {
+  printf '%s' "$1" >"$SHIM_STATE/retro.rate_limit"
 }
 
 retro_call_count() {

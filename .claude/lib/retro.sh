@@ -806,7 +806,7 @@ SEEN
 retro_run() {
   local ticket="$1" outcome="$2" verdicts="${3:-}" rollback="${4:-0}"
   local dir stream receipt gist why supersedes adr decision because escalate
-  local capability posture answered=0 result
+  local capability posture answered=none result
 
   RALPH_RETRO_QUOTA=''
   [ -n "${RALPH_RETRO_STATE:-}" ] || return 0
@@ -860,17 +860,6 @@ retro_run() {
   session_spawn "$dir/prompt" "$stream" $(lenses_posture) || true
   MODEL="$saved_model"
 
-  # A subscription that ran out during the retro is news the pilot does not have,
-  # and it travels the one direction [08] allows: it can add a reason to be
-  # careful and can never take one away.
-  posture="$(budget_stream_posture "$stream" 2>/dev/null || true)"
-  if budget_refused "$posture"; then
-    RALPH_RETRO_QUOTA="$posture"
-    receipt_note "no lesson was distilled from this iteration: the API refused the retro session ($(printf '%s' "$posture" | awk '{ print $2 }'))"
-    rm -rf "$dir"
-    return 0
-  fi
-
   gist="$(retro__said LESSON "$stream")"
   why="$(retro__said WHY "$stream")"
   supersedes="$(retro__said SUPERSEDES "$stream")"
@@ -890,16 +879,43 @@ retro_run() {
 
   if [ -n "$gist" ] || [ -n "$adr" ] || [ -n "$escalate" ] ||
     [ -n "$capability" ]; then
-    answered=1
+    answered=said
   elif lenses_findings "$stream" 2>/dev/null | grep -q "$RETRO_TOKEN-NOTHING"; then
-    answered=1
+    answered=said
+  fi
+
+  # A subscription that ran out during the retro is news the pilot does not have,
+  # and it travels the one direction [08] allows: it can add a reason to be
+  # careful and can never take one away.
+  #
+  # Asked **after** everything the session said has been read, and through
+  # `budget_refused_silence`, which is where that ordering lives ([63]). This tier
+  # used to ask it first, and a retro that answered a lesson, an ADR and an
+  # escalation on a stream warning about *next* week lost all three, never reached
+  # `capability_review`, and stopped the night: `RALPH_RETRO_QUOTA` overwrites the
+  # slot's posture, `budget_may_spawn` reads it, and the successor is armed. It
+  # also put "the API refused the retro session" on a receipt for a session that
+  # had replied six tagged lines.
+  #
+  # The posture is raised to the pilot on this branch only, which is the same
+  # answer the two other tiers give: a refused session is the news, and a session
+  # that answered is not. The [08] direction is honoured by the delivery session's
+  # own posture and by the endpoint the pilot re-asks — neither of which this
+  # event, which is about a window this run may never spend, is entitled to
+  # overwrite.
+  posture="$(budget_stream_posture "$stream" 2>/dev/null || true)"
+  if budget_refused_silence "$answered" "$posture"; then
+    RALPH_RETRO_QUOTA="$posture"
+    receipt_note "no lesson was distilled from this iteration: the API refused the retro session ($(printf '%s' "$posture" | awk '{ print $2 }'))"
+    rm -rf "$dir"
+    return 0
   fi
 
   # Silence is not an answer, here for the reason it is not one for a lens ([06]):
   # a session that died, was cut for context or replied prose has distilled
   # nothing, and an iteration where that happened must not read like one where the
   # retro looked and found nothing worth saying.
-  if [ "$answered" = 0 ]; then
+  if [ "$answered" = none ]; then
     receipt_note "the retro session for this iteration ended without an answer this loop could read — no lesson was recorded, and that is a session that said nothing rather than a session that found nothing"
     rm -rf "$dir"
     return 0

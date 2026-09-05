@@ -340,6 +340,41 @@ budget_refused() {
   [ "$status" != allowed ]
 }
 
+# **The verdict outranks the event, in that order and not the other way round.**
+#
+# The one ordering every tier that reads an answer out of a stream shares, and a
+# function rather than a sentence repeated in each of them because that is how it
+# was got wrong: [43] wrote it in prose in `lenses_refused_posture`, [11] wrote it
+# again in prose in `playthrough_close`, and the third tier asked the two
+# questions the other way round — `retro_run` consulted the budget *before* it
+# read a word the session had said, and threw away a lesson, an architecture
+# decision, an escalation, a capability and the rest of the night ([63]). A rule
+# the pack knows in three hand-copied places is a rule one of the copies is wrong
+# about.
+#
+# `$1` is what the session answered, where `none` and the empty string both mean
+# it said nothing at all; `$2` is the posture `budget_stream_posture` read out of
+# its stream. True only when both halves are: the session said nothing, **and**
+# the reason it said nothing is that the API refused it.
+#
+# The event is about a *window*, not about this call. A session can be told it is
+# blocked for the window after the one it is spending and still come back with
+# `pass`, `fail`, or a lesson worth keeping — that session looked, and what it
+# said stands. Asked the other way round, everything it answered is discarded on a
+# warning about tomorrow, and the tier reports a refusal that never happened.
+#
+# Silence on its own buys nothing here, and that is the other half ([06]): a
+# session that died, was cut for context or answered prose judged nothing either,
+# and stays red and billed. What is different about a refusal is that nothing was
+# ever looked at, because the session never started.
+budget_refused_silence() {
+  case "${1:-none}" in
+    none) ;;
+    *) return 1 ;;
+  esac
+  budget_refused "${2:-}"
+}
+
 # ── the decision ─────────────────────────────────────────────────────────────
 
 # May the loop spawn? Sets four variables in the caller's shell and returns

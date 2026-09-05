@@ -136,3 +136,19 @@ La règle qui en sort, pour le prochain ticket qui ajoute une classe ou une bran
   - **Une mesure du pack prime toujours sur une lecture de flux, et il a fallu l'écrire une deuxième fois.** Ce ticket l'avait tenu pour la limite molle et les deux délais de [23] ; [43] a dû le tenir pour `GATE_TIMEOUT` dans la moitié lentille — sans quoi tout ce qui sait faire traîner une lentille au-delà de la deadline en ayant émis une ligne `blocked` achetait le rendu gratuit d'un vrai refus.
 
 - **Contrainte posée par [09], livré le 29/08/2026 : les trois variables de sortie de `budget_check` ont maintenant un lecteur en fin de run.** `RALPH_BUDGET_WINDOW`, `RALPH_BUDGET_RESET` et `RALPH_BUDGET_SOURCE` sont lus par `loop__arm_successor`, **en queue de `loop_main`**, longtemps après que ce module les a posés et après le drainage des itérations en vol. Ce sont des variables du shell du pilote, comme le cache de 180 s et pour la même raison ; un changement qui déplacerait `budget_check` dans un sous-shell, une itération ou une substitution de commande casserait l'armement du successeur **en silence** — la boucle sortirait toujours en `6` et ne programmerait plus rien. Deux autres choses à savoir : `exit 6` a deux causes et [09] arme sur les deux, ce sont ses gardes qui les séparent (un reset vide ou non numérique est refusé, une fenêtre de session dont le reset est lisible mais au-delà de `BUDGET_MAX_PAUSE` est armée — c'est exactement le cas qu'un successeur résout mieux qu'un arrêt) ; et `BUDGET_MAX_PAUSE` a gagné un second rôle, il plafonne aussi l'instant d'un successeur quand `RALPH_BUDGET_SOURCE=stream`, puisque c'est tout ce qu'un `rate_limit_event` forgé achète aujourd'hui.
+
+- **Contrainte posée par [63], livré le 05/09/2026 : « une raison de plus, jamais
+  une de moins » ne passe plus par un rétro qui a répondu.** `retro_run` remontait
+  `RALPH_RETRO_QUOTA` sur n'importe quel événement `blocked` de son flux, y compris
+  celui d'une session qui avait parfaitement répondu — et comme `loop.sh` recopie
+  cette variable dans `$slot/posture`, un avertissement portant sur la fenêtre
+  *suivante* arrêtait la nuit et armait un successeur. Tranché dans [63] : le
+  posture n'est remonté que sur la branche où le rétro n'a rien dit, ce qui aligne
+  ce palier sur les deux autres (`lenses_refused_posture` ne rend un posture que
+  sur un verdict `none`). La direction de ce ticket reste tenue par deux canaux que
+  ce changement ne touche pas — le posture de la **session de livraison**, première
+  mesure du mur par le run, et l'endpoint que `budget_check` redemande avec
+  `force=1` dès qu'un posture dit refusé. Ce qui est refusé, c'est qu'un événement
+  in-band lu dans le flux d'une session **qui a répondu** décide de l'arrêt du run.
+  `$slot/posture` a donc toujours deux écrivains possibles (livraison, lentille
+  refusée) et non trois.

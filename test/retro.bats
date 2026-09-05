@@ -868,3 +868,175 @@ FAKE
   assert_file_contains "$(receipt_path 01-alpha)" "the API refused the retro session"
   refute_file_exists "$(index_path)"
 }
+
+# ── the event is about a window, the answer is about this iteration ──────────
+#
+# The ordering [43] wrote and [11] wrote again, and that this tier had backwards
+# until [63]: **the verdict outranks the event**. It lives in one place now,
+# `budget_refused_silence`, and what the tests below hold is the retro's end of
+# it — the four things a retro can produce, and the night, none of which an
+# in-band signal about a *later* window is entitled to take away.
+#
+# Every one of them is paired with the same run under `allowed`, at the bottom:
+# one variable changes between the two, and the assertions do not.
+
+# The whole of what a retro can say, in one answer. Four things, written down in
+# four different places by four different modules — and a single misplaced line
+# threw all four away at once, which is why they are staged together here rather
+# than one scenario per artefact.
+retro_says_everything() {
+  retro_answer \
+    "RALPH-RETRO-LESSON: the flow has to be wired before the last ticket" \
+    "RALPH-RETRO-WHY: three iterations rebuilt the same wiring" \
+    "RALPH-RETRO-ADR: who owns the flow document" \
+    "RALPH-RETRO-DECISION: the loop owns it and no session may write it" \
+    "RALPH-RETRO-BECAUSE: a session cannot vouch for what it wrote itself" \
+    "RALPH-RETRO-ESCALATE: a lint should fail when the flow is not wired" \
+    "RALPH-RETRO-CAPABILITY: lens flow"
+}
+
+# The event that says nothing about the call carrying it: `blocked`, for the
+# seven-day window, on the retro's stream and on no other. The delivery session's
+# own stream still says `allowed` — that is the posture the pilot reads to decide
+# whether to pause, and staging this through `claude_rate_limit` would move it
+# too and measure a paused run instead.
+retro_next_window_blocked() {
+  retro_rate_limit '{"status":"blocked","resetsAt":4102444800,"rateLimitType":"seven_day","isUsingOverage":false}'
+}
+
+retro_next_window_allowed() {
+  retro_rate_limit '{"status":"allowed","resetsAt":4102444800,"rateLimitType":"seven_day","isUsingOverage":false}'
+}
+
+@test "a retro warned about a later window still records the lesson it distilled" {
+  # The fourth layer of observability, and the one read *into the next session's
+  # prompt*: losing it costs every iteration after this one. The session looked,
+  # answered six tagged lines, and was told in passing that a window it may never
+  # spend is blocked.
+  use_tickets 01-alpha
+  retro_on
+  retro_says_everything
+  retro_next_window_blocked
+
+  run_loop
+  assert_success
+
+  assert_file_contains "$(index_path)" "the flow has to be wired before the last ticket"
+  # And the receipt does not claim a measurement nobody took ([10]): the session
+  # answered, so nothing here may say the API refused it.
+  refute_file_contains "$(receipt_path 01-alpha)" "the API refused the retro session"
+}
+
+@test "a retro warned about a later window still records its architecture decision" {
+  # docs/adr/ is read by every later session and by the Standards lens. A decision
+  # taken during an iteration and dropped on a quota warning is a decision the
+  # project never took.
+  use_tickets 01-alpha
+  retro_on
+  retro_says_everything
+  retro_next_window_blocked
+
+  run_loop
+  assert_success
+
+  run bash -c "ls '$PROJECT_DIR/docs/adr'"
+  assert_output_contains "who-owns-the-flow-document"
+}
+
+@test "a retro warned about a later window still escalates to the human sink" {
+  # The only way this pack asks for a rule it must not build itself ([15]). It is
+  # a ticket or it is nothing.
+  use_tickets 01-alpha
+  retro_on
+  retro_says_everything
+  retro_next_window_blocked
+
+  run_loop
+  assert_success
+
+  run bash -c "ls '$TRACKER_DIR'"
+  assert_output_contains "retro-a-lint-should-fail-when-the-flow-is-not-wired"
+}
+
+@test "a retro warned about a later window still reaches the capability review" {
+  # The fifth thing a retro can say, and the one furthest down `retro_run`: the
+  # early return was above `capability_review`, so this tier was not reached at
+  # all rather than reached and answered nothing ([15]).
+  use_tickets 01-alpha
+  retro_on
+  retro_says_everything
+  retro_next_window_blocked
+
+  run_loop
+  assert_success
+
+  run bash -c "ls '$TRACKER_DIR'"
+  assert_output_contains "capability-lens-flow"
+}
+
+@test "a retro warned about a later window does not stop the night" {
+  # The fifth thing lost, and the one nothing on the receipt would have shown: a
+  # retro read as refused writes `RALPH_RETRO_QUOTA`, the loop copies it over the
+  # slot's posture, and `budget_may_spawn` stops the run and arms a successor on
+  # an event about *next* week. Every ticket after the first is never attempted.
+  use_tickets 01-alpha 02-beta
+  retro_on
+  retro_says_everything
+  retro_next_window_blocked
+
+  run_loop
+  assert_success
+
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  refute_output_contains "blocks this run"
+  assert_equal "$(retro_call_count)" "2"
+}
+
+@test "a retro that said nothing readable and was refused says so, event and all" {
+  # The direction that keeps the five above honest, and the one that makes the
+  # harness itself assertable. Same helper, same blocked event, on a session whose
+  # answer this loop cannot read: here the event *is* the reason, so the receipt
+  # says the API refused it and the index stays empty.
+  #
+  # Without this, a shim that quietly dropped `retro_rate_limit` would stage
+  # nothing at all and leave every test above green — the shape of fake this pack
+  # has already been bitten by twice ([06]'s call counter, [11]'s value gate).
+  use_tickets 01-alpha
+  retro_on
+  retro_answer "the receipt looks fine to me"
+  retro_next_window_blocked
+
+  run_loop
+
+  assert_file_contains "$(receipt_path 01-alpha)" "the API refused the retro session (seven_day)"
+  refute_file_exists "$(index_path)"
+}
+
+@test "the paired witness: the same answer, the same run, an event that says allowed" {
+  # One variable between this and the five above, and the assertions do not move.
+  # Without it, a fixture that never spawned a retro at all would make every one
+  # of them pass by writing nothing and asserting nothing was wrong.
+  use_tickets 01-alpha 02-beta
+  retro_on
+  retro_says_everything
+  retro_next_window_allowed
+
+  run_loop
+  assert_success
+
+  # The run's own output first: `run` below replaces it, and an assertion made
+  # after that would be reading the output of `ls`.
+  refute_output_contains "blocks this run"
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  assert_equal "$(retro_call_count)" "2"
+
+  assert_file_contains "$(index_path)" "the flow has to be wired before the last ticket"
+  refute_file_contains "$(receipt_path 01-alpha)" "the API refused the retro session"
+  run bash -c "ls '$PROJECT_DIR/docs/adr'"
+  assert_output_contains "who-owns-the-flow-document"
+  run bash -c "ls '$TRACKER_DIR'"
+  assert_output_contains "retro-a-lint-should-fail-when-the-flow-is-not-wired"
+  assert_output_contains "capability-lens-flow"
+}

@@ -379,10 +379,10 @@ lenses__verdict() {
 # then wired to two outcomes only, because those were the two that existed when it
 # was written ([43], and [31] on a seal narrower than its own criterion).
 #
-# The verdict outranks the event, in that order and not the other way round: a
-# session can be told it is blocked for the window *after* the one it is spending
-# and still come back with `pass` or `fail`. That lens looked, and what it said
-# stands whatever its stream says about the subscription.
+# The order the two questions are asked in is `budget_refused_silence`, and it is
+# asked there rather than restated here since [63]: the verdict outranks the
+# event, and the tier that wrote that sentence a third time in prose is the tier
+# that got it backwards.
 #
 # Read by the gate, out of the stream in the gate's own temporary directory and
 # before it removes that directory. Deliberately not returned by `lenses_review`:
@@ -394,9 +394,8 @@ lenses_refused_posture() {
   local dir="$1" name="$2" stream posture
   stream="$(lenses__stream "$dir" "$name")"
   [ -f "$stream" ] || return 1
-  [ "$(lenses__verdict "$stream")" = none ] || return 1
   posture="$(budget_stream_posture "$stream")"
-  budget_refused "$posture" || return 1
+  budget_refused_silence "$(lenses__verdict "$stream")" "$posture" || return 1
   printf '%s\n' "$posture"
   return 0
 }
