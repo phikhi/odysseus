@@ -160,3 +160,30 @@
   clôture d'une feature, donc probablement le seul des cinq qu'on veut dans
   l'historique — et le laisser non ignoré et non commité est ce qui fait qu'un
   humain le voit listé par le refus de `router_may_reinject` au drainage suivant.
+
+- **Contrainte posée par la passe transversale du 05/09/2026 : ne pas prendre
+  `gate__tmp_leftovers` pour la spécification du balayage — elle couvre six noms
+  sur dix-huit.** Le commentaire de `gate_leftovers` désigne explicitement ce
+  ticket comme le composant *entitled* à faire le `find -mtime +7` (« the obvious
+  shape […] and the component entitled to run it is the installer ([19]), the only
+  part of the pack that lives outside an iteration »). Or la liste énumérée là est
+  `ralph-gate.*`, `ralph-ignore.*`, `ralph-worktree.*`, `ralph-slot.*`,
+  `ralph-frontier.*`, et `grep -rn mktemp .claude/` en donne **dix-huit** au
+  premier niveau de `$TMPDIR`. Mesuré (`../sondes/passe-05-09/q1-*.bats`) : un run
+  réel tué au `KILL` pendant le gate laisse **neuf** entrées et le contrôle en
+  compte **six** ; les trois muettes sont `ralph-receipt.*`, `ralph-retro.*` — des
+  répertoires, alors que la phrase annonce des « director(ies) » — et
+  `ralph-spec.*`. Témoin appairé : un run qui finit normalement laisse zéro.
+  **[62] est ouvert pour dériver la liste de son critère ; si [62] passe avant, ce
+  ticket balaie ce que le contrôle voit et les deux restent en phase par
+  construction. Sinon, ce ticket doit refaire le relevé lui-même** — et un [19]
+  écrit sur la liste actuelle laisse douze familles sur le disque pour toujours.
+
+- **Ordre de grandeur, pour dimensionner ce que le balayage rend.** Sur la machine
+  de développement de ce dépôt, le nettoyage manuel du 03/09/2026 a fait passer
+  `$TMPDIR` de **1,0 Go à 49 Mo**, soit environ 1 Go de résidus par ticket livré
+  — l'essentiel venant du harnais de test (`ralph-test.*`) et non du pack. Deux
+  conséquences pour ce ticket : le balayage vaut la peine d'être écrit, et le
+  motif qu'il choisit doit dire ce qu'il fait de `ralph-test.*` et des résidus des
+  runs d'autres dépôts sur la même machine (`$TMPDIR` est partagé — c'est déjà
+  l'hypothèse assumée par `-mtime +0` dans `gate__tmp_leftovers`).

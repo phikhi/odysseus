@@ -202,3 +202,31 @@
   un nom qu'aucun projet n'a. La ligne complète est dans le tableau de
   `docs/frontiere-de-confiance.md`, rangée « Un ticket est identifiable par son
   `NN` ».
+
+- **Contrainte posée par la passe transversale du 05/09/2026 : la clause « à voix
+  haute » n'a aujourd'hui aucun logement dans l'interface, et [64] est ouvert pour
+  lui en donner un.** Mesuré (`../sondes/passe-05-09/q3-*.bats`) : la voix est un
+  `printf … >&2` dans `tracker_local__refuse_name`, donc dans un `__` du **backend
+  local** ; elle est dite huit fois sur la console d'un run AFK, zéro fois dans
+  `run.log`, zéro dans le reçu, zéro dans `docs/playthroughs/` — et quatre
+  consommateurs la jettent (`$(tracker_ids 2>/dev/null)` dans
+  `playthrough__injected`, `router__tracker_state`, `router_protect_tracker`).
+  L'en-tête de contrat de `lib/tracker.sh` ne dit rien de qui parle ; le seul
+  endroit que l'interface possède pour un constat de **forme d'id** est
+  `tracker_preflight`, explicitement non dispatché, et il ne porte que
+  `ambiguous-id`. **Si [64] passe avant, ce ticket implémente contre un logement
+  qui existe ; sinon il doit l'inventer, ou réimplémenter huit `printf >&2`.**
+  `lib/tracker.sh` était déjà hors write-surface de [48] : c'est toujours ici que
+  la décision se prend, [64] ne fait que la préparer.
+
+- **Seconde contrainte de la même passe, sur la borne du gate de valeur.** [11]
+  avait déjà écrit ici que `playthrough__injected` lit le slug **dans l'id** et
+  qu'un backend numérotant côté serveur casse la borne. La passe a élargi le
+  constat : la borne ne lit pas seulement un id, elle lit un espace de noms **à
+  deux écrivains** — une session de livraison qui dépose trois fichiers
+  `NN-playthrough-wiring-*.md` dans `issues/` est nommée par la quarantaine, garde
+  ses noms, et éteint la réinjection de la feature pour toujours (mesuré, `q3`
+  Q3e). Ticket [65]. Si [65] passe avant, ce ticket écrit contre un compteur qui
+  ne scanne plus le tracker — probablement le registre d'écritures du pilote
+  ([13]/[40]) — et la question « un backend qui numérote côté serveur » disparaît
+  avec le scan.

@@ -197,3 +197,29 @@ encore vu comme **deux** ids qui ne résolvent rien.
   un saut de ligne, il le refuse à voix haute*. C'est une obligation d'adaptateur,
   pas un détail du backend local, et elle est écrite dans le ticket [18] et dans
   la ligne du tableau, faute de quoi personne ne la relirait au bon moment.
+
+## Ce que la passe transversale du 05/09/2026 a mesuré du « à voix haute » — ticket [64]
+
+Le **filtre** livré ici n'est pas en cause : les six scans passent bien par
+`tracker_local__addressable`, et la règle « un septième scan ajouté sans le filtre
+rouvre le trou » tient. Ce que la passe a mesuré est le **rapport**.
+
+- La ligne est dite **huit fois** sur la console d'un run AFK, **zéro fois** dans
+  `run.log`, **zéro** dans le reçu d'audit, **zéro** dans `docs/playthroughs/` —
+  c'est-à-dire dans les trois seuls artefacts qu'un humain relit le matin. Sur le
+  drain humain : six fois sans session, sept avec, console seulement.
+- **Quatre consommateurs la jettent** : `playthrough__injected` ([11]),
+  `router__tracker_state` ([61]) et `router_protect_tracker` ([55]) lisent
+  `$(tracker_ids 2>/dev/null)`. Le commentaire de `tracker_local__refuse_name`
+  raisonne soigneusement sur la substitution de commande (« the line has to survive
+  being printed from a subshell ») et **jamais sur la redirection**. Ici ça ne
+  coûte pas la ligne — les producteurs nus sont plus nombreux — mais ça démontre
+  qu'un canal `>&2` posé dans un producteur n'est pas tenable : chaque nouveau
+  consommateur décide s'il l'entend.
+- Le pack a le canal qu'il faut et il a été écrit pour ce genre-là : [27] a
+  construit `tracker_preflight` (« the state **no per-ticket read would ever
+  surface** », « **not dispatched: the question is about the shape of ids, which
+  the interface owns** ») lu par `loop__report_tracker_findings`, qui produit une
+  ligne `loop_log` **et** une ligne de journal. Il ne porte qu'`ambiguous-id`.
+- Conséquence pour la clause d'interface écrite ici pour [18] : elle n'a **aucun
+  logement**. Sondes : `../sondes/passe-05-09/q3-*.bats`.
