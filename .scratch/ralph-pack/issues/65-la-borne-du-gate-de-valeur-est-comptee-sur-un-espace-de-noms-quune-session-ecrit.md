@@ -45,3 +45,11 @@
 - **Ce que [18] hérite.** [11] avait déjà écrit dans [18] que `playthrough__injected` lit le slug **dans l'id** et qu'un backend numérotant côté serveur casse la borne. Cette trouvaille l'élargit : la borne ne lit pas seulement un id, elle lit un espace de noms **à deux écrivains**. Si ce ticket passe avant [18], [18] écrit contre un compteur réparé ; sinon [18] hérite des deux problèmes à la fois.
 
 - **Piège rencontré en sondant.** `$FEATURE` n'est pas dans l'environnement du faux `claude` : une sonde qui veut écrire dans `issues/` depuis une session prend le répertoire par un glob (`ls -d "$root"/.scratch/*/issues`), jamais par `$FEATURE`. Et un `pack_run` écrase `$status`/`$output` — copier la sortie du `run_loop` avant.
+
+- **Place dans la file, validée par Philippe le 05/09/2026 : troisième**, avant
+  [64] et [18]. `[18] Blocked by:` porte maintenant `65` : si ce ticket répare la
+  borne en cessant de scanner le tracker (registre d'écritures du pilote,
+  [13]/[40]), la contrainte que [11] avait écrite dans [18] — « un backend qui
+  numérote côté serveur casse la borne » — disparaît avec le scan au lieu d'être
+  une obligation de plus. Ordre complet retenu : [63] → [62] → [65] → [64] →
+  passe transversale → [18] → [19].

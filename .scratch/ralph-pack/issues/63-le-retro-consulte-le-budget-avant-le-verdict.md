@@ -57,3 +57,9 @@
 - **Piège** : un `script_claude` installé fait taire `retro_call_count` (le shim écrit `claude.retros/calls` *après* le `exec`). Une sonde qui a besoin de savoir que le rétro a tourné pose son propre témoin.
 
 - **Ce qui reste à décider dans le ticket.** Faut-il quand même remonter le posture au pilote quand le rétro a répondu ? L'argument de [08] (« ça peut ajouter une raison d'être prudent et jamais en retirer une ») dit oui ; l'argument de [43] dit que l'événement parle de la fenêtre *suivante* et que le pilote a déjà l'endpoint pour ça. Les deux moitiés sont séparables et le ticket doit trancher les deux séparément — jeter la réponse est faux dans tous les cas, arrêter la nuit est une question ouverte.
+
+- **Place dans la file, validée par Philippe le 05/09/2026 : premier.** Aucune
+  arête — `retro.sh` et `test/helpers/` ne sont touchés par aucun autre ticket de
+  la file. C'est le seul **faux livré** des quatre trouvailles de la passe, et le
+  `retro_rate_limit` qu'il ajoute au harnais profite aux trois suivants. Ordre
+  complet retenu : [63] → [62] → [65] → [64] → passe transversale → [18] → [19].

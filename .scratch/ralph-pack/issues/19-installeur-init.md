@@ -2,7 +2,7 @@
 
 **What to build:** Le dépôt du pack **en une commande** dans n'importe quel repo (vierge ou existant) : validation des préconditions, merge du `CLAUDE.md`, copie du substrat pinné, provisionnement des dossiers durables — le dépôt passe de « rien » à « prêt à discovery ».
 
-**Blocked by:** 01
+**Blocked by:** 01, 18, 62
 
 **Write-surface:** `init.sh`, `package.json`, `bin/**`, `test/install.bats`
 
@@ -187,3 +187,9 @@
   motif qu'il choisit doit dire ce qu'il fait de `ralph-test.*` et des résidus des
   runs d'autres dépôts sur la même machine (`$TMPDIR` est partagé — c'est déjà
   l'hypothèse assumée par `-mtime +0` dans `gate__tmp_leftovers`).
+
+- **`Blocked by:` élargi le 05/09/2026, ordre validé par Philippe.** `18, 62`
+  s'ajoutent à `01`. [18] est l'ordre déjà validé le 01/09 ; [62] est l'arête de
+  la passe du 05/09 — sans lui, le balayage de `$TMPDIR` que ce ticket doit écrire
+  hérite d'une liste qui couvre six noms sur dix-huit. Ordre complet retenu :
+  [63] → [62] → [65] → [64] → passe transversale → [18] → [19].

@@ -52,3 +52,12 @@
 - **Piège à ne pas répéter.** `-mtime +0` veut dire *strictement plus de 24 h* : un test qui pose un résidu et l'interroge tout de suite mesure `0` quelle que soit la liste. Vieillir avec `touch -t` (`date -v-25H`).
 
 - **Ce que le motif unique coûterait, à mesurer avant de le choisir.** `ralph-*` attraperait aussi `ralph-test.*` (le répertoire du harnais de test lui-même) et les résidus des runs d'autres dépôts sur la même machine — ce qui est déjà vrai des six noms actuels et que le commentaire assume explicitement (« a directory nobody has touched in twenty-four hours belongs to no run that is still going »). Le choix à écrire est donc : dériver le motif, ou dériver la liste, et dans les deux cas ce qui rougit quand un producteur est ajouté.
+
+- **Place dans la file, validée par Philippe le 05/09/2026 : deuxième**, après
+  [63] et avant [65], [64], [18], [19]. La raison n'est pas l'arête vers [19] mais
+  ce que ce ticket livre : **le contrôle qui rougit quand un producteur est ajouté
+  sans être couvert**. Installé tôt, il travaille pour les quatre tickets qui
+  suivent — [18] en particulier, qui a toutes les chances d'ajouter un `mktemp`
+  (un backend distant qui cache des réponses). Installé juste avant [19] seulement,
+  il arriverait après le producteur qu'il aurait dû attraper. `[19] Blocked by:`
+  porte maintenant `62`.

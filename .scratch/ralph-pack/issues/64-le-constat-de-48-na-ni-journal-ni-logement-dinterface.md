@@ -48,3 +48,11 @@
 - **Ce qui ne change pas.** Le **filtre** de [48] (`tracker_local__addressable` sur les six scans) est correct et n'est pas en cause : un nom que ce backend ne rend jamais ne décide de rien à la place d'un id qui en est un. Ce ticket ne touche pas au filtre, il touche au **rapport**. Et la règle de [48] reste : un septième scan ajouté sans le filtre rouvre le trou.
 
 - **Ce qui reste écrit au tableau et que ce ticket ne répare pas.** Un fichier au nom porteur d'un saut de ligne présent **avant** le run n'est vu ni par [21] (restauration : il ne bouge pas, donc aucune entrée de `diff-tree`) ni par [07] (quarantaine : elle regarde ce que le registre d'écritures dit d'un nom `<id>.md`). Vérifié une fois de plus dans cette passe : c'est bien la ligne du producteur qui est le seul témoin, ce qui est précisément l'argument de ce ticket.
+
+- **Place dans la file, validée par Philippe le 05/09/2026 : quatrième**,
+  **immédiatement avant [18]**. C'est la plus grosse surface des quatre tickets de
+  la passe (`tracker.sh` + `tracker-local.sh` + `loop.sh`) et l'arête **dure** vers
+  [18], qui rouvre `tracker.sh` juste après : collés, l'en-tête de contrat est
+  écrit et rempli dans la foulée ; séparés, `tracker.sh` est relu deux fois.
+  `[18] Blocked by:` porte maintenant `64`. Ordre complet retenu : [63] → [62] →
+  [65] → [64] → passe transversale → [18] → [19].
