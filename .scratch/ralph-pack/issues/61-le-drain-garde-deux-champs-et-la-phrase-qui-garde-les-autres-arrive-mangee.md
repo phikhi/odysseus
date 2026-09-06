@@ -224,3 +224,14 @@ mécanisme. Ce ne sont pas des champs inertes : ils déplacent ce que le pack
   - un ticket **`claimed` par un run mort** qu'une session résout n'est pas remis :
     nommé une fois au drain, puis le run AFK dit `exit 5`, « rien à moudre », et
     le balayage de [12] ne relit pas un résolu.
+
+- **Ce ticket a un frère non livré, ouvert par la passe transversale du
+  06/09/2026 : [66].** Le commentaire écrit ici pour justifier l'épinglage de
+  `Failures:` laisse la ref `failed/<id>` dehors — « pinning a git ref is a
+  different mechanism […] `router_tree_note` is what looks at what a session left
+  outside `issues/` ». Mesuré : `router_tree_note` lit `router__tree_dirt`, qui est
+  l'arbre de travail moins `gate_is_bookkeeping`, donc ni les refs ni
+  `.scratch/<feature>/`. Une session routée qui écrit la ref choisit le desk du
+  drain suivant exactement comme elle choisissait le desk avec `Failures:` avant
+  ce ticket — et une session routée qui l'efface détruit la preuve que le dossier
+  envoie lire.

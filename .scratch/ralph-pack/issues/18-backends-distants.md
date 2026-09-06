@@ -2,7 +2,7 @@
 
 **What to build:** Les implémentations distantes de l'adaptateur de tracker, satisfaisant **la même interface** que `local`, avec la forme d'intégration façonnée par le backend (claim = assignee, reçu = PR, `wait_ci`). La boucle reste agnostique.
 
-**Blocked by:** 02, 10, 64, 65
+**Blocked by:** 02, 10, 64, 65, 66
 
 **Write-surface:** `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `test/tracker-remote.bats`
 
@@ -323,3 +323,34 @@
   backend qui numérote côté serveur casse la borne ») **disparaît avec le scan**
   au lieu d'être une obligation de plus pour ce ticket. Ordre complet retenu :
   [63] → [62] → [65] → [64] → passe transversale → [18] → [19].
+
+- **Contrainte posée par la passe transversale du 06/09/2026 : la trace forensique
+  que le routeur lit n'est épinglée par rien, et [66] est ouvert pour ça.** Ce
+  ticket porte déjà, plus haut, la remarque « la branche est une **ref git
+  locale** ; sur un backend distant elle peut vivre ailleurs […] Si ce ticket
+  déplace la trace forensique, il possède la question de savoir comment le routeur
+  la trouve. » La passe ajoute la moitié qui manquait : **et qui l'épingle**.
+
+  Mesuré (`../sondes/passe-06-09/q1-*.bats`) : une session routée qui n'écrit *que*
+  `refs/heads/failed/<id>` fait passer le desk de `admit` à `arbitrate` ; une qui
+  l'efface fait passer `arbitrate` à `admit`, et le dossier affirme alors à
+  l'humain « there is none. nothing ever ran on this ticket » à propos d'une
+  tentative réellement jugée. `router_pin` épingle `Escalation:`,
+  `Write-surface:`, `Failures:`, l'arbre de travail et l'état du tracker — pas la
+  ref.
+
+  Ce que ça impose ici, quelle que soit la forme que prendra [66] : **la trace
+  forensique d'un backend distant est une preuve, donc elle doit être lue par le
+  routeur à travers un épinglage pris avant la session routée, pas au moment du
+  dossier.** Une PR, un label, une requête : tout ce qu'un backend expose est
+  écrit par ce qu'une session peut appeler — c'est le même arbitrage que celui que
+  [65] a écrit pour la borne du gate de valeur. Livrer après [66] et hériter du
+  mécanisme, plutôt que d'inventer un second épinglage sur une API.
+
+- **Et une clause de plus, du même endroit, sur ce que le drain *raconte*.**
+  `router_run_notes` tire quatre conclusions de `run.log`, un fichier local que
+  rien ne garde ([67]). Un backend distant ne change rien à cette ligne — le
+  journal reste local ([16] : « le drain journalise dans le même fichier, parce que
+  c'est celui qu'un humain ouvre au matin ») — mais `tracker_receipt_path` rend
+  chez toi une PR, et le dossier met les deux côte à côte. Si ce ticket ajoute une
+  source de preuve, elle a la même obligation que la ref.

@@ -2,7 +2,7 @@
 
 **What to build:** Le dépôt du pack **en une commande** dans n'importe quel repo (vierge ou existant) : validation des préconditions, merge du `CLAUDE.md`, copie du substrat pinné, provisionnement des dossiers durables — le dépôt passe de « rien » à « prêt à discovery ».
 
-**Blocked by:** 01, 18, 62
+**Blocked by:** 01, 18, 62, 69
 
 **Write-surface:** `init.sh`, `package.json`, `bin/**`, `test/install.bats`
 
@@ -236,3 +236,13 @@
   la passe du 05/09 — sans lui, le balayage de `$TMPDIR` que ce ticket doit écrire
   hérite d'une liste qui couvre six noms sur dix-huit. Ordre complet retenu :
   [63] → [62] → [65] → [64] → passe transversale → [18] → [19].
+
+- **Contrainte posée par la passe transversale du 06/09/2026 : `gate_leftovers`
+  aura deux lecteurs.** [69] ajoute l'appel côté drainage humain, parce qu'un
+  drain démarré après un run tué est exactement la situation où un humain vient
+  voir ce qui s'est passé et qu'il n'en nommait **rien** (mesuré : 9 entrées dans
+  `$TMPDIR`, un marqueur de successeur, 1 worktree enregistré — 0 nommé, contre 3
+  pour un run AFK sur le même décor). Ce que ça change ici : ce que cet installeur
+  balaye est déjà nommé par **deux** points d'entrée, et une divergence entre ce
+  que `gate_tmp_names` liste ([62]) et ce que le balayage retire serait deux
+  vérités sur le même disque. Sondes : `../sondes/passe-06-09/q4-*.bats`.

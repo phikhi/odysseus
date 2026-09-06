@@ -143,3 +143,22 @@ Une seule racine, et c'est la règle de [31] non appliquée à ce ticket-là : *
 - **La moitié des aveux de `failures.sh` n'avait aucun canal** (`failures__log` seul), dont les cinq raisons pour lesquelles la branche `failed/<ticket>` que ce reçu envoie lire peut ne pas exister. Le mauvais routage était bien fermé ici (`RALPH_FAILURE_BRANCH` n'est posé qu'au succès) ; ce qui restait est que le repli de `receipt__evidence` — « nothing of the work itself » — se lit comme « il n'y avait rien à garder » là où git a refusé.
 
 Et une cinquième que le critère a sortie en le relisant : un **rollback qui n'a pas pu agir** arrête le run ([34]) sur une itération que la politique vient de mettre en retry, donc la clause d'escalade la manquait. L'échec le plus grave du pack ne produisait aucun document.
+
+- **Une phrase de ce ticket reste littéralement vraie et n'est plus suffisante,
+  passe transversale du 06/09/2026.** « Le journal n'est une autorité pour rien
+  ici — rien ne le relit pour **choisir ou marquer** » : c'est toujours exact.
+  [16] a créé une troisième catégorie que cette phrase ne couvre pas —
+  **raconter à l'humain qui va décider**. `router_run_notes` lit `run.log` et en
+  tire quatre conclusions, dites une fois au démarrage du drain, sans réserve,
+  pendant que `router_journal_lines` lit le même fichier deux fonctions plus haut
+  et imprime « Read them, do not rely on them ». Mesuré : une session routée fait
+  **disparaître** l'une des quatre en ajoutant une ligne, et en **fabrique** une
+  autre sur un `run.log` vierge. Réparation : [67].
+
+- **Et la limite que ce ticket écrit lui-même est ce qui rend la contrefaçon
+  durable.** `loop_journal_verify` ne se prononce que sur le bloc du run courant,
+  et une ligne écrite *avant* le run entre dans `RALPH_JOURNAL_BASE` : mesuré, une
+  ligne posée par un drain traverse un run AFK complet, vert, sans une plainte.
+  Ce n'est pas un défaut à réparer ici — c'est le prix de « les lignes des runs
+  précédents ne sont pas à ce run de garantir », et il fallait le mesurer une fois.
+  Sondes : `../sondes/passe-06-09/q2-*.bats` (Q2e).

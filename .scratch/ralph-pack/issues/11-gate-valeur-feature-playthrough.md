@@ -433,3 +433,17 @@ pour que la prochaine lecture de `playthrough.sh` les trouve.
   `playthrough_rate_limit` que ce ticket avait ajouté pour son propre palier :
   l'asymétrie était la raison pour laquelle le défaut du rétro ne pouvait pas
   s'écrire.
+
+- **La borne du témoin de `spec.md` est écrite comme une borne de *run* et son
+  argument nomme un humain — passe transversale du 06/09/2026, ticket [68].**
+  `playthrough_witness` dit : « Across runs it is the file on disk that seeds it
+  […] a human who corrects the spec between two runs is heard, a session that
+  rewrites it during one is not. » Le contrôle fait exactement ce pour quoi il a
+  été écrit (mesuré : une session AFK qui réécrit `spec.md` pendant le run ne
+  change **rien** au prompt du gate de valeur). Ce qui a changé est la population
+  de ce qui écrit dans l'intervalle : [16] met une session **non jugée** dans
+  l'arbre principal, entre deux runs. Mesuré : le prompt du gate de valeur du run
+  suivant porte le flux que la session routée a écrit, et personne ne le dit.
+  Direction à retenir — c'est le sens **indulgent** (un `pass` sur une feature qui
+  ne marche pas), donc un faux vert possible, contrairement à [65] dont l'effet
+  était « un humain est demandé plus tôt ».
