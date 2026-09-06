@@ -357,6 +357,16 @@ loop_preflight() {
 # ticket whose `Blocked by:` names it, which drops out of a frontier that is a
 # memoryless scan and never comes back, with nothing anywhere to say why.
 #
+# Since [64] this carries the second finding of that kind without a line changing
+# here, which is the point of having built a channel rather than a message: a
+# ticket whose *name* no backend can hand out as an id ([48]) is on no frontier
+# either, and it used to be reported by a `printf ... >&2` inside the scan — eight
+# times a run on a console an AFK night has nobody sitting at, and never once in
+# this file. Nothing is dispatched and nothing is special-cased: whatever
+# `tracker_preflight` finds gets a `loop_log` line and a journal line, and
+# `tracker_finding_said` is told about it so that the producers of that second
+# finding stop repeating to a reader what this line has already given them.
+#
 # Said in `run.log` and not only on the console, because that is the file a human
 # reads in the morning and the only one a receipt ([10]) will be able to read.
 # The lines land before the locks are taken, so a run refused by another run's
@@ -371,6 +381,7 @@ loop__report_tracker_findings() {
     [ -n "$subject" ] || continue
     loop_log "$message"
     loop_journal_append "$subject" "$outcome" 0 0 0
+    tracker_finding_said "$subject" "$outcome"
   done <<FINDINGS
 $(tracker_preflight)
 FINDINGS

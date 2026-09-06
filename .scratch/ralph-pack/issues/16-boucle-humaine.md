@@ -376,3 +376,15 @@ ajouté un second appelant sans en hériter aucune.
   Pas corrigé par [62], dont la write-surface ne porte pas ce fichier ; à
   qualifier lors d'une passe transversale — la ligne est inerte (elle ne bloque
   rien), donc c'est le silence qui est le sujet, pas un faux vert.
+
+- **Contrainte posée par [64], livré le 06/09/2026.** `human_loop_preflight`
+  appelle `tracker_preflight` et journalise ses constats, puis appelle
+  `tracker_finding_said "$subject" "$outcome"` — la mémoire qui empêche le repli
+  stderr du producteur de répéter à un humain ce que ce drain vient de lui
+  montrer. Deux choses à hériter si cette boucle bouge : (1) le `while … done`
+  boucle sur un **heredoc** et non sur un pipe, sans quoi la mémoire serait posée
+  dans un sous-shell et oubliée ; (2) le second constat de `tracker_preflight`
+  (`unaddressable-name`) est pris **explicitement**, parce que ce préflight est
+  une liste et non une délégation — un constat ajouté à `loop_preflight`
+  n'arrivera jamais ici tout seul. C'est la même racine que le constat ouvert
+  ci-dessus sur `gate_leftovers`.

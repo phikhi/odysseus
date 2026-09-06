@@ -224,6 +224,29 @@
   `lib/tracker.sh` était déjà hors write-surface de [48] : c'est toujours ici que
   la décision se prend, [64] ne fait que la préparer.
 
+  **RÉSOLUE PAR [64], LIVRÉ LE 06/09/2026. Ce que ce ticket implémente contre,
+  et il n'y a rien à inventer :**
+
+  - **`tracker_refuse_name NOM`** — publique, dans `lib/tracker.sh`. Un backend
+    qui rencontre un nom qu'il ne peut pas rendre comme id l'appelle **avec le nom
+    tel que le tracker le porte**, et n'imprime **aucune phrase à lui**.
+    L'interface échappe le saut de ligne *et* la tabulation, en fait un constat
+    `unaddressable-name` de `tracker_preflight` (une ligne `loop_log` + une ligne
+    de journal, une fois au démarrage du run **et** du drain), et garde la phrase
+    sur stderr en repli pour les appelants qu'aucun préflight ne couvre. Un
+    backend distant qui numérote côté serveur n'appelle jamais cette fonction et
+    ne trouve rien au préflight : c'est la bonne réponse, pas une réponse
+    manquante — même arbitrage que pour `ambiguous-id`.
+  - **La clause est dans l'en-tête de contrat de `lib/tracker.sh`**, avec
+    l'endroit où passe la voix. C'est là qu'il faut la lire, plus dans [48] ni
+    seulement dans le tableau.
+  - **`tracker_finding_said SUJET ISSUE`** — appelée par `loop.sh` et par
+    `human-loop.sh` après avoir journalisé un constat, pour que le repli cesse de
+    répéter ce qu'un lecteur a déjà reçu. Un backend n'a rien à en faire ; un
+    **troisième point d'entrée** en aurait, et c'est la famille [55]/[56]/[57].
+  - `tracker_local__refuse_name` **n'existe plus** : ne pas le chercher comme
+    modèle.
+
 - **Seconde contrainte de la même passe, sur la borne du gate de valeur —
   RÉSOLUE PAR [65], LIVRÉ LE 05/09/2026, ET REMPLACÉE PAR UNE AUTRE.** Lire les
   deux paragraphes qui suivent ensemble : le premier est mort, le second est la
