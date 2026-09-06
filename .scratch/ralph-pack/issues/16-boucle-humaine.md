@@ -388,3 +388,39 @@ ajouté un second appelant sans en hériter aucune.
   une liste et non une délégation — un constat ajouté à `loop_preflight`
   n'arrivera jamais ici tout seul. C'est la même racine que le constat ouvert
   ci-dessus sur `gate_leftovers`.
+
+- **Trois constats de plus, mesurés par la passe transversale du 06/09/2026, et ils
+  ont la racine des trois précédents.** Le drain n'est entouré d'aucun épinglage à
+  part `router_pin` (cinq valeurs) et il décide et raconte sur trois preuves de
+  plus que rien n'épingle. Sondes : `../sondes/passe-06-09/`.
+
+  1. **La ref `refs/heads/failed/<id>`** — [66]. Une session routée qui la crée
+     envoie le drain suivant de `admit` à `arbitrate` ; une session routée qui
+     l'efface fait affirmer au dossier « there is none. nothing ever ran on this
+     ticket » à propos d'une tentative réellement jugée, et la preuve est perdue.
+     C'est [61] par l'autre bout, et le commentaire de `router_desk` qui laisse la
+     ref dehors nomme `router_tree_note` comme le garde — or celui-ci lit
+     `router__tree_dirt`, c'est-à-dire l'arbre de travail moins
+     `gate_is_bookkeeping`.
+  2. **`run.log`** — [67]. `router_run_notes` en tire quatre conclusions sans la
+     réserve que `router_journal_lines` imprime deux fonctions plus haut, et l'une
+     des quatre est une négation qu'une ligne suffit à faire taire (mesuré). Et
+     `router_journal` écrit dans ce fichier **sans témoin**, là où
+     `loop_journal_append` en tient un depuis [10] : une session routée a effacé,
+     dans le même drainage, la ligne `drained` de la décision qu'un humain venait
+     de prendre sur le ticket précédent — le drain n'a rien dit.
+  3. **`spec.md`** — [68]. `playthrough_witness` couvre « pendant un run » et
+     laisse « entre deux runs » au motif que ce qui y écrit est un humain. Cette
+     boucle a mis une session non jugée dans cet intervalle : mesuré, le gate de
+     valeur du run suivant rejoue le flux que la session routée a écrit.
+
+  Le constat ouvert plus haut sur `gate_leftovers` est qualifié en **[69]**.
+
+- **Ce que `human_loop_main` ne fait pas et que `loop_main` fait, mesuré en entier
+  le 06/09/2026** (à ne pas re-dériver) : `gate_leftovers`, `concurrency_leftovers`
+  ([69]), `budget_check`/`budget_pause`/`budget_paused`/`budget_posture`/
+  `budget_span`, `capability_witness`, `claim_reclaim_stale`, `concurrency_cap`,
+  `failures_protect_tracker`, `gate_frontier_common`/`_pin`/`_residue`,
+  `playthrough_close`/`_rc`/`_witness`, `retro_close`/`_open`, `scheduler__wake`.
+  Tout sauf les deux premiers est délibéré : un drain ne spawne pas d'itération,
+  ne juge rien et ne clôt aucune feature.
