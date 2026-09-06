@@ -154,7 +154,10 @@
   trouve.
 
 - **Contrainte posée par [11], livré le 04/09/2026 : le gate de valeur compte ses
-  propres tickets en lisant le slug dans l'id.** `playthrough__injected` compte les
+  propres tickets en lisant le slug dans l'id. PÉRIMÉE — remplacée par [65],
+  livré le 05/09/2026 ; la version vivante est plus bas, « Seconde contrainte de
+  la même passe ». Gardée telle quelle pour que le remplacement se lise.**
+  `playthrough__injected` compte les
   tickets `*-playthrough-wiring-*` que la feature porte déjà, et c'est **ce compte**
   que `PLAYTHROUGH_REINJECT_MAX` borne — délibérément lu dans le tracker plutôt que
   gardé dans une variable du run, parce qu'un compteur en mémoire se remet à zéro
@@ -210,7 +213,9 @@
   local** ; elle est dite huit fois sur la console d'un run AFK, zéro fois dans
   `run.log`, zéro dans le reçu, zéro dans `docs/playthroughs/` — et quatre
   consommateurs la jettent (`$(tracker_ids 2>/dev/null)` dans
-  `playthrough__injected`, `router__tracker_state`, `router_protect_tracker`).
+  `playthrough__injected`, `router__tracker_state`, `router_protect_tracker` —
+  depuis [65], celui de `playthrough.sh` s'appelle `playthrough__strangers`, et
+  il y en a un second dans le repli de `playthrough__opened`).
   L'en-tête de contrat de `lib/tracker.sh` ne dit rien de qui parle ; le seul
   endroit que l'interface possède pour un constat de **forme d'id** est
   `tracker_preflight`, explicitement non dispatché, et il ne porte que
@@ -219,17 +224,57 @@
   `lib/tracker.sh` était déjà hors write-surface de [48] : c'est toujours ici que
   la décision se prend, [64] ne fait que la préparer.
 
-- **Seconde contrainte de la même passe, sur la borne du gate de valeur.** [11]
-  avait déjà écrit ici que `playthrough__injected` lit le slug **dans l'id** et
-  qu'un backend numérotant côté serveur casse la borne. La passe a élargi le
-  constat : la borne ne lit pas seulement un id, elle lit un espace de noms **à
-  deux écrivains** — une session de livraison qui dépose trois fichiers
-  `NN-playthrough-wiring-*.md` dans `issues/` est nommée par la quarantaine, garde
-  ses noms, et éteint la réinjection de la feature pour toujours (mesuré, `q3`
-  Q3e). Ticket [65]. Si [65] passe avant, ce ticket écrit contre un compteur qui
-  ne scanne plus le tracker — probablement le registre d'écritures du pilote
-  ([13]/[40]) — et la question « un backend qui numérote côté serveur » disparaît
-  avec le scan.
+- **Seconde contrainte de la même passe, sur la borne du gate de valeur —
+  RÉSOLUE PAR [65], LIVRÉ LE 05/09/2026, ET REMPLACÉE PAR UNE AUTRE.** Lire les
+  deux paragraphes qui suivent ensemble : le premier est mort, le second est la
+  contrainte vivante.
+
+  *Ce qui est mort.* [11] avait écrit ici que `playthrough__injected` lit le slug
+  **dans l'id** et qu'un backend numérotant côté serveur laisse le compte à zéro
+  pour toujours. **Ce scan n'existe plus** : `playthrough__injected` a disparu, la
+  borne est comptée sur le registre d'écritures du pilote ([13]/[40]) via
+  `playthrough__opened`. Les deux réponses que [11] laissait à choisir — « rendre
+  un id qui porte le slug » ou « ajouter une opération *combien de tickets portent
+  ce préfixe* » — **ne sont plus à choisir** : la seconde est devenue sans objet,
+  et la première n'est plus une obligation *pour la borne* (elle le reste pour la
+  dédup, voir ci-dessous).
+
+  *Ce qui la remplace, plus étroit qu'avant.* `playthrough__opened` est la liste
+  que **le run tient lui-même** : `playthrough_close` y ajoute l'id que
+  `tracker_open_unique` vient de rendre, quel qu'il soit. Le compte ne lit donc
+  **plus du tout** la forme d'un id, et un backend numérotant côté serveur ne
+  casse plus la borne. Restent deux lecteurs qui, eux, lisent encore le texte de
+  l'id, et ce sont ceux-là que ce ticket doit traiter :
+
+  - `playthrough__opened_slug` compare `*-<slug>` sur les ids que **ce run** a
+    ouverts, pour distinguer « un doublon que j'ai ouvert » de « un nom que je
+    n'ai jamais vu ». Sur un id qui ne dérive pas du slug, la réponse est
+    **toujours non** : chaque doublon est rapporté à un humain comme un ticket
+    que ce run n'a pas ouvert. Phrase fausse, à chaque tour.
+  - `playthrough__strangers` filtre `tracker_ids` sur `-playthrough-wiring-` pour
+    **nommer** les tickets de câblage que ce run n'a pas ouverts. Sur des ids
+    numérotés côté serveur il ne trouve jamais rien : la phrase que lit l'humain
+    quand la borne mord redevient muette sur ce qu'elle n'a pas compté — le
+    silence exact que [65] a fermé.
+
+  Une seule réparation pour les deux, et c'est la même qu'avant en plus étroit :
+  **l'id que le backend rend porte le slug qu'on lui a passé**, ou l'interface
+  gagne la question « cet id porte-t-il ce slug », posée *au backend* au lieu
+  d'être déduite du texte. `tracker_open_unique` reste l'autre moitié de la
+  terminaison de ce chemin (le même trou nommé deux fois n'ouvre qu'un ticket, le
+  second tour demande un humain) : un backend qui ne l'implémente pas refuse
+  bruyamment, ce qui est le bon échec, mais il doit répondre à la question plutôt
+  que d'hériter d'une réponse qui marche sur du markdown.
+
+  *Et une contrainte de fond, qui n'est pas une affaire d'id :* la source du
+  compte doit rester **hors d'atteinte d'une session**. Un backend qui tiendrait
+  sa propre trace de « ce que la boucle a ouvert » — un label, un champ, une
+  requête — ne doit pas la substituer ici : tout ce qu'un backend expose est
+  écrit par ce qu'une session peut appeler. Le registre d'écritures du pilote
+  ([13]/[40]) a d'ailleurs été essayé et **refusé** en livrant [65], pour une
+  raison qui vaut aussi pour un backend : il répond « quels tickets la boucle
+  a **écrits** », et une mise en quarantaine est une écriture — les trois tickets
+  contrefaits revenaient dans le compte par `failures_quarantine_strays`.
 
 - **Contrainte posée par [62], livré le 05/09/2026 : tout `mktemp` que ces
   adaptateurs poseront au premier niveau de `$TMPDIR` doit avoir sa ligne dans

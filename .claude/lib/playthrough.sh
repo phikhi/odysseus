@@ -100,17 +100,15 @@
 # its first attempt ([16] wrote the arithmetic down), and with the zero `RETRY_N`
 # stops bounding anything on a path that loops. Two bounds, each on its own
 # question: `RETRY_N` bounds the attempts at one wiring ticket, and
-# `PLAYTHROUGH_REINJECT_MAX` bounds how many of them this feature may open.
+# `PLAYTHROUGH_REINJECT_MAX` bounds how many of them one run may open.
 #
-# **What counts them is the tracker, not a variable of the run.** A counter in the
-# pilot would reset on every restart, and the bound would then bound nothing across
-# a night that crashed. So the count is the number of wiring tickets this feature
-# already carries, which is durable, needs no new state, and is wrong in one
-# direction only: a session that forged one pushes the run towards asking a human,
-# and a session that deleted one is putting back by the tracker's own guard ([21]).
-# The price is written down rather than implied — the count is over the life of the
-# feature and not per run, so a feature that has already been re-injected twice
-# escalates the third time even if the first two were months ago.
+# **What counts them is this run's own list of what it opened** ([65]). The count
+# used to be the number of wiring tickets the tracker carried, "read off the
+# tracker rather than counted in the run, for the reason a variable resets and a
+# tracker does not". That sentence is true about durability and says nothing about
+# **who writes the thing counted** — and `issues/` has two writers. The whole of
+# the argument, the two sources that were tried and refused, and what the answer
+# costs in exchange, are written where the count is made: `playthrough__opened`.
 #
 # Public API
 #   playthrough_preflight     refuse the values that switch this off in silence
@@ -477,23 +475,151 @@ playthrough__slug() {
   printf '%s-%s\n' "$prefix" "$slug"
 }
 
-# How many wiring tickets this feature already carries. Read off the tracker
-# rather than counted in the run, for the reason the header gives: a variable
-# resets, a tracker does not.
+# ── what this run opened, and what merely carries the name ───────────────────
 #
-# Ids one per line and compared whole ([37]): an id is a file name a session
-# chooses, and `for id in $(…)` would count the words of one.
-playthrough__injected() {
-  local id n=0
+# The ids of the wiring tickets **this run opened**, one per line, appended to by
+# `playthrough_close` and by nothing else. A shell variable of the pilot, like the
+# witness above: `playthrough_close` runs in the pilot's own shell, once per empty
+# frontier, so what it appends on one pass is there on the next.
+#
+# `playthrough__inject` cannot append it, which is why this sits here rather than
+# where it would read best: its caller takes the id out of a **command
+# substitution**, and an append made inside that subshell is gone the moment it
+# returns.
+RALPH_PLAYTHROUGH_OPENED="${RALPH_PLAYTHROUGH_OPENED:-}"
+
+# This is the list `PLAYTHROUGH_REINJECT_MAX` is compared against, and where it
+# comes from is the whole of [65]. Two sources were tried before this one and both
+# are wrong; writing down *why* is the point, because each reads like the obvious
+# answer.
+#
+# **The tracker's own ids — what this used to be, and the defect.** Every ticket
+# whose id carried `PLAYTHROUGH_SLUG_PREFIX`, "read off the tracker rather than
+# counted in the run, for the reason a variable resets and a tracker does not".
+# True about durability, and it never asks **who writes the tracker**. `issues/`
+# has two writers. Measured on 05/09/2026 rather than reasoned: a delivery session
+# drops three `60/61/62-playthrough-wiring-forged.md` in there, the quarantine of
+# [07] sees them, names them and leaves them their names, the count answers 3 —
+# and at the default of 2 that feature never re-opens a wiring ticket again. Every
+# red playthrough goes straight to the human sink under a sentence that accuses
+# the bound and never the forgery. Nothing turns falsely green, because the count
+# can only rise and a human is therefore asked *earlier*; what a session switches
+# off in silence is the tier [11] built so that a night repairs itself. That is
+# the canonical form of the question this project asks before writing ([21],
+# [55]): a control reading a file the session can write is not a control — here
+# applied to a **bound** rather than to a field.
+#
+# **The pilot's register of tracker writes ([13], [40]) — the obvious repair, and
+# it is wrong.** It looks exactly right: a file in `$TMPDIR` under a name no
+# session is told, appended to by the dispatcher, already read by the restore and
+# the quarantine. It answers a different question. The register says *which
+# tickets the loop wrote*, and a quarantine is a write — so the very first thing
+# the loop does with a forged wiring ticket is escalate it, which puts its id in
+# the register. Probed on a real run before this line was written: the three
+# forged tickets came back in the count through `failures_quarantine_strays`, the
+# bound bit exactly as before, and `playthrough__strangers` found nobody to name
+# because the register and the board agreed. A guard built on it would have been
+# green in the suite and worthless in a night.
+#
+# So the list is kept by the **one place that opens them**, which is the only
+# producer whose answer is "opened" and not "touched".
+#
+# **What that costs, and it is the old sentence turned around.** A variable of the
+# pilot dies with the run, so the bound now bounds **a run** and no longer the life
+# of the feature: a night that crashed and was restarted re-opens its budget, where
+# the old count remembered. Paid on purpose, and smaller than it reads — what this
+# bound exists to stop is a *loop*, and the loop is inside one run. Nothing here
+# starts the next one: a successor is armed only by a weekly wall ([09]) and is a
+# fresh night by construction. A bound that remembered across months was, in
+# exchange, counting file names anybody may write. And no source is both durable
+# and out of a session's reach: everything that outlives a run lives in the tree,
+# and a session writes the tree.
+#
+# **The residue, named rather than discovered.** A variable is lost if this call
+# ever moves into a subshell, and a lost list is a bound that stops bounding —
+# fail-open, where the witness two screens up fails closed. Two things stand in
+# front of it: the append is made by `playthrough_close` itself and a mutation
+# moves it into `playthrough__inject` to prove a test notices, and
+# `tracker_open_unique` still refuses a second ticket under one slug, which is
+# what makes the *same* hole terminate whatever this list says.
+playthrough__opened() {
+  printf '%s' "$RALPH_PLAYTHROUGH_OPENED"
+}
+
+# Remember one. Called from `playthrough_close`'s own shell, never from
+# `playthrough__inject` — see the note on the variable above.
+playthrough__note_opened() {
+  [ -n "${1:-}" ] || return 0
+  RALPH_PLAYTHROUGH_OPENED="$RALPH_PLAYTHROUGH_OPENED$1"$'\n'
+  return 0
+}
+
+# The wiring tickets the tracker carries that this run did not open, one id per
+# line — what a sentence needs in order to name something other than the bound.
+#
+# **Not an accusation, and the wording built on it must not become one.** From
+# here, a wiring ticket an *earlier* run opened looks exactly like one a session
+# forged: the list above is this run's. What the pack knows is that it did not
+# open them, and that is the whole of what it says.
+playthrough__strangers() {
+  local opened id nl
+  nl=$'\n'
+  opened="$nl$(playthrough__opened)$nl"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     case "$id" in
-      *-"$PLAYTHROUGH_SLUG_PREFIX"-*) n=$((n + 1)) ;;
+      *-"$PLAYTHROUGH_SLUG_PREFIX"-*) ;;
+      *) continue ;;
     esac
+    case "$opened" in
+      *"$nl$id$nl"*) continue ;;
+    esac
+    printf '%s\n' "$id"
   done <<IDS
 $(tracker_ids 2>/dev/null)
 IDS
-  printf '%s\n' "$n"
+  return 0
+}
+
+# Whether the ticket already carrying this slug is one **this run** opened.
+#
+# The other half of [65], and it is looked at from the same end: `tracker_open_unique`
+# deduplicates on the slug, so a ticket a session dropped under exactly the slug
+# this gate would have used makes the gate open **nothing at all** — same
+# direction, same silence. It cannot be re-opened without giving up the guard that
+# terminates this path, so what changes is the sentence: a duplicate this run
+# wrote and a name it has never seen send a reader to two different places.
+#
+# Narrower than the count it sits beside, and that is worth writing down rather
+# than leaving to be rediscovered: the slug is derived from a title the value
+# gate's own session invents, so a session has to **guess** it, where the count
+# read any name carrying the prefix.
+playthrough__opened_slug() {
+  local slug="$1" id
+  while IFS= read -r id; do
+    case "$id" in
+      *-"$slug") return 0 ;;
+    esac
+  done <<IDS
+$(playthrough__opened)
+IDS
+  return 1
+}
+
+# How many entries in a one-per-line list.
+playthrough__count() {
+  awk 'length { n++ } END { print n + 0 }' <<LIST
+$1
+LIST
+}
+
+# A one-per-line list rendered for a human. Line by line and never `tr '\n' ' '`
+# then `s/ /, /g`, which turns one id carrying a space into two names in the very
+# sentence a human reads to go and find the file ([37]).
+playthrough__names() {
+  awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }' <<LIST
+$1
+LIST
 }
 
 # Whether a proposed write-surface may be handed to a session at all.
@@ -789,7 +915,7 @@ playthrough_close() {
       rc=0
       ;;
     fail)
-      injected="$(playthrough__injected)"
+      injected="$(playthrough__count "$(playthrough__opened)")"
       max="${PLAYTHROUGH_REINJECT_MAX:-2}"
       [ -n "$hole" ] || hole='the session answered fail and did not say where the chain breaks'
       [ -n "$title" ] || title="$hole"
@@ -798,6 +924,10 @@ playthrough_close() {
         openrc=0
         id="$(playthrough__inject "$title" "$hole" "$surface")" || openrc=$?
         if [ -n "$id" ]; then
+          # Here and not inside `playthrough__inject`, which runs in the command
+          # substitution above: an append made in there is lost on the way back,
+          # and the bound would then bound nothing ([65]).
+          playthrough__note_opened "$id"
           outcome="an internal wiring hole: $id is on the frontier ($((injected + 1)) of $max)"
           rc=1
         elif [ "$openrc" != 0 ]; then
@@ -808,8 +938,16 @@ playthrough_close() {
           # duplicate is about the feature.
           outcome="an internal wiring hole the tracker refused to open a ticket for — asking a human instead: $hole"
           rc=2
+        elif playthrough__opened_slug "$(playthrough__slug "$PLAYTHROUGH_SLUG_PREFIX" "$title")"; then
+          outcome="an internal wiring hole this run already carries a ticket for — asking a human rather than opening it twice: $hole"
+          rc=2
         else
-          outcome="an internal wiring hole this feature already carries a ticket for — asking a human rather than opening it twice: $hole"
+          # The adapter deduplicated on a slug this run never opened a ticket
+          # under ([65]). A session that guessed the slug and a wiring ticket an
+          # earlier run left behind are indistinguishable from here, so the
+          # sentence says the one thing the pack knows — that it did not open it —
+          # rather than the one it would like to say.
+          outcome="an internal wiring hole the tracker already carries a ticket for under the slug this gate would have used, and this run did not open it — asking a human rather than opening it twice: $hole"
           rc=2
         fi
         if [ "$rc" = 2 ]; then
@@ -849,15 +987,27 @@ playthrough_close() {
 # Why this one went to a human, in the words of whichever reason applies. Ordered
 # by what a reader needs first: the class the session gave, then the bound, then
 # the surface it named.
+#
+# The bound names what it did **not** count ([65]). Before this ticket the count
+# was the tracker's own names, so the sentence a human read blamed the bound for
+# tickets a session had put there and never said so. Now the wiring tickets this
+# run did not open are outside the arithmetic — which is the fix — and a human
+# reading "past the 2 re-injections" while four of them sit in `issues/` would be
+# owed the other half of the picture. Silent when there are none: a sentence that
+# reports on an empty list reads like a finding ([37]).
 playthrough__why_human() {
-  local class="$1" injected="$2" max="$3" surface="$4"
+  local class="$1" injected="$2" max="$3" surface="$4" strangers=''
   if [ "$class" != internal ]; then
     printf 'a hole this loop must not close by itself (%s)' "${class:-unclassified}"
     return 0
   fi
   if [ "$injected" -ge "$max" ]; then
-    printf 'an internal wiring hole, past the %s re-injection(s) PLAYTHROUGH_REINJECT_MAX allows this feature' \
+    printf 'an internal wiring hole, past the %s re-injection(s) PLAYTHROUGH_REINJECT_MAX allows this run' \
       "$max"
+    strangers="$(playthrough__names "$(playthrough__strangers)")"
+    [ -z "$strangers" ] ||
+      printf ' — and the tracker carries wiring ticket(s) this run did not open, which no longer count against it: %s' \
+        "$strangers"
     return 0
   fi
   printf 'an internal wiring hole whose write-surface cannot be handed to a session (%s)' \

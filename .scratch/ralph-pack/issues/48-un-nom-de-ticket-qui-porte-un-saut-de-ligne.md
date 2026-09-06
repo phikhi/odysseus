@@ -208,7 +208,9 @@ rouvre le trou » tient. Ce que la passe a mesuré est le **rapport**.
   `run.log`, **zéro** dans le reçu d'audit, **zéro** dans `docs/playthroughs/` —
   c'est-à-dire dans les trois seuls artefacts qu'un humain relit le matin. Sur le
   drain humain : six fois sans session, sept avec, console seulement.
-- **Quatre consommateurs la jettent** : `playthrough__injected` ([11]),
+- **Quatre consommateurs la jettent** : `playthrough__injected` ([11] — depuis
+  [65], livré le 05/09/2026, c'est `playthrough__strangers`, et ce que la ligne
+  perdue coûte est passé d'un compte interne à une phrase lue par un humain),
   `router__tracker_state` ([61]) et `router_protect_tracker` ([55]) lisent
   `$(tracker_ids 2>/dev/null)`. Le commentaire de `tracker_local__refuse_name`
   raisonne soigneusement sur la substitution de commande (« the line has to survive

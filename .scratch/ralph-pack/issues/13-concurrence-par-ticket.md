@@ -242,3 +242,35 @@ Et deux enseignements de méthode, valables au-delà de ce ticket :
   pour toute contrainte qu'un ticket écrit dans un autre : elle est lue, elle est
   recopiée dans la liste des contraintes, et rien ne vérifie qu'elle a été
   dépensée.**
+
+- **Constat posé par [65], livré le 05/09/2026 : le registre répond « ce que la
+  boucle a écrit », et un ticket contrefait y entre par la quarantaine.** [65]
+  devait borner `PLAYTHROUGH_REINJECT_MAX` sur une source qu'une session n'écrit
+  pas, et le registre était la forme évidente — la passe transversale l'avait
+  écrit, le ticket aussi. **Il a été essayé et il est faux**, mesuré sur un run
+  réel avant d'écrire une ligne de garde
+  (`../sondes/ticket-65/verification.bats`, cas S1) : une session dépose trois
+  `NN-playthrough-wiring-forged.md`, `failures_quarantine_strays` les escalade —
+  et une escalade est un `tracker_mark_escalated`, donc une écriture, donc une
+  ligne au registre portant leur id. Le compte revenait à trois, la borne mordait
+  exactement comme avant, et `playthrough__strangers` ne trouvait personne à
+  nommer puisque registre et tableau étaient d'accord. Un garde bâti dessus aurait
+  été **vert dans la suite et sans valeur dans une nuit**.
+
+  La leçon appartient à ce ticket parce qu'il possède le registre, et elle est à
+  relire avant tout quatrième lecteur : **le registre est indexé par id et par
+  rien d'autre — il ne dit pas quelle opération a écrit.** Il répond à « ce ticket
+  a-t-il bougé par la boucle » (la question des deux gardes de `issues/`) et ne
+  peut pas répondre à « ce ticket, la boucle l'a-t-elle **créé** ». Même famille
+  que la limite déjà écrite plus haut (« la granularité reste un id, donc *la
+  boucle a écrit X* vaut pour toute modification de X »), et c'est la première fois
+  qu'un appelant l'a payée. [65] tient sa liste lui-même, dans une variable du
+  pilote alimentée par le seul endroit qui ouvre.
+
+- **Et le run sans registre n'est toujours refusé par personne.**
+  `RALPH_TRACKER_LOG=''` quand le `mktemp` de `loop_main` échoue : la boucle
+  continue, `tracker__note_write` devient un no-op, la restauration de [21] défait
+  les marquages de la boucle et la quarantaine de [07] met en quarantaine les
+  tickets que la boucle a ouverts. Aucun ticket n'a pris ce refus ; s'il doit
+  exister, il est ici : *un run qui ne peut pas tenir le registre de ses propres
+  écritures dans le tracker ne doit pas grinder*.
