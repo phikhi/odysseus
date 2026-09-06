@@ -75,3 +75,23 @@
   `router_tree_note` : livré derrière, il aurait à choisir entre s'accrocher au
   nouvel épinglage ou rester à côté. `Blocked by: 69`. Ordre complet retenu :
   [69] → [67] → [66] → [68] → [18] → [19].
+
+- **Ce que [69] laisse à ce ticket, livré le 06/09/2026.** `human_loop_main` a deux
+  lignes de plus au démarrage, placées **entre** `draining ready-for-human` et
+  `router_run_notes` : le bloc `gate_leftovers` (heredoc) et l'appel à
+  `concurrency_leftovers`. Trois choses à hériter. (1) L'ordre : les résidus
+  passent avant les quatre mots du run, donc un témoin ajouté à `router_run_notes`
+  n'est plus la première chose qu'un drain dit. (2) `human_loop_main` déclare
+  maintenant `local leftovers` — un second `local` du même nom dans la même
+  fonction serait une redéclaration silencieuse. (3) La posture, qui est la même
+  que celle demandée ici : ces lignes **comptent et ne jugent pas**, et un refus
+  de la fonction appelée veut dire « rien à dire ». Le `if` de
+  `concurrency_leftovers` est ce qui le tient sous `set -e` ; côté heredoc la
+  substitution avale le statut, mesuré. Un témoin de journal qui refuserait le
+  drain sur une plainte casserait cette posture au même endroit.
+
+- **Décor de sonde, prêt.** `../sondes/ticket-69/verification.bats` porte « un run
+  réel tué au `KILL` pendant le gate, puis un drain démarré derrière », avec ses
+  deux pièges déjà réglés (semer `01-alpha` en `ready-for-agent` pour que le gate
+  démarre, et `rm -rf "$(run_lock_dir)" "$(tree_lock_dir)"` avant de relancer).
+  À copier plutôt qu'à réécrire.
