@@ -415,6 +415,43 @@ human_loop_main() {
 
   human_loop_log "draining ready-for-human (feature=$FEATURE backend=$TRACKER_BACKEND)"
 
+  # What the runs before this one left outside the repository, and then what they
+  # left registered inside it. The two lines `loop_main` says at the same point,
+  # said here for the reason [16] left this finding open without one: a drain
+  # started after a killed run is the single moment this pack has a human looking
+  # at it. Measured on the 06/09/2026 pass — a real run killed with `KILL` during
+  # the gate leaves nine entries in `$TMPDIR`, a successor marker and one
+  # registered worktree; an AFK run started behind it names three of those, and a
+  # drain named none.
+  #
+  # **Line by line, and never by delegation.** The preflight above says this loop
+  # chooses what it does rather than inheriting it, and these two are chosen the
+  # same way: nothing here calls `loop_preflight`, so a third leftover added to
+  # `loop_main` tomorrow does not arrive here on its own — and that is a thing to
+  # know rather than a thing to fix.
+  #
+  # **They count, and they judge nothing.** A drain that refused to start over a
+  # residue would shut the door on the very human who came to look at it, which is
+  # the opposite of what this is for. So a refusal from either function means
+  # "there was nothing to say" and travels no further: the `if` is what keeps the
+  # second one from ending the drain under `set -e`, and `|| true` states the same
+  # intent for the first — a command substitution inside a here-document swallows
+  # the status either way, which is why that half is a sentence rather than a
+  # guard, and why `test/mutate.sh` puts the refusal *in* instead of taking it out.
+  #
+  # `gate_leftovers` has two readers from here on, and that is a constraint for the
+  # sweep of [19] rather than a detail: what the installer removes is now named by
+  # both entry points of the pack, and a divergence between the two would be two
+  # truths about one disk.
+  local leftovers
+  while IFS= read -r leftovers; do
+    [ -n "$leftovers" ] || continue
+    human_loop_log "$leftovers"
+  done <<LEFTOVERS
+$(gate_leftovers || true)
+LEFTOVERS
+  if leftovers="$(concurrency_leftovers)"; then human_loop_log "$leftovers"; fi
+
   # The run-level words a reader gets wrong, said once before any ticket. Not a
   # summary of the journal — a human has the file — only the handful of outcomes
   # whose obvious reading is the wrong one ([52], [53]).

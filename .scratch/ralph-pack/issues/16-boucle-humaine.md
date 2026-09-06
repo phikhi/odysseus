@@ -377,6 +377,17 @@ ajouté un second appelant sans en hériter aucune.
   qualifier lors d'une passe transversale — la ligne est inerte (elle ne bloque
   rien), donc c'est le silence qui est le sujet, pas un faux vert.
 
+  **Fermé le 06/09/2026 par [69].** `human_loop_main` dit les deux lignes —
+  `gate_leftovers` et `concurrency_leftovers` — juste après
+  `draining ready-for-human` et **avant** `router_run_notes`, choisies ligne à
+  ligne : le préflight reste une liste et pas une délégation, et rien n'appelle
+  `loop_preflight`. Revérifié sur le run réel
+  (`../sondes/ticket-69/verification.bats`) : le décor produit 9 entrées dans
+  `$TMPDIR`, un marqueur de successeur, 1 worktree enregistré et **0 garde** — un
+  run tué pendant le gate n'en tient aucun — et le drain en nomme **3**, le témoin
+  AFK exactement. Et il ne refuse rien : `V2` ferme le ticket du puits derrière,
+  `rc=0`.
+
 - **Contrainte posée par [64], livré le 06/09/2026.** `human_loop_preflight`
   appelle `tracker_preflight` et journalise ses constats, puis appelle
   `tracker_finding_said "$subject" "$outcome"` — la mémoire qui empêche le repli

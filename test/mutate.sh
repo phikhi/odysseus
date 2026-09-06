@@ -4817,6 +4817,35 @@ mutation "62 only directories are counted, as the sentence used to say" "$GATE" 
   's/-maxdepth 1 \\\(/-maxdepth 1 -type d \\(/' \
   test/gate.bats "left behind in TMPDIR"
 
+# ── [69] what a killed run left, named where a human is looking ──────────────
+#
+# The finding [16] left open. Both lines are *additions* to `human_loop_main`, so
+# the first two entries take them back out — and the last two are the pair that
+# keeps them from becoming a refusal, which is the half a deleting mutation cannot
+# reach. `gate_leftovers` and `concurrency_leftovers` say "there was nothing to
+# say" by returning non-zero, and this file runs under `set -e`: the guarantee is
+# as much that a quiet morning still drains as that a loud one is named.
+
+mutation "69 a drain says nothing about what earlier runs left outside it" "$HUMAN_LOOP" \
+  's/  while IFS= read -r leftovers; do\n    \[ -n "\$leftovers" \] \|\| continue\n    human_loop_log "\$leftovers"\n  done <<LEFTOVERS\n\$\(gate_leftovers \|\| true\)\nLEFTOVERS\n//' \
+  test/human-loop.bats "left outside this repository"
+
+mutation "69 a drain says nothing about the worktrees a run left registered" "$HUMAN_LOOP" \
+  's/  if leftovers="\$\(concurrency_leftovers\)"; then human_loop_log "\$leftovers"; fi\n//' \
+  test/human-loop.bats "worktrees an earlier run left registered"
+
+# And the two directions of "it counts, it does not judge". A morning with nothing
+# left behind is the one the assignment takes down, and a morning with something
+# left behind is the one an operator is refused on — two different defects, and
+# each is green under the other's witness.
+mutation "69 a repository nobody left a worktree in ends the drain" "$HUMAN_LOOP" \
+  's/  if leftovers="\$\(concurrency_leftovers\)"; then human_loop_log "\$leftovers"; fi\n/  leftovers="\$(concurrency_leftovers)"\n  human_loop_log "\$leftovers"\n/' \
+  test/human-loop.bats "names nothing and refuses nothing"
+
+mutation "69 what a killed run left is a reason to refuse the human who came to look" "$HUMAN_LOOP" \
+  's/  local leftovers\n  while IFS= read -r leftovers; do\n/  local leftovers\n  if gate_leftovers >\/dev\/null 2>&1; then exit 2; fi\n  while IFS= read -r leftovers; do\n/' \
+  test/human-loop.bats "left outside this repository"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

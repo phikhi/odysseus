@@ -246,3 +246,13 @@
   balaye est déjà nommé par **deux** points d'entrée, et une divergence entre ce
   que `gate_tmp_names` liste ([62]) et ce que le balayage retire serait deux
   vérités sur le même disque. Sondes : `../sondes/passe-06-09/q4-*.bats`.
+
+  **Livré le 06/09/2026 : la contrainte n'est plus à venir, elle est en place.**
+  `human_loop_main` appelle `gate_leftovers` et `concurrency_leftovers`, donc les
+  dix-sept globs de `gate_tmp_names` et le compte des worktrees enregistrés sont
+  dits par les **deux** points d'entrée. Deux conséquences pour ce ticket : (1) le
+  balayage doit retirer ce que `gate_tmp_names` liste et rien d'autre, sans quoi la
+  phrase du matin et le balayage désignent deux ensembles différents ; (2) `[19]`
+  est le composant *entitled* à balayer, mais il ne l'est plus tout seul à **nommer**
+  — un résidu qu'il retirerait sans que la liste bouge disparaîtrait des deux
+  phrases d'un coup, et personne ne s'en apercevrait.

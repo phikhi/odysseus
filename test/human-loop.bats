@@ -1518,3 +1518,123 @@ ANSWERS
   [ -z "$offenders" ] ||
     fail "the AFK path reaches into the human half:$offenders"
 }
+
+# ── what earlier runs left, said where a human is looking ────────────────────
+#
+# The finding [16] left open, qualified by the 06/09/2026 pass and delivered as
+# [69]. `loop_main` says at startup what the runs before it left outside the
+# repository (`gate_leftovers`: `$TMPDIR`, the dead guards of [49], the successor
+# marker of [53]) and inside it (`concurrency_leftovers`: a worktree still
+# registered). `human_loop_main` called neither — in the one situation where this
+# pack has a human looking at it.
+#
+# The decor is the pass's, staged rather than produced: what a killed run leaves
+# is measured in `sondes/passe-06-09/q4-*.bats`, and a test that killed a real run
+# would be paying half a minute to re-measure it. What is under test here is which
+# of the two entry points says it.
+
+# The drain, with a temporary directory of its own — the same reason
+# `run_loop_own_tmp` has one: a fake reaching into the machine's shared `$TMPDIR`
+# would count the residue of a suite running beside this one.
+drain_own_tmp() {
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  run env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/human-loop.sh"
+}
+
+@test "a drain names what earlier runs left outside this repository" {
+  mk_ticket 20-one Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+
+  mkdir -p "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-gate.rightnow"
+  # A file among the directories, because ten of the pack's eighteen producers
+  # make one ([62]).
+  : >"$RALPH_TEST_DIR/tmp/ralph-slot.writes.deadrun"
+  # Three of the four are older than a day. The fourth is what keeps the count
+  # from being a constant: this pack locks one tree and not one machine ([22]), so
+  # a run of another repository may own a fresh `ralph-gate.*` right now.
+  touch -t 202001010000 "$RALPH_TEST_DIR/tmp/ralph-gate.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-ignore.deadrun" \
+    "$RALPH_TEST_DIR/tmp/ralph-slot.writes.deadrun"
+
+  # A pid that is certainly gone: a subshell's own, read after it exited. And its
+  # witness beside it — a guard whose owner still answers belongs to something
+  # alive, and naming it would be the false alarm that makes a morning unreadable.
+  local dead
+  dead="$(bash -c 'printf %s "$$"')"
+  mkdir -p "$FEATURE_DIR/.open.guard"
+  printf '%s\n' "$dead" >"$FEATURE_DIR/.open.guard/pid"
+  mkdir -p "$FEATURE_DIR/.busy.guard"
+  printf '%s\n' "$$" >"$FEATURE_DIR/.busy.guard/pid"
+
+  # And the marker a successor nobody woke leaves behind, armed for an instant
+  # that has passed ([53]).
+  printf '%s\tat\t2026-08-29T00:00:00Z\n' "$(($(date +%s) - 100))" \
+    >"$PROJECT_DIR/.git/ralph.successor"
+
+  drain_own_tmp <<ANSWERS
+c
+ANSWERS
+  assert_success
+
+  assert_output_contains "3 temporary file(s) and director(ies) from earlier runs are still in"
+  assert_output_contains "exclusion guard(s) left in"
+  assert_output_contains ".open.guard"
+  refute_output_contains ".busy.guard"
+  assert_output_contains "a one-shot successor marker is still in"
+  assert_output_contains "armed 2026-08-29T00:00:00Z with at"
+
+  # And it refused nothing: the ticket the human closed left the sink all the
+  # same. These lines count, they do not judge ([69]) — a drain that stopped on a
+  # residue would shut the door on the human who came to look at it.
+  assert_ticket_status 20-one wontfix
+}
+
+@test "a drain names the iteration worktrees an earlier run left registered" {
+  mk_ticket 20-one Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+
+  # The registration is what survives a killed run, and it outlives the directory:
+  # every later `git worktree` call in this repository carries it ([13]). Removed
+  # here so that what is counted is the entry in the common git directory and not
+  # a leftover in `$TMPDIR`, which the neighbour above already covers.
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  git -C "$PROJECT_DIR" worktree add -q --detach \
+    "$RALPH_TEST_DIR/tmp/ralph-worktree.deadrun" HEAD
+  rm -rf "$RALPH_TEST_DIR/tmp/ralph-worktree.deadrun"
+
+  drain_own_tmp <<ANSWERS
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "1 iteration worktree(s) of earlier runs are still registered"
+  # Named, never pruned — the posture `loop_main` takes on the same line, and for
+  # the same reason: a registration a second old belongs to a run that is alive.
+  run git -C "$PROJECT_DIR" worktree list --porcelain
+  assert_output_contains "ralph-worktree.deadrun"
+}
+
+@test "a drain over a tree earlier runs left nothing in names nothing and refuses nothing" {
+  # The paired witness of both tests above, and it carries a guarantee of its own:
+  # a refusal from either function means "there was nothing to say" and must not
+  # end the drain. `concurrency_leftovers` returns non-zero on a repository with
+  # no leftover worktree, and this loop runs under `set -e` — an assignment
+  # written without its `if` would take the drain down before its first ticket,
+  # on the ordinary morning where nothing was left behind at all.
+  mk_ticket 20-one Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+
+  drain_own_tmp <<ANSWERS
+c
+ANSWERS
+  assert_success
+  assert_ticket_status 20-one wontfix
+
+  refute_output_contains "from earlier runs are still in"
+  refute_output_contains "exclusion guard(s) left in"
+  refute_output_contains "a one-shot successor marker is still in"
+  refute_output_contains "still registered in this repository"
+}
