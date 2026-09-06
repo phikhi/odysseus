@@ -477,6 +477,10 @@ FAKE
   assert_failure
   assert_equal "$status" "4"
   assert_output_contains "past the 1 re-injection(s)"
+  # And the paired witness of the clause below: the tracker carries no wiring
+  # ticket this run did not open, so the sentence says nothing about one. A clause
+  # printed over an empty list reads like a finding.
+  refute_output_contains "did not open"
 
   # One wiring ticket, ground; the second hole went to a human rather than onto
   # the frontier. Both halves are counted, because a bound that opened nothing at
@@ -497,10 +501,126 @@ FAKE
   assert_failure
   assert_equal "$status" "4"
   assert_output_contains "already carries a ticket for"
+  # The duplicate is this run's own, so it is reported as one. The paired witness
+  # of the sentence three tests down, which is the same refusal about a slug this
+  # run never opened a ticket under.
+  refute_output_contains "did not open it"
 
   # One wiring ticket for two rounds, and a human asked on the second.
   assert_equal "$(opened_of_kind wiring 01-alpha)" "1"
   assert_equal "$(opened_of_kind gap 01-alpha)" "1"
+}
+
+# ── whose names the bound counts ([65]) ──────────────────────────────────────
+#
+# `PLAYTHROUGH_REINJECT_MAX` bounds what **the pack opened**, and not what carries
+# a name. `issues/` has two writers, so a count read off the tracker's ids is a
+# count a session writes: three files named `<nn>-playthrough-wiring-…` switch the
+# whole tier off for a feature, in silence, under a sentence that accuses the
+# bound.
+
+# A wiring ticket in the tracker that this run did not open — a file, which is all
+# it ever took. `ready-for-human` so it stays off the frontier: what these tests
+# drive is the value gate, not an extra iteration.
+plant_wiring_ticket() {
+  local id="$1"
+  {
+    printf '# %s — planted, opened by nobody here\n\n' "$id"
+    printf '**Status:** ready-for-human\n\n'
+    printf '**Escalation:** planted\n\n'
+    printf '**Write-surface:** `src/forged.txt`\n\n'
+    printf '**Blocked by:** None\n'
+  } >"$TRACKER_DIR/$id.md"
+}
+
+@test "wiring tickets this run did not open do not spend its re-injection budget" {
+  use_tickets 01-alpha
+  plant_wiring_ticket 60-playthrough-wiring-forged
+  plant_wiring_ticket 61-playthrough-wiring-forged
+  plant_wiring_ticket 62-playthrough-wiring-forged
+  harness__commit "test: three wiring tickets nobody here opened"
+  playthrough_answer_nth 1 \
+    'RALPH-PLAYTHROUGH-HOLE: the markers are written and nothing renders them' \
+    'RALPH-PLAYTHROUGH-CLASS: internal' \
+    'RALPH-PLAYTHROUGH-TITLE: render the markers the demo writes' \
+    'RALPH-PLAYTHROUGH-SURFACE: `src/wired.txt`' \
+    'RALPH-PLAYTHROUGH-VERDICT: fail'
+  playthrough_answer_nth 2 \
+    'RALPH-PLAYTHROUGH-STEP: the user runs the demo and sees the markers' \
+    'RALPH-PLAYTHROUGH-VERDICT: pass'
+
+  run_loop
+  # Three names carrying the prefix, and the default bound is two: counted off the
+  # tracker this run would never re-inject again. It re-injects on its first hole,
+  # grinds it, and closes the feature.
+  assert_success
+  assert_output_contains "is on the frontier (1 of 2)"
+  assert_file_exists "$PROJECT_DIR/src/wired.txt"
+  assert_equal "$(opened_of_kind wiring 01-alpha \
+    60-playthrough-wiring-forged 61-playthrough-wiring-forged 62-playthrough-wiring-forged)" "1"
+}
+
+@test "the count the bound is compared against is what this run opened" {
+  use_tickets 01-alpha
+  plant_wiring_ticket 60-playthrough-wiring-forged
+  plant_wiring_ticket 61-playthrough-wiring-forged
+
+  # Two names on the board and one opening. The tracker's own register would not
+  # separate them either — it says which tickets the loop *wrote*, and the first
+  # thing the loop does with a forged one is quarantine it, which is a write.
+  pack_run 'RALPH_TRACKER_LOG="'"$RALPH_TEST_DIR"'/register"
+    printf "%s\n" 60-playthrough-wiring-forged 61-playthrough-wiring-forged \
+      >"$RALPH_TRACKER_LOG"
+    playthrough__note_opened 70-playthrough-wiring-real
+    printf "opened:[%s]\n" "$(playthrough__opened | tr "\n" " ")"
+    printf "count:[%s]\n" "$(playthrough__count "$(playthrough__opened)")"
+    printf "strangers:[%s]\n" "$(playthrough__strangers | tr "\n" " ")"'
+  assert_success
+  assert_output_contains "opened:[70-playthrough-wiring-real ]"
+  assert_output_contains "count:[1]"
+  assert_output_contains "strangers:[60-playthrough-wiring-forged 61-playthrough-wiring-forged ]"
+}
+
+@test "at its bound the sentence names the wiring tickets this run did not open" {
+  use_tickets 01-alpha
+  set_config PLAYTHROUGH_REINJECT_MAX 0
+  plant_wiring_ticket 60-playthrough-wiring-forged
+  harness__commit "test: one wiring ticket nobody here opened"
+  answer_internal_hole
+
+  run_loop
+  assert_failure
+  assert_equal "$status" "4"
+  # The bound is what refused, and it refused on nothing this run opened. A human
+  # reading the bound while a name like that sits in `issues/` is owed the other
+  # half of the picture.
+  assert_output_contains "past the 0 re-injection(s)"
+  assert_output_contains "this run did not open"
+  assert_output_contains "60-playthrough-wiring-forged"
+  assert_equal "$(opened_of_kind wiring 01-alpha 60-playthrough-wiring-forged)" "0"
+  assert_equal "$(opened_of_kind gap 01-alpha 60-playthrough-wiring-forged)" "1"
+}
+
+@test "a ticket under the slug this gate would use, opened by nobody here, is named as one" {
+  use_tickets 01-alpha
+  # The slug `playthrough__slug` builds from the title in `answer_internal_hole`,
+  # spelled out rather than asked of the pack: a test computing it with the pack's
+  # own function could not catch the pack deduplicating on something else.
+  plant_wiring_ticket 70-playthrough-wiring-render-the-markers-the-demo-writes
+  harness__commit "test: a ticket under the slug this gate would have used"
+  answer_internal_hole
+
+  run_loop
+  assert_failure
+  assert_equal "$status" "4"
+  # `tracker_open_unique` deduplicates on the slug, so the gate opened nothing —
+  # the same silence as the bound, by the other door. It cannot open it anyway
+  # without giving up what terminates this path, so what is owed is the sentence.
+  assert_output_contains "this run did not open it"
+  assert_equal "$(opened_of_kind wiring 01-alpha \
+    70-playthrough-wiring-render-the-markers-the-demo-writes)" "0"
+  assert_equal "$(opened_of_kind gap 01-alpha \
+    70-playthrough-wiring-render-the-markers-the-demo-writes)" "1"
 }
 
 @test "a hole whose surface would cover the harness's own configuration is not handed to a session" {

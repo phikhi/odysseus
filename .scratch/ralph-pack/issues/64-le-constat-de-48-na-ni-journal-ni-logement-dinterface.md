@@ -39,9 +39,18 @@
   | drain humain avec session routée, la ligne dite | **7 fois**, console seulement |
   | `playthrough__injected` au module | **0 fois** — `$(tracker_ids 2>/dev/null)` |
 
+  **Depuis [65], livré le 05/09/2026, cette ligne a changé de nom et de rôle sans
+  changer de forme.** `playthrough__injected` n'existe plus : la borne de
+  réinjection est comptée sur la liste que le run tient lui-même, et plus du tout
+  sur les ids du tracker. Le `$(tracker_ids 2>/dev/null)` est maintenant dans
+  `playthrough__strangers` — les tickets de câblage que ce run n'a **pas** ouverts,
+  qui alimentent la phrase qu'un humain lit quand la borne mord. Le constat est
+  inchangé et il s'est aggravé de place : ce n'est plus un compte interne qui perd
+  la ligne, c'est la **phrase adressée à un humain**.
+
 - **Huit fois sur une console que personne ne regarde.** Un run AFK est par définition sans humain. Ce qu'on relit le matin est `run.log`, le reçu et le playthrough, et aucun des trois ne la porte. Famille de [53] (« la phrase qui nomme le marqueur est stdout-only »), avec la circonstance aggravante que le canal existe et qu'il a été écrit pour ce constat-là.
 
-- **Quatre consommateurs jettent la voix.** `playthrough.sh:494` ([11]), `router.sh:539` ([61]) et `router.sh:646` ([55]) lisent `$(tracker_ids 2>/dev/null)`. Le commentaire de `tracker_local__refuse_name` raisonne soigneusement sur la substitution de commande — « the line has to survive being printed from a subshell: every consumer reads these lists as `$(tracker_ids)`, so a "say it once" flag kept in a variable would be forgotten between two callers » — et jamais sur la **redirection**. Ici ça ne coûte pas la ligne (les producteurs nus sont plus nombreux), mais c'est la démonstration qu'un canal `>&2` posé dans un producteur n'est pas tenable : chaque nouveau consommateur décide s'il l'entend.
+- **Quatre consommateurs jettent la voix.** `playthrough.sh:494` ([11] — depuis [65], c'est `playthrough__strangers`), `router.sh:539` ([61]) et `router.sh:646` ([55]) lisent `$(tracker_ids 2>/dev/null)`. Le commentaire de `tracker_local__refuse_name` raisonne soigneusement sur la substitution de commande — « the line has to survive being printed from a subshell: every consumer reads these lists as `$(tracker_ids)`, so a "say it once" flag kept in a variable would be forgotten between two callers » — et jamais sur la **redirection**. Ici ça ne coûte pas la ligne (les producteurs nus sont plus nombreux), mais c'est la démonstration qu'un canal `>&2` posé dans un producteur n'est pas tenable : chaque nouveau consommateur décide s'il l'entend.
 
 - **Arête dure : [64] avant [18].** La contrainte écrite pour [18] est « un backend ne rend jamais un id porteur d'un saut de ligne, **il refuse à voix haute** ». La voix vit dans `tracker_local__refuse_name`, un `__` du backend local. `tracker_preflight` — le seul endroit que l'interface possède pour les constats de forme d'id, et explicitement *non dispatché* — n'en parle pas, et l'en-tête de contrat de `lib/tracker.sh` non plus (il renvoie la limite du transport à `docs/frontiere-de-confiance.md`, ce qui est juste pour « une ligne ne peut pas porter un saut de ligne » et muet sur « qui le dit »). Un [18] écrit tel quel réimplémente huit `printf >&2` dans son propre backend, ou ne les écrit pas du tout.
 

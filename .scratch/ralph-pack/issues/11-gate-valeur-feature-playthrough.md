@@ -340,6 +340,13 @@ spec par la session de livraison : le prompt du gate porte le flux d'origine.
   la déduplication qui garantit la terminaison — un backend qui ne l'implémente
   pas fait refuser bruyamment l'ouverture, ce qui est le bon échec, mais il doit
   répondre à la question plutôt qu'en hériter.
+  **Réécrite par [65], livré le 05/09/2026** : `playthrough__injected` n'existe
+  plus, la borne compte la liste que le run tient lui-même, et les deux réponses
+  que cette ligne laissait à choisir sont mortes avec le scan — le compte ne lit
+  plus du tout la forme d'un id. Ce qui reste — et
+  qui vise maintenant deux lecteurs au lieu d'un, `playthrough__opened` et
+  `playthrough__opened_slug` — est écrit dans [18], sous « Seconde contrainte de la
+  même passe ». La déduplication et sa terminaison, elles, sont inchangées.
 - **[19] installeur** : `docs/playthroughs/` est provisionné par [19] (spec §6),
   et les trois clés du gate de valeur sont une **confirmation forcée** — un
   installeur qui écrit une config avec `RUN_CMD` vide produit un projet qui ne
@@ -386,6 +393,17 @@ pour que la prochaine lecture de `playthrough.sh` les trouve.
   monter), coût réel : l'autonomie de la nuit, éteinte en silence, avec une phrase
   qui accuse la borne. Même chose par la déduplication de slug de
   `tracker_open_unique`.
+  **✅ Livré le 05/09/2026.** `playthrough__injected` est remplacé par
+  `playthrough__opened`, la liste que le run tient lui-même (`RALPH_PLAYTHROUGH_OPENED`,
+  alimentée par `playthrough_close` et par rien d'autre) ; le registre
+  d'écritures du pilote a été **essayé et refusé**, la quarantaine y inscrivant
+  les tickets contrefaits — voir [65] et [13] ; `playthrough__opened_slug` distingue un doublon que ce run a
+  ouvert d'un nom qu'il n'a jamais vu, et `playthrough__strangers` alimente la
+  phrase qui **nomme** les tickets de câblage non comptés. Le prix, écrit dans
+  [65] et au tableau : la borne borne un **run** et non plus la vie de la feature.
+  Deux phrases de ce module ont changé de texte — « allows this feature » →
+  « allows this run », et « this feature already carries a ticket for » → « this
+  run already carries a ticket for ».
 
 - **[63] — la question de [43] que ce ticket s'est posée pour lui-même et pas pour
   le voisin.** La note laissée ici en livrant (« `retro_run` a l'ordre inverse — à

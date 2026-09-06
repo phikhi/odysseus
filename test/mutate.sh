@@ -4587,7 +4587,7 @@ mutation "11 the re-injection budget bounds nothing" "$PLAYTHROUGH" \
   test/playthrough.bats "past its bound"
 
 mutation "11 the wiring tickets already opened are counted by nobody" "$PLAYTHROUGH" \
-  's/playthrough__injected\(\) \{\n  local id n=0\n/playthrough__injected() {\n  local id n=0\n  printf \x270\\n\x27; return 0\n/' \
+  's/^playthrough__opened\(\) \{\n/playthrough__opened() {\n  return 0\n/m' \
   test/playthrough.bats "past its bound"
 
 mutation "11 the same hole opens a second ticket instead of asking a human" "$PLAYTHROUGH" \
@@ -4606,6 +4606,54 @@ mutation "11 a wiring ticket with no write-surface is handed to a session" "$PLA
 mutation "11 the receipt says nothing about what the feature does once it runs" "$RECEIPT" \
   's/  if \[ -f "\$\(playthrough_path\)" \]; then\n/  if false; then\n/' \
   test/playthrough.bats "names the playthrough by path"
+
+# ── [65] the bound counts what the pack opened, not what carries the name ────
+#
+# `PLAYTHROUGH_REINJECT_MAX` bounds a **stop condition**, so every entry here
+# removes its guard in the direction that still terminates — the rule [11] wrote
+# for its own two, and the reason this family is written last. A count that is too
+# high asks a human sooner; a sentence that says the wrong thing says it once; a
+# list read from the wrong place is still a list. None of them lets a red
+# playthrough re-inject for ever, which would leave this script blocked with a
+# planted defect in the working tree.
+
+mutation "65 the bound counts the tracker's names rather than what this run opened" "$PLAYTHROUGH" \
+  's/  printf \x27%s\x27 "\$RALPH_PLAYTHROUGH_OPENED"\n/  tracker_ids 2>\/dev\/null\n/' \
+  test/playthrough.bats "do not spend its re-injection budget"
+
+# And the list itself, from its two failure modes: never written, and written
+# where it is lost. The second is the reason the append sits in `playthrough_close`
+# and not in `playthrough__inject`, where it would read better — the caller takes
+# the id out of a command substitution, and a subshell's assignment dies with it.
+mutation "65 what this run opened is remembered by nobody" "$PLAYTHROUGH" \
+  's/          playthrough__note_opened "\$id"\n//' \
+  test/playthrough.bats "past its bound"
+
+mutation "65 the id is remembered inside the substitution that opened it" "$PLAYTHROUGH" \
+  's/          playthrough__note_opened "\$id"\n/          \$(playthrough__note_opened "\$id")\n/' \
+  test/playthrough.bats "past its bound"
+
+# The deduplication, from both ends ([61]'s lesson about a pinned field): a
+# predicate that always says "mine" and one that never does are two different
+# defects, and each has a test the other one leaves green.
+mutation "65 a duplicate under a slug this run never opened is reported as its own" "$PLAYTHROUGH" \
+  's/        elif playthrough__opened_slug "/        elif true \|\| playthrough__opened_slug "/' \
+  test/playthrough.bats "opened by nobody here"
+
+mutation "65 a duplicate this run opened itself is reported as a stranger" "$PLAYTHROUGH" \
+  's/        elif playthrough__opened_slug "/        elif false \&\& playthrough__opened_slug "/' \
+  test/playthrough.bats "the same hole twice"
+
+# And the sentence, from both ends too: silent about what it did not count, and
+# talkative about an empty list. The second is what keeps the first honest — a
+# clause printed unconditionally reads like a finding on every run.
+mutation "65 the sentence at the bound names the bound and nothing else" "$PLAYTHROUGH" \
+  's/    strangers="\$\(playthrough__names "\$\(playthrough__strangers\)"\)"\n//' \
+  test/playthrough.bats "names the wiring tickets this run did not open"
+
+mutation "65 the clause is printed over an empty list" "$PLAYTHROUGH" \
+  's/    \[ -z "\$strangers" \] \|\|\n      printf/    printf/' \
+  test/playthrough.bats "past its bound"
 
 # ── [48] a ticket name that carries a newline ────────────────────────────────
 #
