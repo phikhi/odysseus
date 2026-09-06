@@ -43,3 +43,13 @@
 - **Contrainte pour [18].** [18] porte déjà la remarque « `router_desk` distingue les trois arrivées de `decision` par les preuves […] la branche est une **ref git locale** ; sur un backend distant elle peut vivre ailleurs, et un ticket dont l'arbre de tentative est une PR fermée sera routé sur le guichet `admit` (« aucun run n'a jamais jugé ceci »), ce qui est faux. Si ce ticket déplace la trace forensique, il possède la question de savoir comment le routeur la trouve. » Ce ticket-ci ajoute la moitié qui manquait : **et qui l'épingle**. Un backend distant qui rend la trace forensique par une requête rend une preuve écrite par ce qu'une session peut appeler.
 
 - **Piège de sonde.** Un drain rend 3 (« stdin ended ») dès que le script de réponses est épuisé — ce n'est pas un refus, ne pas asserter dessus. Et `printf '%s' "$out" | grep -c journal` compte le libellé du dossier : pour mesurer un silence il faut chercher la phrase exacte.
+
+- **Place dans la file, validée par Philippe le 06/09/2026 : troisième**, derrière
+  [67] et **immédiatement avant [18]**. C'est le point de convergence des trois
+  premiers tickets de la passe (`router_pin` + `router_tree_note`), donc la plus
+  grosse surface, et l'arête **dure** vers [18] : `[18] Blocked by:` porte
+  maintenant `66`, parce qu'un backend distant qui déplace la trace forensique
+  déplace une preuve, et qu'une preuve doit être lue à travers un épinglage pris
+  avant la session routée. Collé à [18] pour la raison qui a fait coller [64] :
+  le mécanisme est écrit et rempli dans la foulée plutôt que relu deux fois.
+  Ordre complet retenu : [69] → [67] → [66] → [68] → [18] → [19].

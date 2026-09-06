@@ -33,3 +33,12 @@
 - **Contrainte pour [19].** Le commentaire de `gate_leftovers` désigne l'installeur comme le composant entitled à balayer, et [62] a fait de `gate_tmp_names` la spécification de ce balayage. Ce ticket ajoute un **second lecteur** de `gate_leftovers` : ce que [19] balaye sera nommé par deux points d'entrée, et une divergence entre les deux serait deux vérités sur le même disque.
 
 - **Piège de sonde.** Un ticket `ready-for-human` ne fait pas démarrer un gate : une sonde qui veut tuer un run doit semer un ticket `ready-for-agent` en plus. Et un run tué garde ses verrous — `rm -rf "$(run_lock_dir)" "$(tree_lock_dir)"` avant de démarrer quoi que ce soit derrière lui.
+
+- **Place dans la file, validée par Philippe le 06/09/2026 : premier.** Aucune
+  arête (`Blocked by: None`), la plus petite surface des quatre — deux lignes dans
+  `human_loop_main` — et c'est le seul des quatre dont la réparation ne touche pas
+  `router.sh`. Il livre en passant le décor de sonde que [67] et [66] réutilisent :
+  « un run réel tué au `KILL` pendant le gate, puis un drain démarré derrière »,
+  avec ses deux pièges (semer un ticket `ready-for-agent` en plus du ticket du
+  puits, et retirer les deux verrous que le run tué garde). Ordre complet retenu :
+  [69] → [67] → [66] → [68] → [18] → [19].
