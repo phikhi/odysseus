@@ -4,18 +4,18 @@
 
 **Blocked by:** None
 
-**Write-surface:** `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/loop.sh`, `test/tracker-local.bats`, `test/smoke.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
+**Write-surface:** `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/loop.sh`, `.claude/human-loop.sh`, `test/tracker-local.bats`, `test/loop-happy-path.bats`, `test/human-loop.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Tags:** tracker, observability
 
-- [ ] Un nom que le backend ne peut pas rendre comme id est un **constat de `tracker_preflight`** : une ligne `subject <TAB> outcome <TAB> phrase`, donc une ligne `loop_log` **et** une ligne de journal, dites **une fois** au démarrage — comme `ambiguous-id`.
-- [ ] La question étant celle de la **forme d'un id**, elle reste **non dispatchée** : c'est l'interface qui la possède, exactement comme `tracker__ambiguous_numbers`. Un backend qui numérote côté serveur n'y trouve rien, et c'est la bonne réponse, pas une réponse manquante.
-- [ ] La clause écrite pour [18] — « un backend ne rend jamais un id porteur d'un saut de ligne, il refuse à voix haute » — est écrite dans l'en-tête de contrat de `lib/tracker.sh`, avec **où** la voix passe. Aujourd'hui elle ne vit que dans le ticket [48] et dans `docs/frontiere-de-confiance.md`.
-- [ ] Décider ce que devient le `printf >&2` de `tracker_local__refuse_name` : gardé (et alors dire pourquoi huit répétitions par run valent mieux qu'une), réduit, ou remplacé. Ne pas le laisser tel quel *par défaut*.
-- [ ] Le drain humain le dit aussi une fois : `human_loop_preflight` n'appelle pas `loop_preflight`, et c'est écrit comme une décision — donc le chemin est à choisir explicitement, pas à hériter.
-- [ ] Entrée de mutation par garantie livrée, plus le témoin appairé.
+- [x] Un nom que le backend ne peut pas rendre comme id est un **constat de `tracker_preflight`** : une ligne `subject <TAB> outcome <TAB> phrase`, donc une ligne `loop_log` **et** une ligne de journal, dites **une fois** au démarrage — comme `ambiguous-id`.
+- [x] La question étant celle de la **forme d'un id**, elle reste **non dispatchée** : c'est l'interface qui la possède, exactement comme `tracker__ambiguous_numbers`. Un backend qui numérote côté serveur n'y trouve rien, et c'est la bonne réponse, pas une réponse manquante.
+- [x] La clause écrite pour [18] — « un backend ne rend jamais un id porteur d'un saut de ligne, il refuse à voix haute » — est écrite dans l'en-tête de contrat de `lib/tracker.sh`, avec **où** la voix passe. Aujourd'hui elle ne vit que dans le ticket [48] et dans `docs/frontiere-de-confiance.md`.
+- [x] Décider ce que devient le `printf >&2` de `tracker_local__refuse_name` : gardé (et alors dire pourquoi huit répétitions par run valent mieux qu'une), réduit, ou remplacé. Ne pas le laisser tel quel *par défaut*.
+- [x] Le drain humain le dit aussi une fois : `human_loop_preflight` n'appelle pas `loop_preflight`, et c'est écrit comme une décision — donc le chemin est à choisir explicitement, pas à hériter.
+- [x] Entrée de mutation par garantie livrée, plus le témoin appairé.
 
 ## Comments
 
@@ -65,3 +65,106 @@
   écrit et rempli dans la foulée ; séparés, `tracker.sh` est relu deux fois.
   `[18] Blocked by:` porte maintenant `64`. Ordre complet retenu : [63] → [62] →
   [65] → [64] → passe transversale → [18] → [19].
+
+- **Livré le 06/09/2026.** Branche `ticket-64`. Les deux gates verts (chiffres au
+  bas de ce ticket). Sondes conservées :
+  `../sondes/ticket-64/q3-rejeu.bats` (le rejeu de q3, avec
+  `playthrough__injected` renommé `playthrough__strangers` pour [65]) et
+  `../sondes/ticket-64/verification.bats` (la sonde « run réel » de ce ticket).
+
+- **La sonde a été rejouée avant d'écrire, et elle a rendu les chiffres du
+  ticket à l'unité près** : run AFK 8 fois sur la console, 0 dans `run.log`, 0
+  dans le reçu, 0 dans le playthrough ; drain humain 6 fois sans session, 7 avec ;
+  `playthrough__strangers` muet au module (`2>/dev/null`). Après livraison, sur la
+  même sonde : **1 fois** partout, plus la ligne de journal.
+
+## Ce qui a été livré
+
+- **La voix a changé de propriétaire.** `tracker_local__refuse_name` **n'existe
+  plus**. Les deux scans du backend appellent `tracker_refuse_name`, une fonction
+  **publique de l'interface** (`lib/tracker.sh`) — le backend ne rend plus aucune
+  phrase à lui. C'est ce qui ferme l'arête vers [18] : un nouveau backend appelle
+  une fonction et hérite du canal, au lieu de réimplémenter huit `printf >&2`.
+  Couche : `tracker-local.sh` appelle un `tracker_` **public** et jamais un
+  `tracker__`, donc `test/layering.bats` est satisfait (il ne refuse que les `__`
+  d'un voisin et les `loop_*` depuis un lib).
+
+- **Le constat.** `tracker_preflight` émet
+  `<nom échappé> <TAB> unaddressable-name <TAB> <phrase>`, exactement la forme
+  d'`ambiguous-id`, donc une ligne `loop_log` **et** une ligne de journal, sans
+  qu'un mot ait changé dans `loop__report_tracker_findings` : c'est l'intérêt
+  d'avoir un canal plutôt qu'un message. Non dispatché, pour la raison écrite par
+  [27] : la forme d'un id appartient à l'interface.
+
+- **Comment l'interface apprend les noms, et pourquoi c'est un fichier.**
+  `tracker_preflight` crée un temporaire, nomme son chemin aux backends par
+  `RALPH_TRACKER_REFUSED` (**jamais exportée**, héritée par les sous-shells — la
+  leçon de [40]), prend la liste d'ids, lit le temporaire, l'émet et le
+  **supprime**, le tout avant qu'une session existe. Une variable ne peut pas
+  porter la collecte : chaque appelant lit la liste dans une substitution de
+  commande, donc ce qui est écrit dans ce sous-shell disparaît en revenant — ce
+  que [48] avait dit du drapeau « déjà dit » et qui vaut identiquement d'un
+  collecteur. Le nom du temporaire est `ralph-tracker.refused.XXXXXX`, couvert par
+  le glob `ralph-tracker.*` déjà présent dans `gate_tmp_names` ([62]) : aucune
+  ligne à ajouter, et `test/gate.bats` (« every name the pack puts at the top of
+  TMPDIR ») reste vert — vérifié isolément avant les gates. Le plancher de ce test
+  passe de 18 producteurs à 19, il demande `>= 18`.
+
+- **Décision sur le `printf >&2` (AC4) : remplacé, et réduit.** Remplacé, parce
+  qu'il n'est plus dans le backend : la phrase est rendue par
+  `tracker__refuse_sentence`, un seul endroit, lu par le constat **et** par le
+  repli. Réduit, parce qu'un point d'entrée qui vient de mettre un constat devant
+  un humain le dit à l'interface (`tracker_finding_said`), qui fait taire le repli
+  pour ce nom-là : **8 → 1** sur un run AFK, **6 → 1** et **7 → 1** sur les deux
+  drains. La mémoire est une variable du shell du point d'entrée, non exportée,
+  héritée par les sous-shells ; les deux lecteurs bouclent sur un **heredoc** et
+  pas sur un pipe, donc ce qu'ils enregistrent l'est bien dans le processus qui
+  broie la nuit ensuite.
+
+- **Ce que le repli coûte encore, mesuré et laissé tel quel.** Un fichier
+  inadressable déposé **pendant** le run (sonde S2) fait répéter la phrase
+  **treize fois** sur trois itérations : aucun préflight de ce run ne pouvait le
+  voir, et un `>&2` de producteur n'a pas de mémoire qu'un sous-shell garde. Laissé
+  parce que ce cas-là n'est pas muet ailleurs : `failures_protect_tracker` voit le
+  fichier arriver sous un nom qu'il ne sait pas adresser, le nomme, refuse de
+  vouer pour le tracker ([39], [49]), l'itération est **rouge** et `run.log` porte
+  son issue (`tracker-write`). Le cas sans second témoin est celui du fichier
+  **déjà là** au démarrage — celui que le constat nomme désormais une fois, dans
+  le fichier qu'un humain ouvre. Écrit aussi dans le commentaire de
+  `tracker_refuse_name`.
+
+- **Le drain (AC5) : choisi, pas hérité.** `human_loop_preflight` n'appelle pas
+  `loop_preflight` — décision datée, écrite dans son préambule — donc rien ne
+  descend ici tout seul. Il appelle `tracker_preflight` lui-même et prend le
+  second constat **délibérément** : la réparation est un renommage, un renommage
+  est d'un humain, et c'est le point d'entrée où un humain est déjà assis. Écrit
+  dans `human-loop.sh` à côté de l'appel, et testé
+  (`test/human-loop.bats`, « names the file no scan can reach, once » + témoin
+  appairé).
+
+- **Une tabulation aussi est échappée, et c'est un défaut trouvé en écrivant.**
+  Un nom de fichier peut porter une tabulation ; un constat est
+  `subject <TAB> outcome <TAB> phrase`, relu par
+  `read -r subject outcome message`. Sans l'échappement, `50-a<LF>b<TAB>c.md`
+  décalait tous les champs d'un cran : le journal aurait nommé un `outcome` que
+  personne n'a jamais vu et l'humain aurait reçu un tiers de phrase. Test dédié +
+  entrée de mutation.
+
+## Ce que ce ticket laisse au dépôt
+
+- **`tracker_refuse_name` est publique et fait partie de l'interface** : tout
+  backend qui rencontre un nom qu'il ne peut pas rendre comme id l'appelle, et
+  n'imprime rien. La clause est dans l'en-tête de contrat de `lib/tracker.sh`
+  avec l'endroit où passe la voix. **Écrit dans [18].**
+- **`tracker_finding_said SUBJECT OUTCOME` est appelée par les deux points
+  d'entrée** après avoir journalisé un constat. Un troisième point d'entrée qui
+  lirait `tracker_preflight` sans l'appeler ne casse rien — il retrouve seulement
+  la répétition. C'est la famille [55]/[56]/[57] : la contrainte est écrite ici et
+  dans [16].
+- **`tracker_preflight` peut désormais rendre non-zéro sur un tracker dont
+  `tracker_ids` ne rend rien.** Son ancien `|| return 0` avalait le cas « le
+  répertoire ne contient que des fichiers que personne ne peut atteindre », qui
+  est exactement celui où un run n'a pas de travail et personne ne sait pourquoi.
+- **Le filtre de [48] n'a pas bougé** (`tracker_local__addressable`, six scans) :
+  ce ticket ne touche qu'au rapport. La règle de [48] tient toujours — un
+  septième scan ajouté sans le filtre rouvre le trou.

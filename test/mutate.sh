@@ -4679,16 +4679,18 @@ mutation "48 the paired witness would pass on a quarantine that quarantines noth
   's/^failures_quarantine_strays\(\) \{/failures_quarantine_strays() { return 0;/m' \
   test/failures.bats "on one line is quarantined for real"
 
-mutation "48 the refusal is silent" "$TRACKER" \
-  's/^tracker_local__refuse_name\(\) \{/tracker_local__refuse_name() { return 0;/m' \
+# Re-anchored by [64]: the sentence moved out of the backend and into the
+# interface, which is the whole of that ticket. The guarantee is the same one.
+mutation "48 the refusal is silent" "$TRACKER_IFACE" \
+  's/^tracker_refuse_name\(\) \{/tracker_refuse_name() { return 0;/m' \
   test/tracker-local.bats "handed out by no scan"
 
 mutation "48 the frontier hands the name out as an id" "$TRACKER" \
-  's/    if ! tracker_local__addressable "\$id"; then\n      tracker_local__refuse_name "\$id"\n      continue\n    fi\n    \[ "\$\(tracker_local__field_of_file "\$file" Status\)" = "ready-for-agent" \]/    [ "\$(tracker_local__field_of_file "\$file" Status)" = "ready-for-agent" ]/' \
+  's/    if ! tracker_local__addressable "\$id"; then\n      tracker_refuse_name "\$id"\n      continue\n    fi\n    \[ "\$\(tracker_local__field_of_file "\$file" Status\)" = "ready-for-agent" \]/    [ "\$(tracker_local__field_of_file "\$file" Status)" = "ready-for-agent" ]/' \
   test/tracker-local.bats "handed out by no scan"
 
 mutation "48 the id list hands the name out as an id" "$TRACKER" \
-  's/  \[ -d "\$dir" \] \|\| return 0\n  for file in "\$dir"\/\*\.md; do\n    \[ -e "\$file" \] \|\| continue\n    id="\$\(basename "\$file"\)"\n    if ! tracker_local__addressable "\$id"; then\n      tracker_local__refuse_name "\$id"\n      continue\n    fi\n/  [ -d "\$dir" ] || return 0\n  for file in "\$dir"\/*.md; do\n    [ -e "\$file" ] || continue\n    id="\$(basename "\$file")"\n/' \
+  's/  \[ -d "\$dir" \] \|\| return 0\n  for file in "\$dir"\/\*\.md; do\n    \[ -e "\$file" \] \|\| continue\n    id="\$\(basename "\$file"\)"\n    if ! tracker_local__addressable "\$id"; then\n      tracker_refuse_name "\$id"\n      continue\n    fi\n/  [ -d "\$dir" ] || return 0\n  for file in "\$dir"\/*.md; do\n    [ -e "\$file" ] || continue\n    id="\$(basename "\$file")"\n/' \
   test/tracker-local.bats "handed out by no scan"
 
 mutation "48 an id carrying a newline still resolves to its file" "$TRACKER" \
@@ -4710,6 +4712,67 @@ mutation "48 a name nothing can address still takes its slug" "$TRACKER" \
 mutation "48 a name nothing can address still counts as a collision" "$TRACKER" \
   's/      tracker_local__addressable "\$hit" \|\| continue\n      carriers=/      carriers=/' \
   test/tracker-local.bats "not move a ticket over a file"
+
+# ── [64] the constat of [48] gets a journal line and a home in the interface ──
+#
+# [48] refused the name and said so with a `printf ... >&2` inside the scan. Eight
+# times on the console of an AFK run, zero times in `run.log`, in the receipt and
+# in the playthrough, and thrown away outright by the consumers that read
+# `$(tracker_ids 2>/dev/null)`. The report is now a finding of `tracker_preflight`
+# — the channel [27] built for a tracker that is wrong about its own ids — and the
+# producer's sentence is the fallback for the callers no preflight covers.
+#
+# Both directions of the memo are written, because "said once" is vacuous in one
+# of them: a memo that silences everything satisfies "not repeated" exactly as
+# well as the fix does.
+
+mutation "64 the names the backend refused never reach the preflight" "$TRACKER_IFACE" \
+  's/  RALPH_TRACKER_REFUSED="\$sink"\n/  RALPH_TRACKER_REFUSED=""\n/' \
+  test/loop-happy-path.bats "named at the start, and the run goes on"
+
+mutation "64 the preflight collects the name and says nothing about it" "$TRACKER_IFACE" \
+  's/\n      printf [^\n]*unaddressable-name[^\n]*\n/\n/' \
+  test/tracker-local.bats "names the file no scan of this tracker can reach"
+
+mutation "64 the paired witness would pass on a preflight that reports every file" "$TRACKER" \
+  's/^tracker_local__addressable\(\) \{/tracker_local__addressable() { return 1;/m' \
+  test/tracker-local.bats "a name that fits on one line is no finding at all"
+
+mutation "64 a tracker with no reachable ticket returns before it says why" "$TRACKER_IFACE" \
+  's/  \[ -n "\$ids" \] \|\| return "\$found"\n/  [ -n "\$ids" ] || return 0\n/' \
+  test/tracker-local.bats "only files are unreachable still says why"
+
+mutation "64 the newline in the name is not escaped out of the finding" "$TRACKER_IFACE" \
+  's/\n  name="\$\{name[^\n]*\\\\n\}"\n/\n/' \
+  test/tracker-local.bats "names the file no scan of this tracker can reach"
+
+mutation "64 the tab in the name is not escaped out of the finding" "$TRACKER_IFACE" \
+  's/\n  name="\$\{name[^\n]*\\\\t\}"\n/\n/' \
+  test/tracker-local.bats "does not shift the fields of the finding"
+
+mutation "64 nothing remembers what a reader has already been given" "$TRACKER_IFACE" \
+  's/  RALPH_TRACKER_SAID="\$RALPH_TRACKER_SAID\$subject\n"\n/  :\n/' \
+  test/tracker-local.bats "says nothing more about a name a reader"
+
+mutation "64 one name given to a reader silences every other" "$TRACKER_IFACE" \
+  's/\n    \*\$[^\n]*"\$name"[^\n]*\) return 0 ;;\n/\n    *) return 0 ;;\n/' \
+  test/tracker-local.bats "does not silence a second one"
+
+mutation "64 the memo keeps the subject of every finding, whatever its kind" "$TRACKER_IFACE" \
+  's/  \[ "\$outcome" = unaddressable-name \] \|\| return 0\n//' \
+  test/tracker-local.bats "finding of another kind silences nothing"
+
+mutation "64 the run never tells the interface what it put in front of a human" "$LOOP" \
+  's/    tracker_finding_said "\$subject" "\$outcome"\n//' \
+  test/loop-happy-path.bats "named at the start, and the run goes on"
+
+mutation "64 the drain never tells the interface what it put in front of a human" "$HUMAN_LOOP" \
+  's/    tracker_finding_said "\$subject" "\$outcome"\n//' \
+  test/human-loop.bats "names the file no scan can reach, once"
+
+mutation "64 the drain does not run the tracker's own preflight" "$HUMAN_LOOP" \
+  's/  human_loop__report_tracker_findings\n//' \
+  test/human-loop.bats "names the file no scan can reach, once"
 
 # ── [62] the sweep list is held to its criterion ─────────────────────────────
 #

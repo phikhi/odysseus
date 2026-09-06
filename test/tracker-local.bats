@@ -757,6 +757,121 @@ printf "renumbered[%s]\n" "$(tracker_renumber 99-real)"
   assert_output_contains "renumbered[100-real]"
 }
 
+# ── the finding that names it, and where the finding goes ────────────────────
+#
+# [64]. [48] refused the name and said so with a `printf ... >&2` inside the scan:
+# eight times on the console of an AFK run, zero times in `run.log`, in the audit
+# receipt and in the playthrough, and swallowed outright by the consumers that
+# read `$(tracker_ids 2>/dev/null)`. The report belongs to the interface, which
+# owns the shape of an id, and it comes out of the one channel the pack built for
+# a tracker that is wrong about its own ids ([27]).
+
+@test "the preflight names the file no scan of this tracker can reach" {
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '99-a\nb').md"
+
+  pack_run 'tracker_preflight'
+  assert_failure
+  # Subject, outcome and sentence, in that order and tab-separated: this line is
+  # read back by `read -r subject outcome message` in both entry points, so the
+  # shape is the guarantee and not the wording.
+  assert_output_contains "$(printf '99-a\\nb.md\tunaddressable-name\ttracker: ')"
+  assert_output_contains "carries a newline in its name"
+}
+
+@test "the paired witness: a name that fits on one line is no finding at all" {
+  # Without this the test above passes just as well against a preflight that
+  # reported every file it was shown.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/99-ab.md"
+
+  pack_run 'tracker_preflight'
+  assert_success
+  assert_equal "$output" ""
+}
+
+@test "a tracker whose only files are unreachable still says why there is no work" {
+  # The direction an early return swallows. `tracker_ids` answering nothing and
+  # `tracker_ids` answering nothing *because every file in the directory is
+  # unreachable* look identical from the loop, and only one of them is a tracker
+  # somebody has to go and fix.
+  rm -f "$TRACKER_DIR"/*.md
+  printf '# 99 — a ticket nobody can address\n\n**Status:** ready-for-agent\n' \
+    >"$TRACKER_DIR/$(printf '99-a\nb').md"
+
+  pack_run 'tracker_preflight'
+  assert_failure
+  assert_output_contains "unaddressable-name"
+}
+
+@test "a name carrying a tab does not shift the fields of the finding it produces" {
+  # The other separator of a finding, and a file name may carry it. Unescaped, the
+  # subject would eat the outcome's column, `read -r subject outcome message`
+  # would hand a human two thirds of a sentence, and the journal line would name
+  # an outcome no reader has ever seen.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '99-a\nb\tc').md"
+
+  pack_run 'tracker_preflight'
+  assert_failure
+  assert_output_contains "$(printf '99-a\\nb\\tc.md\tunaddressable-name\ttracker: ')"
+}
+
+@test "a scan says nothing more about a name a reader has already been given" {
+  # What "said out loud" became: said *once*. The producer keeps its sentence for
+  # the callers no preflight covers — a name written into `issues/` after the run
+  # started — and stops repeating the one an entry point has already put in front
+  # of a human.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '99-a\nb').md"
+
+  pack_run '
+tracker_finding_said "99-a\nb.md" unaddressable-name
+tracker_ids >/dev/null
+tracker_frontier >/dev/null
+'
+  assert_success
+  refute_output_contains "carries a newline in its name"
+}
+
+@test "the paired witness: a scan nobody told still says it, every time" {
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '99-a\nb').md"
+
+  pack_run '
+tracker_ids >/dev/null
+tracker_frontier >/dev/null
+'
+  assert_success
+  run bash -c "printf '%s\n' \"\$1\" | grep -c 'carries a newline in its name'" _ "$output"
+  assert_equal "$output" "2"
+}
+
+@test "one name a reader has been given does not silence a second one" {
+  # The pin, in the direction that matters: a memo of what was said is only
+  # useful if it is a memo of *what* was said. One entry silencing the file next
+  # to it is how a control that reports an action it never took gets written.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '99-a\nb').md"
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '98-c\nd').md"
+
+  pack_run '
+tracker_finding_said "99-a\nb.md" unaddressable-name
+tracker_ids >/dev/null
+'
+  assert_success
+  assert_output_contains '"98-c\nd.md"'
+  refute_output_contains '"99-a\nb.md"'
+}
+
+@test "a finding of another kind silences nothing" {
+  # The memo is told about every finding and keeps the ones with a second voice.
+  # A duplicate id has no producer printing it on the side, and a memo that took
+  # the subject of any finding at all would be a memo of the wrong thing.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '99-a\nb').md"
+
+  pack_run '
+tracker_finding_said "99-a\nb.md" ambiguous-id
+tracker_ids >/dev/null
+'
+  assert_success
+  assert_output_contains "carries a newline in its name"
+}
+
 # ── one number at a time ─────────────────────────────────────────────────────
 #
 # Allocating an `NN` reads the directory, takes the max and writes it back, and

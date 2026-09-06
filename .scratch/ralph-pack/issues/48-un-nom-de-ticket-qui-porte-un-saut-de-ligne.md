@@ -225,3 +225,18 @@ rouvre le trou » tient. Ce que la passe a mesuré est le **rapport**.
   ligne `loop_log` **et** une ligne de journal. Il ne porte qu'`ambiguous-id`.
 - Conséquence pour la clause d'interface écrite ici pour [18] : elle n'a **aucun
   logement**. Sondes : `../sondes/passe-05-09/q3-*.bats`.
+
+- **Le rapport a changé de propriétaire — [64], livré le 06/09/2026.** Le filtre
+  de ce ticket n'a pas bougé (`tracker_local__addressable`, les six scans, et la
+  règle « un septième scan sans le filtre rouvre le trou » tient). Ce qui a bougé
+  est la **voix** : `tracker_local__refuse_name` n'existe plus, les deux scans
+  appellent `tracker_refuse_name`, une publique de l'interface, et le nom devient
+  un constat `unaddressable-name` de `tracker_preflight` — une ligne `loop_log` et
+  une ligne de journal, dites une fois au démarrage du run et du drain. La raison
+  est mesurée et pas théorique : la ligne `>&2` écrite ici était dite huit fois
+  sur la console d'un run AFK et zéro fois dans `run.log`, dans le reçu et dans le
+  playthrough. Le raisonnement écrit dans le commentaire de ce ticket portait sur
+  la **substitution de commande** et jamais sur la **redirection** : trois
+  consommateurs lisent `$(tracker_ids 2>/dev/null)` et jetaient la ligne. Les
+  entrées de mutation de [48] qui nommaient `tracker_local__refuse_name` ont été
+  ré-ancrées, pas supprimées.

@@ -137,12 +137,21 @@ human_loop_preflight() {
 
   [ "$rc" = 0 ] || return "$rc"
 
-  # The duplicate-id scan, and this loop is the one component that can act on it
-  # ([27], [47]): two tickets carrying one number take every ticket that names it
-  # out of the frontier for good, a session can no longer create the collision,
+  # The tracker's own findings, and this loop is the one component that can act on
+  # them ([27], [47]): two tickets carrying one number take every ticket that names
+  # it out of the frontier for good, a session can no longer create the collision,
   # and renaming one of them is a thing only a human — or this drain — may do. The
   # sentence shown is the one `tracker_preflight` produces, never a second
   # rendering of the same finding.
+  #
+  # **Chosen, not inherited** ([64]). The preamble above says this preflight is a
+  # list and not a delegation: it does not call `loop_preflight`, so nothing added
+  # there ever arrives here on its own. The second finding of `tracker_preflight` —
+  # a file in `issues/` whose name no backend can hand out as an id ([48]) — is
+  # taken deliberately, and for the reason the duplicate is: the fix is a rename,
+  # a rename is a human's, and this is the entry point with a human already sitting
+  # at it. Measured before it was: a drain over such a file said the sentence six
+  # times, on a console, and wrote nothing anywhere.
   human_loop__report_tracker_findings
   return 0
 }
@@ -153,6 +162,7 @@ human_loop__report_tracker_findings() {
     [ -n "$subject" ] || continue
     human_loop_log "$message"
     router_journal "$subject" "$outcome" drain
+    tracker_finding_said "$subject" "$outcome"
   done <<FINDINGS
 $(tracker_preflight)
 FINDINGS

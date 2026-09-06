@@ -146,6 +146,48 @@ teardown() {
   assert_ticket_status 03-blocked ready-for-agent
 }
 
+@test "a file no scan of the tracker can reach is named at the start, and the run goes on" {
+  # [64]. The second finding of the preflight, and it travels the channel [27]
+  # built rather than a `printf ... >&2` inside the scan: measured before this,
+  # the sentence was on the console eight times and in `run.log` never — and
+  # `run.log` is what a human opens in the morning after an AFK night.
+  use_tickets 01-alpha
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/$(printf '50-a\nb').md"
+
+  run_loop
+  assert_success
+  assert_output_contains "carries a newline in its name"
+  # Copied before the next `run`, which overwrites it.
+  local out="$output"
+
+  # In run.log, where the duplicate id lands too: the subject is the file to go
+  # and rename, escaped so that the line naming a newline is not itself cut in
+  # two.
+  assert_file_contains "$FEATURE_DIR/run.log" "unaddressable-name"
+  assert_file_contains "$FEATURE_DIR/run.log" '50-a\nb.md'
+
+  # Said once, at the start — not rediscovered by every scan of every iteration.
+  run bash -c "printf '%s\n' \"\$1\" | grep -c 'carries a newline in its name'" _ "$out"
+  assert_equal "$output" "1"
+
+  # And the run did its night's work anyway: reporting, not refusing.
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "the paired witness: a tracker no scan refuses anything in says nothing about a name" {
+  use_tickets 01-alpha
+  # Scanned like any other file, and off the frontier: what this witness is about
+  # is the name, and a second ticket on the frontier would be ground for bytes
+  # that are already there.
+  cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/50-ab.md"
+  perl -pi -e 's/ready-for-agent/ready-for-human/' "$TRACKER_DIR/50-ab.md"
+
+  run_loop
+  assert_success
+  refute_output_contains "carries a newline in its name"
+  refute_file_contains "$FEATURE_DIR/run.log" "unaddressable-name"
+}
+
 @test "a tracker with nothing wrong with it says nothing at the start" {
   use_tickets 01-alpha 03-blocked
 

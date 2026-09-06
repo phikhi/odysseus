@@ -128,6 +128,49 @@ $output"
   assert_output_contains "Unblocks: 2 ticket(s)"
 }
 
+@test "the drain names the file no scan can reach, once, and puts it in the journal" {
+  # [64], and it is chosen rather than inherited: this preflight is a list and not
+  # a delegation, so a finding added to `loop_preflight` never arrives here on its
+  # own. It is taken because the fix is a rename, a rename is a human's, and this
+  # is the entry point with a human already reading. Measured before this: a drain
+  # over such a file said the sentence six times, on a console, and wrote nothing
+  # anywhere.
+  mk_ticket 20-one Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  cp "$TRACKER_DIR/20-one.md" "$TRACKER_DIR/$(printf '50-a\nb').md"
+
+  drain <<ANSWERS
+q
+ANSWERS
+  assert_failure 3
+  assert_output_contains "carries a newline in its name"
+  local out="$output"
+
+  # The same rendering the AFK run gets, in the same journal, under the same
+  # outcome — one finding, one sentence, two entry points.
+  assert_file_contains "$(journal_file)" "unaddressable-name"
+  assert_file_contains "$(journal_file)" '50-a\nb.md'
+
+  run bash -c "printf '%s\n' \"\$1\" | grep -c 'carries a newline in its name'" _ "$out"
+  assert_equal "$output" "1"
+}
+
+@test "the paired witness: a drain with nothing unreachable in the tracker says nothing" {
+  mk_ticket 20-one Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  cp "$TRACKER_DIR/20-one.md" "$TRACKER_DIR/50-ab.md"
+
+  drain <<ANSWERS
+q
+ANSWERS
+  assert_failure 3
+  refute_output_contains "carries a newline in its name"
+  # No journal line either, and the file need not even exist: a drain that found
+  # nothing wrong with the tracker and was quit at the first ticket writes none.
+  run bash -c "grep -c 'unaddressable-name' '$(journal_file)' 2>/dev/null || printf 0"
+  assert_equal "$output" "0"
+}
+
 @test "an empty sink is not a sink that was emptied" {
   use_tickets 01-alpha 02-beta
 

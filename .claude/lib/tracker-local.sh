@@ -51,8 +51,9 @@ tracker_local__issues_dir() {
 # backend hands one out (`frontier`, `ids`), resolves one (`__path`), or lets one
 # decide the answer about a name that *is* an id (`__number_taken`,
 # `__slug_taken`, the carrier count of a renumber). What that leaves is a file the
-# pack cannot reach, named out loud rather than skipped in silence, and the trust
-# table carries the line.
+# pack cannot reach, named out loud rather than skipped in silence — as a finding
+# of `tracker_preflight` since [64], and not on a console — and the trust table
+# carries the line.
 #
 # The one place a name like this still moves something is `tracker_local__next_nn`,
 # and it is left alone knowingly: that function reads `ls` output through a sed
@@ -70,20 +71,16 @@ tracker_local__addressable() {
   return 0
 }
 
-# Said by the two scans that would otherwise hand the name out as an id, on every
-# scan that meets one — and the repetition is the decision, not an oversight.
-#
-# A ticket nobody can reach is worse than a ticket nobody can grind if nothing
-# says so, and the line has to survive being printed from a subshell: every
-# consumer reads these lists as `$(tracker_ids)`, so a "say it once" flag kept in
-# a variable would be forgotten between two callers and would quietly say it
-# never. The name is rendered with its newline escaped, because a message that
-# printed the raw name would arrive as two lines and reproduce the very defect it
-# reports.
-tracker_local__refuse_name() {
-  printf 'tracker: "%s" carries a newline in its name — that is not an id this backend hands out and nothing in the pack can address it, so it is on no frontier and no scan of the tracker sees it. Rename it.\n' \
-    "${1//$'\n'/\\n}" >&2
-}
+# The two scans that would otherwise hand the name out as an id call
+# `tracker_refuse_name`, and this backend renders no sentence of its own. [48] put
+# a `printf ... >&2` here, reasoning carefully about the command substitution
+# every consumer reads these lists through and never about the redirection: said
+# eight times on the console of an AFK run, zero times in `run.log`, in the
+# receipt and in the playthrough, and swallowed outright by the three consumers
+# that read `$(tracker_ids 2>/dev/null)`. The name goes up to the interface
+# instead ([64]), which owns the shape of an id and says it once where a human
+# reads it — and a second backend gets that for nothing rather than reimplementing
+# eight `printf`s of its own.
 
 # Accepts `01`, `01-alpha` or `01-alpha.md`.
 #
@@ -224,7 +221,7 @@ tracker_local_frontier() {
     # Before the status is even read: a name this backend cannot hand out as an id
     # is not a ticket of this tracker whatever it says about itself ([48]).
     if ! tracker_local__addressable "$id"; then
-      tracker_local__refuse_name "$id"
+      tracker_refuse_name "$id"
       continue
     fi
     [ "$(tracker_local__field_of_file "$file" Status)" = "ready-for-agent" ] || continue
@@ -244,7 +241,7 @@ tracker_local_ids() {
     [ -e "$file" ] || continue
     id="$(basename "$file")"
     if ! tracker_local__addressable "$id"; then
-      tracker_local__refuse_name "$id"
+      tracker_refuse_name "$id"
       continue
     fi
     printf '%s\n' "${id%.md}"
