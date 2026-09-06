@@ -277,9 +277,9 @@ d'appeler `loop_preflight`.
 - **[18]** — un backend distant qui déplace la trace forensique déplace une preuve
   que rien n'épingle ; à lire avec [66].
 
-## L'ordre proposé
+## L'ordre, validé par Philippe le 06/09/2026
 
-**[69] → [67] → [66] → [68]**, puis [18] → [19].
+**[69] → [67] → [66] → [68] → [18] → [19]**
 
 Par le critère du dépôt — **minimiser la reprise**, jamais la gravité :
 
@@ -298,3 +298,5 @@ Par le critère du dépôt — **minimiser la reprise**, jamais la gravité :
 
 `Blocked by:` en conséquence : `[67] 69`, `[66] 67`, `[68] 66`, et `[18]` gagne
 `66`.
+
+Écrit dans les quatre tickets (« Place dans la file »).

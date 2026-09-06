@@ -47,3 +47,11 @@
 - **Contrainte pour [11]** : sa borne est écrite comme une borne de run et son argument nomme un humain. À relire avec ce ticket.
 
 - **Piège de sonde.** Une session routée n'a pas `$FEATURE` dans son environnement : prendre le répertoire par `ls -d "$root"/.scratch/*/`. Et le prompt du gate de valeur se lit par `playthrough_call_stdin 1`, entre `--- spec begins ---` et `--- spec ends ---`.
+
+- **Place dans la file, validée par Philippe le 06/09/2026 : quatrième**, derrière
+  [66] et avant [18]. C'est le seul des quatre dont la réparation n'est pas
+  décidée : il faut d'abord trancher *qui possède l'intervalle entre deux runs*,
+  et les trois sorties écrites plus haut dépendent de ce que [66] aura livré comme
+  mécanisme pour nommer ce qu'une session routée laisse hors de `issues/`. Livré
+  avant [66], il inventerait ce mécanisme ; livré après, il choisit. `Blocked by:
+  66`. Ordre complet retenu : [69] → [67] → [66] → [68] → [18] → [19].

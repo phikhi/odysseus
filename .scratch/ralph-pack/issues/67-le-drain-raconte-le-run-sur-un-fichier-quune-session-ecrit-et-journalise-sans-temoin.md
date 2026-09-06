@@ -64,3 +64,14 @@
 - **Contrainte pour [16]** : `human_loop_preflight` est écrit comme *une liste et pas une délégation*. Un témoin ajouté ici ne doit pas devenir un appel à `loop_preflight` par la bande.
 
 - **Piège de sonde.** `grep -c 'journal'` sur la sortie d'un drain compte le libellé du dossier (`journal  its own lines in run.log, below.`) : pour mesurer une plainte, chercher `does not hold exactly`.
+
+- **Place dans la file, validée par Philippe le 06/09/2026 : deuxième**, derrière
+  [69] et avant [66]. Il rouvre `human-loop.sh` immédiatement après [69] : deux
+  tickets dessinés sur un fichier sont un `decision` que le pack sait produire tout
+  seul, et les coller évite de relire ce point d'entrée deux fois. Devant [66]
+  parce que le témoin du journal est un mécanisme **fermé** (une variable du
+  process du drain, une comparaison en sortie, rien qui dépende de ce que [66]
+  décidera de `router_pin`), alors que [66] rouvre `router_pin` et
+  `router_tree_note` : livré derrière, il aurait à choisir entre s'accrocher au
+  nouvel épinglage ou rester à côté. `Blocked by: 69`. Ordre complet retenu :
+  [69] → [67] → [66] → [68] → [18] → [19].
