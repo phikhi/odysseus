@@ -4027,9 +4027,11 @@ mutation "57 the drain asks at the ticket and not after each decision" "$HUMAN_L
   test/human-loop.bats "took the run lock away"
 
 # It asks, it says so, and it drains on anyway — which is the shape a lost lock
-# had before this ticket, minus the silence.
+# had before this ticket, minus the silence. Anchored on the `exit` itself, which
+# is the only one in this file: [67] put the journal witness between it and the
+# tally, and an anchor spanning the two would have to move again next time.
 mutation "57 a lock the drain no longer holds is said and not acted on" "$HUMAN_LOOP" \
-  's/  human_loop_log "stopped with \$3 and everything after it still in the sink"\n  exit 4\n/  human_loop_log "stopped with \$3 and everything after it still in the sink"\n/' \
+  's/^  exit 4\n\}/}/m' \
   test/human-loop.bats "took the run lock away"
 
 # And the line that carries the refusal out of one ticket into the drain. Without
@@ -4187,7 +4189,7 @@ mutation "58 the pin records no tracker, so nothing a session moved is put back"
   test/human-loop.bats "resolve the ticket this drain has not reached yet"
 
 mutation "58 the drain says nothing about what a session wrote in the tracker" "$HUMAN_LOOP" \
-  's/  if moved="\$\(router_protect_tracker "\$id"\)"; then\n    printf \x27%s\\n\x27 "\$moved" \| sed \x27s\/\^\/ralph: \/\x27\n  fi\n//' \
+  's/  router_protect_tracker "\$id" \|\| true\n//' \
   test/human-loop.bats "resolve the ticket this drain has not reached yet"
 
 # The restore itself, one entry per state it can write. Named and not put back is
@@ -4845,6 +4847,52 @@ mutation "69 a repository nobody left a worktree in ends the drain" "$HUMAN_LOOP
 mutation "69 what a killed run left is a reason to refuse the human who came to look" "$HUMAN_LOOP" \
   's/  local leftovers\n  while IFS= read -r leftovers; do\n/  local leftovers\n  if gate_leftovers >\/dev\/null 2>&1; then exit 2; fi\n  while IFS= read -r leftovers; do\n/' \
   test/human-loop.bats "left outside this repository"
+
+# ── [67] one file, read twice, and journalled without a witness ──────────────
+#
+# Two halves of `run.log`. The first three entries are about what the drain *says*
+# of that file: the reserve one of its two readers carried and the other did not,
+# and the one conclusion that is an **absence** — a negation a single forged line
+# withdrew, on the one end this pack writes down nowhere else.
+#
+# The last four are about what the drain *writes* there. Two of them delete the
+# witness, and two are the pair that keeps it from becoming a drain that accuses
+# itself: a witness written from a subshell and a witness measured from the top of
+# the file are both green under the accusing test and both wrong.
+
+mutation "67 the four run-level words arrive without their reserve" "$ROUTER" \
+  's/^router__run_notes_caveat\(\) \{/router__run_notes_caveat() { return 0;/m' \
+  test/human-loop.bats "reserve the ticket"
+
+mutation "67 one forged line withdraws the end nothing else writes down" "$ROUTER" \
+  's/    if \[ -z "\$after" \]; then\n/    if [ -n "\$after" ]; then :; elif [ -z "\$after" ]; then\n/' \
+  test/human-loop.bats "nowhere else"
+
+# And the other direction, because a drain that printed the withdrawal sentence
+# whatever the file held would pass the entry above while having lost the finding.
+mutation "67 the withdrawal is said over a file that withdrew nothing" "$ROUTER" \
+  's/    if \[ -z "\$after" \]; then\n/    if [ -n "\$after" ] \&\& [ -z "\$after" ]; then\n/' \
+  test/human-loop.bats "killed while draining"
+
+mutation "67 a journal rewritten under the drain is never noticed" "$ROUTER" \
+  's/^router_journal_verify\(\) \{/router_journal_verify() { return 0;/m' \
+  test/human-loop.bats "rewritten under the drain"
+
+mutation "67 the drain keeps no copy of what it journalled" "$ROUTER" \
+  's/  ROUTER__JOURNAL_WITNESS="\$ROUTER__JOURNAL_WITNESS\$line\n"\n//' \
+  test/human-loop.bats "rewritten under the drain"
+
+mutation "67 the drain never asks whether its own lines survived" "$HUMAN_LOOP" \
+  's/  router_journal_verify \|\| true\n\n  if ! sink="\$\(router_sink\)" \|\| \[ -z "\$sink" \]; then\n/  if ! sink="\$(router_sink)" \|\| [ -z "\$sink" ]; then\n/' \
+  test/human-loop.bats "rewritten under the drain"
+
+mutation "67 the drain's own lines are counted in a subshell" "$HUMAN_LOOP" \
+  's/  router_protect_tracker "\$id" \|\| true\n/  if moved="\$(router_protect_tracker "\$id")"; then printf \x27%s\\n\x27 "\$moved"; fi\n/' \
+  test/human-loop.bats "does not accuse itself"
+
+mutation "67 the drain's block is measured from the top of the file" "$HUMAN_LOOP" \
+  's/  router_journal_base\n\n  human_loop_preflight \|\| exit 2\n/  human_loop_preflight || exit 2\n/' \
+  test/human-loop.bats "does not accuse itself"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

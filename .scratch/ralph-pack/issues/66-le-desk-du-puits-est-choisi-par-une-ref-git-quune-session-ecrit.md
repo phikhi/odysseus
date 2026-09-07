@@ -53,3 +53,32 @@
   avant la session routée. Collé à [18] pour la raison qui a fait coller [64] :
   le mécanisme est écrit et rempli dans la foulée plutôt que relu deux fois.
   Ordre complet retenu : [69] → [67] → [66] → [68] → [18] → [19].
+
+- **Ce que [67] laisse à ce ticket, livré le 07/09/2026.** Quatre choses à hériter
+  avant de rouvrir `router.sh`.
+
+  1. **Une phrase du drain affirme désormais que rien ne garde cette zone.**
+     `router__run_notes_caveat` dit, au-dessus des quatre mots du run, « `run.log`,
+     under `.scratch/`, which nothing in this pack guards and nothing can ». Si ce
+     ticket ajoute un garde qui **nomme** ce qu'une session laisse dans
+     `.scratch/<feature>/`, cette phrase devient à moitié fausse le jour de la
+     livraison — la relire est un AC de [66], pas un détail de rédaction. Même
+     question pour la réserve jumelle de `router_journal_lines`, qui la porte
+     depuis [16].
+  2. **`router_journal` tient un témoin, donc tout nouvel appelant doit être dans
+     le shell du drain.** `ROUTER__JOURNAL_WITNESS` est une variable du process ;
+     un `router_journal` appelé depuis une substitution de commande, la droite d'un
+     pipeline ou un `&` écrit la ligne dans le fichier et **pas** dans le témoin,
+     et le drain se termine en s'accusant d'une réécriture que personne n'a faite.
+     C'est ce qui a coûté à [67] de sortir `router_protect_tracker` de son
+     `moved="$(…)"`.
+  3. **`router_protect_tracker` imprime son propre préfixe `ralph: `** et est
+     appelé comme une instruction (`router_protect_tracker "$id" || true`). Un
+     ticket qui veut capturer sa sortie doit se demander d'abord où ses neuf
+     `router_journal` atterrissent.
+  4. **Un épinglage de refs se compare, il ne se journalise pas dans une boucle.**
+     La posture que [67] a tenue et que [69] avait posée : ces mécanismes comptent
+     et ne jugent rien — `router_journal_verify` ne change jamais le code de sortie
+     du drain, parce qu'un refus donnerait à une session routée une ligne pour
+     renvoyer chez lui l'humain venu vider le puits. Un garde de refs qui
+     **refuserait** le drain casserait la même règle au même endroit.

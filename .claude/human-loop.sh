@@ -216,6 +216,10 @@ human_loop__locks_are_ours() {
 human_loop__stop_lost_lock() {
   human_loop_log "drained $1 ticket(s), left $2 where they were"
   human_loop_log "stopped with $3 and everything after it still in the sink"
+  # And the journal, on this end too ([67]). A lock taken out from under a drain
+  # is the one exit where what was already decided matters most, and it is the one
+  # a `while` loop's `break` does not reach.
+  router_journal_verify || true
   exit 4
 }
 
@@ -229,7 +233,7 @@ human_loop__stop_lost_lock() {
 # and leave the rest of the sink where it was. What it costs is a line saying so,
 # and the ticket stays exactly where it was: this function marks nothing.
 human_loop__session() {
-  local id="$1" desk rc=0 left moved
+  local id="$1" desk rc=0 left
   if [ -z "${MODEL:-}" ]; then
     human_loop_log "$id: MODEL is empty, so there is nothing to open a session with — set it in $RALPH_CONFIG"
     return 1
@@ -260,9 +264,17 @@ human_loop__session() {
   # would otherwise make the drain refuse itself on its second ticket — and a
   # ticket file is in exactly that dropped zone. This one looks at nothing else.
   # It puts back what left this sink, and names the rest.
-  if moved="$(router_protect_tracker "$id")"; then
-    printf '%s\n' "$moved" | sed 's/^/ralph: /'
-  fi
+  #
+  # **Called here and not through a command substitution, which is the difference
+  # between the two lines** ([67]). `router_tree_note` reports; this one *writes
+  # the tracker and journals what it wrote*, and a command substitution is a
+  # subshell — the drain's copy of its own journal lines would die in it, and a
+  # drain whose session moved a neighbouring ticket would end by accusing itself
+  # of a journal nobody rewrote. So the prefix is printed at the other end, by the
+  # function that knows which of its sentences is one, and this call is a plain
+  # statement in this shell. `|| true` for the reason [69]'s leftovers carry one:
+  # a refusal means "nothing moved", never "stop".
+  router_protect_tracker "$id" || true
   router_journal "$id" drain-session "$desk"
   return 0
 }
@@ -390,6 +402,18 @@ human_loop_main() {
 
   cd "$(ralph_project_root)"
 
+  # Where this drain's own block in `run.log` starts, taken before the preflight —
+  # which journals the tracker's findings ([64]) — and never later, for the reason
+  # `loop_main` takes its own base at the same place: a base read on the first
+  # append is already past whatever went missing before it, and the check at the
+  # end would balance over a hole.
+  #
+  # In `human_loop_main` and not in the preflight, and that is the constraint [67]
+  # wrote into [16] before writing this line: `human_loop_preflight` is a list of
+  # what a drain cannot run without and not a delegation, so a witness taken from
+  # inside it would be the first step of turning it into one.
+  router_journal_base
+
   human_loop_preflight || exit 2
 
   # Both locks, and the coarser one first, exactly as `loop_main` takes them.
@@ -463,6 +487,9 @@ LEFTOVERS
   local sink id rc=0 drained=0 left=0 quit=0 changed=0
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "nothing to drain: the human sink was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
+    # A drain that offered nothing may still have journalled: the preflight writes
+    # the tracker's own findings ([64]) before either lock is taken.
+    router_journal_verify || true
     exit 5
   fi
 
@@ -529,6 +556,19 @@ SINK
   # printed on every ordinary drain, is the noise [37] ruled out.
   [ "$changed" = 0 ] ||
     human_loop_log "$changed ticket(s) left this sink while this drain was running, without a decision from it"
+
+  # Last, after every decision has been taken and journalled, and never a reason
+  # to change the exit code ([10], and [69]'s posture on the leftovers above): a
+  # journal is not an authority in this pack — nothing reads it back to choose or
+  # to mark — so a rewritten one costs a reader and not a decision. Turning it
+  # into a stop would hand a routed session a one-line way to end the drain of the
+  # human who came to empty this sink.
+  #
+  # What it says when it fires is worth more here than on the AFK path, and that
+  # is why [67] built it: these lines are the only trace this pack keeps of what a
+  # **human** decided. The tracker holds the state a `r`, an `s` or a `c` wrote;
+  # nothing but this file says who wrote it, or that a drain ran at all.
+  router_journal_verify || true
 
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "the human sink is empty"

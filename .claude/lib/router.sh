@@ -85,6 +85,10 @@
 #                                  human half
 #   router_close ID                wontfix
 #   router_journal ID OUTCOME ACTION   one line in `run.log`
+#   router_journal_base            where this drain's own block in `run.log`
+#                                  starts, taken before anything journals
+#   router_journal_verify          non-zero, loudly, when `run.log` no longer
+#                                  holds the lines this drain wrote
 
 # ── the closed set ───────────────────────────────────────────────────────────
 
@@ -176,6 +180,14 @@ ROUTER__PINNED_SURFACE=''
 ROUTER__PINNED_FAILURES=''
 ROUTER__PINNED_TREE=''
 ROUTER__PINNED_TRACKER=''
+
+# Every line this drain wrote in `run.log`, in order, and how many the file held
+# before it wrote any. Variables of the drain's own process and never files, for
+# the reason [08]'s budget cache is never one: a file would be a file the routed
+# session writes, which is exactly what they exist to detect. See `router_journal`
+# and `router_journal_verify`.
+ROUTER__JOURNAL_WITNESS=''
+ROUTER__JOURNAL_BASE=0
 
 # Pin one ticket. Called once per ticket by whatever drains the sink, before the
 # dossier and before any session — before the dossier included, so that what a
@@ -590,21 +602,21 @@ router__say_unrestored() {
   now_digest="$(router__ticket_digest "$other")" || now_digest=''
 
   if [ "$now_fail" != "$was_fail" ]; then
-    printf '%s reads `Failures: %s` after that session, where this drain took it as `%s`, and nothing here put it back: a retry budget has no verb that writes it — the loop adds one at a time and a delivery clears it — so a restore would be a second author for a number only a gate ever moved. What it decides is how many fresh sessions that ticket gets before the loop gives up on it, and which desk the next drain routes it to. No gate wrote that number.\n' \
+    printf 'ralph: %s reads `Failures: %s` after that session, where this drain took it as `%s`, and nothing here put it back: a retry budget has no verb that writes it — the loop adds one at a time and a delivery clears it — so a restore would be a second author for a number only a gate ever moved. What it decides is how many fresh sessions that ticket gets before the loop gives up on it, and which desk the next drain routes it to. No gate wrote that number.\n' \
       "$other" "${now_fail:-nothing}" "${was_fail:-nothing}"
     router_journal "$other" tracker-drift failures
     said=0
   fi
 
   if [ "$now_block" != "$was_block" ]; then
-    printf '%s reads `Blocked by: %s` after that session, where this drain took it as `%s`, and nothing here put it back. A ticket naming a blocker that is not resolved never enters the frontier, so a number written here takes it out of every autonomous run there is until somebody reads the file — and a ticket that left the frontier this way is not escalated, not claimed and not named anywhere else.\n' \
+    printf 'ralph: %s reads `Blocked by: %s` after that session, where this drain took it as `%s`, and nothing here put it back. A ticket naming a blocker that is not resolved never enters the frontier, so a number written here takes it out of every autonomous run there is until somebody reads the file — and a ticket that left the frontier this way is not escalated, not claimed and not named anywhere else.\n' \
       "$other" "${now_block:-nothing}" "${was_block:-nothing}"
     router_journal "$other" tracker-drift blocked
     said=0
   fi
 
   if [ "$now_digest" != "$was_digest" ]; then
-    printf '%s reads differently after that session and none of the fields this drain watches moved, so what changed is the rest of its file. It is left exactly as it was written, for the reason the quarantine does not delete a ticket ([21], [27]) — and it is said here because a ticket body is a prompt: what is in this one goes verbatim to the next session opened on it, routed or autonomous, and nothing judged a word of it.\n' \
+    printf 'ralph: %s reads differently after that session and none of the fields this drain watches moved, so what changed is the rest of its file. It is left exactly as it was written, for the reason the quarantine does not delete a ticket ([21], [27]) — and it is said here because a ticket body is a prompt: what is in this one goes verbatim to the next session opened on it, routed or autonomous, and nothing judged a word of it.\n' \
       "$other"
     router_journal "$other" tracker-drift body
     said=0
@@ -623,11 +635,19 @@ router__say_unrestored() {
 # the reading side, a control announcing having acted on what it left exactly as
 # it was.
 #
-# It writes to the tracker from inside a command substitution, and that is sound
-# where [55]'s note says a pin could not be: a subshell cannot hand its caller a
-# shell variable, and it can perfectly well hand it a file. What it must not do
-# is refresh the pin — the baseline stays the state this drain took, so a second
-# session in the same ticket says the same thing about what is still true.
+# It writes to the tracker, and it is read **in the drain's own shell** — it
+# prints its own `ralph: ` prefix rather than being captured and prefixed by the
+# caller, and that is the whole reason ([67]). A command substitution is a
+# subshell: writing the tracker from one is sound, as [55]'s note says, because a
+# subshell can hand its caller a file; journalling from one is not, because the
+# drain's copy of what it journalled is a shell variable and dies there. Nine
+# `router_journal` calls hang off this function, one per `tracker-drift` word —
+# six here and the three of `router__say_unrestored` — so a drain whose routed
+# session moved a neighbouring ticket would have ended by accusing itself of a
+# journal nobody rewrote: [10]'s reclaim trap, one entry point over. What it
+# must not do either way is refresh the pin: the baseline stays the state this
+# drain took, so a second session in the same ticket says the same thing about
+# what is still true.
 #
 # Refuses loudly on a ticket nothing pinned, for [55]'s reason and not for
 # tidiness: with an empty pin every ticket in the tracker reads as one that
@@ -660,7 +680,7 @@ router_protect_tracker() {
     was_digest="${rest%%$tab*}"
 
     if ! printf '%s\n' "$now_ids" | grep -qxF -- "$other"; then
-      printf '%s is gone from the tracker, and it was there when this drain took %s. Nothing here can put a ticket back that it never had a copy of.\n' \
+      printf 'ralph: %s is gone from the tracker, and it was there when this drain took %s. Nothing here can put a ticket back that it never had a copy of.\n' \
         "$other" "$id"
       router_journal "$other" tracker-drift gone
       said=0
@@ -685,7 +705,7 @@ router_protect_tracker() {
       # read, this one reports a session's return whether or not a transition is
       # ever attempted. Two producers of one sentence would leave the older one's
       # mutation hollow without either guarantee having moved.
-      printf '%s reads `Status: %s` and `Escalation: %s` after that session, where this drain took it as `%s` and `%s`. This is the ticket in front of you, so nothing here put it back: a correction made during the conversation may be yours, and the next decision on it is yours too. Nothing has judged it — a state this drain did not write is a state no gate gave.\n' \
+      printf 'ralph: %s reads `Status: %s` and `Escalation: %s` after that session, where this drain took it as `%s` and `%s`. This is the ticket in front of you, so nothing here put it back: a correction made during the conversation may be yours, and the next decision on it is yours too. Nothing has judged it — a state this drain did not write is a state no gate gave.\n' \
         "$other" "${now_status:-nothing}" "${now_esc:-nothing}" \
         "${was_status:-nothing}" "${was_esc:-nothing}"
       router_journal "$other" tracker-drift held
@@ -697,17 +717,17 @@ router_protect_tracker() {
     router__put_back "$other" "$was_status" "$was_esc" || rc=$?
     case "$rc" in
       0)
-        printf '%s was moved to `Status: %s` while this drain was on %s, and has been put back to `%s`. A ticket leaves this sink — or the frontier — through a transition of this drain or not at all, and a `Status:` a session wrote is not one: nothing judged that ticket. The rest of what was written in its file is untouched.\n' \
+        printf 'ralph: %s was moved to `Status: %s` while this drain was on %s, and has been put back to `%s`. A ticket leaves this sink — or the frontier — through a transition of this drain or not at all, and a `Status:` a session wrote is not one: nothing judged that ticket. The rest of what was written in its file is untouched.\n' \
           "$other" "${now_status:-nothing}" "$id" "$was_status"
         router_journal "$other" tracker-drift restored
         ;;
       2)
-        printf '%s was moved to `Status: %s` while this drain was on %s, and putting it back to `%s` failed. It is where that session left it, and no gate has seen it.\n' \
+        printf 'ralph: %s was moved to `Status: %s` while this drain was on %s, and putting it back to `%s` failed. It is where that session left it, and no gate has seen it.\n' \
           "$other" "${now_status:-nothing}" "$id" "$was_status"
         router_journal "$other" tracker-drift restore-failed
         ;;
       *)
-        printf '%s now reads `Status: %s` and read `%s` when this drain took %s, and nothing here put it back: `%s` is not a state this drain can write without inventing a field it never took a copy of. If it left the frontier, no gate read a line of it.\n' \
+        printf 'ralph: %s now reads `Status: %s` and read `%s` when this drain took %s, and nothing here put it back: `%s` is not a state this drain can write without inventing a field it never took a copy of. If it left the frontier, no gate read a line of it.\n' \
           "$other" "${now_status:-nothing}" "${was_status:-nothing}" "$id" \
           "${was_status:-nothing}"
         router_journal "$other" tracker-drift named
@@ -723,7 +743,7 @@ PINNED
     if printf '%s\n' "$ROUTER__PINNED_TRACKER" | cut -f6- | grep -qxF -- "$other"; then
       continue
     fi
-    printf '%s is in the tracker and did not exist when this drain took %s. It is left where it is — a ticket that appeared is not deleted here, for the reason the quarantine does not delete one ([21], [27]) — and nothing has validated a word of it.\n' \
+    printf 'ralph: %s is in the tracker and did not exist when this drain took %s. It is left where it is — a ticket that appeared is not deleted here, for the reason the quarantine does not delete one ([21], [27]) — and nothing has validated a word of it.\n' \
       "$other" "$id"
     router_journal "$other" tracker-drift created
     said=0
@@ -732,7 +752,7 @@ $now_ids
 IDS
 
   [ "$said" = 0 ] || return 1
-  printf 'Only `Status:` and `Escalation:` are put back here. `Failures:`, `Blocked by:` and the body of every ticket are named and left as that session wrote them: there is no worktree, no scope-guard, no gate and no rollback on this path, and no verb that writes any of the three back without inventing state nothing measured.\n'
+  printf 'ralph: Only `Status:` and `Escalation:` are put back here. `Failures:`, `Blocked by:` and the body of every ticket are named and left as that session wrote them: there is no worktree, no scope-guard, no gate and no rollback on this path, and no verb that writes any of the three back without inventing state nothing measured.\n'
   return 0
 }
 
@@ -919,8 +939,36 @@ router_journal_lines() {
 #                             as a state.
 #   claim-refused             a ticket that read `ready-for-agent` and that no
 #                             iteration of that run could take ([49]).
+#
+# Read with the reserve `router_journal_lines` prints beside its own lines, and
+# printed **above** them rather than under them ([67]). Until this ticket the same
+# file was read twice, two functions apart, and only one of the two readings said
+# where it comes from: a human was handed the lines of one ticket with "read them,
+# do not rely on them" and four run-level affirmations with nothing. Both readings
+# are of `.scratch/<feature>/run.log`, which nothing in this pack guards and
+# nothing can — a session's own stream is written there while it is being watched,
+# and this drain writes there too.
 router_run_notes() {
-  local journal found=1
+  local words
+  words="$(router__run_notes_words)" || return 1
+  [ -n "$words" ] || return 1
+  router__run_notes_caveat
+  printf '%s\n' "$words"
+  return 0
+}
+
+# The reserve itself, and it says one thing `router_journal_lines` does not have
+# to: three of the four words below are read as a *presence* and one of them as an
+# **absence**, so this file buys silence at the price it buys a claim. A reader who
+# knows only "these lines may be forged" still reads a missing note as a fact about
+# the run.
+router__run_notes_caveat() {
+  printf 'The words below are read off `run.log`, under `.scratch/`, which nothing in this pack guards and nothing can: the sessions they are about write there, and this drain writes there too. A word that is *there* may have been put there, and a word that is *missing* is as cheap to arrange as one that is there. Read them, do not rely on them.\n'
+}
+
+# The four, one `if` each. Non-zero when the file has nothing worth reading out.
+router__run_notes_words() {
+  local journal found=1 after='' word
   journal="$(ralph_feature_dir)/run.log"
   [ -f "$journal" ] || return 1
 
@@ -932,9 +980,30 @@ router_run_notes() {
     printf 'run.log carries a `successor-blocked-*` word. That is a refusal to arm and it is not `weekly-pause`: `successor-blocked-path` in particular is a run that finished holding a `git`, a `claude` or an `at` it did not start with — a plant on this machine, not a project that resumes by hand.\n'
     found=0
   fi
-  if grep -q 'budget-wall' "$journal" 2>/dev/null &&
-    ! grep -q 'successor-armed\|weekly-pause\|successor-blocked-' "$journal" 2>/dev/null; then
-    printf 'run.log carries `budget-wall` with no `successor-armed`, no `weekly-pause` and no `successor-blocked-*`: that run was killed while it was draining. Nothing in this pack writes that end down as a state.\n'
+  # The one conclusion that is an **absence**, and since [67] the absence is said
+  # rather than left as a silence. It used to be a single `if` over a negation:
+  # `budget-wall` and none of the three words a run says after a wall it survived.
+  # Measured on the 06/09 pass — a routed session appends one line carrying
+  # `successor-armed`, the note is gone, and nothing anywhere says a note was
+  # withdrawn, on the one end this pack writes down nowhere else.
+  #
+  # So both arms print. The negation is still the finding; what changes is that
+  # the file can no longer buy silence on it, only a second sentence naming the
+  # word it bought the silence with. The three words are matched by one `grep` in
+  # a loop rather than by one `grep` each, so that the two lines above stay the
+  # only ones in this file matching their own text — an anchor that is not unique
+  # is a mutation entry that will one day edit the wrong function.
+  if grep -q 'budget-wall' "$journal" 2>/dev/null; then
+    for word in successor-armed weekly-pause successor-blocked-; do
+      if grep -q -- "$word" "$journal" 2>/dev/null; then
+        after="$after \`$word\`"
+      fi
+    done
+    if [ -z "$after" ]; then
+      printf 'run.log carries `budget-wall` with no `successor-armed`, no `weekly-pause` and no `successor-blocked-*`: that run was killed while it was draining. Nothing in this pack writes that end down as a state.\n'
+    else
+      printf 'run.log carries `budget-wall` and also:%s. A run that hit the wall and lived says one of those next, so this file is not saying that a run was killed while it was draining — and that is the whole of what withdraws it: one line carrying one of those words, anywhere in this file. The end this pack writes down nowhere else is said here or nowhere, so read that word as a claim and not as a fact.\n' "$after"
+    fi
     found=0
   fi
   if grep -q 'claim-refused' "$journal" 2>/dev/null; then
@@ -1363,8 +1432,77 @@ router_close() {
 # journal carries ([10]): the tracker is the only authority, and a line lost to a
 # crash costs a reader, not a decision.
 router_journal() {
-  local id="${1:-}" outcome="${2:-}" action="${3:-none}" journal
+  local id="${1:-}" outcome="${2:-}" action="${3:-none}" journal line
   journal="$(ralph_feature_dir)/run.log"
-  printf '%s\t%s\t%s\tturns=0\tcost=0\ttokens=0\taction=%s\n' \
-    "$(ralph_now)" "${id:--}" "$outcome" "$action" >>"$journal"
+  line="$(printf '%s\t%s\t%s\tturns=0\tcost=0\ttokens=0\taction=%s' \
+    "$(ralph_now)" "${id:--}" "$outcome" "$action")"
+  printf '%s\n' "$line" >>"$journal"
+  # And the drain's own copy of it, for the reason the pilot keeps one ([10]) and
+  # with one difference that decides how loudly this is worth saying: these lines
+  # are the only trace this pack keeps of what a **human** decided. `drained
+  # reinjected`, `drained signed-off`, `drained closed` — the tracker carries the
+  # state, and nothing anywhere carries who moved it or that a drain ran at all.
+  #
+  # A variable of the drain's own process and never a file, exactly as [08]'s
+  # budget cache and [10]'s journal witness: a file would be a file the routed
+  # session writes, which is the whole problem this exists to detect. Every caller
+  # is therefore in this shell and in no subshell of it — see
+  # `router_protect_tracker`, which had to stop being read through a command
+  # substitution to keep that true.
+  ROUTER__JOURNAL_WITNESS="$ROUTER__JOURNAL_WITNESS$line
+"
+}
+
+# Where this drain's own block in the journal starts, taken before anything in
+# this drain writes a line — the preflight journals the tracker's findings ([64])
+# before either lock is taken, so a base read on the first append is already past
+# whatever came with it, and the length check below would balance over a line that
+# went missing.
+#
+# Guarded on `FEATURE` and not on the caller's care: this runs before the preflight
+# that refuses an empty one, so it is the one function here that has to survive a
+# drain with no journal to measure.
+router_journal_base() {
+  ROUTER__JOURNAL_BASE=0
+  [ -n "${FEATURE:-}" ] || return 0
+  ROUTER__JOURNAL_BASE="$(awk 'END { print NR + 0 }' \
+    "$(ralph_feature_dir)/run.log" 2>/dev/null || printf 0)"
+  return 0
+}
+
+# Whether the journal still holds what this drain wrote, said once, at the end of
+# the drain. The AFK half of this is `loop_journal_verify` and the comparison is
+# deliberately the same one, down to the two questions: the file is exactly
+# `base + n` lines long, and its last `n` lines are this drain's own, verbatim and
+# in order. Length as well as tail, because "the file ends with my lines" is
+# satisfied by a file holding one line of mine too many at the front — which is
+# what a line written from a subshell looks like from here.
+#
+# What it can vouch for is this drain's block and nothing above it. A line an
+# earlier run wrote is not this drain's to remember, and that limit is the one the
+# 06/09 pass measured from the other end: a forgery a drain leaves in the file
+# enters the next run's `RALPH_JOURNAL_BASE` and is invisible to every run after
+# it. Detection of a rewrite, not a proof that the file is true.
+#
+# It never changes what the drain does, for [10]'s reason and for one of its own:
+# nothing reads this file to choose or to mark, and a witness that could end a
+# drain would hand a routed session a one-line way to stop the human who came to
+# empty the sink — the same posture the leftovers of [69] are written in, counted
+# and judging nothing.
+router_journal_verify() {
+  local journal n total
+  [ -n "${ROUTER__JOURNAL_WITNESS:-}" ] || return 0
+  journal="$(ralph_feature_dir)/run.log"
+  n="$(printf '%s' "$ROUTER__JOURNAL_WITNESS" | awk 'END { print NR + 0 }')"
+  [ "$n" -gt 0 ] || return 0
+  total="$(awk 'END { print NR + 0 }' "$journal" 2>/dev/null || printf 0)"
+  if [ "$total" = "$((${ROUTER__JOURNAL_BASE:-0} + n))" ] &&
+    [ "$(tail -n "$n" "$journal" 2>/dev/null || true)" = \
+      "$(printf '%s' "$ROUTER__JOURNAL_WITNESS")" ]; then
+    return 0
+  fi
+  printf 'ralph: the run journal does not hold exactly the %s line(s) this drain wrote, where it wrote them: something rewrote %s under it. Nothing here read that file to decide anything, so no ticket was marked on it — but those lines are the only trace this pack keeps of what you decided at this sink, and they are not in it any more. What this drain wrote follows.\n' \
+    "$n" "$journal"
+  printf '%s' "$ROUTER__JOURNAL_WITNESS" | sed 's/^/ralph: journal: /'
+  return 1
 }

@@ -450,6 +450,63 @@ ANSWERS
   assert_output_contains "a plant on this machine, not a project that resumes by hand"
 }
 
+@test "the run-level words carry the reserve the ticket's own lines carry" {
+  # One file, read twice, two functions apart, and until [67] only one of the two
+  # readings said where it comes from: a human was handed one ticket's lines with
+  # "read them, do not rely on them" and four run-level affirmations with nothing
+  # at all.
+  use_tickets 09-escalated
+  printf '2026-09-06T00:00:00Z\t-\tclaim-refused\tturns=0\tcost=0\ttokens=0\taction=none\n' \
+    >>"$(journal_file)"
+
+  drain <<ANSWERS
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "the frontier is short of a ticket"
+  assert_output_contains "A word that is *there* may have been put there"
+  assert_output_contains "as cheap to arrange as one that is there"
+}
+
+@test "one line cannot buy silence on the end this pack writes down nowhere else" {
+  # The 06/09 pass, Q2b. `budget-wall` with none of the three words a run says
+  # after a wall it survived is a run killed while it was draining — an end this
+  # sentence is the only place in the pack to say. It used to be a negation, so a
+  # routed session appending one line carrying `successor-armed` withdrew it, and
+  # the drain that followed said nothing at all.
+  use_tickets 09-escalated
+  {
+    printf '2026-09-06T00:00:00Z\t-\tbudget-wall\tturns=0\tcost=0\ttokens=0\taction=none\n'
+    printf '2026-09-06T00:00:01Z\t-\tsuccessor-armed\tturns=0\tcost=0\ttokens=0\taction=none\n'
+  } >>"$(journal_file)"
+
+  drain <<ANSWERS
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "carries \`budget-wall\` and also: \`successor-armed\`"
+  assert_output_contains "read that word as a claim and not as a fact"
+}
+
+@test "the same file without that line still says the run was killed while draining" {
+  # The paired witness. A drain that printed the withdrawal sentence whatever the
+  # file held would pass the test above while having lost the finding itself —
+  # the note that names an end nothing else in this pack ever writes down.
+  use_tickets 09-escalated
+  printf '2026-09-06T00:00:00Z\t-\tbudget-wall\tturns=0\tcost=0\ttokens=0\taction=none\n' \
+    >>"$(journal_file)"
+
+  drain <<ANSWERS
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "that run was killed while it was draining"
+  refute_output_contains "and also:"
+}
+
 @test "what the drain did is in the journal a human opens" {
   use_tickets 09-escalated
 
@@ -1281,6 +1338,97 @@ ANSWERS
   assert_output_contains "21-second reads differently after that session"
   assert_output_contains "a ticket body is a prompt"
   assert_file_contains "$(journal_file)" "tracker-drift"
+}
+
+# ── the drain's own copy of what it journalled ───────────────────────────────
+#
+# [10] made `run.log` tamper-evident rather than tamper-proof: the pilot keeps
+# every line it wrote in a variable of its own process and says so at the end when
+# the file no longer holds them. [16] added a second writer of that file and no
+# witness at all — and the lines that second writer puts there are the only trace
+# this pack keeps of what a **human** decided ([67]).
+#
+# The two tests below are a pair, and the second is the one that costs something
+# to keep green: every `router_journal` call has to happen in the drain's own
+# shell, the nine hanging off `router_protect_tracker` included, or an honest
+# drain ends by accusing itself.
+
+@test "a run journal rewritten under the drain is named, with the drain's own lines" {
+  # Nothing can stop the write: `run.log` is in the one directory this pack cannot
+  # guard, and moving it out of reach would move it out of the morning. So the
+  # decision a human just took is not protected, it is *witnessed*.
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+dir="$(ls -d "$root"/.scratch/*/ | head -1)"
+printf '2026-09-06T00:00:00Z\t-\ta night that never happened\tturns=0\tcost=0\ttokens=0\taction=none\n' \
+  >"$dir/run.log"
+exit 0
+SCRIPT
+
+  # `c` closes the first ticket — a decision, journalled — and the session opened
+  # on the second one overwrites the file that holds it.
+  drain <<ANSWERS
+c
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 20-first wontfix
+  assert_output_contains "does not hold exactly"
+  assert_output_contains "the only trace this pack keeps of what you decided"
+
+  # The copy has to go somewhere: after this the file is the only one left, and it
+  # is a lie. Asserted on the copy itself and not on the drain's whole output,
+  # where `20-first` appears in a dossier either way.
+  local said
+  said="$(printf '%s\n' "$output" | grep '^ralph: journal: ' || true)"
+  assert_contains "$said" "20-first"
+  assert_contains "$said" "action=closed"
+}
+
+@test "an honest drain does not accuse itself, a session that moved the tracker included" {
+  # The refutation the pair needs, and it is not decoration — it is [10]'s reclaim
+  # trap one entry point over. `router_protect_tracker` journals one line per
+  # ticket a session moved, and it used to be read through a command substitution:
+  # the drain's copy of those lines died in that subshell, so every drain whose
+  # session touched a neighbouring ticket would have ended by reporting its own
+  # journal rewritten.
+  #
+  # The file is seeded first, so that the base this drain measures is not zero: a
+  # witness that counted from the top of the file passes this test on an empty one
+  # and fails on every real morning.
+  two_in_the_sink
+  {
+    printf '2026-09-05T00:00:00Z\t01-old\tresolved\tturns=3\tcost=1\ttokens=9\taction=none\n'
+    printf '2026-09-05T00:00:01Z\t02-old\tresolved\tturns=2\tcost=1\ttokens=8\taction=none\n'
+  } >>"$(journal_file)"
+
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* .*$/**Status:** resolved/' "$tracker/21-second.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  # The drift really was journalled, so the witness really was exercised.
+  assert_output_contains "21-second was moved to \`Status: resolved\`"
+  assert_file_contains "$(journal_file)" "tracker-drift"
+  refute_output_contains "does not hold exactly"
+
+  # And the file is what the drain says it is: the two lines it was seeded with,
+  # plus the two this drain wrote — the drift and the session.
+  run bash -c "grep -c 'action=' '$(journal_file)'"
+  assert_equal "$output" "4"
 }
 
 # ── the locks ────────────────────────────────────────────────────────────────
