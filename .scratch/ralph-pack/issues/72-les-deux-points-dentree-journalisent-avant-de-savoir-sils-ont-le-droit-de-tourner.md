@@ -43,3 +43,27 @@
 - **Piège de sonde.** Il faut deux processus vivants en même temps. Côté run : un faux `claude` qui touche `$RALPH_SHIM_STATE/in-session` puis attend `$RALPH_SHIM_STATE/go`. Côté drain : un **fifo** sur son stdin (`mkfifo` + `exec 9>`), sinon il sort immédiatement sur « stdin ended » et ne tient jamais les verrous.
 
 - **Place dans la file, validée par Philippe le 07/09/2026 : deuxième.** Délié (`Blocked by: None`), deux fichiers, un seul mécanisme — et il tranche où le préambule de `loop_main` a le droit d'écrire, ce dont [70] a besoin pour placer son épinglage une seule fois. Ordre retenu : [71] → [72] → [70] → [18] → [19].
+
+- **Deux contraintes écrites ici par [71], livré le 07/09/2026, parce que ce
+  ticket touche les deux mêmes fichiers.**
+
+  1. *`human-loop.sh` porte maintenant un piège `EXIT`.* Il convertit tout `0`
+     qui n'est pas sa dernière ligne en **6**, « ended in the middle ». Deux
+     choses le rendent fragile à un déplacement du préambule : il est armé en
+     tête de fichier **et réarmé par `human_loop__arm_signals`**, parce que
+     `run_lock_acquire` et `tree_lock_acquire` posent chacun leur propre
+     `trap 'state_locks_release' EXIT` et le désarment donc en le prenant ; et
+     `human_loop__on_exit` relâche les verrous lui-même, ce qui est ce qui
+     autorise à remplacer leur trap. Déplacer les verrous, la base de journal ou
+     le préflight sans regarder cette ligne rouvre le faux `0` — deux mutations
+     et deux tests le disent (`ended in the middle`, `ended before it took its
+     locks`).
+  2. *`loop.sh` n'a rien de tel, et c'est la question 4 de [71].* Son `0` dit
+     « the frontier was drained » et n'importe quel lib qui finirait le shell le
+     lui fait dire sur une frontière pleine. Le chemin AFK n'atteint pas le
+     défaut de [71] — `failures.sh` n'appelle `tracker_mark_escalated` que sous
+     `[ -n "$reason" ]` — donc la forme est ouverte sans cas connu. Ce ticket est
+     celui qui a `loop.sh` dans sa write-surface **et** qui regarde déjà le
+     préambule des deux points d'entrée : la symétrie est à trancher ici, ne
+     serait-ce que pour écrire qu'on ne la fait pas.
+

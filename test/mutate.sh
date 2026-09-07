@@ -5026,6 +5026,69 @@ mutation "68 the user flow of a ticket nothing pinned is read as one this drain 
   's/  if \[ "\$\{ROUTER__PINNED_ID:-\}" != "\$id" \]; then\n    printf \x27ralph: %s: nothing pinned the user flow[^\n]*\n      "\$id" >&2\n    return 1\n  fi\n//' \
   test/human-loop.bats "user flow of a ticket this drain never pinned"
 
+# ── [71] what an adapter refuses, and how ────────────────────────────────────
+#
+# The drain writes a neighbour's ticket with a value read off that ticket, so
+# whatever the backend does about a value it will not take, the drain wears. It
+# used to end it: `${2:?…}` is a shell exit, the sink's ordinary ticket carries no
+# `Escalation:` at all, and since [67] there is no subshell between the drain and
+# this operation. Measured: dead mid-sink, exit `0`, a ticket `resolved` no gate
+# read, `run.log` empty.
+#
+# Three halves, three families of entry. The adapter's answer to an empty reason
+# and to a missing one. What `router__put_back` does with a refusal, plus the
+# paired witness that the reason a neighbour *did* carry still comes back with it.
+# And the exit code, which is the half that survives a backend nothing in this
+# repository can read — with its own paired witness, because a guard that fired on
+# an honest drain would pass every entry below while turning every emptied sink
+# into a fault.
+
+mutation "71 an escalation the adapter will not take ends its caller" "$TRACKER" \
+  's/  \[ "\$#" -ge 2 \] \|\| return 2\n/  local _reason="\$\{2:?tracker: an escalation needs a reason\}"\n/' \
+  test/tracker-local.bats "without a reason"
+
+mutation "71 an empty reason is refused instead of written" "$TRACKER" \
+  's/  \[ "\$#" -ge 2 \] \|\| return 2\n/  [ -n "\$\{2:-\}" ] \|\| return 2\n/' \
+  test/tracker-local.bats "empty escalation reason"
+
+mutation "71 a neighbour with no escalation comes back carrying an empty one" "$TRACKER" \
+  's/Status ready-for-human Escalation --drop Claimed --drop/Status ready-for-human Escalation "\$reason" Claimed --drop/' \
+  test/human-loop.bats "without an escalation is put back"
+
+mutation "71 the drain wears an adapter refusal as a restore" "$ROUTER" \
+  's/      tracker_mark_escalated "\$other" "\$was_esc" \|\| return 2\n/      tracker_mark_escalated "\$other" "\$was_esc" \|\| true\n/' \
+  test/human-loop.bats "refuses to put a neighbour back"
+
+# The paired witness of the two above: an adapter call that dropped the reason
+# whatever the ticket carried would pass both of them while emptying the field of
+# every neighbour this drain ever puts back.
+mutation "71 the reason a neighbour carried is dropped when it is put back" "$ROUTER" \
+  's/      tracker_mark_escalated "\$other" "\$was_esc" \|\| return 2\n/      tracker_mark_escalated "\$other" "" \|\| return 2\n/' \
+  test/human-loop.bats "has not reached yet"
+
+# The locks install an EXIT trap of their own, so the guard has to be put back
+# where they are taken — that is the line, and taking it out is how the defect
+# comes back with the locks held.
+mutation "71 the locks take the drain's exit guard away with them" "$HUMAN_LOOP" \
+  's/  trap \x27state_locks_release; exit 143\x27 TERM\n  trap human_loop__on_exit EXIT\n/  trap \x27state_locks_release; exit 143\x27 TERM\n/' \
+  test/human-loop.bats "ended in the middle"
+
+mutation "71 the guard is armed only once the locks are taken" "$HUMAN_LOOP" \
+  's/\ntrap human_loop__on_exit EXIT\n/\n/' \
+  test/human-loop.bats "ended before it took its locks"
+
+# The paired witness: a guard that never saw its own end would call every emptied
+# sink a drain that stopped in the middle.
+mutation "71 a drain that reached its own end is called one that ended in the middle" "$HUMAN_LOOP" \
+  's/    HUMAN_LOOP__REACHED_THE_END=1\n//' \
+  test/human-loop.bats "sign-off is the one escalation"
+
+# And the other end of the same witness: only a `0` is converted, so every exit
+# this loop decided on passes through untouched.
+mutation "71 the guard rewrites every exit and not only a zero" "$HUMAN_LOOP" \
+  's/  \[ "\$rc" = 0 \] \|\| exit "\$rc"\n//' \
+  test/human-loop.bats "drained to the end"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -34,6 +34,9 @@
 #   4  stopped by a guard: one of the two locks this drain took is gone, or is
 #      not ours any more ([57])
 #   5  nothing to drain: the sink was empty when this started
+#   6  ended in the middle, where nothing here decided to stop: something below
+#      this loop ended this shell. The sink is not empty, no tally was printed,
+#      and the ticket it stopped on is the one it was last talking about ([71])
 #
 # 0 and 5 are different for the reason they are different in `loop.sh`: a drain
 # that found nothing because `FEATURE` points at the wrong tracker must not be
@@ -45,6 +48,11 @@
 # it. It is deliberately not 3. A human who quit and a drain that stopped because
 # something took its lock out from under it leave the sink looking identical, and
 # the second is the one nobody may read as "they will come back to it".
+#
+# 6 is the only code here that is not this loop's own decision, and 4 was the
+# near miss: 4 is a *guard* stopping a drain that is otherwise fine, so telling an
+# operator "a lock is gone" about a shell that was ended under them would send
+# them to look at the one thing that is not the matter.
 #
 # Kept bash 3.2 compatible, like the rest of the pack.
 set -euo pipefail
@@ -86,6 +94,49 @@ human_loop_log() {
   printf 'ralph: %s\n' "$*"
 }
 
+# ── the only way out that means "done" ───────────────────────────────────────
+#
+# `0` is the strongest sentence this pack prints for a human sink: everything
+# that was in it was drained. Every other exit here is a number this loop chose
+# after deciding something. `0` was reachable without a decision at all — a lib
+# that ends this shell exits it with the status of whatever it ran last, and this
+# process is the one place in the pack where that is a lie rather than a nuisance.
+#
+# Measured on the code [67] delivered ([71]): `router_protect_tracker` put a
+# neighbouring ticket back through `tracker_mark_escalated <id> "$was_esc"`, the
+# local adapter refused an empty reason with `${2:?…}` — a shell exit — and the
+# drain ended in the middle of its sink with **`0`**, one ticket resolved that no
+# gate had read, the sink ticket still in it and `run.log` empty. Both halves are
+# fixed where they belong: the adapter returns instead of exiting, and the
+# interface says so as a clause. This is the half that survives a backend nobody
+# here can read — a project's own, a remote one ([18]) — because it holds from
+# this end.
+#
+# It converts, it does not rescue: the drain is over either way, and what it buys
+# is that the number an operator reads is not the one that means the opposite.
+# Only a `0` is touched, so no other exit of this file passes through anything.
+#
+# **It releases the locks, and that is not a courtesy — it is how it survives.**
+# `run_lock_acquire` and `tree_lock_acquire` each install `trap
+# 'state_locks_release' EXIT` of their own, so a guard set once at the top of this
+# file is silently overwritten the moment this drain takes what it came to take.
+# So the release moves *into* this handler and `human_loop__arm_signals` puts the
+# handler back — at the two places the locks are taken and after every session,
+# which is where that function is already called for the same kind of reason.
+HUMAN_LOOP__REACHED_THE_END=0
+
+human_loop__on_exit() {
+  local rc=$?
+  state_locks_release
+  [ "$rc" = 0 ] || exit "$rc"
+  if [ "${HUMAN_LOOP__REACHED_THE_END:-0}" != 1 ]; then
+    printf 'ralph: this drain ended in the middle, where nothing in it decided to stop — something below it ended this shell. What was still in the sink is still in it, and the last ticket named above is where to start again. This is not an emptied sink: an operation of the tracker adapter that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' >&2
+    exit 6
+  fi
+  exit 0
+}
+trap human_loop__on_exit EXIT
+
 # ── signals ──────────────────────────────────────────────────────────────────
 #
 # Both locks install these when they are taken; they are re-installed by hand
@@ -100,9 +151,15 @@ human_loop_log() {
 # the whole of it: bash resets a *handled* signal to its default in a child and
 # leaves an *ignored* one ignored. `trap '' INT` would have made `claude` itself
 # deaf to Ctrl-C, which is worse than the defect it was fixing.
+#
+# EXIT is re-armed here too, and for a reason that is not about signals at all:
+# both `*_lock_acquire` install an EXIT trap of their own, so the guard set at the
+# top of this file stops existing the moment either lock is taken ([71]). This
+# function is called right after both, and again after every session.
 human_loop__arm_signals() {
   trap 'state_locks_release; exit 130' INT
   trap 'state_locks_release; exit 143' TERM
+  trap human_loop__on_exit EXIT
 }
 
 # ── preflight ────────────────────────────────────────────────────────────────
@@ -605,6 +662,9 @@ SINK
 
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "the human sink is empty"
+    # The one place this loop is entitled to say it. Read by the trap installed at
+    # the top of this file, which turns every other `0` into a 6 ([71]).
+    HUMAN_LOOP__REACHED_THE_END=1
     exit 0
   fi
   if [ "$quit" = 1 ]; then

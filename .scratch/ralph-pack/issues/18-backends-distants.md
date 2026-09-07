@@ -438,3 +438,29 @@
   distant l'inventerait ; `70` parce que la preuve que le dossier montre doit
   savoir dire sa provenance avant qu'un backend la déplace vers une PR. File
   retenue : **[71] → [72] → [70] → [18] → [19]**.
+
+- **La clause que [71] a écrite, livrée le 07/09/2026, et c'est une contrainte
+  sur chaque opération écrite ici.** L'en-tête de contrat de `lib/tracker.sh` dit
+  maintenant *comment* une opération refuse : un **code de retour** non nul —
+  `3` est pris par le dispatcher pour une opération non implémentée, donc un
+  backend commence à `1` ou `2` — et **jamais** une sortie de shell : ni
+  `${N:?word}`, ni `exit`, ni un errexit laissé filer. La raison n'est pas
+  stylistique : cette interface a **deux appelants**, et celui qui paie est le
+  drain — depuis [67] il n'a ni sous-shell d'itération ni `proc_collect` entre
+  lui et ses libs. Mesuré sur le backend local avant [71] : un `${2:?}` a tué le
+  drain en pleine remise, qui est sorti `0`, le code que son propre en-tête
+  documente comme « the sink is empty ». Troisième moitié de la clause : une
+  **valeur vide est une valeur**, pas un refus — `mark_escalated ID ""` est le
+  ticket du guichet `request`, sans `Escalation:`, et un backend distant doit
+  pouvoir l'écrire.
+
+- **Et ce qui ne tient pas cette clause, à savoir tout ce qui est ici.** Aucun
+  test de ce dépôt ne peut lire un backend qui n'existe pas encore : la ligne du
+  tableau de confiance le dit en toutes lettres. Ce qui tient est l'autre bout —
+  `human-loop.sh` refuse désormais de sortir `0` ailleurs qu'à sa dernière ligne
+  (code **6** sinon), donc un backend qui casse la clause coûte un mauvais
+  diagnostic et jamais un faux « everything was drained ». Un backend écrit ici
+  qui refuserait en tuant le shell serait donc **vert sur toute la suite** et
+  visible seulement à ce code de sortie : à couvrir par un test de ce ticket, pas
+  à supposer.
+
