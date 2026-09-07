@@ -61,4 +61,4 @@
 
 - **Piège de sonde.** Une session d'itération atteint l'arbre principal par `git worktree list --porcelain | awk '/^worktree /{print $2; exit}'`, et les refs sans rien faire du tout. Et il faut un ticket `ready-for-agent` en plus du ticket du puits, sinon le run sort sur une frontière vide et n'ouvre aucune session.
 
-- **Place dans la file (proposée par la passe du 07/09) : troisième, collé à [18].** La plus grosse surface des trois (`loop.sh`, `failures.sh`, `receipt.sh`, `router.sh`) et l'arête dure vers [18], qui rouvre les deux objets juste après. Même raison qui avait fait coller [64] puis [66] à [18]. Ordre proposé : [71] → [72] → [70] → [18] → [19].
+- **Place dans la file, validée par Philippe le 07/09/2026 : troisième, collé à [18].** La plus grosse surface des trois (`loop.sh`, `failures.sh`, `receipt.sh`, `router.sh`) et l'arête dure vers [18], qui rouvre les deux objets juste après. Même raison qui avait fait coller [64] puis [66] à [18]. Ordre retenu : [71] → [72] → [70] → [18] → [19].

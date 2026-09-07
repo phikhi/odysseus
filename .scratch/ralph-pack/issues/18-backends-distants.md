@@ -2,7 +2,7 @@
 
 **What to build:** Les implémentations distantes de l'adaptateur de tracker, satisfaisant **la même interface** que `local`, avec la forme d'intégration façonnée par le backend (claim = assignee, reçu = PR, `wait_ci`). La boucle reste agnostique.
 
-**Blocked by:** 02, 10, 64, 65, 66
+**Blocked by:** 02, 10, 64, 65, 66, 70, 71
 
 **Write-surface:** `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `test/tracker-remote.bats`
 
@@ -430,3 +430,11 @@
   backend local fait des `sed`. Un cache par ticket drainé est la parade évidente
   et elle a un piège nommé ailleurs dans ce dépôt ([08], [40]) : il ne doit pas
   vivre dans un fichier qu'une session routée peut écrire.
+
+- **`Blocked by:` élargi le 07/09/2026** après la passe du même jour et la
+  validation de la file par Philippe : `70` et `71` s'ajoutent aux cinq
+  existantes. `71` parce que la clause *ce qu'une opération de l'adaptateur a le
+  droit de refuser, et sous quelle forme* n'existe pas encore et qu'un backend
+  distant l'inventerait ; `70` parce que la preuve que le dossier montre doit
+  savoir dire sa provenance avant qu'un backend la déplace vers une PR. File
+  retenue : **[71] → [72] → [70] → [18] → [19]**.
