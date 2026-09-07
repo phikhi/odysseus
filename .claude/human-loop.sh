@@ -275,6 +275,20 @@ human_loop__session() {
   # statement in this shell. `|| true` for the reason [69]'s leftovers carry one:
   # a refusal means "nothing moved", never "stop".
   router_protect_tracker "$id" || true
+
+  # And what it did to the forensic refs ([66]). A third reader at the same
+  # moment and against the same baseline, because a ref is neither of the other
+  # two objects: `router__tree_dirt` measures this working tree, and
+  # `refs/heads/failed/<id>` is in `.git/`, which no path in a working tree names.
+  # It is what chooses the `arbitrate` desk and what the dossier sends a human to
+  # read, so a session that writes one re-desks the next drain and a session that
+  # deletes one destroys the only evidence about a ticket that outlives a `gc`.
+  #
+  # A plain statement and not a command substitution, for the reason the call
+  # above is one ([67]): it journals, and the drain's copy of its own journal
+  # lines is a variable of this shell. `|| true` says "nothing moved", never
+  # "stop" — the posture [69] set for the leftovers and [67] kept for the witness.
+  router_branch_note "$id" || true
   router_journal "$id" drain-session "$desk"
   return 0
 }

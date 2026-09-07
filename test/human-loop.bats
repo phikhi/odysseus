@@ -1340,6 +1340,194 @@ ANSWERS
   assert_file_contains "$(journal_file)" "tracker-drift"
 }
 
+# ── the ref that chooses the desk ────────────────────────────────────────────
+#
+# [55] pinned `Escalation:`, [61] pinned `Failures:`, and the paragraph written
+# then left `refs/heads/failed/<id>` out — naming `router_tree_note` as what looks
+# at "what a session left outside `issues/`", which reads the working tree minus
+# this feature's own directory and therefore sees no ref at all. Measured on the
+# 06/09 pass: a routed session writing nothing but the ref moves the desk of the
+# next session on its own ticket from `admit` to `arbitrate`, and one erasing the
+# ref of an attempt a run really judged makes the dossier say that nothing ever
+# ran on it. The first is a misrouting a pin repairs; the second is evidence
+# destroyed, which a pin can only name — so both directions are here, and so is
+# the sentence that has to say the proof is gone rather than that a path moved.
+
+@test "a routed session cannot re-desk its own ticket by writing itself a forensic branch" {
+  # [61]'s test, on the other piece of evidence `router_desk` reads. The desk, the
+  # question, the treatment and the whole prompt of the second session on this
+  # ticket are chosen by the first one unless the ref is taken before it runs.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+git -C "$root" update-ref refs/heads/failed/20-first HEAD
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "2"
+  # The dossier a human read, and the prompt the second session was handed, both
+  # answer on the namespace as the drain took it.
+  assert_output_contains "there is none. nothing ever ran on this ticket"
+  assert_contains "$(claude_call_argv 2)" "No run ever judged this ticket"
+  refute_contains "$(claude_call_argv 2)" "wrote inside another ticket"
+  refute_output_contains "(arbitrate)"
+
+  # And the ref is still there — the pin decides, it does not restore — but it is
+  # named, and the naming is journalled from the drain's own shell. The drain's
+  # own output is kept first: the `run` below overwrites `$output`, which is the
+  # trap this file's helpers exist for.
+  local said="$output"
+  assert_contains "$said" "was written while this drain was on 20-first"
+  refute_contains "$said" "does not hold exactly"
+  assert_file_contains "$(journal_file)" "ref-drift"
+  run git -C "$PROJECT_DIR" show-ref --verify --quiet refs/heads/failed/20-first
+  assert_success
+}
+
+@test "a routed session that erased a forensic branch cannot make the drain say nothing ran" {
+  # The expensive direction. `failed/<id>` is what `router_dossier` leans on for a
+  # ticket that has been in this sink for a while — a receipt names git objects a
+  # `gc` may collect, a ref does not — so a session that deletes one takes away
+  # the only thing about that ticket that was going to survive. A pin keeps the
+  # desk honest; nothing gives the tree back, and the sentence has to say so.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  git -C "$PROJECT_DIR" branch failed/20-first
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+git -C "$root" update-ref -d refs/heads/failed/20-first
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "2"
+  assert_contains "$(claude_call_argv 2)" "wrote inside another ticket"
+  refute_contains "$(claude_call_argv 2)" "No run ever judged this ticket"
+
+  local said="$output"
+  assert_contains "$said" "is gone, and this drain took 20-first with it pointing at"
+  assert_contains "$said" "The evidence is lost, not moved"
+  assert_file_contains "$(journal_file)" "ref-drift"
+
+  # Nothing here put it back, and that is written down rather than assumed: this
+  # drain never authored these refs and the commit it named may already be
+  # unreachable.
+  run git -C "$PROJECT_DIR" show-ref --verify --quiet refs/heads/failed/20-first
+  assert_failure
+}
+
+@test "a forensic branch a routed session pointed somewhere else is named at both ends" {
+  # The third arm, and the one neither of the other two reaches: the ref is there,
+  # so the desk is right and the dossier still tells a human to read it — at a
+  # tree no run judged.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  git -C "$PROJECT_DIR" branch failed/20-first
+  printf 'later\n' >"$PROJECT_DIR/later.txt"
+  harness__commit "test: a commit after the attempt"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+git -C "$root" update-ref refs/heads/failed/20-first "$(git -C "$root" rev-parse HEAD)"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_output_contains "points at"
+  assert_output_contains "when this drain took 20-first"
+  assert_output_contains "at a tree no run judged"
+  assert_file_contains "$(journal_file)" "ref-drift"
+}
+
+@test "a routed session that left the forensic refs alone is not announced to have moved one" {
+  # The paired witness, and it is the one that keeps the three above from being
+  # sentences printed after every session — [37]'s rule from the reading side.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  git -C "$PROJECT_DIR" branch failed/20-first
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "1"
+  refute_output_contains "was written while this drain was on"
+  refute_output_contains "The evidence is lost, not moved"
+  refute_output_contains "at a tree no run judged"
+  refute_file_contains "$(journal_file)" "ref-drift"
+}
+
+@test "a forensic branch a routed session wrote on a neighbour is named" {
+  # Where the pin cannot help, and the reason the note reads the whole namespace
+  # rather than this ticket's ref: nobody asked this human about `21-second`, and
+  # no drain has pinned it yet — the drain that reaches it will pin the forged ref
+  # and route on it. [58]'s finding, one directory over.
+  two_in_the_sink
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+git -C "$root" update-ref refs/heads/failed/21-second HEAD
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  local said="$output"
+  assert_contains "$said" "refs/heads/failed/21-second\` was written while this drain was on 20-first"
+  run bash -c "awk -F'\t' '\$2 == \"21-second\" && \$3 == \"ref-drift\"' '$(journal_file)' | wc -l | tr -d ' '"
+  assert_equal "$output" "1"
+}
+
+@test "git refusing to list the forensic refs is not a namespace a session emptied" {
+  # [59], on this producer. Read as an empty list, a refusal turns every ref this
+  # drain pinned into a ref a session deleted — and the sentence for that accuses
+  # somebody of destroying evidence. So the note says what it could not do, and
+  # says nothing else.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  git -C "$PROJECT_DIR" branch failed/20-first
+
+  pack_run 'router_pin 20-first
+    router__failed_refs() { return 1; }
+    router_branch_note 20-first || printf "said nothing else\n"'
+
+  assert_output_contains "git would not list"
+  assert_output_contains "said nothing else"
+  refute_output_contains "The evidence is lost, not moved"
+}
+
 # ── the drain's own copy of what it journalled ───────────────────────────────
 #
 # [10] made `run.log` tamper-evident rather than tamper-proof: the pilot keeps
