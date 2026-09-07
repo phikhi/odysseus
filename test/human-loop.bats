@@ -1528,6 +1528,192 @@ ANSWERS
   refute_output_contains "The evidence is lost, not moved"
 }
 
+# ── [68] the user flow the next run's value gate replays ─────────────────────
+#
+# The fourth object of the same pin, and the only one whose damage lands one
+# entry point away: `spec.md` is what the terminal value gate replays at the end
+# of an AFK run, and that run copies it before its first session ([11]). The
+# interval a routed session lives in is exactly the one the copy does not cover,
+# and a rewritten flow makes that gate more **lenient** — a `pass` on a feature
+# nobody wired.
+#
+# Three arms, a paired witness, and the two refusals: a spec that could not be
+# read is not a spec a session deleted ([59]), and a ticket nothing pinned is
+# refused rather than reported on.
+
+@test "a routed session that rewrote the user flow is named, and the flow is left as it wrote it" {
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+dir="$(ls -d "$root"/.scratch/*/ | head -1)"
+printf '# spec\n\n## User flow\n\nFORGED: everything already works.\n' >"$dir/spec.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  local said="$output"
+  assert_contains "$said" "\`spec.md\` reads differently after that session"
+  assert_contains "$said" "makes that gate more lenient, never stricter"
+  # And what the naming does not buy, said rather than left to be found: the
+  # write survives this drain and the next run replays it.
+  assert_contains "$said" "the next drain takes it as its own baseline"
+  assert_contains "$said" "the run after that replays it"
+  refute_contains "$said" "does not hold exactly"
+  assert_file_contains "$(journal_file)" "spec-drift"
+
+  # Nothing here puts it back: this drain is not the author of that file, and a
+  # human correcting the spec between two runs is the write it exists for.
+  assert_file_contains "$FEATURE_DIR/spec.md" "FORGED"
+}
+
+@test "a user flow a routed session deleted is named as a feature that cannot close" {
+  # The other direction, and it is the honest one: without a spec the value gate
+  # closes nothing at all and names the missing key. What is lost is the closing,
+  # not the verdict — the sentence has to say which.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+dir="$(ls -d "$root"/.scratch/*/ | head -1)"
+rm -f "$dir/spec.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  local said="$output"
+  assert_contains "$said" "with a user flow in it"
+  assert_contains "$said" "what this costs is the closing of this feature"
+  assert_file_contains "$(journal_file)" "spec-drift"
+}
+
+@test "a user flow written while the drain was on a ticket is named" {
+  # A feature with no spec cannot be closed by anything this loop measures. One
+  # written at this sink can, on a flow whose author nothing here knows.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  rm -f "$FEATURE_DIR/spec.md"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+dir="$(ls -d "$root"/.scratch/*/ | head -1)"
+printf '# spec\n\n## User flow\n\nFORGED: everything already works.\n' >"$dir/spec.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  local said="$output"
+  assert_contains "$said" "\`spec.md\` was written while this drain was on 20-first"
+  assert_contains "$said" "a flow nobody promised"
+  assert_file_contains "$(journal_file)" "spec-drift"
+}
+
+@test "a routed session that left the user flow alone is not announced to have moved it" {
+  # The paired witness, and the one that keeps the three above from being a line
+  # printed after every session — [37]'s rule from the reading side.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_equal "$(claude_call_count)" "1"
+  refute_output_contains "reads differently after that session"
+  refute_output_contains "with a user flow in it"
+  refute_output_contains "was written while this drain was on"
+  refute_file_contains "$(journal_file)" "spec-drift"
+}
+
+@test "a user flow that could not be read is not one a session deleted" {
+  # [59] on this producer, and staged the way a session could really do it: a
+  # directory under that name is a file that is *there* and that nothing can read.
+  # Taken as an absence it would be reported as a spec somebody deleted — and the
+  # sentence for that tells a human this feature can no longer be closed.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+dir="$(ls -d "$root"/.scratch/*/ | head -1)"
+rm -f "$dir/spec.md"
+mkdir "$dir/spec.md"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  local said="$output"
+  assert_contains "$said" "could not be read after that session"
+  refute_contains "$said" "with a user flow in it"
+  refute_contains "$said" "reads differently after that session"
+  refute_file_contains "$(journal_file)" "spec-drift"
+}
+
+@test "a user flow the pin could not read is not a baseline the drain invents" {
+  # The other end of the same rule: a pin that could not read the file leaves no
+  # baseline, and a note reading that empty pin as "there was none" would report
+  # every spec on disk as one this session wrote.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  rm -f "$FEATURE_DIR/spec.md"
+  mkdir "$FEATURE_DIR/spec.md"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  local said="$output"
+  assert_contains "$said" "could not be read when this drain took this ticket"
+  refute_contains "$said" "was written while this drain was on"
+  refute_file_contains "$(journal_file)" "spec-drift"
+}
+
+@test "the user flow of a ticket this drain never pinned cannot be told from what a session wrote" {
+  # The same fail-closed shape the other three readers have: a second entry point
+  # that forgot the pin gets a refusal rather than a report made of nonsense.
+  mk_ticket 20-first Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+
+  pack_run 'router_spec_note 20-first || printf "said nothing else\n"'
+
+  assert_output_contains "nothing pinned the user flow this feature promised"
+  assert_output_contains "said nothing else"
+}
+
 # ── the drain's own copy of what it journalled ───────────────────────────────
 #
 # [10] made `run.log` tamper-evident rather than tamper-proof: the pilot keeps

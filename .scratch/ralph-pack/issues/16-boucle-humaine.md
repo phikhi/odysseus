@@ -454,3 +454,14 @@ ajouté un second appelant sans en hériter aucune.
   `playthrough_close`/`_rc`/`_witness`, `retro_close`/`_open`, `scheduler__wake`.
   Tout sauf les deux premiers est délibéré : un drain ne spawne pas d'itération,
   ne juge rien et ne clôt aucune feature.
+
+- **Contrainte écrite par [68], livré le 07/09/2026.** `human_loop__session` compte
+  maintenant **quatre** lecteurs au retour d'une session routée, tous contre la
+  base prise par `router_pin` quand le drain a pris le ticket : `router_tree_note`
+  (l'arbre, [56]), `router_protect_tracker` (`issues/`, [58]/[61]),
+  `router_branch_note` (`refs/heads/failed/*`, [66]) et `router_spec_note`
+  (`spec.md`, [68]). Les trois derniers sont appelés **comme des instructions**,
+  jamais dans une substitution de commande : ils journalisent, et
+  `ROUTER__JOURNAL_WITNESS` est une variable du process du drain ([67]). Un
+  cinquième lecteur ajouté ici doit tenir la même règle — et la même posture :
+  compter, ne rien juger, ne rien remettre, silence quand rien n'a bougé.

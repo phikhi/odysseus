@@ -4957,6 +4957,75 @@ mutation "66 a git that would not answer is an empty namespace" "$ROUTER" \
   's/  if ! now="\$\(router__failed_refs\)"; then\n/  if now="\$(router__failed_refs)" \&\& false; then\n/' \
   test/human-loop.bats "namespace a session emptied"
 
+# ── [68] the user flow the next run's value gate replays ─────────────────────
+#
+# The fourth object of the same pin, and the only one whose damage lands one
+# entry point away: `spec.md` is what the terminal value gate replays, the pilot
+# copies it before its first session ([11]), and the interval a routed session
+# lives in is exactly the one that copy does not cover.
+#
+# Two entries take the pin away — one where it is taken, one where the empty pin
+# is read — and three are the arms of the note. Then the ones a deleting mutation
+# cannot reach: the paired witness, which puts the naming *in* where nothing
+# moved; the sentence the acceptance criterion is about, because naming a rewrite
+# is not the guarantee — what it buys is a human now and no protection for the
+# next run, and that has to be said; and the call put back inside a command
+# substitution, where it journals into `run.log` and not into the drain's own
+# witness ([67]'s trap, on the function added after it).
+#
+# The last two are [59] on this producer, at both ends: a `spec.md` that is there
+# and unreadable, read as an absence, is a spec reported as deleted — and the
+# sentence for that tells a human this feature can no longer be closed.
+
+mutation "68 the drain pins no user flow" "$ROUTER" \
+  's/  ROUTER__PINNED_SPEC="\$\(router__spec_digest\)" \|\| ROUTER__PINNED_SPEC=\x27\x27\n//' \
+  test/human-loop.bats "rewrote the user flow"
+
+mutation "68 a rewritten user flow is not named" "$HUMAN_LOOP" \
+  's/  router_spec_note "\$id" \|\| true\n//' \
+  test/human-loop.bats "rewrote the user flow"
+
+mutation "68 the flow note is taken in a subshell" "$HUMAN_LOOP" \
+  's/  router_spec_note "\$id" \|\| true\n/  if spec="\$(router_spec_note "\$id")"; then printf \x27%s\\n\x27 "\$spec"; fi\n/' \
+  test/human-loop.bats "rewrote the user flow"
+
+# Naming the rewrite is not the guarantee: the pin is per ticket and the note is
+# at session return, so what it buys is the human sitting at the sink and not the
+# run after them. Said in the sentence, or supposed.
+mutation "68 what the naming does not buy is left to be discovered" "$ROUTER" \
+  's/What this line buys is you, now: the write survives this drain, the next drain takes it as its own baseline and says nothing, and the run after that replays it./Nothing else is left to say about it./' \
+  test/human-loop.bats "rewrote the user flow"
+
+mutation "68 a deleted user flow is reported as a rewritten one" "$ROUTER" \
+  's/    \*:missing\)\n/    *:nothing)\n/' \
+  test/human-loop.bats "deleted is named as a feature that cannot close"
+
+mutation "68 a user flow that appeared is reported as a rewritten one" "$ROUTER" \
+  's/    missing:\*\)\n/    nothing:*)\n/' \
+  test/human-loop.bats "written while the drain was on a ticket"
+
+# The paired witness: a note that fired whatever the file held would pass every
+# entry above while being a line printed after every session ([37]).
+mutation "68 a session that touched no user flow is told it rewrote one" "$ROUTER" \
+  's/  \[ "\$now" != "\$ROUTER__PINNED_SPEC" \] \|\| return 1\n//' \
+  test/human-loop.bats "left the user flow alone"
+
+mutation "68 a user flow that could not be read after the session is read as an empty one" "$ROUTER" \
+  's/  if ! now="\$\(router__spec_digest\)"; then\n/  if now="\$(router__spec_digest)" \&\& false; then\n/' \
+  test/human-loop.bats "could not be read is not one a session deleted"
+
+mutation "68 a file that is there and unreadable is read as a file that is not there" "$ROUTER" \
+  's/  \[ -n "\$digest" \] \|\| return 1\n//' \
+  test/human-loop.bats "could not be read is not one a session deleted"
+
+mutation "68 a pin that read nothing is a baseline all the same" "$ROUTER" \
+  's/  if \[ -z "\$\{ROUTER__PINNED_SPEC:-\}" \]; then\n/  if [ -n "\$\{ROUTER__PINNED_SPEC:-\}" ] \&\& [ -z "\$\{ROUTER__PINNED_SPEC:-\}" ]; then\n/' \
+  test/human-loop.bats "pin could not read is not a baseline"
+
+mutation "68 the user flow of a ticket nothing pinned is read as one this drain took" "$ROUTER" \
+  's/  if \[ "\$\{ROUTER__PINNED_ID:-\}" != "\$id" \]; then\n    printf \x27ralph: %s: nothing pinned the user flow[^\n]*\n      "\$id" >&2\n    return 1\n  fi\n//' \
+  test/human-loop.bats "user flow of a ticket this drain never pinned"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -6,14 +6,14 @@
 
 **Write-surface:** `.claude/lib/playthrough.sh`, `.claude/lib/router.sh`, `.claude/human-loop.sh`, `test/playthrough.bats`, `test/human-loop.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Tags:** playthrough, human-loop, trust-boundary
 
-- [ ] Une session routée qui réécrit `spec.md` ne fait pas rejouer au gate de valeur du run suivant un flux que personne n'a promis — ou, si la décision est de le laisser, elle est **dite** : au drain qui l'a laissée faire, et dans le tableau de frontière.
-- [ ] La borne de `playthrough_witness` cesse d'être écrite comme « pendant un run / entre deux runs » et devient « ce que le pack a vu écrire / ce qu'un humain a écrit ». Aujourd'hui la phrase est vraie de [11] et fausse du pack.
-- [ ] Le témoin de [11] n'est pas affaibli : une session AFK qui réécrit `spec.md` pendant un run ne doit **toujours** rien changer au prompt du gate de valeur (Q5c est le témoin appairé à ne pas casser).
-- [ ] Une entrée de mutation par garantie livrée, plus le témoin appairé.
+- [x] Une session routée qui réécrit `spec.md` ne fait pas rejouer au gate de valeur du run suivant un flux que personne n'a promis — ou, si la décision est de le laisser, elle est **dite** : au drain qui l'a laissée faire, et dans le tableau de frontière.
+- [x] La borne de `playthrough_witness` cesse d'être écrite comme « pendant un run / entre deux runs » et devient « ce que le pack a vu écrire / ce qu'un humain a écrit ». Aujourd'hui la phrase est vraie de [11] et fausse du pack.
+- [x] Le témoin de [11] n'est pas affaibli : une session AFK qui réécrit `spec.md` pendant un run ne doit **toujours** rien changer au prompt du gate de valeur (Q5c est le témoin appairé à ne pas casser).
+- [x] Une entrée de mutation par garantie livrée, plus le témoin appairé.
 
 ## Comments
 
@@ -111,3 +111,91 @@
   mécanisme pour nommer ce qu'une session routée laisse hors de `issues/`. Livré
   avant [66], il inventerait ce mécanisme ; livré après, il choisit. `Blocked by:
   66`. Ordre complet retenu : [69] → [67] → [66] → [68] → [18] → [19].
+
+- **Livré le 07/09/2026. La sortie choisie est la 1 — le drain nomme — et elle
+  est livrée dans la forme de [66] :** `router_pin` prend un `cksum` de `spec.md`
+  au moment où il prend le ticket (`ROUTER__PINNED_SPEC`, cinquième objet du même
+  appel), et `router_spec_note`, publique, appelée depuis `human_loop__session`
+  **comme une instruction** et jamais dans une substitution de commande ([67]),
+  nomme au retour de session ce qui a bougé. Trois bras — réécrit, effacé, apparu
+  là où il n'y avait rien — une ligne `spec-drift` par bras dans `run.log`, le
+  silence et un `1` quand rien n'a bougé ([37]), et un refus qui ne s'exprime pas
+  en absence ([59]) : un `spec.md` présent et illisible n'est pas un `spec.md`
+  effacé, aux **deux** bouts de l'épinglage (au moment du pin, et au retour).
+
+- **Pourquoi rien n'est remis, et l'argument est neuf.** [66] pouvait s'appuyer
+  sur « ce drain n'est pas l'auteur de ces refs ». Le ticket demandait de reposer
+  la question ici, sur la foi que « le pack est l'auteur de `spec.md` » —
+  **vérifié, et c'est faux** : rien dans `.claude/` n'écrit ce fichier,
+  `playthrough.sh` le lit (`playthrough__spec_path`, `playthrough_witness`) et
+  signale son absence (`PLAYTHROUGH_UNCONFIGURED`). L'argument tient donc, et il
+  s'en ajoute un plus fort : **un humain qui corrige la spec entre deux runs est
+  l'écriture pour laquelle ce fichier existe** — c'est la phrase même de [11] — et
+  le guichet `admit` sert à avoir cette conversation dans la session routée. Un
+  drain qui restaurerait déferait la seule édition que ce point d'entrée sert, sur
+  une preuve incapable de la distinguer de celle d'une session. Le témoin ne peut
+  donc pas refuser, ce qui exclut aussi la sortie 2.
+
+- **Ce que la sortie 1 achète, et ce qu'elle n'achète pas — dit dans la phrase
+  imprimée, pas seulement ici** (AC 1). Les deux résidus de [66] se reproduisent à
+  l'identique : l'écriture **survit** au drainage, et l'épinglage est par ticket.
+  La ligne met un humain devant la réécriture pendant qu'il est encore assis au
+  puits ; elle ne protège **aucun run**. La phrase du bras « réécrit » se termine
+  donc par : *the write survives this drain, the next drain takes it as its own
+  baseline and says nothing, and the run after that replays it* — et une entrée de
+  mutation garde cette phrase (`68 what the naming does not buy is left to be
+  discovered`).
+
+- **La borne de `playthrough_witness` (AC 2)** n'est plus « pendant un run / entre
+  deux runs » : le commentaire porte une table des **trois écrivains** — une
+  session de livraison pendant un run (la copie est déjà prise), une session
+  routée au puits (épinglée et nommée depuis ce ticket), un humain dans son
+  éditeur (entendu, et c'est le point). La borne est devenue « ce que le pack a vu
+  écrire / ce qu'un humain a écrit », et la dernière ligne dit pourquoi la
+  deuxième est **nommée** et non refusée : rien ne la distingue de la troisième.
+
+- **La clause de [67] est déclenchée et purgée (AC de rédaction).**
+  `router__run_notes_caveat`, sa jumelle en commentaire dans `router_journal_lines`
+  et la ligne du dossier affirmaient toutes que `.scratch/<feature>/` n'est gardé
+  par rien et ne peut pas l'être. Les trois sont recadrées sur **`run.log`**, avec
+  la raison qui fait la différence : personne n'écrit `spec.md` pendant la fenêtre
+  surveillée, alors que le flux de session, le journal et le verrou y sont écrits
+  par construction. La carte de `router_desk` (livrée par [66], AC 4) gagne sa
+  ligne `spec.md` — la write-surface que ce ticket devait remplir — et garde
+  l'aveu pour le reste de la zone.
+
+- **Mesuré après correctif** (`../sondes/ticket-68/verification.bats`), sur des
+  drains et des runs AFK réels :
+
+  | | |
+  |---|---|
+  | V1 — la session réécrit `spec.md`, écrit du code et **commite** | réécriture **nommée** (1 ligne, digest de la base citée), `spec-drift` dans `run.log` (1), aucune plainte du témoin de journal. **Résidus mesurés** : le fichier forgé survit, le drainage suivant n'en dit **rien** (0), et le gate de valeur du run d'après rejoue le flux forgé (1) |
+  | V2 — la session **efface** `spec.md` | nommé, et la phrase dit ce que ça coûte : la **clôture**. Mesuré derrière : le run suivant sort en **4**, `playthrough` refuse (« spec.md is missing »), **0** appel du gate de valeur. Le sens indulgent ne vaut que pour une réécriture |
+  | V3 — témoin appairé : une session qui écrit, commite et déplace un ticket **voisin** | **0** mot du flux, **0** `spec-drift`, **0** plainte du témoin — et la dérive du tracker journalisée (4). Le drain ne s'accuse pas de son propre journal |
+  | V4 — un run AFK **réel** avant le drain | **0** mot du flux, **0** `spec-drift` : ni le témoin de [11], ni le journal, ni le reçu ne ressemblent à une dérive |
+
+- **Onze entrées de mutation** (`test/mutate.sh -f "68 "`), toutes `ok` : les deux
+  moitiés de l'épinglage (pris / lu vide), les trois bras de la note, la phrase de
+  ce que le nommage n'achète pas, le témoin appairé (une note qui parlerait sur un
+  fichier intact), l'appel remis dans une substitution de commande (le piège de
+  [67], sur la fonction ajoutée après lui), et [59] aux deux bouts du producteur —
+  le refus après la session, et le `[ -n "$digest" ]` sans lequel un fichier
+  présent et illisible est lu comme un fichier absent. Les sept tests vivent dans
+  `test/human-loop.bats`, et les deux refus sont **mis en scène pour de vrai** (un
+  répertoire nommé `spec.md`) plutôt que par une fonction masquée : une mutation du
+  producteur serait invisible à un test qui le remplace.
+
+- **Ce qui reste ouvert ailleurs, écrit ici parce que personne ne relit un ticket
+  clos.**
+  1. `receipt.sh` porte encore, en commentaire, « `run.log` lives under
+     `.scratch/<feature>/`, and nothing in this pack guards that directory » —
+     à moitié faux depuis ce ticket, et hors de la write-surface de celui-ci.
+     Contrainte écrite dans [10]. Le raisonnement du reçu, lui, reste juste : ce
+     qu'il refuse de lire est `run.log`, que rien ne garde toujours.
+  2. Nommer au retour de session ne protège pas le run suivant, et le fermer
+     demanderait une base de comparaison à l'échelle du drainage entier — la même
+     structure que [66] a laissée ouverte pour les refs (résidu V5). Un ticket qui
+     voudrait fermer les deux commence par relire `router_pin` en entier ; deux
+     durées de vie dans une seule structure est le prix.
+  3. Rien ne nomme une réécriture faite **hors du pack** — un éditeur, un autre
+     terminal — et c'est voulu : c'est l'écriture pour laquelle `spec.md` existe.

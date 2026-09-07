@@ -289,6 +289,25 @@ human_loop__session() {
   # lines is a variable of this shell. `|| true` says "nothing moved", never
   # "stop" — the posture [69] set for the leftovers and [67] kept for the witness.
   router_branch_note "$id" || true
+
+  # And what it did to the user flow this feature promises ([68]). A fourth
+  # reader at the same moment and against the same baseline, and the only one of
+  # the four whose object decides nothing in this drain: `spec.md` is what the
+  # terminal value gate of the **next** AFK run replays, and that run takes its
+  # own copy before its first session ([11]) — so the interval this conversation
+  # lives in is the one the copy does not cover, and a rewritten flow makes that
+  # gate more lenient rather than stricter.
+  #
+  # It names and puts nothing back, for the reason written on the function: this
+  # drain is not the author of that file, and a human correcting the spec between
+  # two runs is the write it is there for. What that leaves is said in the
+  # sentence — the write survives this drain, and the next run replays it.
+  #
+  # A plain statement and not a command substitution, for the reason the two
+  # calls above are ([67]): it journals, and the drain's copy of its own journal
+  # lines is a variable of this shell. `|| true` says "nothing moved", never
+  # "stop".
+  router_spec_note "$id" || true
   router_journal "$id" drain-session "$desk"
   return 0
 }

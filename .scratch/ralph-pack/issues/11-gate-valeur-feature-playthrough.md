@@ -447,3 +447,15 @@ pour que la prochaine lecture de `playthrough.sh` les trouve.
   Direction à retenir — c'est le sens **indulgent** (un `pass` sur une feature qui
   ne marche pas), donc un faux vert possible, contrairement à [65] dont l'effet
   était « un humain est demandé plus tôt ».
+
+- **Contrainte écrite par [68], livré le 07/09/2026.** La borne de
+  `playthrough_witness` n'est plus écrite comme une borne de **temps** : le
+  commentaire porte une table des trois écrivains — une session de livraison
+  pendant un run (la copie est déjà prise, et le témoin appairé de Q5c le tient),
+  une session routée au puits (épinglée par `router_pin` et nommée par
+  `router_spec_note`, jamais remise), un humain dans un éditeur (entendu, et c'est
+  ce pour quoi le fichier existe). Le témoin de ce ticket n'a **pas** bougé : ce
+  qui a changé est la phrase qui le borne, et le fait que l'intervalle entre deux
+  runs est désormais *compté* d'un côté. Il ne l'est pas de l'autre — nommer au
+  retour d'une session routée ne protège pas le run suivant, qui rejoue toujours ce
+  que le disque porte au moment où il démarre.
