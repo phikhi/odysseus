@@ -173,3 +173,23 @@ Et une cinquième que le critère a sortie en le relisant : un **rollback qui n'
   `receipt.sh` était hors de la write-surface de [68] ; la reformuler appartient à
   ce ticket-ci. Les trois phrases équivalentes de `router.sh` ont été recadrées sur
   `run.log` au même endroit.
+
+- **Contrainte posée par la passe transversale du 07/09/2026 — la provenance est
+  une garantie sur ce que le pack *écrit*, jamais sur ce qu'un lecteur *trouve*.**
+  Tout ce que ce ticket a livré sur le reçu tient : il est assemblé par le process
+  qui a mesuré l'itération, il ne lit ni `run.log` ni le registre, et une session
+  qui réécrit `run.log` une autre nuit ne change pas un chiffre. Ce qui n'avait pas
+  été posé est l'autre bout : `tracker_local_receipt_path` est un `[ -f ]` sur
+  `<racine>/receipts/<FEATURE>/<id>.md`, un chemin de l'**arbre principal**, que
+  `git worktree list` nomme à qui le demande — donc hors du worktree que le
+  scope-guard juge. Mesuré (`../sondes/passe-07-09/q3`) : une itération **verte**
+  dont la session écrit ce fichier passe sans un mot, et `router_dossier` le
+  présente à un humain comme le reçu d'audit, **sans la réserve** que
+  `router_journal_lines` porte deux lignes plus bas. Propriétaire : **[70]**.
+
+- **Et la phrase de `receipt.sh` sur `.scratch/<feature>/` est à relire dans le
+  même passage** : « that file lives under `.scratch/`, which no check in this pack
+  guards » reste vraie de `run.log` et est à moitié fausse de la zone depuis [68],
+  qui épingle `spec.md` autour d'une session routée. Les deux occurrences — le
+  commentaire d'en-tête et la phrase de `receipt__meta` — disent la zone là où
+  elles veulent dire le fichier.

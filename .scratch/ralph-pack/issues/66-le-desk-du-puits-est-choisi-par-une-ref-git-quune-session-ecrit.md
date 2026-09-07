@@ -177,3 +177,19 @@
   durées de vie dans la même structure. Si un ticket veut la fermer, c'est le même
   ticket que « les refs `failed/*` sont gardées », et il commence par relire
   `router_pin` en entier.
+
+- **Le résidu V1 a un jumeau antérieur, trouvé par la passe transversale du
+  07/09/2026** (`../passe-transversale-07-09.md`, §1). V1 dit : la ref forgée
+  survit au drainage, donc le drainage suivant l'épingle comme sa base et se tait.
+  Le jumeau est plus large et n'a besoin de survivre à rien — la contrefaçon est
+  écrite par un **run AFK**, donc elle est déjà dans la photo de base du **premier**
+  drainage. Mesuré (`../sondes/passe-07-09/q1`) : une itération **verte** dont la
+  session fait un seul `git update-ref refs/heads/failed/20-decision` fait passer
+  le guichet de `admit` à `arbitrate`, et le run n'en dit **0** mot ; l'autre sens,
+  la même itération verte efface la ref d'une tentative réellement jugée et le
+  drain affirme « nothing ever ran on this ticket ». `router_branch_note` se tait
+  **correctement** dans les deux cas : son contrat porte sur ce qui bouge sous le
+  drain. Ce qui manque est un témoin du côté du run, à la place que [14] occupe
+  déjà pour `LEARNINGS.md`. Propriétaire : **[70]**, qui prend le même objet et le
+  reçu d'audit avec, et qui porte désormais la moitié « reçu » de l'arête vers
+  [18].

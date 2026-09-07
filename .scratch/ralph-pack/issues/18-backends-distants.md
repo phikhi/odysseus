@@ -392,3 +392,41 @@
   c'est celui qu'un humain ouvre au matin ») — mais `tracker_receipt_path` rend
   chez toi une PR, et le dossier met les deux côte à côte. Si ce ticket ajoute une
   source de preuve, elle a la même obligation que la ref.
+
+- **Deux clauses d'interface de plus, posées par la passe transversale du
+  07/09/2026** (`../passe-transversale-07-09.md`).
+
+  1. **Ce qu'une opération de l'adaptateur a le droit de refuser, et sous quelle
+     forme.** L'en-tête de `lib/tracker.sh` documente les opérations et leurs
+     valeurs de retour, jamais leurs refus — alors que le dispatcher en émet déjà
+     un (`3`, « does not implement <op> »), donc la forme existait sans être un
+     contrat. Mesuré sur le backend **local** : `tracker_local_mark_escalated` est
+     écrite `${2:?tracker: an escalation needs a reason}`, ce qui est une **sortie
+     du shell** ; appelée par `router__put_back` avec une valeur de champ vide,
+     elle tue le drain, qui rend `0`. Un refus doit être un code de retour. Un
+     backend distant qui refuserait par un `exit`, un `${:?}` ou un `set -e` non
+     rattrapé tuerait ses **deux** appelants, et celui qui coûte le plus cher est
+     le drain : depuis [67] il n'y a plus de sous-shell entre lui et ses libs.
+     Le correctif et la clause appartiennent à **[71]**, à livrer avant ce ticket.
+  2. **Le reçu distant est une preuve que le dossier montre, et sa provenance doit
+     être dite.** [66] avait déjà écrit ici la moitié « ref » de cette arête : une
+     trace forensique déplacée hors d'une ref locale doit être lue à travers un
+     épinglage pris avant la session routée. La moitié « reçu » est mesurée depuis
+     le 07/09 : sur le backend local, `tracker_local_receipt_path` est un `[ -f ]`
+     sur un chemin de l'**arbre principal** qu'une session d'itération atteint, et
+     le dossier le présente sans réserve. Sur un backend distant le reçu est une
+     **PR**, c'est-à-dire un objet qu'une session peut atteindre par le réseau : ce
+     ticket doit dire ce qui atteste la provenance d'un reçu distant, ou dire que
+     rien ne l'atteste. Propriétaire du travail préparatoire : **[70]**, collé à ce
+     ticket.
+
+- **Coût du drain sur un backend distant, chiffré ici parce que personne ne l'avait
+  écrit.** La note ci-dessus sur `gate__surface_owner` ne couvre que le chemin AFK.
+  Depuis [58]/[61], `router__tracker_state` lit **cinq champs plus le ticket
+  entier** pour **chaque** ticket du tracker, **à chaque** ticket drainé ; et
+  `router_sink` appelle `router_unblocks`, qui relit `Blocked by:` sur tous les
+  tickets, pour chaque candidat du puits. Sur un tracker de quarante tickets avec
+  trois tickets dans le puits, c'est de l'ordre de sept cents lectures là où le
+  backend local fait des `sed`. Un cache par ticket drainé est la parade évidente
+  et elle a un piège nommé ailleurs dans ce dépôt ([08], [40]) : il ne doit pas
+  vivre dans un fichier qu'une session routée peut écrire.

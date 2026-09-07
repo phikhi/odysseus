@@ -168,3 +168,13 @@
 - **Le filtre de [48] n'a pas bougé** (`tracker_local__addressable`, six scans) :
   ce ticket ne touche qu'au rapport. La règle de [48] tient toujours — un
   septième scan ajouté sans le filtre rouvre le trou.
+
+- **Contrainte posée par la passe transversale du 07/09/2026.** Le constat que ce
+  ticket a fait journaliser par les deux points d'entrée est écrit **avant les
+  deux verrous** : `*_report_tracker_findings` tourne dans le préflight, et le
+  préflight tourne avant `tree_lock_acquire`. Celui des deux points d'entrée qui va
+  perdre le verrou a donc déjà écrit une ligne dans le `run.log` de l'autre, et
+  fait tirer son témoin ([10] ou [67]). Mesuré : `../sondes/passe-07-09/q4`.
+  La garantie livrée ici — « une fois par run **et** par drain, dans `run.log` et à
+  l'écran » — doit rester vraie pour un point d'entrée qui tourne vraiment, et
+  devenir « à l'écran seulement » pour celui qui refuse. Propriétaire : **[72]**.

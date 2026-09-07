@@ -206,3 +206,23 @@
   *rien ne garde cette zone* — le jour où [66] y met un garde, cette phrase et sa
   jumelle de `router_journal_lines` sont à relire). Le constat 2 de la liste
   ouverte dans [16] est fermé ; restent 1 ([66]) et 3 ([68]).
+
+- **Ce que ce ticket a hérité sans le savoir, trouvé par la passe transversale du
+  07/09/2026** (`../passe-transversale-07-09.md`, §2). Sortir
+  `router_protect_tracker` de son `moved="$(router_protect_tracker "$id")"` était
+  la bonne réparation et elle tient : les neuf `router_journal` qui pendent à cette
+  fonction mouraient dans le sous-shell. Ce que la substitution faisait **aussi**,
+  et que personne n'avait à l'esprit, était de **borner une sortie de shell** :
+  `router__put_back` appelle `tracker_mark_escalated <id> "$was_esc"`, et
+  `tracker_local_mark_escalated` est écrite `${2:?…}`, ce qui est un `exit` et non
+  un `return`. Dans un `$( )` ça tue le sous-shell et l'appelant survit (mesuré) ;
+  dans le shell du drain ça tue le drain, qui rend **`0`** — « the sink is empty:
+  everything in it was drained ». Le défaut n'était faux dans aucun des deux
+  tickets pris isolément, ce qui est exactement la question 4 de `CLAUDE.md`.
+  Propriétaire : **[71]**.
+
+- **Et le témoin de journal livré ici tire sur le pack lui-même** :
+  `router_journal_verify` accuse quand un **run AFK** démarre pendant que ce drain
+  tient les verrous, parce que le run journalise ses constats de tracker avant de
+  découvrir qu'il ne peut pas tourner. Réciproque mesurée côté [10]. Propriétaire :
+  **[72]**.

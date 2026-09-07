@@ -465,3 +465,28 @@ ajouté un second appelant sans en hériter aucune.
   `ROUTER__JOURNAL_WITNESS` est une variable du process du drain ([67]). Un
   cinquième lecteur ajouté ici doit tenir la même règle — et la même posture :
   compter, ne rien juger, ne rien remettre, silence quand rien n'a bougé.
+
+- **Trois constats de plus, ouverts par la passe transversale du 07/09/2026**
+  (`../passe-transversale-07-09.md`). Ce point d'entrée a été durci six fois
+  contre la seule session qu'il ouvre lui-même ; ce qu'il *décide*, ce qu'il
+  *montre* et ce qu'il *écrit* vient de l'autre point d'entrée, et rien n'a
+  regardé de ce côté-là.
+
+  1. **Il meurt sur son propre garde et sort `0`.** `router_protect_tracker` remet
+     un voisin par `tracker_mark_escalated <id> "$was_esc"` ; un ticket du puits
+     sans `**Escalation:**` — la forme que `capability_propose` écrit, donc tous
+     les tickets `request` — atteint `${2:?}`, qui est une **sortie du shell**.
+     Le drain meurt, rend `0` (« the sink is empty: everything in it was
+     drained »), le voisin reste `resolved` sans gate et `run.log` est vide.
+     Ticket **[71]**, et c'est un héritage direct de [67], qui a retiré le
+     sous-shell qui bornait le dégât.
+  2. **Il journalise avant de savoir s'il a le droit de tourner.**
+     `human_loop_preflight` écrit les constats du tracker ([64]) **avant** les
+     deux verrous, donc un drainage lancé pendant qu'un run tourne fait tirer
+     `loop_journal_verify` — et réciproquement, `router_journal_verify` sur un run
+     démarré pendant un drainage. Ticket **[72]**.
+  3. **Les deux preuves que le dossier montre viennent d'un run AFK.** La ref
+     `failed/<id>` et le reçu d'audit sont écrits par une itération, dans deux
+     zones qu'aucun contrôle du chemin AFK ne regarde ; l'épinglage de [66] ne
+     mord pas, une contrefaçon antérieure au drainage étant déjà dans sa photo de
+     base. Ticket **[70]**.

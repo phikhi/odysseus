@@ -459,3 +459,14 @@ pour que la prochaine lecture de `playthrough.sh` les trouve.
   runs est désormais *compté* d'un côté. Il ne l'est pas de l'autre — nommer au
   retour d'une session routée ne protège pas le run suivant, qui rejoue toujours ce
   que le disque porte au moment où il démarre.
+
+- **Contrainte posée par la passe transversale du 07/09/2026.**
+  `docs/playthroughs/<feature>.md` est écrit par le pack dans l'**arbre
+  principal**, lu par un humain le matin, et atteignable par une session
+  d'itération exactement comme le reçu d'audit : `git worktree list` nomme l'arbre
+  principal, et les quatre contrôles du chemin AFK comparent des trees du
+  *worktree*. Rien dans le pack ne le relit et le dossier du drain ne le montre
+  pas, donc il ne porte pas le défaut mesuré sur le reçu et la ref — mais il est
+  dans la même zone avec le même mécanisme absent, et il est nommé dans **[70]**
+  comme le troisième objet de cette liste, pour que le correctif ne soit pas plus
+  étroit que son critère ([31], [45]).
