@@ -19,6 +19,8 @@
 #   5  nothing to grind: the frontier was already empty when the run started
 #   6  the usage budget blocks this run: a weekly limit, or a session window
 #      whose reset this run must not sleep to ([08])
+#   7  ended in the middle, where nothing in this run decided to stop: something
+#      below it ended this shell. The frontier was not drained ([72])
 #
 # 6 is deliberately not 4. Every other guard is a decision this run took about
 # itself; this one is a wall that lifts on its own at a known instant, which is
@@ -28,6 +30,13 @@
 # by hand, or one of the `successor-blocked-*` words that says which refusal it
 # was ([53]) — because a reader who has to act on the difference is reading the
 # journal and not a status.
+#
+# 7 is the only code in this list that is not a decision this run took, and that
+# is why it is neither 4 nor 6: those two are guards and walls, things this loop
+# saw and printed a line about. 7 says it saw nothing, because the shell it was
+# reasoning in ended under it. It is the number `human-loop.sh` spells 6 ([71]),
+# which cannot be borrowed here — 6 is the budget wall — and the two loops give
+# the same event different numbers rather than give one number two meanings.
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
 # FEATURE points at the wrong tracker, or because every ticket is still in
@@ -74,6 +83,49 @@ loop_log() {
   printf 'ralph: %s\n' "$*"
 }
 
+# ── the only way out that means "the frontier was drained" ───────────────────
+#
+# `0` is the strongest sentence this pack prints for an AFK night: this run ground
+# everything it could. Every other exit here is a number this loop chose, with a
+# line above it saying why. So the only zeroes that may leave this file are the two
+# at the end of `loop_main`; a shell ended from underneath with a zero status is
+# converted to 7 rather than read as a finished night.
+#
+# The sister of `human_loop__on_exit`, and it is here because [71] left the
+# question open rather than answered it. Nothing on the AFK path is known to reach
+# the defect that built the drain's guard — `failures.sh` calls
+# `tracker_mark_escalated` only under `[ -n "$reason" ]`, so the `${2:?}` that
+# killed a drain mid-sink cannot fire here. That is an accident of one guard in one
+# lib and not a property of anything, and what it leaves standing otherwise is the
+# most expensive signal this pack prints resting on a shell any operation below it
+# can end: an adapter written for a backend nobody here can read ([18]), a lib that
+# spells a refusal as an exit, a `${x:?}` in either.
+#
+# **It releases the locks, and that is not a courtesy — it is how it survives.**
+# `run_lock_acquire` and `tree_lock_acquire` each install a `trap
+# 'state_locks_release' EXIT` of their own, so a guard set once here is silently
+# overwritten the moment this run takes what it came to take. The release moves
+# *into* this handler and `loop_main` puts the handler back, at the line where it
+# already replaces the locks' signal traps.
+#
+# It converts, it does not rescue: the run is over either way, and what it buys is
+# that the number an operator reads in the morning is not the one that means the
+# opposite. Only a `0` is touched, so every exit this loop decided on — 1, 2, 4, 5
+# and 6 — passes through untouched.
+LOOP__REACHED_THE_END=0
+
+loop__on_exit() {
+  local rc=$?
+  state_locks_release
+  [ "$rc" = 0 ] || exit "$rc"
+  if [ "${LOOP__REACHED_THE_END:-0}" != 1 ]; then
+    printf 'ralph: this run ended in the middle, where nothing in it decided to stop — something below it ended this shell. The frontier was not drained: whatever this run had not ground is still on it, and the last line above is where it stopped. An operation that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' >&2
+    exit 7
+  fi
+  exit 0
+}
+trap loop__on_exit EXIT
+
 # ── graceful stop ────────────────────────────────────────────────────────────
 #
 # A kill asks the run to stop, it does not tear it down: the current iteration
@@ -88,11 +140,22 @@ RALPH_STOP=0
 RALPH_JOURNAL_WITNESS=''
 
 # How many lines the journal held before this run wrote anything. Filled at the top
-# of `loop_main`, before the preflight — which journals ([27]) — and never later:
-# the mutation gate is what taught this function where it has to be taken. Read on
-# the first append instead, it would already be past a line that went missing
-# before it, and the check below would balance.
+# of `loop_main` and never later: the mutation gate is what taught this function
+# where it has to be taken. Read on the first append instead, it would already be
+# past a line that went missing before it, and the check below would balance.
+#
+# It stays there now that nothing in the preamble writes ([72]), and the two halves
+# are worth keeping apart: what had to move behind the locks is the *writing*, and
+# counting the lines of a file is not one. A base taken after the locks would be a
+# base taken later, for no reason.
 RALPH_JOURNAL_BASE=0
+
+# What `tracker_preflight` found, one `subject<TAB>outcome<TAB>message` line each,
+# held from the preflight — which says them on the console — to the moment this run
+# knows both locks are its own and may write them down ([72]). A variable of the
+# pilot and never a file, for the reason above it: this one is only read by the run
+# that filled it, and a run refused by a lock takes it to the grave.
+LOOP__FINDINGS=''
 
 loop_request_stop() {
   RALPH_STOP=1
@@ -211,10 +274,10 @@ loop_spawn_session() {
 # The tracker stays the only authority; a line lost to a crash costs nothing.
 #
 # Not one line per *iteration*, and the difference has bitten every reader written
-# against it: the liveness sweep journals a ticket that changed hands ([12]), the
-# preflight journals a duplicate id before the locks are even taken ([27]), and the
-# budget wall journals a run that stopped without one. Counting lines is not
-# counting iterations, and summing costs is still summing costs.
+# against it: the liveness sweep journals a ticket that changed hands ([12]), a
+# duplicate id gets a line of its own before the first ticket is claimed ([27]),
+# and the budget wall journals a run that stopped without one. Counting lines is
+# not counting iterations, and summing costs is still summing costs.
 #
 # `action=` is the seventh field and it is [07]'s open question, answered here
 # ([10]). The outcome says what happened to the *iteration*; a reader of the
@@ -369,21 +432,52 @@ loop_preflight() {
 #
 # Said in `run.log` and not only on the console, because that is the file a human
 # reads in the morning and the only one a receipt ([10]) will be able to read.
-# The lines land before the locks are taken, so a run refused by another run's
-# lock still records what it saw — one honest duplicate rather than a silence.
+#
+# **In two halves, and the seam is [72].** The scan and the console line are here,
+# in the preflight, where they have always been; the journal line and the memo wait
+# until `loop_main` knows both locks are this run's. Until [72] both halves ran
+# here, which is before this run knows whether it is allowed to touch this tree at
+# all — so a run refused by a drain's lock had already written two lines into the
+# journal of the drain that refused it, and that drain ended by accusing it of
+# rewriting the file. What is lost by waiting is nothing a reader had: a run that
+# does not run has no block in `run.log` to put a line in, and the sentence is on
+# the console of the person who started it either way.
 #
 # It does not refuse the run: a duplicate number costs the tickets that point at
 # it and nothing else, so stopping here would trade a whole night's work for a
 # warning that reads the same in the morning either way.
 loop__report_tracker_findings() {
   local subject outcome message
+  LOOP__FINDINGS="$(tracker_preflight)" || true
   while IFS="$(printf '\t')" read -r subject outcome message; do
     [ -n "$subject" ] || continue
     loop_log "$message"
-    loop_journal_append "$subject" "$outcome" 0 0 0
     tracker_finding_said "$subject" "$outcome"
   done <<FINDINGS
-$(tracker_preflight)
+$LOOP__FINDINGS
+FINDINGS
+}
+
+# The other half, called once both locks are held ([72]): the line that goes in
+# `run.log`, which is the file a second entry point appends to and watches for
+# rewriting.
+#
+# The memo is not here, and the line it draws is the rule of the preamble above
+# `loop_main` read on the smallest case there is. `tracker_finding_said` records
+# what a reader has been given ([64]) in a variable of *this* shell, which no
+# second entry point can see and which a refused run takes to the grave. What had
+# to move is writing a byte where somebody else reads, not remembering something.
+#
+# The scan is not run again: `tracker_preflight` `mktemp`s, walks the tracker and
+# refuses names, and asking it twice would be two answers to one question with a
+# session's tree in between.
+loop__journal_tracker_findings() {
+  local subject outcome message
+  while IFS="$(printf '\t')" read -r subject outcome message; do
+    [ -n "$subject" ] || continue
+    loop_journal_append "$subject" "$outcome" 0 0 0
+  done <<FINDINGS
+$LOOP__FINDINGS
 FINDINGS
 }
 
@@ -1309,6 +1403,33 @@ SUCCESSOR
   return 0
 }
 
+# ── the preamble, and what it is allowed to do ───────────────────────────────
+#
+# Everything between the first line of `loop_main` and `run_lock_acquire` runs
+# before this pack knows whether it may touch this working tree at all. A second
+# entry point may be holding both locks and grinding right now — another run, or a
+# human draining this sink ([16]) — and this one is refused a few lines below and
+# leaves with 1.
+#
+# So the rule, and it is about **writing** and not about position ([72]): a
+# preamble may read, it may print to the console of whoever started it, and it may
+# keep what it found in a variable of its own shell. It may not write a byte
+# anywhere a second entry point can read — `run.log` first of all, which both entry
+# points append to and each watches for rewriting ([10], [67]).
+#
+# Measured by the 07/09/2026 pass, in both directions: the preflight journalled the
+# tracker's findings ([27], [64]) three lines before discovering the tree was held,
+# and the entry point that *did* hold the locks ended by accusing the refused one
+# of rewriting its journal — the loudest sentence this pack prints, spent on the
+# most ordinary gesture there is, which is starting a drain while a run is up.
+#
+# The base of the journal window is taken in this preamble all the same, and it is
+# not the same half: reading a count writes nothing, and taking it after the locks
+# would only take it later.
+#
+# What inherits this rather than choosing it: [69]'s two leftover reports are pure
+# readers, which was a chance and not a property, and [70] puts a witness of its
+# own in these same lines.
 loop_main() {
   # First, and the position is the guarantee ([52]). `PATH` decides which `git`,
   # which `claude` and which `at` everything below runs, so a PATH this pack
@@ -1323,11 +1444,12 @@ loop_main() {
 
   cd "$(ralph_project_root)"
 
-  # Where this run's own block in the journal starts, taken before anything writes
-  # to it — the preflight journals a duplicate id before the locks are even taken
-  # ([27]), so a base read on the first append is already past whatever came with
-  # it. Guarded on FEATURE: a run without one has no journal, and is refused a line
-  # below. See loop_journal_verify for what the number is for.
+  # Where this run's own block in the journal starts, taken before anything in this
+  # run writes to it: a base read on the first append is already past whatever came
+  # with it, and the length check at the end would balance over the hole. Reading,
+  # which is what the preamble above is allowed to do. Guarded on FEATURE: a run
+  # without one has no journal, and is refused a line below. See
+  # loop_journal_verify for what the number is for.
   if [ -n "${FEATURE:-}" ]; then
     RALPH_JOURNAL_BASE="$(awk 'END { print NR + 0 }' \
       "$(ralph_feature_dir)/run.log" 2>/dev/null || printf 0)"
@@ -1342,9 +1464,26 @@ loop_main() {
   tree_lock_acquire || exit 1
   run_lock_acquire || exit 1
   # Replaces the locks' own signal traps: stopping is a decision the loop
-  # makes between iterations, not an immediate teardown. The EXIT trap they
-  # installed survives, and it is what releases both.
+  # makes between iterations, not an immediate teardown.
   trap 'loop_request_stop' TERM INT
+  # And their EXIT trap, which released both locks and decided nothing. Since [72]
+  # this run's guard does the release itself, which is what earns it the right to
+  # be the one handler that says what a `0` leaving this shell means — the locks
+  # overwrote it when they took it, so it is put back exactly here.
+  #
+  # What that leaves open, named rather than closed: between `tree_lock_acquire`
+  # and this line the locks' own handler is the one installed, so a shell ended in
+  # those three lines still leaves with whatever it was going to leave with. It is
+  # the window `human-loop.sh` has for the same reason, and closing it would mean
+  # the locks stopped installing a trap of their own — which is what makes them
+  # safe for every other caller, `loop__iterate` included.
+  trap loop__on_exit EXIT
+
+  # The first thing this run writes anywhere, and "first" is the whole of [72]: the
+  # tracker's findings were said on the console by the preflight, before this run
+  # knew it was allowed to touch this tree; the line that goes in the journal a
+  # second entry point reads waits until here.
+  loop__journal_tracker_findings
 
   loop_log "run start (feature=$FEATURE backend=$TRACKER_BACKEND model=$MODEL)"
 
@@ -1681,6 +1820,10 @@ RECLAIMED
         exit 5
       fi
       loop_log "frontier empty after $iteration iterations"
+      # One of the two places this loop is entitled to leave with a zero. Read by
+      # the guard installed at the top of this file, which turns every other `0`
+      # into a 7 ([72]).
+      LOOP__REACHED_THE_END=1
       exit 0
     fi
 
@@ -1737,6 +1880,14 @@ RECLAIMED
   # a rewritten one costs a reader and not a decision ([10] on [21]). Turning it
   # into a stop would hand a session a one-line way to end the night.
   loop_journal_verify || true
+  # And the other one, which no path reaches with an empty `stop_code` today —
+  # written down rather than left to be rediscovered ([72]): the `while` above only
+  # leaves by `break`, the one `break` is behind `[ -n "$stop_code" ]`, and every
+  # exit here is therefore a 4 or a 6 the guard passes through untouched. Set all
+  # the same, so that the day a stop meaning "nothing left to do" is added its `0`
+  # is one this loop decided on rather than one the guard has to guess about. No
+  # mutation aims at this line: no test could go red for it.
+  LOOP__REACHED_THE_END=1
   exit "${stop_code:-0}"
 }
 

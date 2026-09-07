@@ -2001,6 +2001,70 @@ ANSWERS
   [ ! -d "$(tree_lock_dir)" ] || fail "the drain kept the working-tree lock it took on its way to being refused"
 }
 
+@test "an AFK run refused by this drain's locks leaves this drain's journal alone" {
+  # [72], the other direction, and Q4c of the 07/09/2026 pass made deterministic:
+  # the AFK run is started from inside the routed session, so it is certain to ask
+  # for the locks while this drain holds both of them.
+  #
+  # Measured before [72]: the run wrote the tracker's finding into *this* drain's
+  # block of `run.log` and only then discovered the tree was held, and the drain
+  # ended by accusing it — over lines that are the only trace this pack keeps of
+  # what a human decided ([67]).
+  mk_ticket 20-a Status ready-for-human Escalation decision 'Blocked by' None
+  mk_ticket 20-b Status ready-for-human Escalation decision 'Blocked by' None
+
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+( cd "$root" && bash "$root/.claude/loop.sh" >"$RALPH_SHIM_STATE/run.out" 2>&1 )
+printf '%s
+' "$?" >"$RALPH_SHIM_STATE/run.rc"
+exit 0
+SCRIPT
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  # The refusal really happened, and after the finding was put in front of whoever
+  # started the run.
+  assert_equal "$(cat "$SHIM_STATE/run.rc")" "1"
+  assert_file_contains "$SHIM_STATE/run.out" "two or more tickets carry the number 20"
+  assert_file_contains "$SHIM_STATE/run.out" "already holds"
+
+  # And it wrote nothing here. The run's own findings would have carried
+  # `action=none`; this drain's carry `action=drain`, so the file is counted by
+  # what wrote each line rather than by what it says.
+  run bash -c "grep -c 'ambiguous-id' '$(journal_file)'"
+  assert_equal "$output" "1"
+  assert_file_contains "$(journal_file)" \
+    "$(printf 'ambiguous-id\tturns=0\tcost=0\ttokens=0\taction=drain')"
+
+  # And this drain's witness accuses nobody. It is live in this exact shape — the
+  # test above fires it with a session that rewrites the file — so this is a
+  # refutation and not a hope.
+  refute_output_contains "does not hold exactly"
+}
+
+@test "the paired witness: the same drain with no second entry point beside it" {
+  # What the test above is worth: the same tracker, the same finding, the same
+  # journal — and nothing else running.
+  mk_ticket 20-a Status ready-for-human Escalation decision 'Blocked by' None
+  mk_ticket 20-b Status ready-for-human Escalation decision 'Blocked by' None
+
+  drain <<ANSWERS
+q
+ANSWERS
+  assert_failure 3
+
+  refute_output_contains "does not hold exactly"
+  run bash -c "grep -c 'ambiguous-id' '$(journal_file)'"
+  assert_equal "$output" "1"
+}
+
 @test "a run woken up under a human's hands is told a human is in the way" {
   # The other direction, and the reason the note exists at all: a successor that
   # wakes mid-drain has to be refused — which is what [09] wants — and the
