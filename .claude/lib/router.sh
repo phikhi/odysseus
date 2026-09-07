@@ -1871,10 +1871,12 @@ router_journal() {
 }
 
 # Where this drain's own block in the journal starts, taken before anything in
-# this drain writes a line — the preflight journals the tracker's findings ([64])
-# before either lock is taken, so a base read on the first append is already past
-# whatever came with it, and the length check below would balance over a line that
-# went missing.
+# this drain writes a line, so a base read on the first append is already past
+# whatever came with it and the length check below would balance over a line that
+# went missing. Since [72] nothing in the preamble writes at all — the tracker's
+# findings ([64]) wait until both locks are held — and this is still taken where it
+# was: reading a line count writes nothing, and taking it later would only take it
+# later.
 #
 # Guarded on `FEATURE` and not on the caller's care: this runs before the preflight
 # that refuses an empty one, so it is the one function here that has to survive a

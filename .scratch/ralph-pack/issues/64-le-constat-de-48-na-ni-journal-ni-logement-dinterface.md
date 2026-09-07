@@ -178,3 +178,22 @@
   La garantie livrée ici — « une fois par run **et** par drain, dans `run.log` et à
   l'écran » — doit rester vraie pour un point d'entrée qui tourne vraiment, et
   devenir « à l'écran seulement » pour celui qui refuse. Propriétaire : **[72]**.
+
+- **Contrainte écrite par [72], livré le 07/09/2026 : la garantie de ce ticket a
+  changé de forme sans changer d'intention.** Elle disait « une fois par run **et**
+  par drain, dans `run.log` et à l'écran ». Elle dit maintenant : *à l'écran dans
+  tous les cas ; dans `run.log` pour le point d'entrée qui tourne vraiment*. La
+  raison est que les deux préflights journalisaient **avant** de demander les
+  verrous, donc le point d'entrée qui allait être refusé écrivait dans le journal
+  de celui qui tournait — et le témoin de celui-là ([10], [67]) l'accusait d'avoir
+  réécrit son journal.
+
+  Ce qui a bougé et ce qui n'a pas : la ligne de journal est passée dans
+  `loop__journal_tracker_findings` / `human_loop__journal_tracker_findings`,
+  appelées après les deux verrous. `tracker_finding_said` est **resté** avec la
+  phrase, dans la moitié qui parle — il écrit dans une variable du shell du point
+  d'entrée, que personne d'autre ne peut lire, et il appartient à « dit tout haut →
+  dit une fois ». Ne pas le déplacer : c'est la seule opération d'interface que le
+  préambule appelle nu, donc la seule cible des tests « ended before it took its
+  locks » de [71] et [72]. `tracker_preflight` n'est appelé qu'**une fois** ; son
+  résultat est gardé dans `LOOP__FINDINGS` / `HUMAN_LOOP__FINDINGS`.

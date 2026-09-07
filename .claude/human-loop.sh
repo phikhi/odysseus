@@ -213,15 +213,47 @@ human_loop_preflight() {
   return 0
 }
 
+# What `tracker_preflight` found, one `subject<TAB>outcome<TAB>message` line each,
+# held from the preflight — which says them on the console — to the moment this
+# drain knows both locks are its own and may write them down ([72]). A variable of
+# this shell and never a file: a drain refused by a run's lock takes it to the
+# grave, which is the point.
+HUMAN_LOOP__FINDINGS=''
+
+# The scan and the sentence, and only those two: this runs in the preamble, before
+# the drain knows whether it may touch this tree at all ([72]). What it found goes
+# in a variable of this shell until `human_loop_main` holds both locks.
 human_loop__report_tracker_findings() {
   local subject outcome message
+  HUMAN_LOOP__FINDINGS="$(tracker_preflight)" || true
   while IFS="$(printf '\t')" read -r subject outcome message; do
     [ -n "$subject" ] || continue
     human_loop_log "$message"
-    router_journal "$subject" "$outcome" drain
     tracker_finding_said "$subject" "$outcome"
   done <<FINDINGS
-$(tracker_preflight)
+$HUMAN_LOOP__FINDINGS
+FINDINGS
+}
+
+# The other half, called once both locks are held ([72]): the line that goes in
+# `run.log`, which is the file an AFK run writes and watches for rewriting ([10]) —
+# a drain refused by that run's lock used to leave its findings in it and be
+# accused of exactly that.
+#
+# The memo stays in the half above, with the sentence it belongs to.
+# `tracker_finding_said` ([64]) records what a reader has been given in a variable
+# of *this* shell; nothing else can see it, and a refused drain takes it to the
+# grave. What had to move behind the locks is writing where somebody else reads.
+#
+# The scan is not run again. `tracker_preflight` `mktemp`s and walks the tracker,
+# and asking it twice would be two answers to one question.
+human_loop__journal_tracker_findings() {
+  local subject outcome message
+  while IFS="$(printf '\t')" read -r subject outcome message; do
+    [ -n "$subject" ] || continue
+    router_journal "$subject" "$outcome" drain
+  done <<FINDINGS
+$HUMAN_LOOP__FINDINGS
 FINDINGS
 }
 
@@ -479,8 +511,28 @@ human_loop__drain_one() {
   done
 }
 
-# ── the drain ────────────────────────────────────────────────────────────────
-
+# ── the drain, and what its preamble is allowed to do ────────────────────────
+#
+# Everything between the first line of `human_loop_main` and `run_lock_acquire`
+# runs before this pack knows whether it may touch this working tree at all. An
+# AFK run may be holding both locks and grinding right now — that is [22], and
+# refusing this drain is correct — and the refusal arrives a few lines below.
+#
+# So the rule, the same one `loop.sh` carries above `loop_main` and for the same
+# measurement ([72]): a preamble may read, it may print to the console of the human
+# who started it, and it may keep what it found in a variable of its own shell. It
+# may not write a byte anywhere a second entry point can read — `run.log` first of
+# all, which both entry points append to and each watches for rewriting ([10],
+# [67]).
+#
+# The most ordinary gesture there is triggers it: a human starting a drain while a
+# run is up. Until [72] this preflight journalled the tracker's findings ([64])
+# three lines before discovering the tree was held, and the run that held it ended
+# its night accusing this drain of rewriting its journal.
+#
+# The base of this drain's journal window is taken in this preamble all the same,
+# and it is not the same half: `router_journal_base` reads a line count and writes
+# nothing.
 human_loop_main() {
   # First, and the position is the guarantee ([52]). `PATH` decides which `git`
   # and which `claude` everything below runs, and this loop runs a `claude` in
@@ -492,11 +544,12 @@ human_loop_main() {
 
   cd "$(ralph_project_root)"
 
-  # Where this drain's own block in `run.log` starts, taken before the preflight —
-  # which journals the tracker's findings ([64]) — and never later, for the reason
-  # `loop_main` takes its own base at the same place: a base read on the first
-  # append is already past whatever went missing before it, and the check at the
-  # end would balance over a hole.
+  # Where this drain's own block in `run.log` starts, taken before the preflight and
+  # never later, for the reason `loop_main` takes its own base at the same place: a
+  # base read on the first append is already past whatever went missing before it,
+  # and the check at the end would balance over a hole. It stays here now that the
+  # preflight writes nothing ([72]) — what had to move behind the locks is the
+  # writing, and counting the lines of a file is not one.
   #
   # In `human_loop_main` and not in the preflight, and that is the constraint [67]
   # wrote into [16] before writing this line: `human_loop_preflight` is a list of
@@ -526,6 +579,12 @@ human_loop_main() {
   tree_lock_acquire || exit 1
   run_lock_acquire "a human draining this feature's sink" || exit 1
   human_loop__arm_signals
+
+  # The first thing this drain writes anywhere, and "first" is the whole of [72]:
+  # the tracker's findings were said on the console by the preflight, before this
+  # drain knew it was allowed to touch this tree; the line that goes in the journal
+  # an AFK run reads and watches waits until here.
+  human_loop__journal_tracker_findings
 
   human_loop_log "draining ready-for-human (feature=$FEATURE backend=$TRACKER_BACKEND)"
 
@@ -577,8 +636,9 @@ LEFTOVERS
   local sink id rc=0 drained=0 left=0 quit=0 changed=0
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "nothing to drain: the human sink was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
-    # A drain that offered nothing may still have journalled: the preflight writes
-    # the tracker's own findings ([64]) before either lock is taken.
+    # A drain that offered nothing may still have journalled: the tracker's own
+    # findings ([64]) are written once both locks are held ([72]), which is well
+    # before the sink is read.
     router_journal_verify || true
     exit 5
   fi

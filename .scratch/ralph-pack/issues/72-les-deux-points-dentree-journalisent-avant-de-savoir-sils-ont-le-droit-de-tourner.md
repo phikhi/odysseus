@@ -4,17 +4,17 @@
 
 **Blocked by:** None
 
-**Write-surface:** `.claude/loop.sh`, `.claude/human-loop.sh`, `test/human-loop.bats`, `test/loop-happy-path.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
+**Write-surface:** `.claude/loop.sh`, `.claude/human-loop.sh`, `test/human-loop.bats`, `test/loop-happy-path.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md` — plus `.claude/lib/router.sh`, **écart déclaré** : un commentaire seul (voir les commentaires de livraison).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Tags:** human-loop, journal, concurrency
 
-- [ ] Un point d'entrée qui n'obtiendra pas les verrous n'écrit **aucune ligne** dans `run.log`. Ce qu'il a à dire des constats du tracker, il le dit à l'écran comme aujourd'hui.
-- [ ] Le témoin de l'autre point d'entrée ne se déclenche pas : un run qui tourne pendant qu'un humain essaie de drainer finit sans accuser personne, et réciproquement.
-- [ ] La règle est écrite là où un lecteur la cherchera : *ce qui, dans le préambule d'un point d'entrée, a le droit d'écrire avant les verrous.* Les deux fichiers portent aujourd'hui un commentaire qui explique où la **base** est prise et rien sur ce qui **écrit**.
-- [ ] Le témoin appairé est livré avec : le même run, sans point d'entrée concurrent, ne dit rien.
-- [ ] Une entrée de mutation par garantie livrée.
+- [x] Un point d'entrée qui n'obtiendra pas les verrous n'écrit **aucune ligne** dans `run.log`. Ce qu'il a à dire des constats du tracker, il le dit à l'écran comme aujourd'hui.
+- [x] Le témoin de l'autre point d'entrée ne se déclenche pas : un run qui tourne pendant qu'un humain essaie de drainer finit sans accuser personne, et réciproquement.
+- [x] La règle est écrite là où un lecteur la cherchera : *ce qui, dans le préambule d'un point d'entrée, a le droit d'écrire avant les verrous.* Les deux fichiers portent aujourd'hui un commentaire qui explique où la **base** est prise et rien sur ce qui **écrit**.
+- [x] Le témoin appairé est livré avec : le même run, sans point d'entrée concurrent, ne dit rien.
+- [x] Une entrée de mutation par garantie livrée.
 
 ## Comments
 
@@ -67,3 +67,91 @@
      préambule des deux points d'entrée : la symétrie est à trancher ici, ne
      serait-ce que pour écrire qu'on ne la fait pas.
 
+---
+
+## Livré le 07/09/2026
+
+- **Ce qui a bougé, et rien d'autre.** Les deux `*__report_tracker_findings` sont
+  coupées en deux. La moitié qui **parle** reste dans le préflight : elle appelle
+  `tracker_preflight` **une fois**, garde le résultat dans `LOOP__FINDINGS` /
+  `HUMAN_LOOP__FINDINGS` — une variable du shell du point d'entrée, jamais un
+  fichier — et imprime chaque constat. La moitié qui **écrit**
+  (`loop__journal_tracker_findings`, `human_loop__journal_tracker_findings`) est
+  appelée dans `*_main`, **après** les deux verrous, avant la ligne « run start » /
+  « draining ready-for-human » — donc l'ordre du journal ne change pas.
+
+- **`tracker_finding_said` n'a pas bougé, et c'était une erreur en cours de route
+  qu'il faut laisser écrite.** Déplacé d'abord avec la ligne de journal, puis
+  ramené : (a) il n'écrit rien que personne d'autre ne peut lire — c'est une
+  variable de ce shell — donc la règle ne le vise pas ; (b) il *appartient* à la
+  phrase (« dit tout haut » → « dit une fois », [64]) ; et surtout (c) c'est la
+  **seule** opération d'interface que le préambule appelle nu, donc la seule cible
+  possible du test « ended before it took its locks » de [71] côté drain et du même
+  côté run. L'avoir déplacé aurait laissé ce test vert en ne testant plus rien —
+  et la mutation `71 the guard is armed only once the locks are taken` serait
+  devenue VACUOUS sans qu'aucune suite ne le dise.
+
+- **La base de journal n'a pas bougé** (`RALPH_JOURNAL_BASE`, `router_journal_base`),
+  et c'est ce que le ticket demandait : lire un compteur de lignes n'écrit rien.
+  Les trois commentaires qui la justifiaient *par* « le préflight journalise »
+  disaient maintenant faux ; les trois sont réécrits. Le troisième est dans
+  `.claude/lib/router.sh` — **écart de write-surface déclaré**, commentaire seul,
+  aucune ligne de code touchée : la phrase de `router_journal_base` nommait le
+  comportement que ce ticket supprime, et la laisser aurait été le premier
+  faux-ami du prochain lecteur.
+
+- **La symétrie de [71], tranchée : faite.** `loop.sh` a maintenant son garde de
+  sortie — `LOOP__REACHED_THE_END`, `loop__on_exit`, code **7** — armé en tête de
+  fichier **et** réarmé juste après les deux verrous, qui écrasent tout trap EXIT
+  en posant le leur. Pourquoi la faire plutôt que l'écrire : le `0` de `loop.sh`
+  est le signal le plus cher du pack, et ce qui l'en protégeait était
+  `[ -n "$reason" ]` dans `failures.sh`, c'est-à-dire un accident d'un garde dans
+  un lib. **7 et pas 6** : 6 est le mur de budget ici. **7 et pas 3** : 3 est, chez
+  le drain, un humain qui a quitté, c'est-à-dire une fin ordinaire.
+
+- **Deux mesures faites en route, à ne pas redécouvrir.**
+  1. *Un `${N:?}` ne rend pas toujours le même code, et le trap voit autre chose
+     que le shell.* Sans trap, le pré-verrou sort en **1** ; avec le trap,
+     `$?` vaut **0** à l'entrée du handler (le statut de la dernière commande
+     exécutée) et le garde convertit. Post-verrou sans réarmement : **0**, parce
+     que c'est `state_locks_release` du trap des verrous qui a rendu le statut.
+     Les deux cas sont donc bien couverts par « seul un `0` est converti », mais
+     la raison n'est pas la même des deux côtés.
+  2. *Un run refusé par `run_lock_acquire` n'atteint jamais `loop__on_exit`* : le
+     verrou d'arbre a déjà posé son propre trap EXIT par-dessus. La mutation
+     « le garde réécrit toute sortie et pas seulement un zéro » visait d'abord ce
+     test-là et est sortie **VACUOUS** ; elle vise maintenant la frontière vide
+     (`exit 5`), qui est le plus court chemin vers une sortie non nulle avec le
+     garde en place. La fenêtre de trois lignes entre `tree_lock_acquire` et le
+     réarmement est **nommée dans le code** plutôt que fermée : la fermer voudrait
+     dire que les verrous cessent de poser leur trap, ce qui est ce qui les rend
+     sûrs pour tous leurs autres appelants.
+
+- **Les sondes de la passe, rejouées sous forme déterministe.** `q4` avait besoin
+  de deux processus vivants ; les tests livrés démarrent le **second point d'entrée
+  depuis la session** du premier, qui la tient forcément pendant que le premier a
+  les deux verrous. Côté run, le faux `claude` tourne dans un *worktree* et doit
+  rejoindre l'arbre principal (`$RALPH_SHIM_STATE/project-dir`) — sans ça il
+  drainerait la copie de `.scratch/` de son worktree et ne mesurerait rien. Quatre
+  tests, deux par sens (le cas + son témoin appairé), plus deux pour le garde de
+  sortie.
+
+- **Piège de test rencontré** : `assert_file_contains` fait un `grep -qF`, donc un
+  `"\t"` écrit dans une assertion est deux caractères et ne matche jamais une
+  vraie tabulation — assertion vide, test vert. La ligne du journal s'asserte avec
+  `"$(printf 'ambiguous-id\tturns=0\t…')"`.
+
+### Contrainte écrite dans [70]
+
+Le préambule de `loop_main` porte maintenant une règle écrite : il peut lire,
+imprimer, et garder ce qu'il a trouvé dans une variable de son shell — il ne peut
+**pas** écrire là où un second point d'entrée lit. Le témoin de [70] se pose donc
+soit derrière les deux verrous, soit en pure lecture. C'est ce que ce ticket devait
+trancher pour lui.
+
+### Contrainte écrite dans [64]
+
+Sa garantie devient : « une fois par run **et** par drain, à l'écran dans tous les
+cas, et dans `run.log` pour le point d'entrée qui tourne vraiment ». Le point
+d'entrée refusé le dit à l'écran et n'écrit rien. `tracker_finding_said` reste avec
+la phrase, pas avec la ligne de journal.

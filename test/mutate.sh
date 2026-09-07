@@ -5089,6 +5089,63 @@ mutation "71 the guard rewrites every exit and not only a zero" "$HUMAN_LOOP" \
   's/  \[ "\$rc" = 0 \] \|\| exit "\$rc"\n//' \
   test/human-loop.bats "drained to the end"
 
+# ── [72] what a preamble may write before it holds the locks ─────────────────
+#
+# Two entry points, one `run.log`, and each carrying a witness that says it is the
+# only writer between its base and its check ([10], [67]). The 07/09/2026 pass
+# measured the preflight journalling the tracker's findings ([27], [64]) three
+# lines before either lock is asked for: the entry point that is refused writes in
+# the journal of the one that is not, in both directions, and is accused of it.
+#
+# Each direction is mutated from the *other* file — the line a run must not see is
+# one the drain writes — and the two deleting entries beside them are the paired
+# witness a moved call needs: a pack that journalled the findings nowhere at all
+# would pass the first two while losing what [27] and [64] built.
+
+mutation "72 the drain journals what it found before it holds the locks" "$HUMAN_LOOP" \
+  's/    human_loop_log "\$message"\n/    human_loop_log "\$message"\n    router_journal "\$subject" "\$outcome" drain\n/' \
+  test/loop-happy-path.bats "leaves this run's journal alone"
+
+mutation "72 the run journals what it found before it holds the locks" "$LOOP" \
+  's/    loop_log "\$message"\n/    loop_log "\$message"\n    loop_journal_append "\$subject" "\$outcome" 0 0 0\n/' \
+  test/human-loop.bats "leaves this drain's journal alone"
+
+mutation "72 the run never journals what the tracker preflight found" "$LOOP" \
+  's/  loop__journal_tracker_findings\n//' \
+  test/loop-happy-path.bats "duplicate number is named at the start"
+
+mutation "72 the drain never journals what the tracker preflight found" "$HUMAN_LOOP" \
+  's/  human_loop__journal_tracker_findings\n//' \
+  test/human-loop.bats "names the file no scan can reach"
+
+# And the guard on the AFK exit code, which is the symmetry [71] left open and this
+# ticket had to settle: `loop.sh` prints `0` for "the frontier was drained", and any
+# operation below it that ended this shell used to print it too.
+
+mutation "72 the locks take the run's exit guard away with them" "$LOOP" \
+  's/  trap loop__on_exit EXIT\n//' \
+  test/loop-happy-path.bats "ended in the middle"
+
+mutation "72 the run's guard is armed only once the locks are taken" "$LOOP" \
+  's/\ntrap loop__on_exit EXIT\n/\n/' \
+  test/loop-happy-path.bats "ended before it took its locks"
+
+# The paired witness: a guard that never saw its own end would call every drained
+# frontier a run that stopped in the middle.
+mutation "72 a run that reached its own end is called one that ended in the middle" "$LOOP" \
+  's/      LOOP__REACHED_THE_END=1\n      exit 0\n/      exit 0\n/' \
+  test/loop-happy-path.bats "grinds the whole frontier"
+
+# And the other end of it: only a `0` is converted, so every exit this run decided
+# on passes through untouched. Aimed at the `5`, and that is not interchangeable
+# with the `1` of a lock: `run_lock_acquire` fails with the *locks'* own EXIT trap
+# installed over this guard, so a run refused there never reaches it at all. The
+# empty frontier is the shortest path that exits non-zero with the guard back in
+# place.
+mutation "72 the run's guard rewrites every exit and not only a zero" "$LOOP" \
+  's/  \[ "\$rc" = 0 \] \|\| exit "\$rc"\n//' \
+  test/loop-happy-path.bats "empty from the start is not reported as work done"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

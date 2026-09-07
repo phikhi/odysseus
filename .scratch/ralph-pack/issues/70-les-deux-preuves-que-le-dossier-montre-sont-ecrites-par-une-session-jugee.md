@@ -62,3 +62,28 @@
 - **Piège de sonde.** Une session d'itération atteint l'arbre principal par `git worktree list --porcelain | awk '/^worktree /{print $2; exit}'`, et les refs sans rien faire du tout. Et il faut un ticket `ready-for-agent` en plus du ticket du puits, sinon le run sort sur une frontière vide et n'ouvre aucune session.
 
 - **Place dans la file, validée par Philippe le 07/09/2026 : troisième, collé à [18].** La plus grosse surface des trois (`loop.sh`, `failures.sh`, `receipt.sh`, `router.sh`) et l'arête dure vers [18], qui rouvre les deux objets juste après. Même raison qui avait fait coller [64] puis [66] à [18]. Ordre retenu : [71] → [72] → [70] → [18] → [19].
+
+- **[72] a répondu, le 07/09/2026, et voici la règle exacte qu'il laisse.** Le
+  préambule de `loop_main` — tout ce qui va de sa première ligne à
+  `run_lock_acquire` — porte maintenant une règle écrite en toutes lettres
+  au-dessus de la fonction, et le même paragraphe est au-dessus de
+  `human_loop_main` : *un préambule a le droit de **lire**, d'**imprimer** sur la
+  console de qui l'a lancé, et de garder ce qu'il a trouvé dans une **variable de
+  son propre shell** — il n'a pas le droit d'écrire un octet là où un second point
+  d'entrée lit.* Ce qui a payé pour cette phrase : le préflight journalisait les
+  constats du tracker trois lignes avant de demander les verrous, donc le point
+  d'entrée refusé écrivait dans le `run.log` de celui qui tournait, qui finissait
+  en l'accusant d'avoir réécrit son journal.
+
+  **Conséquence directe pour la forme (1) :** l'épinglage se prend soit en pure
+  lecture dans le préambule (une photo est une lecture — c'est exactement le
+  statut que garde `RALPH_JOURNAL_BASE`), soit **après** les deux verrous s'il
+  écrit quoi que ce soit — un `mktemp`, un fichier de `$TMPDIR`, une ligne de
+  journal. `loop_main` a désormais une ligne dédiée juste après les verrous
+  (`loop__journal_tracker_findings`) : c'est là que va tout ce que le préambule a
+  trouvé et qui doit laisser une trace. Deuxième conséquence, plus petite : le
+  préambule porte aussi un garde de sortie (`loop__on_exit`, code 7) armé en tête
+  de fichier et **réarmé après les verrous**, parce que les deux `*_lock_acquire`
+  écrasent tout trap EXIT ; un épinglage posé entre `tree_lock_acquire` et ce
+  réarmement est dans une fenêtre de trois lignes que le garde ne couvre pas, et
+  cette fenêtre est nommée dans le code.

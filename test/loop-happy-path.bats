@@ -634,6 +634,148 @@ sleep 30'
   [ ! -d "$(run_lock_dir)" ] || fail "the lock survived the run"
 }
 
+# ── the two entry points, side by side ───────────────────────────────────────
+
+# Two tickets carrying one number, both off the frontier: `tracker_preflight`
+# returns an `ambiguous-id`, which is the finding every entry point says at the
+# start ([27], [64]) and the one thing a run and a drain both write about before
+# doing anything else. `ready-for-human` keeps them out of the night's work, so
+# what is measured here is the finding and not a second delivery.
+happy__ambiguous_twenty() {
+  local n
+  for n in a b; do
+    cp "$(ticket_file 01-alpha)" "$TRACKER_DIR/20-$n.md"
+    perl -pi -e 's/ready-for-agent/ready-for-human/' "$TRACKER_DIR/20-$n.md"
+  done
+}
+
+@test "a drain refused by this run's locks leaves this run's journal alone" {
+  # [72], and Q4a of the 07/09/2026 pass made deterministic: the second entry
+  # point is started from inside the session, so it is certain to ask for the
+  # locks while this run holds both of them. Two live processes with a race
+  # between them would measure the same thing on a good day.
+  #
+  # Measured before [72]: the drain wrote its finding into *this* run's block of
+  # `run.log` and only then discovered the tree was held, and this run ended by
+  # printing the loudest sentence it has — "do not believe it about this run" —
+  # over the most ordinary gesture there is, which is starting a drain while a run
+  # is up.
+  use_tickets 01-alpha
+  happy__ambiguous_twenty
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+# The session works in a worktree; the journal and both locks are in the main
+# tree, which a session reaches without being told how ([30]).
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+( cd "$root" && bash "$root/.claude/human-loop.sh" </dev/null \
+  >"$RALPH_SHIM_STATE/drain.out" 2>&1 )
+printf '%s\n' "$?" >"$RALPH_SHIM_STATE/drain.rc"
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_success
+
+  # The refusal really happened, and it happened after the finding was put in
+  # front of the human who started the drain — which is where it stays ([64]).
+  assert_equal "$(cat "$SHIM_STATE/drain.rc")" "1"
+  assert_file_contains "$SHIM_STATE/drain.out" "two or more tickets carry the number 20"
+  assert_file_contains "$SHIM_STATE/drain.out" "already holds"
+
+  # And it wrote nothing here: no line of the drain's in this run's journal.
+  refute_file_contains "$FEATURE_DIR/run.log" "action=drain"
+  # This run's own finding is in it, so the silence above is the drain's and not a
+  # journal that stopped working.
+  assert_file_contains "$FEATURE_DIR/run.log" "ambiguous-id"
+  # And the witness of the entry point that did hold the locks accuses nobody
+  # ([10]). It is live in this exact shape — `test/receipt.bats` fires it with a
+  # session that rewrites the file — so this is a refutation and not a hope.
+  refute_output_contains "does not hold exactly"
+}
+
+# ── the only way out that means "the frontier was drained" ───────────────────
+
+# One pack operation, replaced, in a lib the pack sources after its own — the
+# shape [71] built for the drain, one entry point over.
+hostile_adapter_op() {
+  local fn="$1"
+  {
+    printf '# shellcheck shell=bash\n'
+    printf '# Written by test/loop-happy-path.bats: one operation, replaced.\n'
+    printf '%s() {\n' "$fn"
+    cat
+    printf '}\n'
+  } >"$PACK_DIR/lib/zz-hostile-adapter.sh"
+}
+
+@test "a run something ended in the middle does not report a drained frontier" {
+  # [72], the half that survives a lib nothing in this repository wrote: an adapter
+  # for a backend nobody here can read ([18]), or any operation that spells a
+  # refusal as a shell exit instead of a return — which is the contract [71] put at
+  # the top of `lib/tracker.sh` after a drain died of one mid-sink.
+  #
+  # `concurrency_cap` because it is called bare in the pilot's own shell, after
+  # both locks are taken, where there is no subshell to absorb the death — the one
+  # arrangement that tests the guard the locks overwrote and `loop_main` put back.
+  #
+  # Measured without the guard: `0`, which is this pack's word for a night that
+  # ground everything it could, printed over a frontier still holding its ticket.
+  hostile_adapter_op concurrency_cap <<'OP'
+  local ended="${9:?concurrency: nothing to cap this with}"
+  printf '%s' "$ended"
+OP
+  use_tickets 01-alpha
+
+  run_loop
+  assert_failure 7
+  assert_output_contains "ended in the middle"
+  refute_output_contains "frontier empty"
+  # And what the sentence says is true: nothing was ground.
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
+@test "a run something ended before it took its locks does not report one either" {
+  # The same lie one step earlier, and the reason the guard is armed at the top of
+  # this file and not only where the locks are taken: the preflight runs the
+  # tracker's findings through this shell ([64], [72]), so an operation that ends
+  # its caller there ends a run that claimed nothing, printed no start line, and
+  # would still have left with `0`.
+  #
+  # `tracker_finding_said` because it is the interface function that runs in the
+  # pilot's own shell at that moment; two tickets carrying the same `NN` are what
+  # makes `tracker_preflight` produce the finding that reaches it.
+  hostile_adapter_op tracker_finding_said <<'OP'
+  local ended="${9:?tracker: nothing to say this with}"
+  printf '%s' "$ended"
+OP
+  use_tickets 01-alpha
+  happy__ambiguous_twenty
+
+  run_loop
+  assert_failure 7
+  assert_output_contains "ended in the middle"
+  refute_output_contains "run start"
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
+@test "the paired witness: the same run with no second entry point beside it" {
+  # What the test above is worth: the same tracker, the same finding, the same
+  # journal — and nothing else running. A run that never accused anybody would
+  # pass the assertion above whatever the drain wrote.
+  use_tickets 01-alpha
+  happy__ambiguous_twenty
+
+  run_loop
+  assert_success
+
+  refute_output_contains "does not hold exactly"
+  assert_file_contains "$FEATURE_DIR/run.log" "ambiguous-id"
+  refute_file_contains "$FEATURE_DIR/run.log" "action=drain"
+}
+
 # ── the run journal ──────────────────────────────────────────────────────────
 
 @test "each iteration appends a line to the run journal" {
