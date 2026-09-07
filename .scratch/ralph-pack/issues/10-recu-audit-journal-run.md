@@ -162,3 +162,14 @@ Et une cinquième que le critère a sortie en le relisant : un **rollback qui n'
   Ce n'est pas un défaut à réparer ici — c'est le prix de « les lignes des runs
   précédents ne sont pas à ce run de garantir », et il fallait le mesurer une fois.
   Sondes : `../sondes/passe-06-09/q2-*.bats` (Q2e).
+
+- **Contrainte écrite par [68], livré le 07/09/2026.** Le commentaire d'ouverture
+  de `receipt.sh` dit « `run.log` lives under `.scratch/<feature>/`, and nothing in
+  this pack guards that directory ». Depuis [68], une pièce de ce répertoire a un
+  garde : `spec.md` est épinglé par le drain et nommé quand une session le bouge.
+  Le **raisonnement** du reçu est intact — ce qu'il refuse de lire est `run.log`,
+  que rien ne garde et que rien ne peut garder, parce que le flux de session s'y
+  écrit pendant la fenêtre surveillée — mais la phrase est trop large d'un fichier.
+  `receipt.sh` était hors de la write-surface de [68] ; la reformuler appartient à
+  ce ticket-ci. Les trois phrases équivalentes de `router.sh` ont été recadrées sur
+  `run.log` au même endroit.

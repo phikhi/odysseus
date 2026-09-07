@@ -188,6 +188,7 @@ ROUTER__PINNED_FAILURES=''
 ROUTER__PINNED_TREE=''
 ROUTER__PINNED_TRACKER=''
 ROUTER__PINNED_REFS=''
+ROUTER__PINNED_SPEC=''
 
 # Every line this drain wrote in `run.log`, in order, and how many the file held
 # before it wrote any. Variables of the drain's own process and never files, for
@@ -235,6 +236,15 @@ ROUTER__JOURNAL_BASE=0
 # can write and can destroy. It behaves like the three fields and not like the
 # tree: it is what a decision reads. See `router__failed_refs` for what it costs
 # and for what it deliberately does *not* buy.
+#
+# **A fifth object joined them in [68], and it is the only one that decides
+# nothing here**: a digest of `spec.md`, the user flow the terminal value gate of
+# the next AFK run replays. It behaves like the fields and not like the tree — it
+# is read to say what moved under this drain — and what it is *for* is one entry
+# point over: the pilot's own copy is taken per run ([11]), so the interval
+# between two runs is covered by nothing, and since [16] that interval holds a
+# session nothing judges. See `router_spec_note` for what naming it buys and for
+# the argument that nothing is put back.
 router_pin() {
   local id="${1:?router: a ticket id}"
   ROUTER__PINNED_ID=''
@@ -247,6 +257,7 @@ router_pin() {
   ROUTER__PINNED_TREE="$(router__tree_dirt)" || ROUTER__PINNED_TREE=''
   ROUTER__PINNED_TRACKER="$(router__tracker_state)" || ROUTER__PINNED_TRACKER=''
   ROUTER__PINNED_REFS="$(router__failed_refs)" || ROUTER__PINNED_REFS=''
+  ROUTER__PINNED_SPEC="$(router__spec_digest)" || ROUTER__PINNED_SPEC=''
   ROUTER__PINNED_ID="$id"
 }
 
@@ -966,6 +977,126 @@ NOW
   return 0
 }
 
+# ── the user flow the next run's value gate will replay ──────────────────────
+#
+# The fifth object taken at that one call — the fourth piece of evidence, after
+# the three fields and the forensic refs — and the only one that decides nothing
+# in this drain: it decides the **next AFK run** ([68]).
+#
+# `spec.md` is what the terminal value gate replays once the frontier is empty.
+# The pilot copies it into `$TMPDIR` before its first session ([11]) for the
+# reason everything here is pinned — a control that reads a file the session can
+# write is not a control — and that copy is taken **per run**. So the bound
+# `playthrough_witness` is written under is "during a run" against "between two
+# runs", and what made the second half safe was that whatever writes in that
+# interval is a human.
+#
+# [16] put an unjudged `claude` in exactly that interval. Measured on the 06/09
+# pass (`sondes/passe-06-09/q5`): a routed session rewrites `spec.md`, the value
+# gate of the next AFK run replays the forged flow, and neither the drain nor the
+# run says a word of it. The direction is the expensive one — a flow that promises
+# less makes that gate more **lenient**, so what it buys is a `pass` on a feature
+# nobody wired, a feature closed on a flow nobody promised, and a
+# `docs/playthroughs/<feature>.md` telling a human that morning that it works.
+#
+# **This counts and judges nothing**, the posture [69], [67] and [66] all hold at
+# this one place. Nothing is put back, and that needed an argument of its own
+# rather than [66]'s: this drain is not the author of the forensic refs, and it is
+# not the author of `spec.md` either — nothing in this pack writes that file,
+# `playthrough.sh` reads it and reports it missing when it is not there. More than
+# that, **a human correcting the spec between two runs is the write that file is
+# there for** ([11] names it in the same breath as the bound), and the `admit`
+# desk exists to have that conversation inside the routed session. A drain that
+# restored it would be undoing the one edit this entry point is for, on evidence
+# that cannot tell it from a session's.
+#
+# **What naming buys, and what it does not**, which is [66]'s two measured
+# residues arriving here unchanged: the write **survives**, so the next drain pins
+# the forged flow as its own baseline and says nothing about it, and the run after
+# that replays it. The pin is per ticket and the note is at session return — it
+# puts a human in front of the rewrite while they are still sitting at the sink,
+# and it protects no run. The sentence says so rather than leaving it to be found.
+
+# A digest of this feature's `spec.md`, `missing` when there is no such file, and
+# non-zero when there is one and it could not be read.
+#
+# Three answers and not two, because [59]'s rule bites hardest here: read as an
+# absence, a refusal of this producer turns a spec nobody touched into a spec a
+# session deleted, and the sentence for that tells a human the feature can no
+# longer be closed. A file that is there and unreadable — a directory under that
+# name, a mode nobody can open — is a refusal, not a deletion.
+#
+# `cksum` for the reason every other digest in this pack uses it ([15], [30],
+# `router__ticket_digest` one screen up): it is arithmetic on bytes and it is on
+# the PATH the preflight witnesses. Nothing here needs it to be hard to forge — a
+# session that wants to hide an edit can revert the edit — and the file is read
+# through a redirection rather than by name so that `cksum`'s own output carries
+# no path to strip.
+router__spec_digest() {
+  local file digest
+  file="$(ralph_feature_dir)/spec.md"
+  [ -e "$file" ] || {
+    printf 'missing\n'
+    return 0
+  }
+  digest="$(cksum <"$file" 2>/dev/null | awk '{ print $1 "." $2 }')" || digest=''
+  [ -n "$digest" ] || return 1
+  printf '%s\n' "$digest"
+}
+
+# What that session did to the user flow, said after a routed session and nowhere
+# else.
+#
+# **Printed in the drain's own shell, with its own `ralph: ` prefix, and never
+# through a command substitution** ([67], [66]): it journals, and the drain's copy
+# of what it journalled is a variable of its process.
+#
+# Silent and non-zero when the file is exactly as this drain took it, for [37]'s
+# rule read from this side: a control must not announce having acted on what it
+# left exactly as it was.
+#
+#   0  it said something
+#   1  nothing moved, or nothing here could tell
+router_spec_note() {
+  local id="${1:?router: a ticket id}" now
+  if [ "${ROUTER__PINNED_ID:-}" != "$id" ]; then
+    printf 'ralph: %s: nothing pinned the user flow this feature promised before a session could be opened on it, so nothing here can tell what that session wrote in `spec.md` from what was already there. `router_pin` is taken once per ticket, before the dossier and before any session.\n' \
+      "$id" >&2
+    return 1
+  fi
+  if [ -z "${ROUTER__PINNED_SPEC:-}" ]; then
+    printf 'ralph: %s: `spec.md` was there and could not be read when this drain took this ticket, so there is no baseline to compare it against. That is the whole of what is said about the user flow — in particular, not that it is as this drain took it, and not that it is gone.\n' \
+      "$id" >&2
+    return 1
+  fi
+  if ! now="$(router__spec_digest)"; then
+    printf 'ralph: %s: `spec.md` is there and could not be read after that session, so nothing here can say what it did to it. That is the whole of what is said about the user flow — in particular, not that it is as this drain took it, and not that a session deleted it.\n' \
+      "$id" >&2
+    return 1
+  fi
+  [ "$now" != "$ROUTER__PINNED_SPEC" ] || return 1
+
+  case "$ROUTER__PINNED_SPEC:$now" in
+    missing:*)
+      printf 'ralph: `spec.md` was written while this drain was on %s, and this feature had none when it took this ticket. That file is the user flow the terminal value gate of the next AFK run replays, and a feature that could not be closed by anything this loop measures can now be closed on a flow nobody promised. Nothing here removes it: this drain is not the author of that file, and a human writing the spec at this sink is a normal thing to do. Read it before the next run starts.\n' \
+        "$id"
+      router_journal "$id" spec-drift written
+      ;;
+    *:missing)
+      printf 'ralph: `spec.md` is gone, and this drain took %s with a user flow in it. The terminal value gate closes no feature without one — it names the missing key and asks a human — so what this costs is the closing of this feature and not a lenient verdict. Nothing here puts it back: this drain never wrote that file and kept no copy of what was in it, only a digest of it.\n' \
+        "$id"
+      router_journal "$id" spec-drift deleted
+      ;;
+    *)
+      printf 'ralph: `spec.md` reads differently after that session, where this drain took it as `%s`. That file is the user flow the terminal value gate of the next AFK run replays: a run copies it before its first session ([11]), so what is on disk when the next run starts is what this feature will be judged against — and a flow that promises less makes that gate more lenient, never stricter. Nothing here puts it back: a human correcting the spec between two runs is the write that file is there for, and nothing here can tell that edit from a session'"'"'s. What this line buys is you, now: the write survives this drain, the next drain takes it as its own baseline and says nothing, and the run after that replays it.\n' \
+        "$ROUTER__PINNED_SPEC"
+      router_journal "$id" spec-drift rewritten
+      ;;
+  esac
+  return 0
+}
+
+
 # ── the desk ─────────────────────────────────────────────────────────────────
 
 # Which question this ticket puts to a human.
@@ -1027,10 +1158,17 @@ NOW
 #                                  block and for nothing above it, plus the
 #                                  reserve both readings of that file carry
 #                                  ([67]).
+#   `spec.md`                      the pin and `router_spec_note` ([68]). It is
+#                                  the one piece of that directory that decides
+#                                  something — the user flow the value gate of
+#                                  the *next* AFK run replays — and it is named
+#                                  at session return and never put back. What
+#                                  that buys and what it leaves is written on
+#                                  `router_spec_note` itself.
 #   the rest of `.scratch/<feature>/`  nothing, and nothing can: a session's own
 #                                  stream is written there while it is being
-#                                  watched. The piece of it that *decides*
-#                                  something is `spec.md`, and it is [68]'s.
+#                                  watched, and this drain writes `run.log`
+#                                  there too.
 router_desk() {
   local id="${1:?router: a ticket id}" reason count
   reason="$(router__field "$id" Escalation)" || reason=''
@@ -1151,12 +1289,18 @@ router_has_branch() {
 # This ticket's own lines in the run journal, verbatim.
 #
 # Read here and nowhere else in this module, so that the caveat travels with the
-# lines rather than being a paragraph somebody forgets: `run.log` lives under
-# `.scratch/<feature>/`, which nothing in this pack guards and nothing can guard —
-# the session's own stream is written there during the window being watched — so
-# the session these lines are about could have written them. `receipt.sh` refuses
-# to read this file for exactly that reason. A human may read it; a control may
-# not.
+# lines rather than being a paragraph somebody forgets: `run.log` is guarded by
+# nothing and can be guarded by nothing — a session's own stream is written in
+# that same directory *during* the window being watched, and this drain appends
+# here too — so the session these lines are about could have written them.
+# `receipt.sh` refuses to read this file for exactly that reason. A human may read
+# it; a control may not.
+#
+# The sentence used to be about `.scratch/<feature>/` as a whole, and since [68]
+# that is half false: `spec.md`, one file over, is pinned when this drain takes a
+# ticket and named when a session moves it (`router_spec_note`). What makes that
+# possible is exactly what this file lacks — nobody legitimately writes `spec.md`
+# during the window — so the naming next door buys these lines nothing.
 #
 # Matched on the second tab-separated field, whole, and not with a `grep` for the
 # id: an id is a file name and `01-a` would match the lines of `01-a2` as surely
@@ -1197,8 +1341,10 @@ router_journal_lines() {
 # where it comes from: a human was handed the lines of one ticket with "read them,
 # do not rely on them" and four run-level affirmations with nothing. Both readings
 # are of `.scratch/<feature>/run.log`, which nothing in this pack guards and
-# nothing can — a session's own stream is written there while it is being watched,
-# and this drain writes there too.
+# nothing can — a session's own stream is written in that directory while it is
+# being watched, and this drain writes there too. What [68] added is a guard on
+# one *other* file of that directory and not on this one; the reserve below says
+# which.
 router_run_notes() {
   local words
   words="$(router__run_notes_words)" || return 1
@@ -1214,7 +1360,7 @@ router_run_notes() {
 # knows only "these lines may be forged" still reads a missing note as a fact about
 # the run.
 router__run_notes_caveat() {
-  printf 'The words below are read off `run.log`, under `.scratch/`, which nothing in this pack guards and nothing can: the sessions they are about write there, and this drain writes there too. A word that is *there* may have been put there, and a word that is *missing* is as cheap to arrange as one that is there. Read them, do not rely on them.\n'
+  printf 'The words below are read off `run.log`, which nothing in this pack guards and nothing can: the sessions they are about write in that directory while they are being watched, and this drain writes there too — `spec.md`, next door, is watched since [68] precisely because nobody writes it then. A word that is *there* may have been put there, and a word that is *missing* is as cheap to arrange as one that is there. Read them, do not rely on them.\n'
 }
 
 # The four, one `if` each. Non-zero when the file has nothing worth reading out.
@@ -1401,8 +1547,8 @@ router_dossier() {
 
   lines="$(router_journal_lines "$id")"
   if [ -n "$lines" ]; then
-    printf '  journal  its own lines in run.log, below. That file is under `.scratch/`,\n'
-    printf '           which nothing in this pack guards: the session these lines are\n'
+    printf '  journal  its own lines in run.log, below. That file is one nothing in\n'
+    printf '           this pack guards, and nothing can: the session these lines are\n'
     printf '           about could have written them. Read them, do not rely on them.\n'
     printf '%s\n' "$lines" | sed 's/^/             /'
   else

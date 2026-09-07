@@ -214,8 +214,32 @@ RALPH_PLAYTHROUGH_SPEC="${RALPH_PLAYTHROUGH_SPEC:-}"
 # the readers are subshells of the pilot, and `claude` is not.
 #
 # Across runs it is the file on disk that seeds it, and that limit is the lesson
-# index's own: a human who corrects the spec between two runs is heard, a session
-# that rewrites it during one is not.
+# index's own. It used to be written as a bound on **time** — a human who corrects
+# the spec between two runs is heard, a session that rewrites it during one is not
+# — and [68] found the argument under it dead: what made "between two runs" safe
+# was that whatever writes there is a human, and [16] put an unjudged `claude` in
+# exactly that interval. Measured on the 06/09 pass: a routed session rewrites
+# this file and the next run replays the forged flow, in the lenient direction —
+# `pass` on a feature nobody wired.
+#
+# So the bound is not "during a run against between two runs". It is **what this
+# pack watched being written against what somebody wrote where nothing was
+# watching**:
+#
+#   a delivery session, during a run    this copy is already taken; the rewrite
+#                                       changes nothing here, and the file on
+#                                       disk is what the *next* run seeds from.
+#   a routed session, at the sink       the drain pins this file when it takes a
+#                                       ticket and names what moved when the
+#                                       session returns (`router_spec_note`,
+#                                       [68]). Named, never put back, and the
+#                                       naming reaches the human at the sink and
+#                                       not the run after them.
+#   a human, in an editor               heard, and that is the point: this file
+#                                       is how a spec is corrected between two
+#                                       runs. Nothing distinguishes it from the
+#                                       line above, which is why that one is
+#                                       named rather than refused.
 #
 # A spec that is missing or unreadable leaves an **empty** witness rather than a
 # refusal, because those are facts about the feature that this gate reports at the
