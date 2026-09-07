@@ -62,17 +62,24 @@
 # Public API
 #   router_reasons                 the closed set of words `failures.sh` writes
 #   router_is_reason WORD          membership, literally and not as a pattern
-#   router_pin ID                  the ticket's deciding fields, and the state of
-#                                  the working tree, as they stand now — taken
-#                                  before anything opens a session
+#   router_pin ID                  the ticket's deciding fields, the state of the
+#                                  working tree, of the tracker and of
+#                                  `refs/heads/failed/*`, as they stand now —
+#                                  taken before anything opens a session
 #   router_tree_note ID            what this tree carries that no gate will read,
 #                                  after a routed session
+#   router_protect_tracker ID      what a routed session wrote in `issues/`: put
+#                                  back where this drain owns it, named where it
+#                                  does not
+#   router_branch_note ID          what a routed session did to
+#                                  `refs/heads/failed/*`, after a routed session
 #   router_desk ID                 which question this ticket puts
 #   router_treatment DESK          which skill a human reaches for
 #   router_question DESK           the question itself, one line
 #   router_unblocks ID             how many tickets name this one as a blocker
 #   router_sink                    the sink in drain order, one id per line
-#   router_has_branch ID           does `failed/<id>` exist
+#   router_has_branch ID           does `failed/<id>` exist, as this drain took
+#                                  the ticket
 #   router_journal_lines ID        this ticket's own lines in `run.log`
 #   router_run_notes               the run-level words a drain has to read right
 #   router_dossier ID              everything above, rendered for a human
@@ -180,6 +187,7 @@ ROUTER__PINNED_SURFACE=''
 ROUTER__PINNED_FAILURES=''
 ROUTER__PINNED_TREE=''
 ROUTER__PINNED_TRACKER=''
+ROUTER__PINNED_REFS=''
 
 # Every line this drain wrote in `run.log`, in order, and how many the file held
 # before it wrote any. Variables of the drain's own process and never files, for
@@ -218,6 +226,15 @@ ROUTER__JOURNAL_BASE=0
 # `r` again is let through. The two behave differently on purpose, and the
 # difference is which question each one answers — a field is what a session may
 # rewrite to fool a control, a tree is what a human is expected to change.
+#
+# **A fourth object joined them in [66], and it is the only one that is not in a
+# file**: every `refs/heads/failed/*` this repository holds, with its target.
+# `router_desk` chooses the `arbitrate` desk on the existence of one of them and
+# `router_dossier` sends a human to read it, so it is evidence in exactly the
+# sense `Escalation:` and `Failures:` are — and it is evidence a routed session
+# can write and can destroy. It behaves like the three fields and not like the
+# tree: it is what a decision reads. See `router__failed_refs` for what it costs
+# and for what it deliberately does *not* buy.
 router_pin() {
   local id="${1:?router: a ticket id}"
   ROUTER__PINNED_ID=''
@@ -229,6 +246,7 @@ router_pin() {
     ROUTER__PINNED_FAILURES=''
   ROUTER__PINNED_TREE="$(router__tree_dirt)" || ROUTER__PINNED_TREE=''
   ROUTER__PINNED_TRACKER="$(router__tracker_state)" || ROUTER__PINNED_TRACKER=''
+  ROUTER__PINNED_REFS="$(router__failed_refs)" || ROUTER__PINNED_REFS=''
   ROUTER__PINNED_ID="$id"
 }
 
@@ -334,7 +352,11 @@ router__say_drift() {
 #                                   scope-guard and the rollback already read.
 #                                   What a *routed session* does in there is
 #                                   [55]'s pin, and the window that leaves is
-#                                   [58]'s.
+#                                   [58]'s. The whole map of who guards which
+#                                   zone — this one, `issues/`, `run.log`, the
+#                                   refs — is in `router_desk`'s comment since
+#                                   [66], written once so that this list cannot
+#                                   name a guard that does not do the work.
 #   the ignored zone                `--exclude-standard`. It is the zone nothing
 #                                   in this pack judges and no rollback undoes
 #                                   ([24], [30]); a build cache is not a fix
@@ -756,6 +778,194 @@ IDS
   return 0
 }
 
+# ── the forensic ref, as this drain took it ──────────────────────────────────
+#
+# The fourth object taken at that one call, and the only one that lives in `.git/`
+# rather than in a file a human could open ([66]).
+#
+# `refs/heads/failed/<id>` is what a run writes when it judged an attempt and
+# rolled it back, and it is read as *evidence*: `router_desk` sends a `decision`
+# ticket to the `arbitrate` desk on its existence, and `router_dossier` tells a
+# human to read `git log -p failed/<id>`. Until this ticket it was read as it
+# stood, on an argument written in `router_desk` — a session that writes one "has
+# left a branch behind it in the repository, and `router_tree_note` is what looks
+# at what a session left outside `issues/`". `router_tree_note` reads
+# `router__tree_dirt`, which is this working tree minus `gate_is_bookkeeping`. A
+# ref is not a path in a working tree. The sentence named a mechanism that does
+# not do the work, and it named it while closing the same hole for `Failures:`.
+#
+# Measured on the 06/09 pass, a routed session writing nothing but the ref:
+#
+#   it creates `failed/<id>`   the desk of the next session on that ticket moves
+#                              from `admit` to `arbitrate`, and the dossier sends
+#                              a human to read a tree that session chose. [61]'s
+#                              defect, on the other piece of evidence.
+#   it deletes one             the dossier of a ticket a run really did judge
+#                              says "there is none. nothing ever ran on this
+#                              ticket".
+#
+# **The two do not cost the same, and that is what decides the shape of this.**
+# The first is a misrouting, and a pin repairs it: the desk is chosen on the ref
+# as this drain took it, so a session cannot re-desk the next session on its own
+# ticket. The second is the **destruction of evidence**, and no pin gives it back
+# — a `failed/<id>` ref is the one thing about a ticket that outlives a `gc`,
+# which is why `router_dossier` leans on it for a ticket that has been in this
+# sink for a while. What a pin buys there is saying so: this drain knows the ref
+# was there when it took the ticket, and knows it is gone.
+#
+# **What is deliberately not built here.** These refs are not *guarded*: nothing
+# puts one back, and nothing refuses a drain over one.
+#
+#   putting one back   this drain never authored these refs — `failures.sh` does
+#                      — and the commit a deleted ref named may already be
+#                      unreachable. `router__put_back` drew this line for the
+#                      tracker and it is the same line: this drain writes back
+#                      only what a public verb defines, and a restore that
+#                      invents is a second author for state nothing measured.
+#   refusing           the posture [69] set and [67] kept: these mechanisms count
+#                      and judge nothing. A ref guard that could end a drain would
+#                      hand a routed session one `git update-ref` to send home the
+#                      human who came to empty the sink.
+#
+# So what is delivered is "the drain decides on what it pinned, and names what
+# moved", not "the `failed/*` refs are guarded". The wider one is a ticket of its
+# own and it already has a place to live: [18] moves the forensic trace off a
+# local ref for a remote backend, and a trace that is answered by a request is a
+# piece of evidence produced by something a session can call.
+#
+# **The whole namespace, and not this ticket's ref alone.** The pin decides for
+# the ticket in front of the human; the note names every ref that moved. A routed
+# session on `20-first` that writes `failed/21-second` moves the desk of a ticket
+# nobody asked this human about and that no drain has pinned yet — [58]'s finding
+# on the tracker, the same shape one directory over, and the reason
+# `router__tracker_state` watches every ticket rather than one.
+
+# Every `refs/heads/failed/*` this repository holds, `<objectname><TAB><refname>`,
+# one per line and in refname order — `for-each-ref` sorts by refname, which is
+# what makes the note below say things in the same order twice.
+#
+# The whole refname and not the id: `%(refname:lstrip=3)` renders a bare
+# `refs/heads/failed` as an empty id, and what a human is told to read is a ref
+# name anyway. The name goes **last** for [37]'s reason — everything before the
+# tab is read by position — and here that costs nothing, because git refuses
+# control characters in a refname and the tab cannot be inside one.
+#
+# **Non-zero when git would not answer, and a caller must tell that from an empty
+# namespace** ([59]). Read as an empty list, a refusal turns every ref this drain
+# pinned into a ref a session deleted, and the sentence for that accuses somebody
+# of destroying evidence. `router_pin` reads it as empty on purpose and
+# `router_branch_note` refuses on it, and the asymmetry is which mistake each one
+# would make: the pin degrades to the reading this file had before this ticket,
+# the note would make an accusation out of a machine that answered nothing.
+router__failed_refs() {
+  git for-each-ref --format='%(objectname)%09%(refname)' \
+    refs/heads/failed/ 2>/dev/null
+}
+
+# The target of one ref in such a list, read from stdin; non-zero when the list
+# does not carry it. One reader for the two lists, rather than two that would
+# drift — the same argument `router__tree_split` is written under.
+router__ref_target() {
+  local want="${1:-}" tab line
+  tab="$(printf '\t')"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "${line#*$tab}" = "$want" ] || continue
+    printf '%s\n' "${line%%$tab*}"
+    return 0
+  done
+  return 1
+}
+
+# What this drain pinned about one ticket's forensic ref: its target, or non-zero
+# when it pinned no such ref — and non-zero as well for a ticket this drain did
+# not pin, which is what makes `router_has_branch` fall back to the repository
+# instead of answering "there is none".
+router__pinned_ref() {
+  local id="${1:-}"
+  [ -n "$id" ] || return 1
+  printf '%s\n' "$ROUTER__PINNED_REFS" |
+    router__ref_target "refs/heads/failed/$id"
+}
+
+# What that session did to the forensic refs, said after a routed session and
+# nowhere else.
+#
+# **Printed in the drain's own shell, with its own `ralph: ` prefix, and never
+# through a command substitution** ([67]): it journals, and the drain's copy of
+# what it journalled is a variable of its process. From a subshell the lines
+# reach `run.log` and not the witness, and the drain ends by accusing itself of a
+# rewrite nobody made — which is what `router_protect_tracker` had to be taken
+# out of a `moved="$(…)"` to stop doing.
+#
+# Silent and non-zero when the namespace is exactly as this drain took it, for
+# [37]'s rule read from this side: a control must not announce having acted on
+# what it left exactly as it was.
+#
+#   0  it said something
+#   1  nothing moved, or nothing here could tell
+router_branch_note() {
+  local id="${1:?router: a ticket id}" now tab line ref who was current said=1
+  if [ "${ROUTER__PINNED_ID:-}" != "$id" ]; then
+    printf 'ralph: %s: nothing pinned which forensic refs this repository held before a session could be opened on it, so nothing here can tell what that session wrote under `refs/heads/failed/` from what was already there. `router_pin` is taken once per ticket, before the dossier and before any session.\n' \
+      "$id" >&2
+    return 1
+  fi
+  if ! now="$(router__failed_refs)"; then
+    printf 'ralph: %s: git would not list `refs/heads/failed/*` after that session, so nothing here can say what it did to them. That is the whole of what is said about those refs — in particular, not that they are as this drain took them.\n' \
+      "$id" >&2
+    return 1
+  fi
+  tab="$(printf '\t')"
+
+  # What this drain pinned and what became of it: gone, or pointing somewhere
+  # else. Two arms and not one, because a human does two different things with
+  # them — a ref that is gone sends the next drain to the wrong desk, a ref that
+  # moved sends a human to read the wrong tree at the right name.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    ref="${line#*$tab}"
+    was="${line%%$tab*}"
+    who="${ref#refs/heads/failed/}"
+    current="$(printf '%s\n' "$now" | router__ref_target "$ref")" || current=''
+    if [ -z "$current" ]; then
+      printf 'ralph: `%s` is gone, and this drain took %s with it pointing at `%s`. That ref is the tree of an attempt a run judged and rolled back, and it is the piece of evidence about a ticket that outlives every other one — a receipt names git objects a `gc` may collect, a ref does not. It is not put back here: this drain never wrote one of these, and the commit it named may already be unreachable. The evidence is lost, not moved — a drain reading that ticket now finds no branch at all, and on a `decision` that is the sentence saying nothing ever ran on it.\n' \
+        "$ref" "$id" "$was"
+      router_journal "$who" ref-drift deleted
+      said=0
+    elif [ "$current" != "$was" ]; then
+      printf 'ralph: `%s` points at `%s` and pointed at `%s` when this drain took %s. The ref is still there, so a human is still sent to read it — at a tree no run judged. It is not put back here, for the reason nothing here is: this drain never wrote one of these refs, and what it pointed at may already be unreachable.\n' \
+        "$ref" "$current" "$was" "$id"
+      router_journal "$who" ref-drift moved
+      said=0
+    fi
+  done <<PINNED
+$ROUTER__PINNED_REFS
+PINNED
+
+  # And what appeared. Named and never removed, for the reason a ticket that
+  # appeared is not deleted either ([21], [27]): this drain is not the author of
+  # these refs, and a ref it deleted would be evidence destroyed by its own hand.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    ref="${line#*$tab}"
+    who="${ref#refs/heads/failed/}"
+    if printf '%s\n' "$ROUTER__PINNED_REFS" |
+      router__ref_target "$ref" >/dev/null; then
+      continue
+    fi
+    printf 'ralph: `%s` was written while this drain was on %s, and there was no such ref when it took this ticket. A `failed/<id>` ref is written by a run that judged an attempt and by nothing else: it is what sends a `decision` ticket to the `arbitrate` desk, and what the dossier tells a human to go and read. Nothing here removes it, and no run judged the tree it names. What this drain routed on is the namespace as it took it; the next drain pins what is there then.\n' \
+      "$ref" "$id"
+    router_journal "$who" ref-drift created
+    said=0
+  done <<NOW
+$now
+NOW
+
+  [ "$said" = 0 ] || return 1
+  return 0
+}
+
 # ── the desk ─────────────────────────────────────────────────────────────────
 
 # Which question this ticket puts to a human.
@@ -794,10 +1004,33 @@ IDS
 # ticket from `admit` to `triage-host`, two desks on one ticket, the second chosen
 # by the first.
 #
-# The `failed/<id>` ref is still read as it stands, and that is the boundary:
-# pinning a git ref is a different mechanism, a routed session that writes one has
-# left a branch behind it in the repository, and `router_tree_note` is what looks
-# at what a session left outside `issues/`.
+# **And the third piece of evidence is pinned too, since [66].** What stood here
+# left `refs/heads/failed/<id>` out of the pin and named `router_tree_note` as
+# what looks at "what a session left outside `issues/`" — which it is not: it
+# reads `router__tree_dirt`, this working tree minus `gate_is_bookkeeping`, so it
+# sees neither a ref nor `.scratch/<feature>/`, and it named nothing in all four
+# scenarios the 06/09 pass measured. Who actually guards what, written once here
+# rather than in a sentence that names the wrong function:
+#
+#   the working tree               `router_tree_note`, minus the two zones it
+#                                  names for itself — this feature's own
+#                                  directory and the ignored zone.
+#   `issues/`                      `router_protect_tracker`, against the tracker
+#                                  state pinned at the same call: two states put
+#                                  back, everything else named ([58], [61]).
+#   `refs/heads/failed/*`          the pin and `router_branch_note` ([66]). The
+#                                  desk and the dossier decide on the namespace
+#                                  as this drain took it, and every ref that
+#                                  moved under the drain is named. Nothing puts
+#                                  one back and nothing refuses over one.
+#   `run.log`                      `router_journal_verify`, for this drain's own
+#                                  block and for nothing above it, plus the
+#                                  reserve both readings of that file carry
+#                                  ([67]).
+#   the rest of `.scratch/<feature>/`  nothing, and nothing can: a session's own
+#                                  stream is written there while it is being
+#                                  watched. The piece of it that *decides*
+#                                  something is `spec.md`, and it is [68]'s.
 router_desk() {
   local id="${1:?router: a ticket id}" reason count
   reason="$(router__field "$id" Escalation)" || reason=''
@@ -889,12 +1122,30 @@ router_question() {
 
 # ── the evidence ─────────────────────────────────────────────────────────────
 
-# Does the forensic branch exist. `show-ref --verify` and not `rev-parse`, because
-# it takes the ref name literally and answers about that exact ref rather than
-# about anything git can talk itself into resolving — an id is a file name a
-# session chooses ([37]), so it may hold whatever a file name may hold.
+# Does the forensic branch exist — **as this drain took the ticket** ([66]), and
+# as the repository stands now for a ticket no drain pinned.
+#
+# There is no fall-back for the pinned ticket, and that is not the asymmetry
+# `router__field` carries: presentation falls back there because a dossier
+# printed for an unpinned ticket should show what is on disk, and here the
+# dossier and the desk are the same answer on purpose — "what a human reads and
+# what the drain decides on have to be one value" is the sentence `router_pin` is
+# placed by. It has a visible price and it is the pin's own: the menu is
+# re-offered after a session, so the prompt of a *second* session on one ticket
+# still names a ref the first one deleted. What says so is `router_branch_note`,
+# in between.
+#
+# `show-ref --verify` on the fall-back and not `rev-parse`, because it takes the
+# ref name literally and answers about that exact ref rather than about anything
+# git can talk itself into resolving — an id is a file name a session chooses
+# ([37]), so it may hold whatever a file name may hold.
 router_has_branch() {
-  git show-ref --verify --quiet "refs/heads/failed/${1:-}" 2>/dev/null
+  local id="${1:-}"
+  if [ -n "${ROUTER__PINNED_ID:-}" ] && [ "$ROUTER__PINNED_ID" = "$id" ]; then
+    router__pinned_ref "$id" >/dev/null || return 1
+    return 0
+  fi
+  git show-ref --verify --quiet "refs/heads/failed/$id" 2>/dev/null
 }
 
 # This ticket's own lines in the run journal, verbatim.

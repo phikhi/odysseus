@@ -6,15 +6,15 @@
 
 **Write-surface:** `.claude/lib/router.sh`, `.claude/human-loop.sh`, `test/human-loop.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Tags:** human-loop, trust-boundary
 
-- [ ] `router_pin` épingle l'existence **et** la cible de `refs/heads/failed/<id>` avant que le dossier soit montré, comme il épingle `Escalation:` ([55]) et `Failures:` ([61]).
-- [ ] `router_desk` et `router_dossier` décident et racontent sur la valeur épinglée, jamais sur l'état du dépôt au moment de la lecture.
-- [ ] Une session routée qui **crée** une ref `failed/<id>` est nommée. Une session routée qui en **efface** une l'est aussi, et la phrase dit que la preuve est perdue — pas seulement qu'un chemin a bougé.
-- [ ] `router_tree_note` (ou son successeur) cesse d'être nommé comme le garde de « ce qu'une session a laissé hors de `issues/` » tant qu'il ne l'est pas : soit il couvre les refs et la zone de bookkeeping, soit le commentaire de `router_desk` cesse de le nommer et dit qui garde vraiment.
-- [ ] Une entrée de mutation par garantie livrée, plus le témoin appairé (une session qui n'écrit pas de ref ne doit rien faire dire au drain).
+- [x] `router_pin` épingle l'existence **et** la cible de `refs/heads/failed/<id>` avant que le dossier soit montré, comme il épingle `Escalation:` ([55]) et `Failures:` ([61]).
+- [x] `router_desk` et `router_dossier` décident et racontent sur la valeur épinglée, jamais sur l'état du dépôt au moment de la lecture.
+- [x] Une session routée qui **crée** une ref `failed/<id>` est nommée. Une session routée qui en **efface** une l'est aussi, et la phrase dit que la preuve est perdue — pas seulement qu'un chemin a bougé.
+- [x] `router_tree_note` (ou son successeur) cesse d'être nommé comme le garde de « ce qu'une session a laissé hors de `issues/` » tant qu'il ne l'est pas : soit il couvre les refs et la zone de bookkeeping, soit le commentaire de `router_desk` cesse de le nommer et dit qui garde vraiment.
+- [x] Une entrée de mutation par garantie livrée, plus le témoin appairé (une session qui n'écrit pas de ref ne doit rien faire dire au drain).
 
 ## Comments
 
@@ -82,3 +82,98 @@
      du drain, parce qu'un refus donnerait à une session routée une ligne pour
      renvoyer chez lui l'humain venu vider le puits. Un garde de refs qui
      **refuserait** le drain casserait la même règle au même endroit.
+
+- **Livré le 07/09/2026.** Ce qui a été construit, et surtout ce qui a été
+  décidé de ne pas construire.
+
+  **La question que le ticket demandait de trancher — « le drain décide sur ce
+  qu'il a épinglé » ou « les refs `failed/*` sont gardées » — est tranchée sur la
+  première.** Les refs ne sont pas gardées : rien n'en remet une, rien ne refuse
+  un drainage sur une. Deux raisons, et elles sont écrites dans le code plutôt
+  qu'ici seulement. Remettre une ref, c'est écrire un objet dont ce drain n'est
+  pas l'auteur — `failures.sh` les écrit — vers un commit qui peut déjà être
+  inatteignable ; c'est la ligne que `router__put_back` a tracée pour le tracker
+  (« ce drain ne réécrit que ce qu'un verbe public définit »). Refuser, c'est
+  casser la posture de [69] tenue par [67] au même endroit : ces mécanismes
+  comptent et ne jugent rien, et un garde de refs qui pourrait arrêter le
+  drainage donnerait à une session routée un `git update-ref` pour renvoyer chez
+  lui l'humain venu vider le puits. La garantie plus large a un propriétaire
+  naturel — [18] — et la clause est écrite là-bas.
+
+  **Ce qui est dans `router.sh` :** `ROUTER__PINNED_REFS`, pris par `router_pin`
+  au même appel que les trois champs, l'arbre et le tracker ;
+  `router__failed_refs` (`git for-each-ref … refs/heads/failed/`, une ligne
+  `<objectname><TAB><refname>`) ; `router__ref_target` et `router__pinned_ref`
+  pour lire une liste ; `router_has_branch` qui répond sur l'épinglage pour le
+  ticket épinglé et retombe sur le dépôt pour les autres ; et
+  `router_branch_note`, appelée depuis `human_loop__session` comme une
+  instruction, avec ses trois bras — créée, effacée, déplacée.
+
+  **Trois décisions plus fines, chacune coûtant quelque chose :**
+
+  1. **L'espace de noms entier, pas la ref du ticket.** L'AC ne demandait que
+     `failed/<id>`. Une session routée sur `20-first` qui écrit
+     `failed/21-second` déplace le guichet d'un ticket dont personne n'a parlé à
+     l'humain — c'est la trouvaille de [58] sur le tracker, une zone plus loin, et
+     `router__tracker_state` regarde déjà tous les tickets pour exactement cette
+     raison. Le coût est un `for-each-ref` par ticket drainé.
+  2. **L'épinglage décide et la présentation ne retombe pas.** `router__field`
+     retombe sur le tracker pour un ticket non épinglé parce qu'un dossier doit
+     montrer ce qui est sur le disque ; `router_has_branch` ne retombe **pas**
+     pour le ticket épinglé, et c'est l'AC 2 : « ce qu'un humain lit et ce sur
+     quoi le drain décide doivent être une seule valeur ». Le prix est visible et
+     il est celui de l'épinglage lui-même : le menu est réoffert après une
+     session, donc le prompt d'une **seconde** session sur un ticket nomme encore
+     une ref que la première a effacée. Ce qui le dit est `router_branch_note`,
+     entre les deux.
+  3. **Un refus de git n'est pas un espace de noms vide** ([59]). Lu comme une
+     liste vide, il transforme chaque ref épinglée en ref effacée, et la phrase
+     qui va avec accuse quelqu'un d'avoir détruit une preuve. `router_pin` le lit
+     comme vide — il dégrade alors vers la lecture d'avant ce ticket — et
+     `router_branch_note` **refuse** et ne nomme rien. L'asymétrie est écrite dans
+     `router__failed_refs` : c'est la faute que chacun des deux commettrait.
+
+  **L'AC 4 est tenue par le second terme de son alternative.** `router_tree_note`
+  ne couvre ni les refs ni `.scratch/<feature>/` et ce ticket ne le lui fait pas
+  couvrir : le commentaire de `router_desk` cesse de le nommer et porte la carte
+  de qui garde quelle zone — l'arbre (`router_tree_note`), `issues/`
+  (`router_protect_tracker`), les refs (l'épinglage + `router_branch_note`),
+  `run.log` (`router_journal_verify` pour le bloc du drain, la réserve pour le
+  reste), et l'aveu que le reste de `.scratch/<feature>/` n'est gardé par rien et
+  ne peut pas l'être. Le tableau de zones de `router__tree_dirt` pointe vers cette
+  carte au lieu d'en tenir une seconde copie — deux auteurs pour une affirmation
+  est exactement ce qui a produit la phrase fausse que ce ticket corrige.
+
+  **Ce que [67] laissait à relire, point (a) : les deux réserves sont inchangées
+  et c'est vérifié, pas supposé.** `router__run_notes_caveat` et sa jumelle dans
+  `router_journal_lines` disent que rien ne garde `.scratch/<feature>/` et que
+  rien ne le peut. Ce ticket met un garde sur les **refs**, qui sont dans
+  `.git/` ; il n'en met aucun sur `.scratch/<feature>/`. Les deux phrases restent
+  littéralement vraies, et la carte ci-dessus les redit au même mot près plutôt
+  que de les contredire.
+
+- **Mesuré après correctif** (`../sondes/ticket-66/verification.bats`), sur des
+  drains et un run AFK réels :
+
+  | | |
+  |---|---|
+  | V1 — la session crée `failed/20-decision` | guichet **`admit`** aux deux sessions, dossier « there is none », création **nommée** (1 ligne par retour de session) et journalisée `ref-drift created`. **Résidu mesuré** : la ref survit, donc le drainage **suivant** l'épingle et route sur `arbitrate` |
+  | V2 — la session efface la ref d'une tentative jugée | guichet **`arbitrate`** tenu, la phrase nomme la ref **et sa cible** (`77f6db7…`) et dit « The evidence is lost, not moved ». Rien ne la remet : le drainage suivant dit « there is none », et c'est bien pour ça que la phrase doit le dire |
+  | V3 — témoin appairé : une session qui écrit, **commite** et déplace un ticket voisin | **0** ligne de ref, **0** `ref-drift` dans `run.log`, **0** plainte du témoin de journal — et la dérive du tracker, elle, est journalisée (1). Le drain ne s'accuse pas |
+  | V4 — un run AFK **réel** (`TEST_CMD=false`) écrit une vraie `failed/01-alpha`, puis un drain | **0** `ref-drift`. Le producteur du pack est épinglé comme une preuve légitime et le dossier envoie lire `git log -p failed/01-alpha` |
+  | V5 — la ref est écrite sur `21-second` pendant que le drain est sur `20-decision` | nommée à l'écran et dans le journal sous **`21-second`**. **Résidu mesuré** : `21-second` reçoit quand même `arbitrate` dans ce drainage — son épinglage est pris *après* la session. Nommé, jamais défait : le sort que `router_protect_tracker` réserve déjà à `Failures:` |
+
+- **Dix entrées de mutation** (`test/mutate.sh -f "66 "`), toutes `ok` : les deux
+  moitiés de l'épinglage (pris / lu), les trois bras de la note, la phrase de la
+  preuve perdue, le témoin appairé (la note qui parlerait sur un espace de noms
+  intact), la note rétrécie au seul ticket drainé, l'appel remis dans une
+  substitution de commande (le piège de [67] : le témoin de journal meurt dans le
+  sous-shell et le drain s'accuse), et le refus de git lu comme un vide.
+
+- **Ce qui reste ouvert ailleurs, écrit ici parce que personne ne relit un ticket
+  clos.** Les deux résidus V1 et V5 sont des propriétés de « l'épinglage est par
+  ticket », qui est la doctrine de `router_pin` et non un oubli : une base de
+  comparaison à l'échelle du drainage entier fermerait V5 mais mettrait deux
+  durées de vie dans la même structure. Si un ticket veut la fermer, c'est le même
+  ticket que « les refs `failed/*` sont gardées », et il commence par relire
+  `router_pin` en entier.

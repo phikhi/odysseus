@@ -347,6 +347,44 @@
   [65] a écrit pour la borne du gate de valeur. Livrer après [66] et hériter du
   mécanisme, plutôt que d'inventer un second épinglage sur une API.
 
+- **[66] est livré le 07/09/2026, et voici le mécanisme dont hériter, avec ses
+  trois prix.** `router_pin` prend, au même appel que les trois champs, un
+  instantané de **tout** `refs/heads/failed/*` — `<objectname><TAB><refname>`,
+  produit par `router__failed_refs` — et `router_has_branch` répond dessus pour le
+  ticket épinglé, donc `router_desk` **et** `router_dossier` décident et racontent
+  sur la même valeur. `router_branch_note` compare l'instantané au retour de
+  chaque session routée et nomme trois arrivées : créée, effacée, déplacée. Ce que
+  ce ticket doit reproduire pour une trace distante, sans le réinventer :
+
+  1. **La preuve est lue à travers un épinglage pris par `router_pin`**, pas au
+     moment du dossier. Si la trace est une PR, l'état de cette PR est un
+     `ROUTER__PINNED_*` de plus, pris au même appel — et `router_has_branch` est
+     le point d'extension, parce que c'est la seule fonction que `router_desk` et
+     `router_dossier` interrogent.
+  2. **Nommer ne rend rien, et la phrase doit dire lequel des deux cas on est
+     dans.** Une preuve *créée* est une fausse route réparable par l'épinglage ;
+     une preuve *détruite* est perdue, et la sentence de `router_branch_note` le
+     dit en toutes lettres (« The evidence is lost, not moved »). Sur un backend
+     distant, « détruite » a une forme de plus — une PR fermée, un dépôt privé
+     devenu inaccessible, un token révoqué — et un **refus de l'API n'est pas une
+     absence de preuve** : `router_branch_note` refuse et ne nomme rien quand
+     `git` ne répond pas ([59]), et une requête réseau a besoin de la même
+     distinction, avec plus de raisons de tomber.
+  3. **Rien n'est remis et rien ne refuse.** Ce drain n'est pas l'auteur de ces
+     preuves et un garde qui refuserait le drainage donnerait à une session
+     routée une ligne pour renvoyer chez lui l'humain venu vider le puits
+     (posture de [69], tenue par [67]). Un backend distant ne doit pas
+     « réparer » une PR.
+
+  Et les deux résidus mesurés (`../sondes/ticket-66/verification.bats`), qui sont
+  des contraintes et pas des anecdotes : la preuve forgée **survit au drainage**,
+  donc le drainage suivant l'épingle et route dessus (V1) ; et l'épinglage est
+  **par ticket**, donc une preuve écrite sur un **voisin** re-guichette ce voisin
+  dans le même drainage — nommée à l'écran et dans `run.log` (`ref-drift
+  created`), jamais défaite (V5). Un backend qui rend la trace par une requête a
+  exactement le même résidu, et il coûte un appel réseau par ticket drainé au lieu
+  d'un `for-each-ref`.
+
 - **Et une clause de plus, du même endroit, sur ce que le drain *raconte*.**
   `router_run_notes` tire quatre conclusions de `run.log`, un fichier local que
   rien ne garde ([67]). Un backend distant ne change rien à cette ligne — le

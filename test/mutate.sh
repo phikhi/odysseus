@@ -4894,6 +4894,69 @@ mutation "67 the drain's block is measured from the top of the file" "$HUMAN_LOO
   's/  router_journal_base\n\n  human_loop_preflight \|\| exit 2\n/  human_loop_preflight || exit 2\n/' \
   test/human-loop.bats "does not accuse itself"
 
+# ── [66] the ref that chooses the desk ───────────────────────────────────────
+#
+# The evidence `router_desk` reads that is not a field. Two entries take the pin
+# away — one at the moment it is taken, one at the moment it is read — and the
+# next four are the three arms of the note plus the sentence the acceptance
+# criterion is about: a ref a session erased has to be reported as evidence lost,
+# not as a path that moved.
+#
+# Then the three that a deleting mutation cannot reach. The paired witness puts
+# the naming *in* where nothing moved; one entry narrows the note back to the
+# drained ticket's own ref, which is green under every other entry here and loses
+# the neighbour; and one puts the call back inside a command substitution, where
+# it journals into `run.log` and not into the drain's witness — [67]'s trap, on
+# the function added after it.
+#
+# The last one is [59] on this producer: a `git` that would not answer, read as an
+# empty namespace, is every pinned ref reported as deleted.
+
+mutation "66 the drain pins no forensic ref" "$ROUTER" \
+  's/  ROUTER__PINNED_REFS="\$\(router__failed_refs\)" \|\| ROUTER__PINNED_REFS=\x27\x27\n//' \
+  test/human-loop.bats "erased a forensic branch"
+
+mutation "66 the desk is chosen on the refs as they stand now" "$ROUTER" \
+  's/  if \[ -n "\$\{ROUTER__PINNED_ID:-\}" \] && \[ "\$ROUTER__PINNED_ID" = "\$id" \]; then\n    router__pinned_ref "\$id" >\/dev\/null \|\| return 1\n    return 0\n  fi\n//' \
+  test/human-loop.bats "writing itself a forensic branch"
+
+mutation "66 a ref a routed session wrote is not named" "$ROUTER" \
+  's/    if printf \x27%s\\n\x27 "\$ROUTER__PINNED_REFS" \|\n      router__ref_target "\$ref" >\/dev\/null; then\n      continue\n    fi\n/    continue\n/' \
+  test/human-loop.bats "writing itself a forensic branch"
+
+mutation "66 a ref that is gone is not noticed" "$ROUTER" \
+  's/    if \[ -z "\$current" \]; then\n/    if [ -n "\$current" ] \&\& [ -z "\$current" ]; then\n/' \
+  test/human-loop.bats "erased a forensic branch"
+
+# And the sentence itself, because naming the deletion is not the guarantee: a
+# pin cannot give a forensic tree back, so what it buys is saying that the proof
+# is gone rather than that something moved.
+mutation "66 evidence destroyed is reported as a ref that moved" "$ROUTER" \
+  's/The evidence is lost, not moved/The ref is where it was/' \
+  test/human-loop.bats "erased a forensic branch"
+
+mutation "66 a ref pointed somewhere else is not named" "$ROUTER" \
+  's/    elif \[ "\$current" != "\$was" \]; then\n/    elif [ "\$current" != "\$was" ] \&\& [ -z "\$current" ]; then\n/' \
+  test/human-loop.bats "pointed somewhere else"
+
+# The paired witness: a note that fired whatever the namespace held would pass
+# every entry above while being a line printed after every session.
+mutation "66 a session that touched no ref is told it wrote one" "$ROUTER" \
+  's/    if printf \x27%s\\n\x27 "\$ROUTER__PINNED_REFS" \|\n      router__ref_target "\$ref" >\/dev\/null; then\n      continue\n    fi\n//' \
+  test/human-loop.bats "left the forensic refs alone"
+
+mutation "66 only the drained ticket's own ref is looked at" "$ROUTER" \
+  's/    who="\$\{ref#refs\/heads\/failed\/\}"\n    if printf/    who="\$\{ref#refs\/heads\/failed\/\}"\n    [ "\$who" = "\$id" ] \|\| continue\n    if printf/' \
+  test/human-loop.bats "wrote on a neighbour"
+
+mutation "66 the ref note is taken in a subshell" "$HUMAN_LOOP" \
+  's/  router_branch_note "\$id" \|\| true\n/  if refs="\$(router_branch_note "\$id")"; then printf \x27%s\\n\x27 "\$refs"; fi\n/' \
+  test/human-loop.bats "writing itself a forensic branch"
+
+mutation "66 a git that would not answer is an empty namespace" "$ROUTER" \
+  's/  if ! now="\$\(router__failed_refs\)"; then\n/  if now="\$(router__failed_refs)" \&\& false; then\n/' \
+  test/human-loop.bats "namespace a session emptied"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
