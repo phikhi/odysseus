@@ -42,4 +42,4 @@
 
 - **Piège de sonde.** Il faut deux processus vivants en même temps. Côté run : un faux `claude` qui touche `$RALPH_SHIM_STATE/in-session` puis attend `$RALPH_SHIM_STATE/go`. Côté drain : un **fifo** sur son stdin (`mkfifo` + `exec 9>`), sinon il sort immédiatement sur « stdin ended » et ne tient jamais les verrous.
 
-- **Place dans la file (proposée par la passe du 07/09) : deuxième.** Délié (`Blocked by: None`), deux fichiers, un seul mécanisme — et il tranche où le préambule de `loop_main` a le droit d'écrire, ce dont [70] a besoin pour placer son épinglage une seule fois. Ordre proposé : [71] → [72] → [70] → [18] → [19].
+- **Place dans la file, validée par Philippe le 07/09/2026 : deuxième.** Délié (`Blocked by: None`), deux fichiers, un seul mécanisme — et il tranche où le préambule de `loop_main` a le droit d'écrire, ce dont [70] a besoin pour placer son épinglage une seule fois. Ordre retenu : [71] → [72] → [70] → [18] → [19].

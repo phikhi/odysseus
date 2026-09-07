@@ -261,7 +261,7 @@ le run tourne.
   drain ; c'est [71].
 - **[18]** — deux clauses d'interface de plus, écrites dans son ticket.
 
-## L'ordre proposé
+## L'ordre, validé par Philippe le 07/09/2026
 
 **[71] → [72] → [70] → [18] → [19]**
 
@@ -283,5 +283,7 @@ Par le critère du dépôt — **minimiser la reprise**, jamais la gravité :
    dire ce qui atteste l'une et l'autre. [66] avait déjà écrit la moitié « ref »
    de cette arête dans [18] ; [70] y ajoute la moitié « reçu ».
 
-`Blocked by:` en conséquence : `[71] None`, `[72] None`, `[70] 72`, et `[18]`
-gagne `70` et `71`.
+`Blocked by:` en conséquence, écrit le 07/09 après validation : `[71] None`,
+`[72] None`, `[70] 72`, et `[18]` gagne `70` et `71` (soit
+`02, 10, 64, 65, 66, 70, 71`). Écrit dans les trois tickets sous « Place dans la
+file ».
