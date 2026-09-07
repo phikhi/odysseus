@@ -427,6 +427,25 @@ ajouté un second appelant sans en hériter aucune.
 
   Le constat ouvert plus haut sur `gate_leftovers` est qualifié en **[69]**.
 
+- **Contrainte posée par [67], livré le 07/09/2026 — et c'est la troisième fois
+  que la même phrase revient.** `human_loop_main` prend maintenant une borne de
+  journal (`router_journal_base`) **avant** `human_loop_preflight`, et pose une
+  vérification (`router_journal_verify || true`) sur les trois sorties qui peuvent
+  suivre une décision : le puits vidé ou quitté, le puits vide au départ, et le
+  verrou perdu de [57]. Trois choses à hériter si cette boucle bouge. (1) La borne
+  est dans `human_loop_main` et **pas** dans le préflight, pour la raison écrite
+  deux entrées plus haut : ce préflight est une liste et pas une délégation, et un
+  témoin pris dedans serait le premier pas pour en faire une. (2) Le témoin est une
+  **variable du process du drain** (`ROUTER__JOURNAL_WITNESS`) : tout appel à
+  `router_journal` doit donc rester dans ce shell — c'est ce qui a obligé [67] à
+  sortir `router_protect_tracker` de son `moved="$(…)"`, ses neuf lignes de
+  `tracker-drift` mourant sinon dans le sous-shell, et tout drain dont la session
+  avait bougé un ticket voisin se serait accusé lui-même. (3) La vérification ne
+  change **jamais** le code de sortie, même posture que les résidus de [69] : un
+  refus donnerait à une session routée une ligne pour renvoyer chez lui l'humain
+  venu vider le puits. Le constat 2 ci-dessous est fermé ; il reste 1 ([66]) et 3
+  ([68]).
+
 - **Ce que `human_loop_main` ne fait pas et que `loop_main` fait, mesuré en entier
   le 06/09/2026** (à ne pas re-dériver) : `gate_leftovers`, `concurrency_leftovers`
   ([69]), `budget_check`/`budget_pause`/`budget_paused`/`budget_posture`/
