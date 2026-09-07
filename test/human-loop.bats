@@ -992,6 +992,169 @@ ANSWERS
   refute_output_contains "reads differently after that session"
 }
 
+# ── [71] what an adapter refuses, and how ────────────────────────────────────
+#
+# Every neighbour above carries an `**Escalation:**`, which is the case that
+# worked. The sink's *ordinary* ticket carries none: `capability_propose` opens
+# every capability, retro and playthrough proposal as a status and nothing else,
+# and that is the whole of the `request` desk. Putting one of those back goes
+# through `tracker_mark_escalated <id> ""`, which the local adapter answered with
+# `${2:?…}` — a shell exit and not a return — so the drain died inside its own
+# guard, on the case it exists for.
+#
+# **Nothing in this family asserts success on a drain, and that is the family.**
+# The defect these cover exits `0`, which is the code `human-loop.sh` documents as
+# "the sink is empty: everything in it was drained". So every assertion is on the
+# exit code itself or on something that exists only if the drain went on: the next
+# ticket offered, the skip line, the final tally.
+
+sink_without_an_escalation() {
+  mk_ticket 20-first Status ready-for-human Escalation failed-impl \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+  mk_ticket 21-second Status ready-for-human \
+    'Write-surface' '`src/two.txt`' 'Blocked by' None
+}
+
+# The routed session of this family: it resolves the neighbour the drain has not
+# reached yet, which is the write [58] exists to catch and the one that sends the
+# drain into `router__put_back`.
+resolves_the_neighbour() {
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+tracker="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+perl -pi -e 's/^\*\*Status:\*\* .*$/**Status:** resolved/' "$tracker/21-second.md"
+exit 0
+SCRIPT
+}
+
+# One operation of the tracker, replaced for the length of one test. Written into
+# `lib/` and sourced after `tracker.sh` and `tracker-local.sh` — the pack sources
+# `lib/*.sh` in order — which is the position a project's own backend, or a remote
+# one ([18]), answers these calls from. Body on stdin.
+hostile_adapter_op() {
+  local fn="$1"
+  {
+    printf '# shellcheck shell=bash\n'
+    printf '# Written by test/human-loop.bats: one tracker operation, replaced.\n'
+    printf '%s() {\n' "$fn"
+    cat
+    printf '}\n'
+  } >"$PACK_DIR/lib/zz-hostile-adapter.sh"
+}
+
+@test "a neighbour that was in this sink without an escalation is put back, and the drain finishes its sink" {
+  sink_without_an_escalation
+  resolves_the_neighbour
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 21-second ready-for-human
+  if ticket_has_field 21-second Escalation; then
+    fail "the put-back invented a reason this ticket never carried: $(ticket_field 21-second Escalation)"
+  fi
+  assert_output_contains "21-second was moved to \`Status: resolved\`"
+  assert_output_contains "put back to \`ready-for-human\`"
+
+  # What exists only if the drain went on rather than ending inside its own
+  # guard: the ticket is back in the sink, so it is offered, and the tally at the
+  # end is printed after the work-list has been walked to its end.
+  [ -n "$(dossier_line 21-second)" ] ||
+    fail "the drain never reached the second ticket
+--- output ---
+$output"
+  assert_output_contains "drained 0 ticket(s), left 2 where they were"
+  assert_file_contains "$(journal_file)" "action=restored"
+}
+
+@test "an adapter that refuses to put a neighbour back is named, and the drain finishes its sink" {
+  # The other half of the clause, and the one a project's own backend decides:
+  # refusing is allowed, ending the caller is not. `2` is the code
+  # `router__put_back` has always documented for it, with a sentence that had
+  # never been printed once.
+  hostile_adapter_op tracker_local_mark_escalated <<'OP'
+  return 2
+OP
+  sink_without_an_escalation
+  resolves_the_neighbour
+
+  drain <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  assert_ticket_status 21-second resolved
+  assert_output_contains "putting it back to \`ready-for-human\` failed"
+  assert_output_contains "no gate has seen it"
+  assert_file_contains "$(journal_file)" "action=restore-failed"
+
+  # And the drain walked the rest of its work-list: the ticket it could not put
+  # back is not in the sink any more, so what proves it was reached is the skip.
+  assert_output_contains "21-second: not offered"
+  assert_output_contains "drained 0 ticket(s), left 1 where they were"
+}
+
+@test "a drain something ended in the middle does not report an emptied sink" {
+  # The half that survives a backend nothing in this repository can read. The
+  # operation below is `tracker_local_mark_escalated` exactly as it was delivered
+  # before [71]: a refusal spelled as a shell exit. It ends the drain from inside
+  # `router_protect_tracker`, where there is no subshell to absorb it since [67].
+  #
+  # Measured before the guard: `0`, on a sink holding two tickets, one of them
+  # `resolved` with no gate behind it and nothing at all in `run.log`.
+  hostile_adapter_op tracker_local_mark_escalated <<'OP'
+  local reason="${2:?tracker: an escalation needs a reason}"
+  tracker_local__set_fields "$1" Status ready-for-human Escalation "$reason" Claimed --drop
+OP
+  sink_without_an_escalation
+  resolves_the_neighbour
+
+  drain <<ANSWERS
+o
+n
+n
+ANSWERS
+  assert_failure 6
+
+  assert_output_contains "this drain ended in the middle"
+  refute_output_contains "the human sink is empty"
+  # What the death left behind, asserted so the sentence is measured against it:
+  # the ticket no gate read is still `resolved` and still out of the sink.
+  assert_ticket_status 21-second resolved
+  refute_output_contains "drained 0 ticket(s)"
+}
+
+@test "a drain something ended before it took its locks does not report an emptied sink either" {
+  # The same lie one step earlier, and the reason the guard is installed at the
+  # top of the file and not only where the locks are taken: `human_loop_preflight`
+  # runs the tracker's own findings through this shell ([64]), so an operation
+  # that ends its caller there ends a drain that has not read the sink, has not
+  # printed a line and would still have left with `0`.
+  #
+  # `tracker_finding_said` because it is the interface function that runs in the
+  # drain's own shell at that moment; two tickets carrying the same `NN` are what
+  # makes `tracker_preflight` produce the finding that reaches it.
+  hostile_adapter_op tracker_finding_said <<'OP'
+  local ended="${9:?tracker: nothing to say this with}"
+  printf '%s' "$ended"
+OP
+  mk_ticket 20-a Status ready-for-human Escalation decision 'Blocked by' None
+  mk_ticket 20-b Status ready-for-human Escalation decision 'Blocked by' None
+
+  drain <<ANSWERS
+q
+ANSWERS
+  assert_failure 6
+
+  assert_output_contains "this drain ended in the middle"
+  refute_output_contains "draining ready-for-human"
+}
+
 @test "the ticket a human is deciding on is named and left exactly as the session wrote it" {
   # [55]'s decision, and this is where it is held rather than restated: a
   # correction made during the conversation may be the human's own, and the next

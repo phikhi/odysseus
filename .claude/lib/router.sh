@@ -503,9 +503,19 @@ router_tree_note() {
 # The price, written because it is a human's own work being undone: a correction
 # a human asks the routed session to make to a *neighbour's* `Status:` or
 # `Escalation:` is reverted — and named, so it is a keystroke to redo through the
-# menu that records it, not a loss. And a ticket that was in this sink without an
-# `Escalation:` comes back with an empty one, `tracker_mark_escalated` being the
-# one public verb that writes this state.
+# menu that records it, not a loss. And a ticket that was in this sink **without**
+# an `Escalation:` comes back without one: that is the sink's ordinary shape —
+# `capability_propose` writes every capability, retro and playthrough proposal
+# that way, and it is the whole of the `request` desk — so it is the shape a
+# put-back has to be able to write. `tracker_mark_escalated` is the one public
+# verb that writes this state, and an empty reason is how it writes the absence of
+# the field ([71]).
+#
+# **That sentence used to say "comes back with an empty one", and what was
+# delivered was neither.** The operation was `${2:?…}`, a shell exit and not a
+# return, so a neighbour without the field ended the drain in the middle of
+# putting it back — `0` on the way out, the ticket left `resolved` with no gate
+# behind it, and nothing in `run.log`. What is written here is what is delivered.
 #
 # **Two fields are restored and everything else is named, which is [61] and not
 # [58].** [58] watched the two states and wrote of the rest that *nobody* holds
@@ -602,9 +612,19 @@ IDS
 # green has to leave: a ticket is on the frontier or in this sink, and every
 # route to `resolved` that no gate gave starts at one of them.
 #
+# **`2` is what an adapter's refusal arrives as, and it took [71] for that to be
+# true.** The two calls below are the drain's only writes to somebody else's
+# ticket, and they are made with a value read off that ticket — so whatever the
+# backend does about a value it will not take, the drain wears it. It has to be a
+# status: the sentence for `2` already existed, says the one thing a human needs
+# ("It is where that session left it, and no gate has seen it"), and had never
+# been printed once. What was happening instead was the operation ending this
+# process. The clause is written on the interface it belongs to, in
+# `lib/tracker.sh`.
+#
 #   0  put back
 #   1  not a state this drain can write faithfully
-#   2  it is, and writing it failed
+#   2  it is, and the adapter would not write it
 router__put_back() {
   local other="${1:?router: a ticket id}" was_status="${2:-}" was_esc="${3:-}"
   case "$was_status" in

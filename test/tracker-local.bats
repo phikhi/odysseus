@@ -186,9 +186,37 @@ TICKET
 }
 
 @test "mark_escalated refuses to escalate without a reason" {
-  pack_run 'tracker_mark_escalated 01-alpha'
-  assert_failure
+  # And the refusal is a **return code**, which is what [71] is about: the caller
+  # is still there afterwards. This used to be `${2:?…}`, a shell *exit*, and the
+  # caller that paid for it is the drain — since [67] there is no subshell between
+  # it and this operation, so it died in the middle of a sink and left with `0`,
+  # the code its own header documents as "everything in it was drained".
+  pack_run 'tracker_mark_escalated 01-alpha || printf "refused rc=%s\n" "$?"
+printf "the caller is still here\n"'
+  assert_success
+  assert_output_contains "refused rc=2"
+  assert_output_contains "the caller is still here"
   assert_ticket_status 01-alpha ready-for-agent
+}
+
+@test "an empty escalation reason is the sink's ordinary ticket, not a refusal" {
+  # The state this pack writes itself: `capability_propose` opens every
+  # capability, retro and playthrough proposal as `ready-for-human` with no
+  # `Escalation:` at all, and that is the whole of the `request` desk. Until [71]
+  # no verb of this interface could write it, so the drain had no way to put such
+  # a ticket back the way it found it — and the empty reason is how it is
+  # written: the absence of the field, the same gesture `mark_ready` makes.
+  pack_run 'tracker_claim 01-alpha pid:1; tracker_mark_escalated 01-alpha ""'
+  assert_success
+
+  assert_ticket_status 01-alpha ready-for-human
+  run ticket_has_field 01-alpha Escalation
+  assert_failure
+  run ticket_has_field 01-alpha Claimed
+  assert_failure
+
+  pack_run 'tracker_frontier'
+  refute_output_contains "01-alpha"
 }
 
 @test "mark_ready re-injects an escalated ticket and clears the escalation" {

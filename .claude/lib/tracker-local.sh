@@ -311,9 +311,46 @@ tracker_local_mark_resolved() {
   tracker_local__set_fields "$1" Status resolved Claimed --drop Failures --drop
 }
 
+# `ready-for-human`, with the reason the caller supplies — and the empty reason is
+# a **value**, not a refusal ([71]).
+#
+# Two questions live here and they used to have one answer, which was the wrong
+# one for both.
+#
+# *A caller that supplies no reason at all* is a caller bug — the interface says
+# `tracker_mark_escalated ID REASON` — and it is refused with a return code. It
+# used to be `${2:?tracker: an escalation needs a reason}`, which is not a refusal
+# but a **shell exit**: the caller does not get a status, it gets ended. That is
+# the clause `lib/tracker.sh` now writes down, and it is not a style rule. This
+# operation has two callers and one of them is the drain, which since [67] has no
+# subshell between it and this line: measured, a drain died mid-sink, exited `0` —
+# the code its own header documents as "the sink is empty: everything in it was
+# drained" — and left the ticket that killed it `resolved` with no gate having
+# read a line of it.
+#
+# *A caller that supplies an empty reason* is asking for the state this pack
+# produces itself: `capability_propose` opens every capability, retro and
+# playthrough escalation as `**Status:** ready-for-human` with **no**
+# `Escalation:` field, which is the whole of the `request` desk. There was no verb
+# that could write it, so `router__put_back` — whose entire job is to put a
+# neighbour back exactly as this drain found it — had no way to restore the sink's
+# ordinary shape. An empty reason writes the absence of the field, the same
+# gesture `mark_ready` makes, so a put-back is byte-faithful rather than a ticket
+# invented an `Escalation:` it never had.
+#
+# What that costs, said rather than discovered: a ticket carrying `**Escalation:**`
+# with nothing after it and a ticket carrying no such line read identically
+# through `tracker_field`, so a put-back of the first writes the second. Both are
+# `request` at the desk and neither carries a reason, so nothing downstream reads
+# them apart.
 tracker_local_mark_escalated() {
-  local id="$1" reason="${2:?tracker: an escalation needs a reason}"
-  tracker_local__set_fields "$id" Status ready-for-human Escalation "$reason" Claimed --drop
+  [ "$#" -ge 2 ] || return 2
+  local id="$1" reason="$2"
+  if [ -n "$reason" ]; then
+    tracker_local__set_fields "$id" Status ready-for-human Escalation "$reason" Claimed --drop
+  else
+    tracker_local__set_fields "$id" Status ready-for-human Escalation --drop Claimed --drop
+  fi
 }
 
 tracker_local_mark_ready() {

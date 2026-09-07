@@ -16,7 +16,8 @@
 #   tracker_unclaim ID                give it back to the frontier
 #   tracker_mark_resolved ID          the gate came back green; clears the claim
 #                                     and the retry counter
-#   tracker_mark_escalated ID REASON  hand it to the human sink, with a reason
+#   tracker_mark_escalated ID REASON  hand it to the human sink, with a reason —
+#                                     or with none, when REASON is empty
 #   tracker_mark_ready ID             re-inject (re-slice, human fix, wiring)
 #   tracker_mark_wontfix ID           closed by a human, never to be ground
 #   tracker_block_on ID DEPS          hold it until those tickets are resolved
@@ -63,6 +64,39 @@
 # consumers read these lists as `$(tracker_ids 2>/dev/null)` and threw the line
 # away. A `>&2` in a producer is not a channel: every consumer decides whether it
 # is heard.
+
+# **How an operation refuses, because that is the other half a new backend has to
+# be told** ([71]). An operation answers a caller; it never ends one.
+#
+#   a refusal is a return code    non-zero, and the caller decides what it means.
+#                                 `3` is taken: the dispatcher above returns it
+#                                 for an operation a backend does not implement,
+#                                 so a backend's own refusal starts at `1` or `2`.
+#   never a shell exit            not `${N:?word}`, not `exit`, not an errexit
+#                                 left to travel. Every one of those ends the
+#                                 *caller's* process, and this interface has two
+#                                 callers: `loop.sh` and `human-loop.sh`.
+#   an empty value is a value     `mark_escalated ID ""` is a ticket in the sink
+#                                 with no `Escalation:`, which is what
+#                                 `capability_propose` writes and what the drain
+#                                 has to be able to put back. A missing argument
+#                                 is the caller bug; an empty one is a state.
+#
+# This is written here rather than left to each adapter because the price is paid
+# one entry point over. The drain is the caller that costs the most: it has no
+# iteration subshell and no `proc_collect` between it and these operations —
+# exactly because [67] removed the last one, for the sound reason that a report
+# written in a command substitution dies with it. Measured on the code delivered
+# by [67]: `tracker_local_mark_escalated` refusing an empty reason by `${2:?}`
+# ended the drain in the middle of putting a neighbour back, and the drain exited
+# `0`, which its header documents as an emptied sink.
+#
+# What holds it: nothing on this side, and that is stated rather than implied. A
+# backend is a file a project installs, and no test of this pack can read one that
+# does not exist yet. What exists is the other end — `human-loop.sh` refuses to
+# exit `0` from anywhere but its own last line, so a backend that breaks this
+# clause costs a human a wrong diagnosis and never a false "everything was
+# drained". `docs/frontiere-de-confiance.md` carries the row.
 
 # The names this process has already put in front of a human, one per line. See
 # `tracker_finding_said`.
