@@ -48,6 +48,62 @@
 
 - **Piège de sonde.** Une session routée n'a pas `$FEATURE` dans son environnement : prendre le répertoire par `ls -d "$root"/.scratch/*/`. Et le prompt du gate de valeur se lit par `playthrough_call_stdin 1`, entre `--- spec begins ---` et `--- spec ends ---`.
 
+- **[66] est livré le 07/09/2026 (merge `650f636`), et voici le mécanisme sur
+  lequel choisir.** Ce ticket attendait de savoir « ce que [66] aura livré comme
+  mécanisme pour nommer ce qu'une session routée laisse hors de `issues/` ». La
+  réponse, en une phrase : **un épinglage pris par `router_pin` + une note dite au
+  retour de session, qui compte et ne juge rien — rien n'est remis, rien n'est
+  refusé.**
+
+  Ce qu'il y a à copier, et c'est une forme entière plutôt qu'une fonction :
+  - `router_pin` prend l'objet **au moment où le drain prend le ticket**, avant le
+    dossier et avant toute session ; ici ce serait un `ROUTER__PINNED_SPEC` (le
+    contenu de `spec.md`, ou son `cksum` — `router__ticket_digest` est déjà écrit
+    sous cet argument-là).
+  - la note est une fonction publique `router_*_note` appelée depuis
+    `human_loop__session` **comme une instruction et jamais dans une substitution
+    de commande**, parce qu'elle journalise et que `ROUTER__JOURNAL_WITNESS` est
+    une variable du process du drain ([67], point que [66] a hérité tel quel).
+    Elle imprime son propre préfixe `ralph: `, rend 0 quand elle a dit quelque
+    chose et **1 en silence** quand rien n'a bougé ([37] : un contrôle n'annonce
+    pas avoir agi sur ce qu'il a laissé intact).
+  - un refus du producteur n'est **pas** une absence ([59]) : `router_branch_note`
+    refuse et ne nomme rien quand `git` ne répond pas. Un `spec.md` illisible n'est
+    pas un `spec.md` réécrit.
+
+  **Ce qui rend la sortie 1 (« le drain nomme ») disponible telle quelle, et ce
+  qui la borne.** `spec.md` est bien dans la zone que `router__tree_dirt` saute,
+  et le commentaire de `router_desk` porte désormais la **carte de qui garde
+  quelle zone** — l'arbre, `issues/`, les refs, `run.log`, et « le reste de
+  `.scratch/<feature>/` : rien, et rien ne le peut ; la pièce qui *décide*
+  quelque chose est `spec.md`, et elle est [68]'s ». **Cette ligne de la carte est
+  la write-surface de ce ticket** : la remplir ou dire pourquoi elle reste ainsi.
+  À relire au même endroit : `router__run_notes_caveat` et sa jumelle dans
+  `router_journal_lines` affirment toutes deux que rien ne garde
+  `.scratch/<feature>/`. [66] ne les a pas touchées **parce qu'il a mis son garde
+  dans `.git/`** ; un garde de [68] est dans `.scratch/<feature>/`, donc les deux
+  phrases **deviennent à moitié fausses le jour de la livraison**. C'est un AC de
+  ce ticket, pas un détail de rédaction — la même clause que [67] avait posée à
+  [66], cette fois réellement déclenchée.
+
+  **Les deux résidus de [66], parce qu'ils se reproduiront ici à l'identique**
+  (mesurés, `../sondes/ticket-66/verification.bats`) : l'écriture forgée
+  **survit** au drainage, donc le drainage suivant l'épingle et travaille dessus
+  (V1) ; et l'épinglage est **par ticket**, donc ce qu'une session écrit est
+  nommé au retour de *sa* session puis devient la base du ticket suivant (V5).
+  Pour `spec.md`, la seconde a une conséquence propre : nommer au retour de
+  session ne protège **pas** le run suivant — c'est ce que la sortie 1 achète et
+  n'achète pas, et l'AC 1 demande précisément que ce soit dit plutôt que supposé.
+
+  **Ce qui n'a pas de précédent à copier**, et donc le vrai travail de ce ticket :
+  [66] a pu ne rien remettre parce que ce drain n'est pas l'auteur des refs. Le
+  pack **est** l'auteur de `spec.md` (`playthrough.sh` l'écrit), donc « rien n'est
+  remis » n'est pas gratuit ici et l'argument de `router__put_back` — « ce drain
+  ne réécrit que ce qu'un verbe public définit » — doit être posé à neuf. C'est
+  aussi ce qui rend la sortie 2 (« le drain re-témoigne ») moins évidente qu'elle
+  n'en a l'air : un témoin qui pourrait *refuser* casserait la posture que [69],
+  [67] et [66] tiennent au même endroit.
+
 - **Place dans la file, validée par Philippe le 06/09/2026 : quatrième**, derrière
   [66] et avant [18]. C'est le seul des quatre dont la réparation n'est pas
   décidée : il faut d'abord trancher *qui possède l'intervalle entre deux runs*,
