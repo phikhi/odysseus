@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `test/tracker-remote.bats`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Les adaptateurs `github` et `gitlab` satisfont l'interface fixe ; la boucle reste agnostique (aucun changement de control-flow).
-- [ ] En distant : claim = assignee ; reçu = la PR ; liveness du claim en **sidecar local** (concurrence mono-machine).
-- [ ] `wait_ci` est ON par défaut si une CI est détectée (opt-out `WAIT_CI=off`) → intégration PR-par-itération.
-- [ ] Le même scénario e2e que `local` (piloté par une API mockée) produit les mêmes transitions d'état observables.
-- [ ] `tracker_ids` est implémenté par les deux backends ; un backend qui ne la fournit pas est détecté, pas subi.
+- [x] Les adaptateurs `github` et `gitlab` satisfont l'interface fixe ; la boucle reste agnostique (aucun changement de control-flow).
+- [x] En distant : claim = assignee ; reçu = la PR ; liveness du claim en **sidecar local** (concurrence mono-machine).
+- [x] `wait_ci` est ON par défaut si une CI est détectée (opt-out `WAIT_CI=off`) → intégration PR-par-itération.
+- [x] Le même scénario e2e que `local` (piloté par une API mockée) produit les mêmes transitions d'état observables.
+- [x] `tracker_ids` est implémenté par les deux backends ; un backend qui ne la fournit pas est détecté, pas subi.
 
 ## Comments
 
@@ -500,3 +500,248 @@
      avant la session routée. `forensic_failed_refs` est publique et vit dans
      `.claude/lib/forensic.sh` depuis [70] ; c'est elle qu'un backend distant
      remplace ou double.
+
+## Livraison (08/09/2026)
+
+**Écart de write-surface, déclaré.** La surface annoncée était
+`.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`,
+`test/tracker-remote.bats`. Ce qui a été écrit en plus, et pourquoi chaque
+fichier :
+
+- **`.claude/lib/forge.sh` (neuf)** — le noyau partagé des deux backends. Deux
+  adaptateurs de vingt opérations chacun, écrits deux fois, sont deux endroits
+  où la prochaine correction sera faite une fois. Le préfixe est `forge_` et
+  **pas** `tracker_remote_` : `tracker__dispatch` route
+  `TRACKER_BACKEND=<nom>` vers `tracker_<nom>_<op>`, donc un noyau nommé d'après
+  un backend ferait de `TRACKER_BACKEND=remote` un backend qui répond à
+  certaines opérations et se trompe silencieusement sur les autres. Le
+  découpage tient aussi la règle de couches : les adaptateurs appellent des
+  `forge_*` **publiques**, jamais un `forge__` — `test/layering.bats` refuserait
+  l'inverse.
+- **`.claude/lib/tracker.sh`** — une 21ᵉ opération, `tracker_tickets_dir` (voir
+  plus bas).
+- **`.claude/lib/tracker-local.sh`** — son implémentation locale.
+- **`.claude/lib/failures.sh`** — `failures__issues_path` demande le chemin à
+  l'adaptateur au lieu de le composer, et `failures_protect_tracker` gagne la
+  branche explicite d'un backend qui ne garde pas ses tickets ici.
+- **`.claude/lib/forensic.sh`** — `forensic_uncovered` gagne la deuxième zone.
+- **`.claude/lib/gate.sh`** — `gate__surface_owner` rend `2` sur un `ids` refusé,
+  et le scope-guard escalade au lieu de retenter (AC 5).
+- **`.claude/lib/router.sh`** — la réserve du dossier, qui était **fausse** pour
+  un reçu distant ([70] avait laissé sa relecture ici).
+- **`.claude/ralph.config.sh.example`** — les cinq clés qu'un backend distant lit
+  et qu'aucun autre ne lit.
+- **`test/helpers/harness.bash`, `test/helpers/shims/curl`,
+  `test/helpers/shims/forge-api` (neuf)** — la forge mockée, avec état.
+- **`test/tracker-local.bats`** — un test nommait `github` comme « un backend qui
+  n'existe pas » ; il nomme maintenant `jira`.
+- **`test/mutate.sh`, `docs/frontiere-de-confiance.md`, `CONTEXT.md`** — les
+  obligations 1, 5 et 8 de la definition of done.
+
+### Ce qui a été décidé, et qui ne se déduit pas du code
+
+1. **L'état vit dans le corps de l'issue, pas dans des labels.** C'est ce qui
+   rend « le même scénario produit les mêmes transitions » une mesure et pas une
+   affirmation : le modèle d'état est celui du backend local, lu avec la même
+   tolérance (`**Nom:** v` ou `Nom: v`, blancs de fin coupés, `[[:space:]]` pour
+   un CRLF). Ce que le vocabulaire de la forge porte **en plus**, pour l'humain
+   et jamais pour une lecture du pack : l'assignee (le claim) et la fermeture
+   (`resolved`, `wontfix`). Un champ et un état de forge qui se contredisent
+   donneraient deux autorités pour un fait.
+2. **Un id est `<numéro>-<slug>`, ou le numéro nu.** Le slug est un champ du
+   corps (`Slug:`), donc il revient dans **le listing** — une requête pour tout
+   le tracker — et c'est ce qui fait que `frontier`, `ids`, `read_ticket` et
+   chaque `field` de chaque ticket sont servis par une seule requête. Le slug
+   n'est pas décoratif : `playthrough__opened_slug` et `playthrough__strangers`
+   le lisent dans le **texte** de l'id ([65]).
+3. **Il n'y a rien à refuser, et c'est la réponse que `lib/tracker.sh` prévoyait
+   déjà.** Un id est un entier plus un slug dans le rendu que le transport
+   utilise déjà (`\n`, `\t`, `\\`), donc il est d'une ligne par construction
+   quoi qu'un humain tape dans un `Slug:`. `tracker_refuse_name` n'est jamais
+   appelée et le préflight ne trouve rien : c'est la bonne réponse et pas une
+   réponse manquante, exactement comme pour `ambiguous-id`. Ce que ça coûte est
+   écrit dans `forge__record_id` : l'id d'une issue dont le slug porte une
+   tabulation se lit `12-a\tb`.
+4. **`renumber` rend l'id qu'on lui donne** ([27]), et la question du dessous a
+   une réponse : `forge__record` résout sur le numéro, unique dans un dépôt.
+5. **`open_unique` est sérialisé par un garde local**, dans le répertoire de la
+   feature, à côté du verrou de run ([49] : un garde sur l'espace des ids vit là,
+   un garde sur un ticket voyage avec lui). Ce qui le tient : cette machine, et
+   rien de plus — aucune des deux forges n'offre de compare-and-swap sur une
+   issue. C'est spec §213 (« liveness mono-machine, pas d'orchestration
+   distribuée ») dit à l'endroit où on supposerait sinon que la forge s'en
+   charge. Le claim est dans le même cas.
+6. **Le reçu est la requête, et la branche est poussée dedans.** C'est la réponse
+   à ce que [10] avait laissé ouvert : les `git show <sha>` du reçu résolvent
+   pour qui a récupéré la branche, sans inliner le diff que [10] a refusé. Une
+   requête par ticket, ouverte par `mark_resolved` — qui en a besoin avant de
+   pouvoir attendre un pipeline — et réécrite par `emit_receipt`. Ce que la
+   machine retient d'elle est dans le sidecar, jamais sur le ticket : un
+   adaptateur qui écrirait un lien, un label ou un commentaire en émettant un
+   reçu devrait noter l'id dans le registre de [13] lui-même, or c'est le
+   dispatcher qui le tient et il exempte `emit_receipt`. Le lien entre les deux
+   est fait par la forge, à partir du `#<numéro>` que porte la description.
+7. **Ce qui atteste la provenance d'un reçu distant : rien ici.** [70] avait posé
+   la question et accepté cette réponse à condition qu'elle soit écrite et portée
+   par le dossier. Elle l'est : `tracker_receipt_dir` refuse,
+   `forensic_uncovered` le dit une fois au démarrage du run, `router_dossier`
+   imprime la réserve écrite pour un objet qui n'est pas dans cet arbre — et dit
+   que ce qui l'atteste vraiment est le registre d'auteurs de la forge, que ce
+   pack ne lit pas. La phrase de [70] (« a receipt lives in the main tree ») est
+   **fausse** ici et a été relue, comme le ticket le demandait.
+8. **La trace forensique ne bouge pas.** `failures_preserve_attempt` écrit
+   `refs/heads/failed/<id>` quel que soit le backend, donc la moitié de [66]
+   qui portait sur « un backend qui déplace la preuve » ne s'applique pas :
+   celui-ci ne la déplace pas. Ce qu'il déplace est le **reçu**, et c'est le
+   point 7.
+9. **`wait_ci`** : `auto` (défaut) attend quand la forge rend un pipeline et
+   laisse passer un projet qui n'en a pas — c'est toute la détection ; `on` est
+   un projet qui a dit en avoir une, donc une requête sans pipeline est un fait
+   pour un humain. Rouge, délai, statut inconnu ou requête impossible à ouvrir :
+   le ticket est escaladé (`ci-red`, `ci-timeout`, `ci-unreachable`,
+   `ci-absent`) et l'opération refuse. Un statut qu'aucune des deux forges ne
+   documente est `unknown` et **jamais** `none` — [59] appliqué à un mot.
+10. **Le coût du drain, chiffré et PAS réglé — et c'est écrit comme tel.** Le
+    listing est mémoïsé dans une **variable du shell appelant**, ce qui replie
+    les lectures d'un **même appel** sur une requête : un scan de frontière de
+    quarante tickets portant chacun un blocage coûte une requête et non quarante
+    et une. Ce que ça n'achète pas était la phrase évidente et elle est fausse :
+    une variable de shell meurt à la première substitution de commande, et une
+    substitution est **la** façon dont ce pack lit le tracker. Ordres de grandeur
+    sur un tracker de quarante : 1 requête pour un scan de frontière, 41 pour un
+    débordement de surface, **240 pour un ticket drainé**. Les deux durées de vie
+    plus longues sont refusées ici plutôt que mal choisies — un fichier dans
+    `.scratch/<feature>/` est un fichier qu'une session routée écrit ([40], et le
+    corollaire de [21] : ce cache décide de ce que le tracker *dit*), et un
+    fichier dans le répertoire témoin du run serait juste mais `human-loop.sh`
+    n'en fabrique pas, donc le donner au drain est une modification du point
+    d'entrée. Propriétaire : **[75]**. Ce qui est réglé sans discussion : ces
+    adaptateurs ne posent **aucun** `mktemp`, donc `gate_tmp_names` n'a pas
+    bougé.
+11. **Le sidecar** vit dans `.scratch/<feature>/.forge-claims`, à côté du verrou
+    de run, en append-only avec la dernière ligne qui gagne. Il porte trois
+    sortes de faits locaux : le claim (`owner=pid:<n> at=<iso>`), la requête
+    ouverte, et l'URL du reçu. Il a exactement l'exposition du verrou de run —
+    une session peut l'écrire — et c'est déjà la ligne « Le reste de
+    `.scratch/<feature>/` » du tableau de confiance.
+12. **JSON en awk, strict.** Délibérément pas jq (le pack promet de tourner sans
+    rien d'installé), et délibérément **strict** là où `budget__window` est
+    tolérant : celui-là lit un chiffre sur un endpoint non documenté et n'imprime
+    rien quand il ne peut pas, celui-ci porte le **texte d'un ticket** — une
+    valeur devinée ici est un ticket réécrit. Un `\uXXXX` au-dessus de l'ASCII
+    refuse au lieu de deviner : `%c` d'awk est un octet sur une implémentation et
+    un caractère sur une autre.
+13. **`ENVIRON` et jamais `awk -v`** pour toute valeur qui n'est pas un littéral
+    du pack. C'est la fragilité que la passe du 29/07/2026 avait mesurée sur le
+    backend local et léguée à ce ticket : awk interprète les échappements d'une
+    assignation `-v`, donc une raison d'escalade portant `\n` arrive en vraie
+    newline et coupe le ticket en deux.
+
+### Pièges rencontrés, à ne pas redécouvrir
+
+- **`IFS=<TAB> read -r a b c` avale les champs vides.** La tabulation est un
+  caractère blanc d'IFS, donc une suite de tabulations se replie et une
+  tabulation de tête saute : un enregistrement dont l'assignee est vide — tout
+  ticket non réclamé — arrivait avec un champ de moins et la frontière lisait le
+  `open` de la forge comme le slug du ticket. Épluché à l'expansion de paramètre
+  (`forge__field_at`), qui ne découpe et ne replie rien. **Le pack a d'autres
+  `IFS="$(printf '\t')" read` ; ils ne sont sûrs que tant que leurs champs sont
+  non vides.**
+- **Le corps échappé se scanne en tenant compte de `\\`.** Un champ dont la
+  valeur finit par une contre-oblique met un `\` juste avant le `n` du séparateur
+  suivant : un scan qui cherche les deux caractères `\n` coupe la valeur un
+  caractère trop tôt, sur un ticket parfaitement bien formé. Les paires sont
+  repliées sur un octet sentinelle avant la recherche.
+- **`printf "$tmpl" a b` réutilise le format tant qu'il reste des arguments**,
+  donc un gabarit d'URL qui nomme le dépôt et pas l'argument imprimait le chemin
+  **deux fois**. Les gabarits sont `{repo}` / `{arg}` et la substitution est de
+  l'expansion de paramètre.
+- **`sub` est une fonction interne d'awk** : la nommer en paramètre local d'une
+  fonction awk est une erreur de compilation.
+- **`\u0000` n'existe pas dans une chaîne awk** : la table d'ordinaux de
+  `forge__urlenc` part de 1.
+- **`mutate.sh` : un `$#` dans un `s#...#...#` termine le délimiteur.** Utiliser
+  `s@...@...@` pour toute ancre qui contient `#`.
+- **`bash test/mutate.sh -n` édite `.claude/` et le restaure**, donc il rebâtit
+  l'empreinte du template du harnais : une suite lancée **pendant** ce dry-run
+  peut bâtir son projet à partir d'un pack muté. Un run de suite a été jeté pour
+  ça pendant ce ticket.
+
+### Ce que le gate de mutation a attrapé, et qui était vert avant lui
+
+Trois entrées sur trente-huit sont sorties **VACUOUS** au premier passage. Deux
+étaient des tests qui mentaient, une était une mutation qui n'en était pas une —
+et aucune des trois n'était visible dans une suite verte.
+
+1. **« un backslash dans un slug n'est pas la fin de la ligne ».** Le test
+   nommait un backslash *ailleurs* dans le corps, et le défaut est ailleurs : le
+   séparateur d'un corps échappé est la paire `\n`, et une valeur qui porte
+   elle-même un backslash suivi de la **lettre** `n` porte exactement cette
+   paire. Sans le repli des backslashes échappés, le scan s'arrêtait **dans** la
+   valeur et le slug sortait tronqué (`a\`) : le ticket recevait un id
+   qu'aucun lecteur de ce tracker ne rencontrera jamais, et rien ne rougissait —
+   le numéro est toujours là, donc le tracker répond simplement sur un nom que
+   personne ne porte. Le test réécrit met le backslash **dans le slug** et vérifie
+   les deux moitiés : l'id rendu, et que le ticket reste joignable dessous.
+2. **« une raison d'escalade vide est une valeur ».** Le test lisait le champ
+   `Escalation` et le comparait au vide. Or un ticket portant `**Escalation:**`
+   suivi de rien et un ticket ne portant pas cette ligne **se lisent
+   identiquement** à travers une lecture de champ — le backend local le dit dans
+   son propre commentaire, et je l'ai lu en écrivant celui-ci sans en tirer la
+   conséquence pour mon assertion. La garantie est l'**absence de la ligne**,
+   parce que ce que `router__put_back` doit pouvoir écrire est la forme que le
+   puits a vraiment, octet pour octet. Le test réécrit regarde le corps.
+3. **La mutation du lecteur JSON n'en était pas une.** Neutraliser un `fail`
+   ne prouvait rien : la chose suivante que l'analyseur rencontrait refusait pour
+   sa propre raison, et le document était rejeté quand même — vert pour une autre
+   cause que celle qu'on croyait mesurer. La forme qui fait vraiment **passer** un
+   document cassé est de lire un mot nu comme un nombre, et il faut élargir les
+   *deux* classes de caractères (celle qui reconnaît le début d'un nombre et celle
+   qui le consomme) : élargir seulement la première laisse l'analyseur sur place
+   et le refus arrive de l'accolade suivante.
+
+La leçon transversale des trois, parce qu'elle n'est pas propre à ce ticket :
+**une assertion sur une valeur lue à travers le même lecteur que le code écrit ne
+peut pas voir une différence que ce lecteur normalise.** Les points 2 et 3 sont
+la même erreur à deux étages.
+
+### Ce qui reste, et où
+
+Trois tickets ouverts. Les deux premiers ont leur ligne dans
+`docs/frontiere-de-confiance.md` ; le troisième est un coût et pas une garantie,
+donc il n'en a pas :
+
+- **[73] — rien ne restaure le tracker d'un backend distant.**
+  `failures_protect_tracker` ne peut pas comparer deux arbres git d'un répertoire
+  qui n'existe pas. Ce ticket a livré la **détection** — le chemin est demandé à
+  l'adaptateur, le refus est une branche explicite, le run le dit une fois — et
+  pas la remise. Un refus à chaque fenêtre rendrait rouge toute itération d'un
+  backend distant, ce qui échange un faux vert contre pas de vert ; la remise
+  demande de rendre `failures_protect_tracker` agnostique du transport, ce qui
+  est une réécriture de ce garde et pas un ajout de backend.
+- **[74] — la boucle avale les refus de l'adaptateur.** `loop.sh` ne lit pas le
+  code de retour de `tracker_mark_resolved`, donc sur un pipeline rouge `run.log`
+  dit `resolved` pendant que le tracker dit `ready-for-human` ; et
+  `loop__next_ticket` lit la frontière dans une substitution de commande, donc
+  un listing refusé arrive comme une frontière vide, ce qui déclenche le gate de
+  valeur terminal. Les deux sont des changements de control-flow que l'AC 1
+  interdit ici. Ce qui a été fait de ce côté-ci : les deux opérations refusent
+  correctement, et `forge__api` redemande une **lecture** (trois essais) et
+  jamais une écriture.
+- **[75] — le drain d'un backend distant relit le tracker par ticket.** Le point
+  10 ci-dessus, avec ses deux durées de vie refusées et le piège d'invalidation
+  qui attend celui qui le livrera.
+
+### Contraintes créées ailleurs
+
+- **[19] (installeur)** : il balaye ce que `gate_tmp_names` nomme, et ce ticket
+  n'ajoute **aucun** nom — les adaptateurs distants ne posent pas un `mktemp`.
+  Ce qu'il ajoute hors du dépôt est le sidecar
+  `.scratch/<feature>/.forge-claims`, qui est **dans** le dépôt, dans la zone que
+  `gate_is_bookkeeping` exclut déjà. Un installeur qui propose `github` ou
+  `gitlab` doit demander `TRACKER_REPO`, `TRACKER_TOKEN_CMD` et `TRACKER_USER` :
+  sans le premier, chaque opération refuse au premier appel.
+- **[73]** : le registre de [13] est indexé par **id**, et l'id d'un backend
+  distant contient le slug lu dans le corps — donc une session qui change le
+  slug change l'id du ticket sans changer le ticket. Personne n'a mesuré ce que
+  ça fait aux deux gardes de [42].

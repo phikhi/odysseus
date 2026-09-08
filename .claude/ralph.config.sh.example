@@ -317,8 +317,51 @@ CLAIM_TTL="${CLAIM_TTL:-5400}"
 TRACKER_BACKEND="${TRACKER_BACKEND:-local}"
 
 # Wait for CI before marking a remote ticket resolved: auto | on | off.
-# `auto` turns it on when the backend reports CI on the pull/merge request.
+# `auto` turns it on when the backend reports CI on the pull/merge request; `on`
+# treats a request with no pipeline at all as something a human should look at,
+# because a project that said it has CI and shows none is not a project whose
+# gate just went green.
 WAIT_CI="${WAIT_CI:-auto}"
+
+# How long that wait may last, in seconds. Empty falls back to GATE_TIMEOUT,
+# which is the other bounded wait of an iteration.
+WAIT_CI_TIMEOUT="${WAIT_CI_TIMEOUT:-}"
+
+# ── What a remote backend needs, and nothing else reads ──────────────────────
+#
+# None of these is read by the `local` backend. A remote backend refuses its first
+# operation — by a return code, never by ending its caller — when TRACKER_REPO is
+# empty: a URL composed out of an empty repository is a request nobody can debug.
+
+# The repository the tickets live in. `owner/name` on github; the project path
+# (`group/name`) or its numeric id on gitlab.
+TRACKER_REPO="${TRACKER_REPO:-}"
+
+# The API root, when it is not the public one — a self-hosted instance, an
+# enterprise install. Empty means the backend's own default.
+TRACKER_API="${TRACKER_API:-}"
+
+# A command that prints the token, never the token itself. Same arrangement as
+# USAGE_TOKEN_CMD, and for the same reason: a credential store is the user's
+# business and its shape differs per platform. It is read out of this sealed
+# config ([24]), so it is exactly as trusted as TEST_CMD.
+#
+#   TRACKER_TOKEN_CMD='security find-generic-password -s ralph-forge -w'
+TRACKER_TOKEN_CMD="${TRACKER_TOKEN_CMD:-}"
+
+# Who a claimed ticket is assigned to, so that a human looking at the tracker sees
+# the claim. Empty leaves the ticket unassigned: the claim still stands in the
+# ticket, which is what every read of this pack goes through.
+TRACKER_USER="${TRACKER_USER:-}"
+
+# Where the branch an iteration leaves is pushed, and what the pull (or merge)
+# request is opened against. The receipt of a remote backend **is** that request,
+# and pushing the branch is what makes the git objects the receipt names resolve
+# for somebody who does not have this repository ([10]).
+RECEIPT_REMOTE="${RECEIPT_REMOTE:-origin}"
+# Empty asks the remote for its own default branch, and refuses when it has none:
+# a request opened against a guess is a diff nobody asked for.
+RECEIPT_BASE="${RECEIPT_BASE:-}"
 
 # ── Feature-level value gate — FORCED CONFIRMATION ───────────────────────────
 #

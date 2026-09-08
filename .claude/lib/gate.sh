@@ -2633,8 +2633,18 @@ SURFACE
 # into two ids that resolve to nothing, so nobody owned its declared surface and
 # an overflow into it came back classified as a stray write — retryable, when the
 # whole point of this function is to say it is not (probed, s2c).
+# **Three answers and not two, since [18]**: this ticket, nobody, or *the tracker
+# would not say*. The list used to be read straight out of a heredoc command
+# substitution, which turns every refusal into an empty list — and an empty list
+# here reads as "no other ticket declared this path", which is the answer that
+# makes a scope overflow retryable. A backend that does not implement `ids` gets
+# `3` from the dispatcher and a sentence on stderr; every drift against a
+# contract then came back classified `internal` and was retried, for ever, on a
+# tracker nobody could enumerate. Detected rather than suffered: `2` here, and the
+# caller says so and escalates.
 gate__surface_owner() {
-  local file="$1" self="$2" id
+  local file="$1" self="$2" id ids
+  ids="$(tracker_ids)" || return 2
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     [ "$id" != "$self" ] || continue
@@ -2643,7 +2653,7 @@ gate__surface_owner() {
       return 0
     fi
   done <<IDS
-$(tracker_ids)
+$ids
 IDS
   return 1
 }
@@ -2670,7 +2680,7 @@ IDS
 # surface can never be assumed to contain anything.
 gate__scope_guard() {
   local ticket="$1" base="$2" now="$3" classfile="$4"
-  local surface changed file owner class='' rc=0
+  local surface changed file owner ownerrc=0 class='' rc=0
 
   if [ -z "$now" ] || ! changed="$(gate_changed_files "$base" "$now")"; then
     printf 'the scope-guard could not read the working tree — refusing to pass it\n'
@@ -2723,8 +2733,17 @@ gate__scope_guard() {
       continue
     fi
     rc=1
-    owner="$(gate__surface_owner "$file" "$ticket" || true)"
-    if [ -n "$owner" ]; then
+    ownerrc=0
+    owner="$(gate__surface_owner "$file" "$ticket")" || ownerrc=$?
+    if [ "$ownerrc" = 2 ]; then
+      # A classification this guard cannot make, escalated rather than guessed
+      # ([18]). `contract` is deliberately the not-retryable class: a tracker that
+      # will not list its tickets is not something a fresh session fixes, and
+      # calling it a stray write would spend the ticket's whole retry budget on a
+      # backend that is misconfigured or does not implement `ids` at all.
+      class=contract
+      printf 'wrote %s, and nothing here can say whose write-surface it is: the tracker would not list its tickets, so a write into another ticket'"'"'s surface and a write into no surface at all cannot be told apart\n' "$file"
+    elif [ -n "$owner" ]; then
       class=contract
       printf 'wrote %s, inside the write-surface of %s (drift)\n' "$file" "$owner"
     else

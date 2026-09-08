@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+# The forge a remote tracker backend talks to, faked with files ([18]).
+#
+# Reached from the `curl` shim when a test has asked for it (`use_forge`), with
+# the method, the URL, the request payload and whether curl was asked to print
+# the status code. It is **stateful**: an adapter claims a ticket, reads it back
+# and finds it claimed, which is the whole of what makes an end-to-end scenario on
+# this backend comparable with the same scenario on `local`.
+#
+# It speaks both dialects at once — `number`/`iid`, `body`/`description`,
+# `state`/`state_event`, `html_url`/`web_url` — so that one mock serves both
+# adapters and a test that passes on one and not the other is a difference in the
+# adapter rather than in the fake.
+#
+# What it deliberately does **not** do: validate. A payload it does not
+# understand is recorded and ignored, so a test asserting on `forge_calls`
+# measures what the pack sent rather than what this file thought of it.
+set -uo pipefail
+
+state="${RALPH_SHIM_STATE:?forge-api: RALPH_SHIM_STATE is not set}"
+dir="$state/forge"
+method="$1"
+url="$2"
+data="$3"
+wants_code="$4"
+
+path="${url#*://}"
+path="/${path#*/}"
+
+printf '%s %s\n' "$method" "$path" >>"$dir/calls"
+[ -z "$data" ] || printf '%s\n' "$data" >>"$dir/payloads"
+
+# A status a test asked this call to answer with, once. `forge_answer_status`
+# stages them one per call, which is what lets a test drive a read that fails and
+# then succeeds — the retry of `forge__api` cannot be measured with a fake that
+# can only ever refuse.
+status=200
+if [ -s "$dir/status" ]; then
+  status="$(head -1 "$dir/status")"
+  sed -i.bak '1d' "$dir/status" 2>/dev/null || {
+    tail -n +2 "$dir/status" >"$dir/status.next"
+    mv -f "$dir/status.next" "$dir/status"
+  }
+  rm -f "$dir/status.bak"
+fi
+[ -n "$status" ] || status=200
+
+# ── JSON, in and out ─────────────────────────────────────────────────────────
+
+json_str() {
+  LC_ALL=C awk '
+    BEGIN { printf "\"" }
+    { if (NR > 1) printf "\\n"; line = $0
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "\"") printf "\\\""
+        else if (c == "\\") printf "\\\\"
+        else if (c == "\t") printf "\\t"
+        else printf "%s", c
+      }
+    }
+    END { printf "\"" }'
+}
+
+# The value of one top-level string key of the payload, unescaped. Nothing
+# general: this reads exactly what `forge_json_string` writes.
+payload_str() {
+  printf '%s' "$data" | FORGE_KEY="$1" LC_ALL=C awk '
+    BEGIN { k = "\"" ENVIRON["FORGE_KEY"] "\":" }
+    {
+      p = index($0, k)
+      if (p == 0) exit 1
+      rest = substr($0, p + length(k))
+      if (substr(rest, 1, 1) != "\"") exit 1
+      out = ""
+      for (i = 2; i <= length(rest); i++) {
+        c = substr(rest, i, 1)
+        if (c == "\"") break
+        if (c == "\\") {
+          i++
+          d = substr(rest, i, 1)
+          if (d == "n") out = out "\n"
+          else if (d == "t") out = out "\t"
+          else out = out d
+          continue
+        }
+        out = out c
+      }
+      printf "%s", out
+      found = 1
+    }
+    END { if (!found) exit 1 }'
+}
+
+answer() {
+  printf '%s' "$1"
+  if [ "$wants_code" = 1 ]; then printf '\n%s' "$status"; fi
+  exit 0
+}
+
+refuse() {
+  if [ "$wants_code" = 1 ]; then printf '\n%s' "$status"; fi
+  exit 0
+}
+
+case "$status" in
+  2*) ;;
+  *) refuse ;;
+esac
+
+# ── the issues ───────────────────────────────────────────────────────────────
+
+issue_json() {
+  local num="$1"
+  printf '{"number":%s,"iid":%s,"title":%s,"body":%s,"description":%s,"state":%s,"assignees":[' \
+    "$num" "$num" \
+    "$(cat "$dir/issue.$num.title" 2>/dev/null | json_str)" \
+    "$(cat "$dir/issue.$num.body" 2>/dev/null | json_str)" \
+    "$(cat "$dir/issue.$num.body" 2>/dev/null | json_str)" \
+    "$(cat "$dir/issue.$num.state" 2>/dev/null | json_str)"
+  local who
+  who="$(cat "$dir/issue.$num.assignee" 2>/dev/null || printf '')"
+  if [ -n "$who" ]; then
+    printf '{"login":%s,"username":%s}' "$(printf '%s' "$who" | json_str)" \
+      "$(printf '%s' "$who" | json_str)"
+  fi
+  printf ']}'
+}
+
+listing() {
+  local first=1 num
+  printf '['
+  while IFS= read -r num; do
+    [ -n "$num" ] || continue
+    [ "$first" = 1 ] || printf ','
+    first=0
+    issue_json "$num"
+  done <"$dir/order"
+  printf ']'
+}
+
+# ── routing ──────────────────────────────────────────────────────────────────
+
+case "$method $path" in
+  "GET "*"/issues?"* | "GET "*"/issues")
+    case "$path" in
+      *"page=1"* | *"page="*) ;;
+    esac
+    # Page two and beyond are empty: this fake holds fewer tickets than a page.
+    case "$path" in
+      *"page=1"*) answer "$(listing)" ;;
+      *"page="*) answer '[]' ;;
+      *) answer "$(listing)" ;;
+    esac
+    ;;
+  "GET "*"/users?username="*)
+    answer '[{"id":7}]'
+    ;;
+  "GET "*"/commits/"*"/status")
+    answer "{\"state\":$(cat "$dir/ci" 2>/dev/null | json_str)}"
+    ;;
+  "GET "*"/pipelines?ref="*)
+    if [ -s "$dir/ci" ]; then
+      answer "[{\"status\":$(cat "$dir/ci" | json_str)}]"
+    fi
+    answer '[]'
+    ;;
+  "POST "*"/issues")
+    num="$(cat "$dir/next" 2>/dev/null || printf 1)"
+    printf '%s\n' "$((num + 1))" >"$dir/next"
+    payload_str title >"$dir/issue.$num.title" 2>/dev/null || : >"$dir/issue.$num.title"
+    { payload_str body || payload_str description || printf ''; } >"$dir/issue.$num.body"
+    printf 'open\n' >"$dir/issue.$num.state"
+    : >"$dir/issue.$num.assignee"
+    printf '%s\n' "$num" >>"$dir/order"
+    answer "$(issue_json "$num")"
+    ;;
+  "POST "*"/issues/"*"/comments" | "POST "*"/issues/"*"/notes")
+    num="${path#*/issues/}"
+    num="${num%%/*}"
+    payload_str body >>"$dir/notes.$num" 2>/dev/null || true
+    printf '\n' >>"$dir/notes.$num"
+    answer '{"id":1}'
+    ;;
+  "PATCH "*"/issues/"* | "PUT "*"/issues/"*)
+    num="${path##*/}"
+    if body="$(payload_str body)" || body="$(payload_str description)"; then
+      printf '%s' "$body" >"$dir/issue.$num.body"
+    fi
+    if st="$(payload_str state)"; then
+      printf '%s\n' "$st" >"$dir/issue.$num.state"
+    fi
+    if ev="$(payload_str state_event)"; then
+      case "$ev" in
+        close) printf 'closed\n' >"$dir/issue.$num.state" ;;
+        reopen) printf 'opened\n' >"$dir/issue.$num.state" ;;
+      esac
+    fi
+    case "$data" in
+      *'"assignees":[]'* | *'"assignee_ids":[]'*) : >"$dir/issue.$num.assignee" ;;
+      *'"assignees":['*)
+        printf '%s\n' "$data" |
+          sed -n 's/.*"assignees":\["\([^"]*\)".*/\1/p' >"$dir/issue.$num.assignee"
+        ;;
+      *'"assignee_ids":['*)
+        cat "$dir/user" 2>/dev/null >"$dir/issue.$num.assignee" || : >"$dir/issue.$num.assignee"
+        ;;
+    esac
+    answer "$(issue_json "$num")"
+    ;;
+  "PATCH "*"/pulls/"* | "PUT "*"/merge_requests/"*)
+    k="${path##*/}"
+    { payload_str body || payload_str description || printf ''; } >"$dir/request.$k.body"
+    answer "{\"number\":$k,\"iid\":$k,\"html_url\":\"https://forge.test/r/$k\",\"web_url\":\"https://forge.test/r/$k\"}"
+    ;;
+  "POST "*"/pulls" | "POST "*"/merge_requests")
+    k="$(cat "$dir/requests.next" 2>/dev/null || printf 1)"
+    printf '%s\n' "$((k + 1))" >"$dir/requests.next"
+    { payload_str head || payload_str source_branch || printf ''; } >"$dir/request.$k.head"
+    { payload_str body || payload_str description || printf ''; } >"$dir/request.$k.body"
+    printf '%s\t%s\n' "$k" "$(cat "$dir/request.$k.head")" >>"$dir/requests"
+    answer "{\"number\":$k,\"iid\":$k,\"html_url\":\"https://forge.test/r/$k\",\"web_url\":\"https://forge.test/r/$k\"}"
+    ;;
+esac
+
+printf 'forge-api: no route for %s %s\n' "$method" "$path" >>"$dir/unrouted"
+status=404
+refuse

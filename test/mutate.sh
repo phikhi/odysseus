@@ -241,6 +241,8 @@ HUMAN_LOOP=".claude/human-loop.sh"
 ROUTER=".claude/lib/router.sh"
 PLAYTHROUGH=".claude/lib/playthrough.sh"
 FORENSIC=".claude/lib/forensic.sh"
+FORGE=".claude/lib/forge.sh"
+GITLAB=".claude/lib/tracker-gitlab.sh"
 HARNESS="test/helpers/harness.bash"
 # A test file, like the three below it: the rule it holds is about the shipped
 # source, so the only thing that can break it is the check itself ([59]). No
@@ -1408,7 +1410,7 @@ mutation "29 a branch cannot see the tree it is judged on" "$GATE" \
 # had lost nothing. Caught by the gate; the lesson is unchanged and now has a
 # third instance.
 mutation "29 a scope-guard handed no tree recomputes one instead of refusing" "$GATE" \
-  's/  local surface changed file owner class=.. rc=0\n\n  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then/  local surface changed file owner class=\x27\x27 rc=0\n\n  if ! changed="\$(gate_changed_files "\$base" "\$now")"; then/' \
+  's/  local surface changed file owner ownerrc=0 class=.. rc=0\n\n  if \[ -z "\$now" \] \|\| ! changed="\$\(gate_changed_files "\$base" "\$now"\)"; then/  local surface changed file owner ownerrc=0 class=\x27\x27 rc=0\n\n  if ! changed="\$(gate_changed_files "\$base" "\$now")"; then/' \
   test/gate.bats "cannot read the tree"
 
 mutation "29 the gate never says what it wrote while it judged" "$GATE" \
@@ -2674,7 +2676,7 @@ mutation "10 the attempt is always the first one" "$LOOP" \
 # was re-checked before the anchor moved: `emit_receipt` is still on the read side,
 # so it still hands no id to the restore and the quarantine.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| emit_receipt\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -5259,6 +5261,236 @@ mutation "70 the dossier shows the two objects bare" "$ROUTER" \
 mutation "70 the reserve is printed under an absence too" "$ROUTER" \
   's#  if \[ "\$shown" = 1 \]; then#  if true; then#' \
   test/forensic.bats "no reserve on evidence there is none of"
+
+# ── [18] the remote tracker backends ─────────────────────────────────────────
+
+# A refusal read as an empty list, which is [59]'s rule where it costs the most:
+# an empty `ids` is what makes `gate__surface_owner` say nobody declared a path,
+# and an empty frontier is what starts the terminal value gate.
+mutation "18 a refused id list is an empty tracker" "$FORGE" \
+  's#  records="\$\(forge__records "\$flavour"\)" \|\| return 1#  records="\$(forge__records "\$flavour")" || records=\x27\x27#' \
+  test/tracker-remote.bats "could not be listed is not an empty frontier"
+
+mutation "18 a refused listing is an empty frontier" "$FORGE" \
+  's#this is not an empty frontier\\n\x27 >&2\n    return 1#this is not an empty frontier\\n\x27 >&2\n    return 0#' \
+  test/tracker-remote.bats "could not be listed is not an empty frontier"
+
+# The bounded retry on a read, without which a blip in a listing is a night: the
+# pilot reads the frontier through a substitution that swallows a status.
+mutation "18 a read that refused once is given up on" "$FORGE" \
+  's#  \[ "\$method" != GET \] \|\| tries="\$\{FORGE_READ_TRIES:-3\}"#  tries=1#' \
+  test/tracker-remote.bats "asked again before it is given up on"
+
+# And the asymmetry, which is the half that matters: a `POST` retried after a
+# timeout is a ticket opened twice, and no caller undoes that.
+mutation "18 a write is retried like a read" "$FORGE" \
+  's#  \[ "\$method" != GET \] \|\| tries="\$\{FORGE_READ_TRIES:-3\}"#  tries="\$\{FORGE_READ_TRIES:-3\}"#' \
+  test/tracker-remote.bats "asked again before it is given up on"
+
+# The escaped body is scanned for `\n`; a value ending in a backslash puts one
+# right before the `n` of the next separator, so a scan that does not fold escaped
+# backslashes first reads the field one character short.
+mutation "18 the slug scan does not fold escaped backslashes" "$FORGE" \
+  's#        gsub\(/\\\\\\\\/, sep, m\)\n##' \
+  test/tracker-remote.bats "not read as the end of the line"
+
+# `awk -v` interprets the escapes of the value it is given: a reason carrying `\n`
+# arrives as a real newline and cuts the ticket in two at that line.
+mutation "18 a field value travels through awk -v" "$FORGE" \
+  's#    FORGE_FIELD_NAME="\$name" FORGE_FIELD_VALUE="\$value" LC_ALL=C awk \x27\n    BEGIN \{ done = 0; has = 0; n = ENVIRON\["FORGE_FIELD_NAME"\]; v = ENVIRON\["FORGE_FIELD_VALUE"\] \}#    LC_ALL=C awk -v n="\$name" -v v="\$value" \x27\n    BEGIN \{ done = 0; has = 0 \}#' \
+  test/tracker-remote.bats "carrying an escape does not cut the ticket in two"
+
+# Claim = assignee, which is what a human looking at the forge sees.
+mutation "18 a claim is never published on the forge" "$FORGE" \
+  's#      forge__assign "\$flavour" "\$num" \|\| true#      :#' \
+  test/tracker-remote.bats "published as the assignee and decided locally"
+
+# And the other half: liveness is local, so a claim this machine took has to read
+# `owner=pid:<n>` — the only owner `claim.sh` can ping.
+mutation "18 a claim is not recorded locally" "$FORGE" \
+  's#      forge__record_local "\$id" claim "owner=\$owner at=\$\(ralph_now\)" \|\| rc=1#      true#' \
+  test/tracker-remote.bats "published as the assignee and decided locally"
+
+# The `Claimed` field is answered locally and never out of the body, which is
+# spec §152 and not an optimisation.
+mutation "18 the claim record is read out of the ticket" "$FORGE" \
+  's#  if \[ "\$name" = Claimed \]; then#  if false; then#' \
+  test/tracker-remote.bats "published as the assignee and decided locally"
+
+# Releasing a claim takes the assignee off too: one left behind is a ticket the
+# forge shows as somebody\x27s while the tracker has given it back.
+mutation "18 a released claim keeps its assignee" "$FORGE" \
+  's#  forge__unassign "\$flavour" "\$num" \|\| true#  true#' \
+  test/tracker-remote.bats "clears the claim and the retry counter"
+
+# [26]\x27s obligation on the interface: a counter kept across a delivery is
+# cumulative over the ticket\x27s whole life, and nothing goes red over it.
+mutation "18 resolving keeps the retry counter" "$FORGE" \
+  's#Status resolved Claimed --drop Failures --drop#Status resolved Claimed --drop#' \
+  test/tracker-remote.bats "clears the claim and the retry counter"
+
+# [71]: an empty reason is a **value** — the shape of the sink `router__put_back`
+# has to be able to restore — and not a refusal.
+mutation "18 an empty escalation reason writes a reason" "$FORGE" \
+  's#Status ready-for-human Escalation --drop Claimed --drop#Status ready-for-human Escalation "\$reason" Claimed --drop#' \
+  test/tracker-remote.bats "empty escalation reason is a value"
+
+# And the other half of the same clause: a missing argument is a return code and
+# never a shell exit, because this interface has two callers and one is the drain.
+mutation "18 a missing escalation reason ends the caller" "$FORGE" \
+  's@  \[ "\$#" -ge 3 \] \|\| return 2@  : "\$\{3:?an escalation needs a reason\}"@' \
+  test/tracker-remote.bats "empty escalation reason is a value"
+
+# The integration form the backend shapes: no wait, no verdict from the forge.
+mutation "18 the forge verdict is never waited for" "$FORGE" \
+  's#  if forge__wait_ci_wanted; then#  if false; then#' \
+  test/tracker-remote.bats "wait_ci green closes the ticket"
+
+# A red pipeline that resolves the ticket anyway, which is the false green this
+# whole key exists to refuse.
+mutation "18 a red pipeline resolves the ticket anyway" "$FORGE" \
+  's#    verdict="\$\(forge__integrate "\$flavour" "\$id"\)" \|\| \{\n      forge_mark_escalated "\$flavour" "\$id" "\$\{verdict:-ci-unreachable\}" \|\| true\n      return 1\n    \}#    verdict="\$(forge__integrate "\$flavour" "\$id")" || true#' \
+  test/tracker-remote.bats "wait_ci green closes the ticket"
+
+# `auto` is the detection and `on` is a claim the project made: a request with no
+# pipeline at all means one thing under each.
+mutation "18 on and auto read a missing pipeline the same way" "$FORGE" \
+  's#            printf \x27ci-absent\\n\x27\n            return 1#            return 0#' \
+  test/tracker-remote.bats "auto passes a project with no pipeline"
+
+# A status neither forge documents, read as "there is no CI": a green through a
+# machine that said nothing ([59] applied to a word).
+mutation "18 an unrecognised pipeline status is no pipeline" "$FORGE" \
+  's#    \*\) printf \x27unknown\\n\x27 ;;#    *) printf \x27none\\n\x27 ;;#' \
+  test/tracker-remote.bats "does not recognise is not a green"
+
+# The push is what makes the git references the receipt carries resolve for
+# somebody who does not have this repository ([10] refused inlining the diff).
+mutation "18 the branch the receipt is about is never pushed" "$FORGE" \
+  's#  git push --force "\$\{RECEIPT_REMOTE:-origin\}" "\$src:refs/heads/\$head" >/dev/null 2>&1 \|\| \{#  true \|\| \{#' \
+  test/tracker-remote.bats "request whose branch is pushed"
+
+# An adapter that wrote the ticket while emitting a receipt would owe the register
+# of [13] an entry it cannot make: the dispatcher exempts `emit_receipt`.
+mutation "18 emitting a receipt writes the ticket" "$FORGE" \
+  's#  forge__record_local "\$id" receipt "\$url" \|\| true#  forge__set_fields "\$flavour" "\$id" Receipt "\$url" \|\| true#' \
+  test/tracker-remote.bats "no ticket is written for it"
+
+# One request per ticket: a second `POST` for a head branch that already has one
+# is a 422 on one forge and a duplicate on the other.
+mutation "18 a second request is opened instead of rewritten" "$FORGE" \
+  's#  if \[ -n "\$reqid" \]; then\n    path="\$\(forge__path "\$flavour" request-one "\$reqid"\)"#  if false; then\n    path="\$(forge__path "\$flavour" request-one "\$reqid")"#' \
+  test/tracker-remote.bats "one request per ticket"
+
+# [47]\x27s operation: the question and the write on the same side of one guard.
+mutation "18 open_unique opens a second ticket under one slug" "$FORGE" \
+  's#  if \[ -n "\$unique" \] && forge__slug_taken "\$flavour" "\$slug"; then#  if false \&\& forge__slug_taken "\$flavour" "\$slug"; then#' \
+  test/tracker-remote.bats "open_unique opens once"
+
+# The slug in the id, which is what two readers of [65] read out of the id text.
+mutation "18 an id carries no slug" "$FORGE" \
+  's#  printf \x27%s\\n\x27 "\$num-\$slug"\n  return 0\n\}#  printf \x27%s\\n\x27 "\$num"\n  return 0\n\}#' \
+  test/tracker-remote.bats "carries the slug in its id"
+
+# And the field that carries it, written when the pack opens a ticket.
+mutation "18 an opened ticket records no slug" "$FORGE" \
+  's#  body="\$\(forge__patch_field "\$body" Slug "\$slug"\)"\n##' \
+  test/tracker-remote.bats "carries the slug in its id"
+
+# [27] on a backend that numbers server-side: the id it carries after the call is
+# the id it was given.
+mutation "18 renumber answers something else" "$FORGE" \
+  's#^forge_renumber\(\) \{\n  printf \x27%s\\n\x27 "\$2"#forge_renumber() \{\n  printf \x27%s\\n\x27 "\$1"#m' \
+  test/tracker-remote.bats "renumber answers the id it was given"
+
+# A dependency that cannot be read is never safe to assume met.
+mutation "18 an unreadable blocker counts as resolved" "$FORGE" \
+  's#    \[ "\$status" = resolved \] \|\| return 1#    :#' \
+  test/tracker-remote.bats "ready-for-agent and unblocked, lowest number first"
+
+# The JSON reader is strict where `budget__window` is tolerant, and the reason is
+# what it carries: a value guessed at here is a ticket rewritten.
+#
+# Widened to letters rather than aimed at the `fail` below it, and that is the
+# correction the gate made: neutering one `fail` proved nothing, because the next
+# thing the parser met refused for its own reason and the document was still
+# rejected. Reading a bare word as a number is the shape that actually gets a
+# broken document **past** this function, with a value in it that nobody wrote.
+mutation "18 the JSON reader reads a bare word as a number" "$FORGE" \
+  's#      if \(c ~ /\[-0-9\]/\) \{\n        k = ""\n        while \(i <= n && substr\(doc, i, 1\) ~ /\[-\+0-9.eE\]/\)#      if (c ~ /[-0-9A-Za-z]/) \{\n        k = ""\n        while (i <= n \&\& substr(doc, i, 1) ~ /[-+0-9.eEA-Za-z]/)#' \
+  test/tracker-remote.bats "refuses what it cannot parse"
+
+mutation "18 a unicode escape above ASCII is guessed at" "$FORGE" \
+  's#            if \(u > 127\) \{ fail\("a \\\\u escape above ASCII"\); return "" \}#            if (u > 99999) \{ fail("a"); return "" \}#' \
+  test/tracker-remote.bats "refuses what it cannot parse"
+
+# The dialect table, on the two entries a mock cannot paper over: the number a
+# human types is the project-local one, and this forge assigns by id.
+mutation "18 gitlab reads the instance-wide id" "$GITLAB" \
+  's#    id-key\) printf \x27iid\\n\x27 ;;#    id-key) printf \x27id\\n\x27 ;;#' \
+  test/tracker-remote.bats "gitlab speaks its own dialect"
+
+mutation "18 gitlab assigns by login" "$GITLAB" \
+  's#    assign-by\) printf \x27id\\n\x27 ;;#    assign-by) printf \x27login\\n\x27 ;;#' \
+  test/tracker-remote.bats "gitlab speaks its own dialect"
+
+# Re-injection drops the escalation reason on both backends, which is one of the
+# transitions the two are compared on.
+mutation "18 re-injecting keeps the escalation reason" "$FORGE" \
+  's#Status ready-for-agent Claimed --drop Escalation --drop#Status ready-for-agent Claimed --drop#' \
+  test/tracker-remote.bats "observes the same transitions"
+
+# ── [18] the tracker nothing restores, and the guard that says so ────────────
+
+# The branch that makes a backend keeping no tickets in this tree an **answer**
+# rather than a silence. Without it the guard refuses on every window, and every
+# iteration of a remote backend is red.
+mutation "18 the tracker guard has no branch for a remote backend" "$FAILURES" \
+  's#  if ! failures__issues_path >/dev/null 2>&1; then\n    return 0\n  fi#  if false; then\n    return 0\n  fi#' \
+  test/tracker-remote.bats "keeps no tickets in this tree is named once"
+
+# And the same branch taken on **every** backend, which is a guard that stopped
+# guarding while every assertion about it went on passing.
+mutation "18 the tracker guard takes the remote branch everywhere" "$FAILURES" \
+  's#  if ! failures__issues_path >/dev/null 2>&1; then\n    return 0\n  fi#  if true; then\n    return 0\n  fi#' \
+  test/tracker-remote.bats "local backend still restores what a session wrote"
+
+# The path asked of the adapter rather than composed here: a second author for a
+# layout only the backend knows, wrong the first time a backend keeps its tickets
+# anywhere else — and wrong in the way nothing notices.
+mutation "18 the tickets path is composed by the guard again" "$FAILURES" \
+  's#  dir="\$\(tracker_tickets_dir 2>/dev/null\)" \|\| return 1#  dir="\$(ralph_project_root)/.scratch/\$\{FEATURE:-x\}/issues"#' \
+  test/tracker-remote.bats "keeps no tickets in this tree is named once"
+
+# The sentence the run says once about it. A control that excludes a zone has to
+# name who guards it, and here nobody does.
+mutation "18 nothing says the tracker is witnessed by nothing" "$FORENSIC" \
+  's#  if ! forensic__tickets_dir >/dev/null 2>&1; then#  if false; then#' \
+  test/tracker-remote.bats "keeps no tickets in this tree is named once"
+
+# ── [18] a classification the scope-guard cannot make ────────────────────────
+
+# Three answers and not two: the tracker would not say. Read as "nobody declared
+# this path", every drift against a contract is retried until the budget is gone.
+mutation "18 a refused id list is nobody owning the path" "$GATE" \
+  's#  ids="\$\(tracker_ids\)" \|\| return 2#  ids="\$(tracker_ids)" || ids=\x27\x27#' \
+  test/tracker-remote.bats "escalates the scope-guard, it does not retry"
+
+mutation "18 the guard does not say it cannot classify" "$GATE" \
+  's#    if \[ "\$ownerrc" = 2 \]; then#    if false; then#' \
+  test/tracker-remote.bats "escalates the scope-guard, it does not retry"
+
+# ── [18] the reserve the dossier prints ──────────────────────────────────────
+
+# "a receipt lives in the main tree" is false on a backend whose receipt is a pull
+# request, and the dossier would be vouching for a witness that refused to take it.
+mutation "18 the dossier prints the file reserve on a remote receipt" "$ROUTER" \
+  's#    if tracker_receipt_dir >/dev/null 2>&1; then#    if true; then#' \
+  test/tracker-remote.bats "reserve written for a remote receipt"
+
+mutation "18 the dossier prints the remote reserve on a file receipt" "$ROUTER" \
+  's#    if tracker_receipt_dir >/dev/null 2>&1; then#    if false; then#' \
+  test/tracker-remote.bats "still says what a file receipt is"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

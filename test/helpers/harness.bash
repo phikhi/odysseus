@@ -385,6 +385,120 @@ harness__init_git() {
   git -C "$PROJECT_DIR" commit -q -m "fixture: initial project"
 }
 
+# ── the forge a remote backend talks to ──────────────────────────────────────
+#
+# Off unless a test asks for it, which is what keeps every assertion about the
+# `curl` shim exactly what it was: the shim routes to the fake forge only when
+# this directory exists and the URL is the one written in it.
+#
+# The API root is a name no machine resolves. That is deliberate: a test that
+# accidentally lost the shim would reach the network, and the failure would be a
+# timeout in the middle of a suite rather than an assertion.
+use_forge() {
+  local backend="${1:-github}" d="$SHIM_STATE/forge"
+  mkdir -p "$d"
+  printf 'https://forge.test' >"$d/base"
+  : >"$d/order"
+  : >"$d/ci"
+  : >"$d/status"
+  printf '1\n' >"$d/next"
+  printf 'ralph-bot\n' >"$d/user"
+  set_config TRACKER_BACKEND "$backend"
+  set_config TRACKER_REPO "acme/widgets"
+  set_config TRACKER_API "https://forge.test/api"
+  set_config TRACKER_USER "ralph-bot"
+  # The two waits, taken out of the way. A poll of ten seconds and a backoff of
+  # two are what a night wants and what a suite cannot pay for; a test that means
+  # to measure the *bound* sets them itself.
+  set_config FORGE_CI_POLL 0
+  set_config FORGE_READ_BACKOFF 0
+  # The integration form, off by default here, and it is the same kind of
+  # injection as `LENSES none`: `WAIT_CI` ships as `auto`, so leaving it on would
+  # make every transition of every test open a pull request and push a branch, and
+  # an assertion about a state transition would really be an assertion about a
+  # remote. The default is exercised on purpose by the tests that mean to — see
+  # `forge_remote`.
+  set_config WAIT_CI off
+}
+
+# A remote to push to, so that a test can run the shipped `WAIT_CI` default
+# rather than the harness's. A bare repository in the test directory: the branch
+# an iteration leaves really is pushed, and the fake forge really is asked for the
+# pipeline of the ref that arrived.
+forge_remote() {
+  git init -q --bare "$RALPH_TEST_DIR/remote.git"
+  git -C "$PROJECT_DIR" remote add origin "$RALPH_TEST_DIR/remote.git" 2>/dev/null ||
+    git -C "$PROJECT_DIR" remote set-url origin "$RALPH_TEST_DIR/remote.git"
+  set_config RECEIPT_BASE main
+  set_config WAIT_CI "${1:-auto}"
+}
+
+# The refs the remote holds, one per line — what a push actually left there.
+forge_remote_refs() {
+  git -C "$RALPH_TEST_DIR/remote.git" for-each-ref --format='%(refname)' 2>/dev/null
+}
+
+# One issue, with its body on stdin. The `Slug:` field is what makes the id carry
+# a slug — the same thing `tracker_open_ticket` writes — so a fixture seeded here
+# and a ticket the pack opened are the same kind of object.
+forge_seed() {
+  local num="$1" slug="$2" title="${3:-$slug}" body d="$SHIM_STATE/forge" next
+  body="$(cat)"
+  printf '%s' "$title" >"$d/issue.$num.title"
+  printf '%s\n\n**Slug:** %s\n' "$body" "$slug" >"$d/issue.$num.body"
+  printf 'open\n' >"$d/issue.$num.state"
+  : >"$d/issue.$num.assignee"
+  printf '%s\n' "$num" >>"$d/order"
+  next="$(cat "$d/next")"
+  [ "$num" -lt "$next" ] || printf '%s\n' "$((num + 1))" >"$d/next"
+}
+
+# The same tickets the local backend gets from `use_tickets`, as issues — which is
+# what makes "the same scenario, the same observable transitions" a comparison
+# rather than a claim. The number is the fixture's `NN` without its leading zero,
+# because a JSON number has none.
+forge_seed_tickets() {
+  local t f base num slug body
+  for t in "$@"; do
+    f="$RALPH_FIXTURES/tickets/${t%.md}.md"
+    base="$(basename "$f" .md)"
+    num="${base%%-*}"
+    slug="${base#*-}"
+    body="$(sed -e "s/@LIVE_PID@/$$/g" \
+      -e "s/@NOW@/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$f")"
+    printf '%s\n' "$body" | forge_seed "$((10#$num))" "$slug" "$slug"
+  done
+}
+
+forge_body() { cat "$SHIM_STATE/forge/issue.$1.body" 2>/dev/null; }
+forge_state() { cat "$SHIM_STATE/forge/issue.$1.state" 2>/dev/null; }
+forge_assignee() { cat "$SHIM_STATE/forge/issue.$1.assignee" 2>/dev/null; }
+forge_notes() { cat "$SHIM_STATE/forge/notes.$1" 2>/dev/null; }
+forge_calls() { cat "$SHIM_STATE/forge/calls" 2>/dev/null; }
+forge_payloads() { cat "$SHIM_STATE/forge/payloads" 2>/dev/null; }
+forge_requests() { cat "$SHIM_STATE/forge/requests" 2>/dev/null; }
+forge_request_body() { cat "$SHIM_STATE/forge/request.$1.body" 2>/dev/null; }
+
+# One field of an issue body, read by the harness and never by the pack: a reader
+# shared with the implementation could not catch the implementation writing
+# nonsense (the rule test/tracker-local.bats states for the local backend).
+forge_field() {
+  sed -n "s/^\*\*$2:\*\*[[:space:]]*//p; s/^$2:[[:space:]]*//p" \
+    "$SHIM_STATE/forge/issue.$1.body" 2>/dev/null | head -1
+}
+
+# What the forge answers about CI. Empty is "there is no pipeline".
+forge_ci() { printf '%s' "${1:-}" >"$SHIM_STATE/forge/ci"; }
+
+# HTTP statuses for the next calls, one per line and one per call, after which
+# every call is a 200 again. What it stages is a read that refuses and then
+# answers, which is the only way to measure a retry.
+forge_answer_status() {
+  local code
+  : >"$SHIM_STATE/forge/status"
+  for code in "$@"; do printf '%s\n' "$code" >>"$SHIM_STATE/forge/status"; done
+}
+
 # ── tracker ──────────────────────────────────────────────────────────────────
 
 use_tickets() {

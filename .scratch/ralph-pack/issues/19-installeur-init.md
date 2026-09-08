@@ -273,3 +273,38 @@
      remplace pas la décision de provisionnement.
   3. Rien n'a été ajouté à `gate_tmp_names` ([62]) : le témoin loge ses deux
      fichiers dans le répertoire `ralph-frontier.*` que le pack composait déjà.
+
+- **Contrainte de [18], livré le 08/09/2026 — un installeur qui propose autre
+  chose que `local` a cinq questions de plus à poser, et une à ne pas poser.**
+
+  1. **Les cinq clés d'un backend distant** sont dans
+     `ralph.config.sh.example` : `TRACKER_REPO` (`owner/name` sur github, le
+     chemin ou l'id de projet sur gitlab), `TRACKER_API` (vide = l'instance
+     publique), `TRACKER_TOKEN_CMD` (une **commande** qui imprime le jeton,
+     jamais le jeton — même arrangement que `USAGE_TOKEN_CMD`, et lue depuis la
+     config scellée, donc aussi confiée que `TEST_CMD`), `TRACKER_USER` (à qui
+     un ticket réclamé est assigné) et le couple `RECEIPT_REMOTE` /
+     `RECEIPT_BASE` (où la branche d'une itération est poussée, et contre quoi la
+     requête est ouverte). Sans `TRACKER_REPO`, **chaque** opération refuse au
+     premier appel, par un code de retour et avec une phrase — pas en tuant son
+     appelant ([71]).
+  2. **Ce qu'il ne faut pas provisionner** : ces adaptateurs ne posent **aucun**
+     `mktemp`, donc `gate_tmp_names` n'a pas bougé et le balayage de ce ticket
+     n'a rien de neuf à retirer. Ce qu'ils laissent hors d'un arbre jugé est le
+     sidecar `.scratch/<feature>/.forge-claims` — dans le dépôt, dans la zone que
+     `gate_is_bookkeeping` exclut déjà, avec exactement l'exposition du verrou de
+     run.
+  3. **La ligne déjà écrite ici sur `receipts/` ne s'applique pas à un backend
+     distant, et c'est pire** : il n'y a pas de répertoire de reçus du tout, le
+     reçu est une requête, et **rien de ce pack n'atteste sa provenance**. Le run
+     le dit une fois au démarrage (`forensic_uncovered`) et le dossier du puits
+     humain porte la réserve. Un installeur qui présente `github`/`gitlab` comme
+     une option équivalente à `local` sans dire ça vend une garantie qui n'existe
+     pas — et la même phrase vaut pour le **tracker** : rien ne restaure ce
+     qu'une session y écrit ([73]).
+  4. `WAIT_CI` est livré à `auto`, donc un projet distant **attend sa CI** avant
+     de fermer un ticket, et pousse une branche par itération. Un installeur qui
+     configure un backend distant sans remote utilisable produit un run où chaque
+     ticket vert finit `ready-for-human` avec `Escalation: ci-unreachable` —
+     c'est le bon échec, mais il vaut mieux le dire à l'installation qu'à trois
+     heures du matin.

@@ -642,11 +642,35 @@ $1
 LIST
 }
 
-# Where the tickets live, relative to the repository root. Same assumption
-# gate_is_bookkeeping makes: the project root is the repository root, and a pack
-# installed below it is out of scope for now.
+# Where the tickets live, relative to the repository root, and **non-zero when
+# this backend keeps none in it**.
+#
+# Same assumption gate_is_bookkeeping makes: the project root is the repository
+# root, and a pack installed below it is out of scope for now.
+#
+# Asked of the adapter since [18], and that is the correction rather than a
+# refactor. This line used to compose `.scratch/$FEATURE/issues` itself, which
+# made this file a second author for a layout only the backend knows — wrong the
+# first time a backend keeps its tickets anywhere else, and wrong in the one way
+# nothing notices: the pathspec matched nothing, both snapshots below were the
+# empty tree, `[ "$after" != "$before" ]` was false, and the guard **vouched for a
+# tracker nobody had looked at**. A refusal here is now an answer with a branch of
+# its own, and the run says once at startup that nothing witnesses that tracker.
+#
+# A directory outside the repository is refused too, and it is the same fact said
+# once more: a tree of this repository cannot hold it, so a pathspec built from it
+# would either match nothing or — worse — reach for a path git resolves somewhere
+# else entirely.
 failures__issues_path() {
-  printf '.scratch/%s/issues\n' "${FEATURE:?ralph: FEATURE is not set}"
+  local dir root
+  dir="$(tracker_tickets_dir 2>/dev/null)" || return 1
+  [ -n "$dir" ] || return 1
+  root="$(ralph_project_root)"
+  case "$dir" in
+    "$root"/*) printf '%s\n' "${dir#"$root"/}" ;;
+    *) return 1 ;;
+  esac
+  return 0
 }
 
 # Whether a path that moved inside the tracker directory is a **ticket file**,
@@ -709,7 +733,9 @@ failures__is_ticket_path() {
 # carry. Getting this wrong is silent: the guard would snapshot a stale copy, find
 # it unchanged, and vouch for a tracker nobody looked at.
 failures_tracker_tree() {
-  (cd "$(ralph_project_root)" && gate_tree_snapshot "$(failures__issues_path)")
+  local path
+  path="$(failures__issues_path)" || return 1
+  (cd "$(ralph_project_root)" && gate_tree_snapshot "$path")
 }
 
 # Undo what the session wrote inside the tracker, and say that it did.
@@ -744,6 +770,27 @@ failures_protect_tracker() {
   local dir after idx status path restored=0 root ours id
   local others='' others_n=0 unvouched=''
 
+  # **A backend whose tickets are not files in this tree, said rather than
+  # vouched for** ([18]). Everything below compares two git trees of a directory,
+  # so on such a backend the pathspec matched nothing, both trees were the empty
+  # tree, and this function returned zero — the exact shape of the false green
+  # [21] closed, reached by a route [21] could not see because the only backend
+  # that existed kept its tickets here.
+  #
+  # Zero and not a refusal, and the choice is written down because the ticket that
+  # opened it left both doors open. A refusal on every window would make every
+  # iteration of a remote backend red, which trades a false green for no green at
+  # all — the backend would be unusable rather than honest. So this takes the
+  # posture [70] settled for the zones nothing in this pack guards: it does not
+  # prevent, it does not restore, and the run **says so once**, at startup, on its
+  # own output (`forensic_uncovered`). What that leaves —
+  # a session editing its own ticket over the network, which no snapshot, no
+  # rollback and no scope-guard of this pack sees — is a row of
+  # `docs/frontiere-de-confiance.md` and not a silence.
+  if ! failures__issues_path >/dev/null 2>&1; then
+    return 0
+  fi
+
   if [ -z "$before" ]; then
     failures__gap "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
     return 1
@@ -756,7 +803,7 @@ failures_protect_tracker() {
   [ "$after" != "$before" ] || return 0
 
   root="$(ralph_project_root)"
-  dir="$(failures__issues_path)"
+  dir="$(failures__issues_path)" || return 1
   # What the *loop* wrote in here while this session was running, which is not the
   # session's doing and must not be undone ([13] on [21]) — the same definition the
   # quarantine reads, from the same place ([42]).
