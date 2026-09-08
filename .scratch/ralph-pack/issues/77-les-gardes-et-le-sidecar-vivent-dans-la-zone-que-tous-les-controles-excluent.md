@@ -111,3 +111,28 @@
   C'est la racine de la passe du 27/08 (« le pack range ses objets d'exécution
   dans des répertoires dont les gardes visent une autre forme »), qui n'avait
   été refermée que pour `issues/` ([49]).
+
+## Place dans la file
+
+Ordre validé par Philippe le 08/09/2026, après la passe transversale du même
+jour : **[76] → [74] → [77] → [75] → [73] → [19]**. Critère du dépôt —
+minimiser la reprise, jamais l'urgence.
+
+1. **[76]** — le seul faux vert livré des six, la plus petite surface, et sa
+   première AC est **le faux du harnais** : tout ticket distant qui suit mesure
+   contre lui. Le précédent est [59], premier pour la même raison.
+2. **[74]** — même famille que [76] (« une lecture qui rend moins qu'on lui
+   demande, sans le dire »), deux lignes de `loop.sh`, et il tranche comment la
+   boucle lit un refus d'adaptateur — ce que [73] ajoutera.
+3. **[77]** — tranche **où vit l'état local** d'un backend distant. [75] loge un
+   cache : livré derrière, il hérite du logement ; livré devant, il le choisit
+   deux fois.
+4. **[75]** — le cache, qui donne son budget à la remise de [73] (cinq champs
+   plus le corps par ticket, par fenêtre).
+5. **[73]** — la remise, avec le mécanisme que `router.sh` porte déjà et le
+   budget que [75] vient de payer.
+6. **[19]** — l'installeur lit ce que les cinq autres décident : le `.gitignore`
+   de la zone comptable ([77]), les clés de config de [76] et [75].
+
+`Blocked by:` écrit en conséquence : `[76] None`, `[74] None`, `[77] None`,
+`[75] 77`, `[73] 74, 75, 77`, et `[19]` gagne `73, 74, 75, 76, 77`.
