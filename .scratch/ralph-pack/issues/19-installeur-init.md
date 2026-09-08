@@ -256,3 +256,20 @@
   est le composant *entitled* à balayer, mais il ne l'est plus tout seul à **nommer**
   — un résidu qu'il retirerait sans que la liste bouge disparaîtrait des deux
   phrases d'un coup, et personne ne s'en apercevrait.
+
+- **Contrainte de [70], livré le 08/09/2026.** Ce ticket provisionne `receipts/`
+  et sait donc déjà que ce répertoire est écrit dans l'arbre principal, hors de
+  tout arbre jugé. Trois choses de plus depuis [70] :
+
+  1. `docs/playthroughs/<feature>.md` est dans la **même** famille — même zone,
+     même portée pour une session, et il est maintenant dans le témoin de
+     `.claude/lib/forensic.sh` au même titre que `receipts/` et
+     `refs/heads/failed/*`. Un installeur qui provisionne l'un doit décider pour
+     l'autre.
+  2. La ligne déjà écrite ici — « un projet qui **commite** `receipts/` remet ses
+     reçus à portée d'une write-surface, et rien ici ne l'en empêche » — vaut mot
+     pour mot pour `docs/playthroughs/`. Le témoin de [70] **nomme** un document
+     que le pack n'a pas écrit ; il ne refuse rien et ne remet rien, donc il ne
+     remplace pas la décision de provisionnement.
+  3. Rien n'a été ajouté à `gate_tmp_names` ([62]) : le témoin loge ses deux
+     fichiers dans le répertoire `ralph-frontier.*` que le pack composait déjà.

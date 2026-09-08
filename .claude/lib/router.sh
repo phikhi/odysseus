@@ -234,7 +234,7 @@ ROUTER__JOURNAL_BASE=0
 # `router_dossier` sends a human to read it, so it is evidence in exactly the
 # sense `Escalation:` and `Failures:` are — and it is evidence a routed session
 # can write and can destroy. It behaves like the three fields and not like the
-# tree: it is what a decision reads. See `router__failed_refs` for what it costs
+# tree: it is what a decision reads. See `forensic_failed_refs` for what it costs
 # and for what it deliberately does *not* buy.
 #
 # **A fifth object joined them in [68], and it is the only one that decides
@@ -256,7 +256,7 @@ router_pin() {
     ROUTER__PINNED_FAILURES=''
   ROUTER__PINNED_TREE="$(router__tree_dirt)" || ROUTER__PINNED_TREE=''
   ROUTER__PINNED_TRACKER="$(router__tracker_state)" || ROUTER__PINNED_TRACKER=''
-  ROUTER__PINNED_REFS="$(router__failed_refs)" || ROUTER__PINNED_REFS=''
+  ROUTER__PINNED_REFS="$(forensic_failed_refs)" || ROUTER__PINNED_REFS=''
   ROUTER__PINNED_SPEC="$(router__spec_digest)" || ROUTER__PINNED_SPEC=''
   ROUTER__PINNED_ID="$id"
 }
@@ -871,27 +871,14 @@ IDS
 # on the tracker, the same shape one directory over, and the reason
 # `router__tracker_state` watches every ticket rather than one.
 
-# Every `refs/heads/failed/*` this repository holds, `<objectname><TAB><refname>`,
-# one per line and in refname order — `for-each-ref` sorts by refname, which is
-# what makes the note below say things in the same order twice.
-#
-# The whole refname and not the id: `%(refname:lstrip=3)` renders a bare
-# `refs/heads/failed` as an empty id, and what a human is told to read is a ref
-# name anyway. The name goes **last** for [37]'s reason — everything before the
-# tab is read by position — and here that costs nothing, because git refuses
-# control characters in a refname and the tab cannot be inside one.
-#
-# **Non-zero when git would not answer, and a caller must tell that from an empty
-# namespace** ([59]). Read as an empty list, a refusal turns every ref this drain
-# pinned into a ref a session deleted, and the sentence for that accuses somebody
-# of destroying evidence. `router_pin` reads it as empty on purpose and
-# `router_branch_note` refuses on it, and the asymmetry is which mistake each one
-# would make: the pin degrades to the reading this file had before this ticket,
-# the note would make an accusation out of a machine that answered nothing.
-router__failed_refs() {
-  git for-each-ref --format='%(objectname)%09%(refname)' \
-    refs/heads/failed/ 2>/dev/null
-}
+# The list this file reads twice is `forensic_failed_refs`, and it moved out of
+# here in [70]. It had a second caller then — the witness a **run** takes of the
+# same namespace before its first session — and two copies of one `for-each-ref`
+# would have been two places to forget its refusal clause in ([59]: git refusing
+# to list is not an empty namespace, and a caller that confuses the two accuses
+# somebody of destroying evidence). `router_pin` reads a refusal as empty on
+# purpose and `router_branch_note` refuses on it; the asymmetry is which mistake
+# each would make.
 
 # The target of one ref in such a list, read from stdin; non-zero when the list
 # does not carry it. One reader for the two lists, rather than two that would
@@ -942,7 +929,7 @@ router_branch_note() {
       "$id" >&2
     return 1
   fi
-  if ! now="$(router__failed_refs)"; then
+  if ! now="$(forensic_failed_refs)"; then
     printf 'ralph: %s: git would not list `refs/heads/failed/*` after that session, so nothing here can say what it did to them. That is the whole of what is said about those refs — in particular, not that they are as this drain took them.\n' \
       "$id" >&2
     return 1
@@ -1503,14 +1490,34 @@ IDS
 # carries sentences written where the fact is known, and a copy here would be a
 # second author for one claim, drifting from the first the day either moves.
 #
-# The one thing said *about* the receipt rather than in it is its shelf life. It
-# references git objects — an iteration's commit, two tree objects — that a `gc`
-# may collect as soon as a branch has moved past them, which is shorter than the
-# thirty days `RECEIPTS_RETENTION_DAYS` keeps the document itself. `failed/<id>`
-# is a ref: it survives, and it is what to lean on for a ticket that has been in
-# this sink for a while.
+# Two things are said *about* the receipt rather than in it. The first is its
+# shelf life: it references git objects — an iteration's commit, two tree objects
+# — that a `gc` may collect as soon as a branch has moved past them, which is
+# shorter than the thirty days `RECEIPTS_RETENTION_DAYS` keeps the document
+# itself. `failed/<id>` is a ref: it survives, and it is what to lean on for a
+# ticket that has been in this sink for a while.
+#
+# The second is **who could have written it**, and it is [70]'s half. Until that
+# ticket this dossier named three pieces of evidence and put a reserve on one of
+# them: `run.log` carries [67]'s since the file lives under `.scratch/`, which no
+# check guards. The other two are no better off and the reason is not the same —
+# they are not unguarded by accident but unreachable by construction, a ref being
+# a path in no working tree at all and a receipt living in the main tree, which is
+# not the worktree a scope-guard compares. Measured on 07/09/2026: a **green**
+# iteration whose session writes one `git update-ref refs/heads/failed/<id>` moves
+# the desk of that ticket from `admit` to `arbitrate` and sends a human to read a
+# tree no run judged, with the run saying nothing and the receipt saying nothing.
+#
+# What [70] then built is a witness on the run side, so the run in which one of
+# them moves says so on `run.log` and on the receipt of every iteration after. It
+# does not make either object trustworthy here, and this is the sentence that says
+# why: a forgery laid down by a run nobody has started since is in that witness's
+# own baseline, and in this drain's pin too ([66] — the pin compares the drain to
+# itself). So the reserve is printed. A dossier that showed the mechanism without
+# it would have swapped one silence for a narrower one, which is exactly what the
+# ticket refused to ship.
 router_dossier() {
-  local id="${1:?router: a ticket id}" desk reason surface receipt lines n
+  local id="${1:?router: a ticket id}" desk reason surface receipt lines n shown
   desk="$(router_desk "$id")"
   reason="$(router__field "$id" Escalation)" || reason=''
   n="$(router_unblocks "$id")"
@@ -1552,8 +1559,10 @@ router_dossier() {
   printf '\nThe question\n\n  %s\n' "$(router_question "$desk")"
 
   printf '\nWhat there is to read\n\n'
+  shown=0
   if router_has_branch "$id"; then
     printf '  branch   failed/%s — the tree of the attempt, as it was. `git log -p failed/%s`\n' "$id" "$id"
+    shown=1
   else
     printf '  branch   there is none. %s\n' "$(router__no_branch "$desk")"
   fi
@@ -1561,8 +1570,22 @@ router_dossier() {
   if receipt="$(tracker_receipt_path "$id" 2>/dev/null)" && [ -n "$receipt" ]; then
     printf '  receipt  %s — verdicts, findings, and the zones nothing judged.\n' "$receipt"
     printf '           It references git objects a `gc` may already have collected; `failed/%s` is a ref and survives.\n' "$id"
+    shown=1
   else
     printf '  receipt  none was kept for this ticket.\n'
+  fi
+
+  # The reserve, on whichever of the two is there — and never on a line that said
+  # there is nothing to read, which would be a caveat about an absence. See the
+  # header for why it is printed rather than replaced by a control.
+  if [ "$shown" = 1 ]; then
+    printf '           A branch and a receipt are written by a run, into zones the\n'
+    printf '           sessions that run judges can reach: a ref is a path in no\n'
+    printf '           working tree, and a receipt lives in the main tree, which is\n'
+    printf '           not the worktree a scope-guard compares. A run that was up\n'
+    printf '           when one of them moved says so in run.log ([70]); one that\n'
+    printf '           moved with no run up is in every witness there is, the pin of\n'
+    printf '           this drain included. Read them, do not rely on them.\n'
   fi
 
   lines="$(router_journal_lines "$id")"

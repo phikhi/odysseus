@@ -1683,7 +1683,7 @@ ANSWERS
   git -C "$PROJECT_DIR" branch failed/20-first
 
   pack_run 'router_pin 20-first
-    router__failed_refs() { return 1; }
+    forensic_failed_refs() { return 1; }
     router_branch_note 20-first || printf "said nothing else\n"'
 
   assert_output_contains "git would not list"

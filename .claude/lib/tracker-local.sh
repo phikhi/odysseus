@@ -724,6 +724,18 @@ tracker_local_emit_receipt() {
   printf '%s\n' "$file"
 }
 
+# The directory `emit_receipt` writes into, named without writing anything. Here
+# rather than derived from `receipt_path`, which answers only for a receipt that
+# already exists: the witness of [70] is taken before the first session of a run,
+# on a feature whose first receipt has not been written yet.
+#
+# `mkdir` is `emit_receipt`'s and not this one's — a question about where a
+# backend keeps something must not create it, or a run that only ever looked
+# would leave a directory behind in the tree it judges.
+tracker_local_receipt_dir() {
+  printf '%s/receipts/%s\n' "$(ralph_project_root)" "${FEATURE:?ralph: FEATURE is not set}"
+}
+
 # Where the last one can be read — the same name `emit_receipt` publishes, and
 # derived from it rather than restated, so the two cannot drift.
 #

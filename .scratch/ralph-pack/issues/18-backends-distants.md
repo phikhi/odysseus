@@ -464,3 +464,39 @@
   visible seulement à ce code de sortie : à couvrir par un test de ce ticket, pas
   à supposer.
 
+- **Ce que [70] laisse à ce ticket, livré le 08/09/2026 — et c'est plus étroit et
+  plus concret que la moitié écrite par [66].**
+
+  1. **Une opération d'adaptateur de plus existe : `tracker_receipt_dir`.** Elle
+     rend le répertoire dans lequel le backend garde ses reçus, ou **refuse**
+     quand il n'en garde pas dans un répertoire — ce qui est le cas d'un backend
+     distant, où le reçu est une PR ([10]). Elle a été ajoutée parce que
+     `tracker_receipt_path` ne pouvait pas servir : elle répond pour un reçu qui
+     existe déjà, et le témoin de [70] est pris **avant la première session**, sur
+     un répertoire entier et pas sur un id. Un backend distant doit répondre à
+     cette opération, et « refuser » est une réponse valide et prévue.
+
+  2. **Le prix de ce refus est déjà écrit et il est à vous.** Quand
+     `tracker_receipt_dir` refuse, **rien dans le pack ne témoigne des reçus** :
+     le run le dit une fois au démarrage (`forensic_uncovered`), et
+     `router_dossier` continue d'envoyer un humain lire un reçu dont plus rien
+     n'atteste la provenance. Ce ticket doit dire **ce qui atteste la provenance
+     d'un reçu distant, ou dire que rien ne l'atteste** — et la seconde réponse
+     est acceptable, à condition qu'elle soit écrite dans
+     `docs/frontiere-de-confiance.md` et que le dossier la porte. Une PR est un
+     objet qu'une session atteint **par le réseau**, ce qu'aucun scope-guard,
+     aucun rollback et aucun témoin de fichier local ne voit.
+
+  3. **La réserve du dossier est déjà là, et elle est écrite pour un reçu
+     local.** `router_dossier` imprime maintenant, sous la ref et sous le reçu :
+     « written by a run, into zones the sessions that run judges can reach: a ref
+     is a path in no working tree, and a receipt lives in the main tree, which is
+     not the worktree a scope-guard compares. » **Cette phrase devient fausse sur
+     un backend distant** — un reçu n'y est pas dans l'arbre principal. La relire
+     fait partie de ce ticket.
+
+  4. Et la moitié de [66] reste : un backend distant qui déplace la trace
+     forensique déplace une preuve, qui doit être lue à travers un épinglage pris
+     avant la session routée. `forensic_failed_refs` est publique et vit dans
+     `.claude/lib/forensic.sh` depuis [70] ; c'est elle qu'un backend distant
+     remplace ou double.

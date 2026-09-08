@@ -193,3 +193,25 @@
   déjà pour `LEARNINGS.md`. Propriétaire : **[70]**, qui prend le même objet et le
   reçu d'audit avec, et qui porte désormais la moitié « reçu » de l'arête vers
   [18].
+
+- **[70] a remonté `router__failed_refs` d'un module, le 08/09/2026.** La mesure
+  a maintenant deux appelants dans deux couches — ce drain, et le témoin qu'un
+  **run** prend de la même famille de refs avant sa première session — et deux
+  copies du même `for-each-ref` auraient été deux endroits où oublier la clause de
+  refus que ce ticket avait écrite ([59] : un git qui refuse de lister n'est pas
+  un espace de noms vide, et le confondre accuse quelqu'un d'avoir détruit des
+  preuves). Elle s'appelle `forensic_failed_refs` et vit dans
+  `.claude/lib/forensic.sh` ; corps et prose inchangés, `router_pin` et
+  `router_branch_note` gardent leurs deux postures asymétriques. **La prose de ce
+  ticket nomme encore l'ancien nom** : c'est un compte rendu de ce qui a été fait
+  à l'époque et il reste tel quel.
+
+- **Et le résidu V1 que ce ticket avait nommé est atteint par l'autre bout, sans
+  être fermé.** [70] a livré un témoin côté **run**, donc une contrefaçon posée
+  *pendant* un run AFK est nommée dans ce run. Ce que ni [66] ni [70] ne voient
+  reste le même objet : une contrefaçon posée par un run que personne n'a fait
+  tourner depuis est dans la photo de base des deux. C'est pour ça que [70] a
+  refusé de livrer son témoin sans la réserve du dossier, qui est désormais
+  imprimée sur la ref **et** sur le reçu — y compris sur la phrase «
+  `failed/<id>` is a ref and survives », qui envoyait précisément vers l'autre
+  objet contrefaisable.

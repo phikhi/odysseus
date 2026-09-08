@@ -32,6 +32,8 @@
 #   tracker_emit_receipt ID           write the audit receipt from stdin
 #   tracker_receipt_path ID           where that receipt can be read, if it is
 #                                     still there; non-zero when there is none
+#   tracker_receipt_dir               the directory this backend keeps receipts
+#                                     in; non-zero when it keeps them elsewhere
 #
 # Marking is the loop's job, after the gate — never the session's.
 #
@@ -122,7 +124,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | receipt_path | emit_receipt)
+    frontier | ids | read_ticket | field | receipt_path | receipt_dir | emit_receipt)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -294,6 +296,22 @@ tracker_emit_receipt() { tracker__dispatch emit_receipt "$@"; }
 # answer "no receipt" on every backend that does not use files, which reads as
 # "nothing was written about this ticket".
 tracker_receipt_path() { tracker__dispatch receipt_path "$@"; }
+# Where a backend keeps receipts, as a directory, or a refusal when it does not
+# keep them in one — the pull request of a remote backend is not a path anybody
+# can walk. A read, and therefore not noted in the register either.
+#
+# The one caller is the witness [70] takes before a run's first session, and it
+# needs what `receipt_path` cannot give: the receipt of an id that does not exist
+# yet, and every file under the directory rather than the ones a ticket names. A
+# forgery under a name no ticket carries is exactly the kind of thing this exists
+# to see, so a per-id question would have been narrower than its own criterion
+# ([31], [45]).
+#
+# **A backend that refuses here is a backend whose receipts nothing witnesses**,
+# and the run says so once rather than going quiet: see `forensic_uncovered`, and
+# [18], which owes the question what attests the provenance of a receipt that is
+# a pull request.
+tracker_receipt_dir() { tracker__dispatch receipt_dir "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

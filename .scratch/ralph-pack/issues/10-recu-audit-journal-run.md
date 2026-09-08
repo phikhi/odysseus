@@ -193,3 +193,20 @@ Et une cinquième que le critère a sortie en le relisant : un **rollback qui n'
   qui épingle `spec.md` autour d'une session routée. Les deux occurrences — le
   commentaire d'en-tête et la phrase de `receipt__meta` — disent la zone là où
   elles veulent dire le fichier.
+
+- **La provenance est une garantie sur ce que le pack *écrit*, jamais sur ce
+  qu'un lecteur *trouve* à cet emplacement** (passe du 07/09/2026, livré par [70]
+  le 08/09/2026). `receipts/<feature>/` est un chemin de l'**arbre principal**,
+  que `git worktree list` nomme à qui le demande : une itération AFK **verte**
+  pouvait y écrire un document que `router_dossier` présentait ensuite comme le
+  reçu d'audit du ticket. Ce qui a changé : le répertoire entre dans le témoin de
+  `.claude/lib/forensic.sh`, pris avant la première session et comparé à chaque
+  itération, et le dossier ne présente plus le reçu nu.
+
+- **Et la phrase de `receipt.sh` à relire, que ce ticket possède.** « It does not
+  read `run.log`: that file lives under `.scratch/`, which no check in this pack
+  guards » reste vraie et n'est plus suffisante : elle dit pourquoi le reçu ne
+  **lit** pas une source contrefaisable, elle ne dit rien de ce qui atteste le
+  document lui-même. Le même passage est à moitié faux pour `spec.md` depuis
+  [68]. Ni l'un ni l'autre n'a été touché par [70], qui n'a pas édité
+  `receipt.sh`.
