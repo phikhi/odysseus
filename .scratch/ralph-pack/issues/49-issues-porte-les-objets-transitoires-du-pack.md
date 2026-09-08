@@ -317,3 +317,15 @@ laisse derrière lui et le seul que **rien** ne compte — `gate_leftovers` rega
 `$TMPDIR` ([36]) et les `*.guard` de la feature (vous), pas le répertoire git. Il
 est inerte quand son instant est passé, donc c'est un constat de plus et pas un
 rouge, exactement comme les deux autres. Propriétaire : [53].
+
+**Ce que la passe transversale du 08/09/2026 a mesuré sur votre règle de
+placement, et qui lui donne un prix.** Un garde d'exclusion posé par une
+**session**, avec un propriétaire **vivant**, arrête la nuit — sur les deux
+backends. `issues/<id>.md.guard/pid` (le vôtre, backend local) et
+`.scratch/<feature>/.forge.guard/pid` (celui de [18], tout le tracker) produisent
+le même run : deux itérations qui ne réclament rien, `rc=4` sterile, et une phrase
+fausse dans les deux moitiés — « the tracker refused the write: nobody is named as
+holding it ». `gate__stale_guards` n'en voit aucun : il ne balaye que
+`<feature_dir>/*.guard` et `<feature_dir>/.*.guard`, donc pas le vôtre qui est un
+niveau plus bas, et seulement des propriétaires **morts**. Sondes
+`../sondes/passe-08-09/q2-*.bats` (Q2e, Q2f) ; propriétaire du correctif : **[77]**.

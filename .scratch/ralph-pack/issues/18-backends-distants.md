@@ -745,3 +745,35 @@ donc il n'en a pas :
   distant contient le slug lu dans le corps — donc une session qui change le
   slug change l'id du ticket sans changer le ticket. Personne n'a mesuré ce que
   ça fait aux deux gardes de [42].
+
+### Ce que la passe transversale du 08/09/2026 a trouvé dessus
+
+Deux tickets de plus, ouverts le lendemain de la livraison
+(`../passe-transversale-08-09.md`, sondes `../sondes/passe-08-09/`) :
+
+- **[76] — la première page est tout le tracker.** La borne de pagination de
+  `forge__listing` compare un *strnum* à une variable non initialisée, donc elle
+  ne compte jamais le premier enregistrement d'une page : **99 sur une page
+  pleine de cent**, donc `99 >= 100` est faux, donc la page deux n'est jamais
+  demandée. Et si elle l'était, `forge__records` identifie un enregistrement par
+  son **indice de tableau**, que `forge_json` renumérote à chaque document : la
+  page deux écrase la page une. Le faux `curl` de la suite ne pouvait montrer ni
+  l'un ni l'autre — il tient moins de tickets qu'une page et le dit dans son
+  propre commentaire.
+- **[77] — le sidecar et les gardes.** `.forge-claims` porte le claim (l'autorité
+  de `tracker_field ID Claimed`) et l'**URL que le dossier du drain montre comme
+  reçu** ; `.forge.guard` sérialise tous les claims du run. Les deux sont dans la
+  zone comptable qu'une session écrit. Mesuré : une ligne appendue sort un ticket
+  de la frontière tant qu'un pid vit, une URL forgée est présentée à un humain
+  comme le reçu d'audit, et un garde posé par une session arrête la nuit en
+  imprimant une phrase fausse sur le tracker. La moitié « garde de claim » est
+  celle du backend **local** et date de [47]/[49] : ce n'est pas un défaut de ce
+  ticket-ci, c'est un défaut que ce ticket-ci a élargi d'un ticket à tout le
+  tracker.
+
+Disculpé au passage, et à ne pas resonder : aucun programme nouveau lancé par son
+nom (les neuf de `forge.sh` sont dans `gate_path_programs`, donc le témoin de
+PATH de [52] couvre ce backend), aucun `mktemp` donc `gate_tmp_names` intact, le
+mémo bien jeté par toutes les écritures, et le piège `IFS=<TAB> read` que ce
+ticket a trouvé ne mord nulle part ailleurs dans le pack — les vingt-et-un autres
+sites ont un sentinelle `-` ou des champs non vides par construction.

@@ -308,3 +308,12 @@
      ticket vert finit `ready-for-human` avec `Escalation: ci-unreachable` —
      c'est le bon échec, mais il vaut mieux le dire à l'installation qu'à trois
      heures du matin.
+
+- **Deux noms de plus dans la zone comptable, posés par [18] et mesurés par la
+  passe du 08/09/2026.** Un backend distant écrit `.scratch/<feature>/.forge-claims`
+  (un fichier : claim, requête, URL du reçu) et `.scratch/<feature>/.forge.guard`
+  (un **répertoire**, le garde de tous les claims). Ce que ça vous demande : le
+  `.gitignore` que vous écrivez pour cette zone doit les couvrir tous les deux, et
+  le second est un répertoire, pas un fichier. Ils ne posent rien dans `$TMPDIR`,
+  donc `gate_tmp_names` ne bouge pas. Ce qu'ils deviennent est l'objet de **[77]**
+  — s'il les déplace, c'est votre `.gitignore` qu'il faudra relire.
