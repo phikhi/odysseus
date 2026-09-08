@@ -123,3 +123,21 @@
   trois sortes de transitoire que le pack pose là ne sont plus ressuscitées d'un
   coup, au lieu d'un déplacement qui n'aurait sauvé que celui-ci. Un garde sur un
   ticket appartient au ticket, ce qu'un backend distant devra tenir aussi ([18]).
+
+- **Contrainte de la passe transversale du 08/09/2026 : le *record* de claim n'est
+  pas de la même nature sur les deux backends, et une phrase de ce module ne vaut
+  que pour la liste.** `claim_reclaim_stale` dit de sa liste d'exemption : « an id
+  the run is holding is a fact only the run knows, **it is written nowhere a
+  session can reach** ». Vrai — c'est une variable du process du pilote. Le
+  `record` que la même boucle lit juste au-dessus, lui, est un **champ de ticket**
+  sur le backend local (donc restauré par [21] autour de chaque session) et une
+  **ligne de fichier** dans `.scratch/<feature>/.forge-claims` sur un backend
+  distant, que rien ne restaure et que le scope-guard exclut.
+
+  Mesuré (`../sondes/passe-08-09/q2-*.bats`, Q2c/Q2d) : le claim d'un run mort est
+  rendu (`2-alpha retry`) ; la **même** situation avec une ligne appendue par une
+  session, portant un pid vivant, rend un reclaim silencieux, un ticket toujours
+  `claimed` et une **frontière vide**. Une session renouvelle la ligne à chaque
+  itération, donc la borne `CLAIM_TTL` ne mord pas, et `CLAIM_TTL=0` — la lecture
+  « pas de backstop » que ce ticket autorise — la retire tout à fait.
+  Propriétaire : **[77]**.

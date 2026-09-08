@@ -64,3 +64,37 @@
   par **id**, et l'id d'un backend distant est `<numéro>-<slug>` où le slug vient
   du corps. Un slug qu'une session modifie change l'id du ticket sans changer le
   ticket. Personne n'a mesuré ce que ça fait aux deux gardes de [42].
+
+- **Ce que la passe transversale du 08/09/2026 a mesuré, et qui change deux
+  choses ici** (`../passe-transversale-08-09.md` §3, sondes
+  `../sondes/passe-08-09/q3-*.bats`).
+
+  1. **Le prix, sur un run réel.** Une session d'itération qui met le ticket
+     **du puits humain** à `resolved` : run **rc=0**, itération **verte**, le
+     ticket reste `resolved` et le run ne dit que sa phrase générique de
+     démarrage (Q3b). Témoin appairé sur le backend local (Q3c) : « the session
+     edited the tracker — restored 1 ticket file(s), the iteration cannot be
+     green », outcome `tracker-write`. Ce n'est donc pas seulement « la
+     write-surface est lue sur un ticket que la session peut écrire » : **un
+     ticket qui attendait une décision humaine sort du puits, et l'itération est
+     verte.** C'est l'écriture que [58] existe pour attraper côté drain.
+  2. **La parade existe déjà, dans `router.sh`.** Mesuré (Q3a) : sur un backend
+     distant, une session **routée** qui met un voisin à `resolved` est remise —
+     `router_pin` prend l'état par `router__tracker_state`, `router__put_back`
+     remet par `tracker_mark_ready`, donc deux opérations de l'interface et pas
+     une ligne de git — et le drain redit la réserve de [61] sur les trois champs
+     qu'il ne remet pas. C'est le mécanisme que ce ticket cherche, à l'endroit où
+     il existe déjà : le rapprochement à faire est avec `router_protect_tracker`,
+     pas avec une réécriture de `failures_protect_tracker` à partir de zéro.
+     Ce qu'il coûte est chiffré et appartient à **[75]** — cinq champs plus le
+     corps par ticket, par fenêtre — donc les deux tickets se rencontrent : la
+     remise de ce ticket-ci est le consommateur qui rend le cache de [75]
+     nécessaire, et pas l'inverse.
+
+- **Et une seconde zone non restaurée que l'AC ne nomme pas** : le sidecar
+  `.scratch/<feature>/.forge-claims` porte le claim, le numéro de requête et
+  l'URL du reçu d'un backend distant, et rien ne le restaure non plus. Il a son
+  ticket — **[77]** — parce que la moitié « garde de claim » du même défaut est
+  celle du backend **local** et qu'elle est là depuis [47]/[49]. Les deux
+  tickets se touchent sur une question : ce qui restaure le tracker d'un backend
+  distant restaure-t-il aussi ce que ce backend garde en local ?

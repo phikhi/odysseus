@@ -60,3 +60,19 @@
   ajoute un ticket à trois heures du matin ne serait pas vu. La borne qui
   ressemble le plus à ce que le pack fait déjà est celle de `budget__fetch`
   (`USAGE_CACHE_TTL`), qui est courte et configurée.
+
+- **Deux choses de la passe transversale du 08/09/2026**
+  (`../passe-transversale-08-09.md`).
+
+  1. **Le cache que ce ticket doit loger a déjà un voisin, et il est dans la
+     mauvaise zone.** `.scratch/<feature>/.forge-claims` — le sidecar de [18] —
+     porte le claim, le numéro de requête et l'URL du reçu, et une session
+     l'écrit sans que rien le voie (mesuré, `../sondes/passe-08-09/q2-*.bats` ;
+     ticket **[77]**). Le raisonnement qui a fait refuser `.scratch/<feature>/`
+     pour le cache est donc **déjà** contredit par ce qui y vit : ne pas
+     « rejoindre le voisin » au prétexte qu'il est là.
+  2. **Le consommateur qui rend ce ticket nécessaire est [73].** La remise d'un
+     tracker distant, telle que `router_protect_tracker` la fait déjà, lit cinq
+     champs plus le corps par ticket et par fenêtre. Livrer [73] sans cache
+     multiplierait ce coût par le nombre d'itérations d'une nuit ; livrer ce
+     ticket-ci d'abord donne à [73] son budget. L'ordre n'est pas indifférent.
