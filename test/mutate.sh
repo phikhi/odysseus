@@ -240,6 +240,7 @@ SCHEDULER_LIB=".claude/lib/scheduler.sh"
 HUMAN_LOOP=".claude/human-loop.sh"
 ROUTER=".claude/lib/router.sh"
 PLAYTHROUGH=".claude/lib/playthrough.sh"
+FORENSIC=".claude/lib/forensic.sh"
 HARNESS="test/helpers/harness.bash"
 # A test file, like the three below it: the rule it holds is about the shipped
 # source, so the only thing that can break it is the check itself ([59]). No
@@ -2379,7 +2380,7 @@ mutation "44 nothing is asked between the gate and the commit" "$LOOP" \
   test/concurrency.bats "dies during the gate"
 
 mutation "44 nothing is asked between the gate and the failure policy" "$LOOP" \
-  's/      if loop__orphaned "\$ticket" "\$slot"; then\n        return 0\n      fi\n      failures_handle/      failures_handle/' \
+  's/      if loop__orphaned "\$ticket" "\$slot"; then\n        return 0\n      fi\n      # What this policy is about to write/      # What this policy is about to write/' \
   test/concurrency.bats "bills the ticket nothing"
 
 mutation "44 an orphan gives back a claim it no longer owns" "$LOOP" \
@@ -2673,7 +2674,7 @@ mutation "10 the attempt is always the first one" "$LOOP" \
 # was re-checked before the anchor moved: `emit_receipt` is still on the read side,
 # so it still hands no id to the restore and the quarantine.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| emit_receipt\)$/    frontier | ids | read_ticket | field | receipt_path)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| emit_receipt\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -4913,7 +4914,7 @@ mutation "67 the drain's block is measured from the top of the file" "$HUMAN_LOO
 # empty namespace, is every pinned ref reported as deleted.
 
 mutation "66 the drain pins no forensic ref" "$ROUTER" \
-  's/  ROUTER__PINNED_REFS="\$\(router__failed_refs\)" \|\| ROUTER__PINNED_REFS=\x27\x27\n//' \
+  's/  ROUTER__PINNED_REFS="\$\(forensic_failed_refs\)" \|\| ROUTER__PINNED_REFS=\x27\x27\n//' \
   test/human-loop.bats "erased a forensic branch"
 
 mutation "66 the desk is chosen on the refs as they stand now" "$ROUTER" \
@@ -4954,7 +4955,7 @@ mutation "66 the ref note is taken in a subshell" "$HUMAN_LOOP" \
   test/human-loop.bats "writing itself a forensic branch"
 
 mutation "66 a git that would not answer is an empty namespace" "$ROUTER" \
-  's/  if ! now="\$\(router__failed_refs\)"; then\n/  if now="\$(router__failed_refs)" \&\& false; then\n/' \
+  's/  if ! now="\$\(forensic_failed_refs\)"; then\n/  if now="\$(forensic_failed_refs)" \&\& false; then\n/' \
   test/human-loop.bats "namespace a session emptied"
 
 # ── [68] the user flow the next run's value gate replays ─────────────────────
@@ -5145,6 +5146,119 @@ mutation "72 a run that reached its own end is called one that ended in the midd
 mutation "72 the run's guard rewrites every exit and not only a zero" "$LOOP" \
   's/  \[ "\$rc" = 0 \] \|\| exit "\$rc"\n//' \
   test/loop-happy-path.bats "empty from the start is not reported as work done"
+
+# ── [70] the record a human is sent to read ──────────────────────────────────
+
+# The run's baseline of the three zones it writes outside every tree it judges.
+# Without it there is nothing to compare a forgery against, and the witness is
+# silent on exactly the run that produced one.
+mutation "70 the run takes no baseline of the record a human reads" "$LOOP" \
+  's#  if ! forensic_witness "\$RALPH_FRONTIER_COMMON"; then#  if false; then#' \
+  test/forensic.bats "writes a forensic ref is named"
+
+# The refs zone, out of the manifest the witness and the comparison are both
+# built from. `refs/heads/failed/*` is a path in no working tree, so nothing else
+# in this pack would ever notice.
+mutation "70 the forensic refs are not in the manifest" "$FORENSIC" \
+  's#    printf \x27ref\\t%s\\t%s\\n\x27 "\$\{line#\*"\$tab"\}" "\$\{line%%"\$tab"\*\}"\n##' \
+  test/forensic.bats "writes a forensic ref is named"
+
+# The receipts zone, likewise: they are in the **main** tree, which is not the
+# worktree the scope-guard compares.
+mutation "70 the audit receipts are not in the manifest" "$FORENSIC" \
+  's#      printf \x27receipt\\t%s\\t%s\\n\x27 "\$file" "\$\(forensic__digest "\$file"\)"\n##' \
+  test/forensic.bats "forges an audit receipt"
+
+# And the third object of the same family, the one no probe measured and the
+# criterion names. Removing it is the correction that would have been narrower
+# than its own sentence ([31], [45]).
+mutation "70 the playthrough is not in the manifest" "$FORENSIC" \
+  's#    printf \x27playthrough\\t%s\\t%s\\n\x27 "\$file" "\$\(forensic__digest "\$file"\)"#    :#' \
+  test/forensic.bats "playthrough is watched because the criterion"
+
+# Both channels at once: `receipt_gap` is called inside the drift, so removing the
+# call leaves the journal and the receipt equally silent.
+mutation "70 the drift reaches no document at all" "$LOOP" \
+  's#\$\(forensic_drift "\$\{RALPH_FRONTIER_COMMON:-\}"\)##' \
+  test/forensic.bats "writes a forensic ref is named"
+
+# [15]'"'"'s lesson taken rather than repeated: `run.log` is the only durable document
+# on the iteration a run stops on, and a line reading `receipt forensic-drift`
+# sends a human looking without saying which one.
+mutation "70 the journal names the kind and not the object" "$FORENSIC" \
+  's#    printf \x27%s\\t%s\\t%s\\n\x27 "\$key" forensic-drift "\$clause"#    printf \x27%s\\t%s\\t%s\\n\x27 "\$kind" forensic-drift "\$clause"#' \
+  test/forensic.bats "writes a forensic ref is named"
+
+# The register, without which the loop reports its own writing as drift — on every
+# red night there is, which is the same as reporting none.
+mutation "70 the ref this policy is about to write is never registered" "$LOOP" \
+  's#      forensic_expect "\$\{RALPH_FRONTIER_COMMON:-\}" ref "\$ticket"\n##' \
+  test/forensic.bats "real forensic ref and a real receipt says nothing"
+
+# Aimed at the two-ticket witness and not at the one-ticket one, which is what
+# `test/mutate.sh` caught: a single ticket writes its receipt on the **last**
+# iteration there is, so nothing ever compares after that write and this entry
+# stayed green with the register gone.
+mutation "70 the receipt this iteration is about to write is never registered" "$LOOP" \
+  's#    forensic_expect "\$\{RALPH_FRONTIER_COMMON:-\}" receipt "\$ticket"\n##' \
+  test/forensic.bats "emitted is not drift for the iteration"
+
+# The third one, load-bearing only on the night the value gate writes its document
+# and the run then grinds on — which is what a re-injected wiring hole is.
+mutation "70 the playthrough the value gate writes is never registered" "$LOOP" \
+  's#        forensic_expect "\$\{RALPH_FRONTIER_COMMON:-\}" playthrough\n##' \
+  test/forensic.bats "reinjects says nothing about the playthrough"
+
+# [59]'"'"'s rule on the refs: a git that would not answer is not an empty namespace,
+# and reading it as one accuses somebody of destroying every piece of evidence
+# this repository holds.
+mutation "70 a git that would not list the refs is read as a namespace" "$FORENSIC" \
+  's#  refs="\$\(forensic_failed_refs\)" \|\| return 1#  refs="\$(forensic_failed_refs)" || refs=\x27\x27#' \
+  test/forensic.bats "not a namespace somebody emptied"
+
+# The same rule on the other zone: `find` answers non-zero for a directory it
+# could not walk as well as for one that is not there.
+mutation "70 a find that would not walk the receipts is read as an empty directory" "$FORENSIC" \
+  's#    listing="\$\(find "\$dir" -mindepth 1 2>/dev/null\)" \|\| return 1#    listing="\$(find "\$dir" -mindepth 1 2>/dev/null)" || listing=\x27\x27#' \
+  test/forensic.bats "not a directory somebody emptied"
+
+# And its paired witness: the `[ -d ]` that keeps a feature with no receipts yet
+# from refusing the whole baseline, which would take the refs down with it.
+mutation "70 a receipts directory that does not exist yet refuses the baseline" "$FORENSIC" \
+  's#  if dir="\$\(forensic__receipt_dir\)" \&\& \[ -d "\$dir" \]; then#  if dir="\$(forensic__receipt_dir)"; then#' \
+  test/forensic.bats "writes a forensic ref is named"
+
+# The third digest state. Without it a document whose mode changed is `-`, which is
+# the answer for "not there", and the comparison accuses a session of destroying a
+# file still sitting where the human sink points.
+mutation "70 a name that cannot be read digests as one that is not there" "$FORENSIC" \
+  's#  elif \[ -e "\$1" \]; then\n    sum=\x27\?\x27\n##' \
+  test/forensic.bats "cannot be read is not a receipt that is gone"
+
+# And the walk it needs: under `-type f` a receipt replaced by a directory leaves
+# the listing altogether and is reported as evidence somebody destroyed.
+mutation "70 the receipt walk sees only regular files" "$FORENSIC" \
+  's#find "\$dir" -mindepth 1 2>/dev/null#find "\$dir" -mindepth 1 -type f 2>/dev/null#' \
+  test/forensic.bats "cannot be read is not a receipt that is gone"
+
+# The zone this witness cannot cover, which a control that excludes something has
+# to name.
+mutation "70 a backend whose receipts nothing witnesses is not named" "$FORENSIC" \
+  's/^forensic_uncovered\(\) \{/forensic_uncovered() { return 1;/m' \
+  test/forensic.bats "named once, not silently uncovered"
+
+# Form (3), and the ticket refused to ship form (1) without it: a witness is per
+# run, so a forgery laid down by a run nobody has started since is in its baseline
+# — and in this drain'"'"'s pin, which compares the drain to itself ([66]).
+mutation "70 the dossier shows the two objects bare" "$ROUTER" \
+  's#  if \[ "\$shown" = 1 \]; then#  if false; then#' \
+  test/forensic.bats "reserve on the two objects it shows"
+
+# The bound on it: a caveat printed under "there is none" is a caveat about an
+# absence, which teaches a reader to distrust the one certain sentence there is.
+mutation "70 the reserve is printed under an absence too" "$ROUTER" \
+  's#  if \[ "\$shown" = 1 \]; then#  if true; then#' \
+  test/forensic.bats "no reserve on evidence there is none of"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

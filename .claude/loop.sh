@@ -948,6 +948,14 @@ loop__iterate() {
       if loop__orphaned "$ticket" "$slot"; then
         return 0
       fi
+      # What this policy is about to write outside every tree anything here judges,
+      # registered **before** it writes it ([70]). `failures_handle` writes
+      # `failed/<ticket>` in the common git directory on this path and on no other,
+      # so the entitlement is entered here and not at the top of the iteration: a
+      # green session forging the ref of its own ticket is then named like any
+      # other, and a sibling comparing in the meantime finds the key already
+      # registered instead of accusing this iteration of what it is doing legally.
+      forensic_expect "${RALPH_FRONTIER_COMMON:-}" ref "$ticket"
       failures_handle "$ticket" "$outcome" "$pre" "$base" "${RALPH_GATE_TREE:-}"
       ;;
   esac
@@ -988,6 +996,22 @@ DRIFT
   done <<PROGRAMS
 $(gate_path_drift "${RALPH_FRONTIER_COMMON:-}")
 PROGRAMS
+
+  # And the third witness of the same shape ([70]): what a human is sent to read
+  # about a ticket. The same two channels for the same reason — a receipt reaches
+  # four routes only, and `run.log` is the one durable document on the iteration a
+  # run stops on. Here rather than after the receipt below, which is deliberate:
+  # everything this iteration is entitled to write is registered before it writes
+  # it, so the order of these two blocks changes nothing, and putting the reading
+  # beside the other two keeps one place where an iteration says what moved under
+  # this run.
+  while IFS="$(printf '\t')" read -r drift_subject drift_outcome drift_message; do
+    [ -n "$drift_subject" ] || continue
+    loop_log "$drift_message"
+    printf '%s\t%s\n' "$drift_subject" "$drift_outcome" >>"$slot/drift"
+  done <<FORENSIC
+$(forensic_drift "${RALPH_FRONTIER_COMMON:-}")
+FORENSIC
 
   # The audit receipt, on the two iterations that *end* a ticket and on no other.
   #
@@ -1064,6 +1088,8 @@ PROGRAMS
       ! budget_refused "$(cat "$slot/posture" 2>/dev/null || true)"; then
       printf '%s\n' "$RALPH_RETRO_QUOTA" >"$slot/posture"
     fi
+    # Registered before the write, for the reason the ref above is ([70]).
+    forensic_expect "${RALPH_FRONTIER_COMMON:-}" receipt "$ticket"
     if ! receipt_emit "$ticket" >/dev/null; then
       # Never fatal, and the reason is the same one that makes the workspace
       # optional: the iteration is over and its ticket is marked either way. What is
@@ -1565,6 +1591,36 @@ LEFTOVERS
     exit 4
   fi
 
+  # The record a human is sent to read about a ticket, witnessed at the level it
+  # lives at ([70]). Three zones no check of this run's own path ever looks at —
+  # `refs/heads/failed/*`, which is a path in no working tree; the audit receipts,
+  # which are in the **main** tree and not the worktree a scope-guard compares; and
+  # the feature's playthrough, in the same place for the same reason. Taken here,
+  # after the locks, before a single session exists, and into the run's own witness
+  # directory — the same one the shared frontier and the PATH baseline use, so this
+  # adds no name to `gate_tmp_names` and nothing new to unwind.
+  #
+  # A witness and never a control: nothing here refuses a run, puts a ref back or
+  # rewrites a document. What it buys is that the run *in which* one of them moved
+  # says so on the two documents a morning reader has — see forensic.sh for what
+  # that does not buy, and `router_dossier` for the reserve the human sink carries
+  # because of it.
+  #
+  # A run that cannot take it keeps the night and loses the witness: refusing to
+  # start would trade a night of delivered tickets for a namespace nobody moved.
+  if ! forensic_witness "$RALPH_FRONTIER_COMMON"; then
+    loop_log "no witness of the record a human is sent to read — the forensic refs, the audit receipts and this feature's playthrough could be created, moved or destroyed under this run with nothing here to say so ([70])"
+  fi
+  # And the zone this witness cannot cover on this backend, said out loud once for
+  # the reason every unguarded zone is ([24]): a control that excludes something
+  # has to name it.
+  while IFS= read -r leftovers; do
+    [ -n "$leftovers" ] || continue
+    loop_log "$leftovers"
+  done <<UNCOVERED
+$(forensic_uncovered || true)
+UNCOVERED
+
   # The user flow the terminal value gate will replay, copied here — before a
   # single session exists, which is the whole of what makes it a control ([11]).
   # `spec.md` sits in `.scratch/<feature>/`, the zone the scope-guard steps over
@@ -1787,6 +1843,14 @@ RECLAIMED
       # on grinding" is otherwise a night whose shape nobody can reconstruct.
       if [ "$iteration" -gt 0 ]; then
         playthrough_rc=0
+        # The third object of the same family, registered before the one call that
+        # writes it ([70]). It looks like a line nobody needs — this gate runs at an
+        # empty frontier, and on an ordinary night nothing compares after it. The
+        # night where it is load-bearing is the one below: a `1` puts a wiring
+        # ticket back and this loop goes on grinding, so the iteration that follows
+        # compares against a witness taken before the document existed. Without this
+        # line it accuses the value gate of forging the proof the value gate writes.
+        forensic_expect "${RALPH_FRONTIER_COMMON:-}" playthrough
         playthrough_close || playthrough_rc=$?
         case "$playthrough_rc" in
           0)
