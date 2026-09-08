@@ -455,6 +455,33 @@ forge_json_string() {
 
 # ── the listing every read is served from ────────────────────────────────────
 
+# How many records one page of the listing holds. **One number**, and that is the
+# point rather than a convenience: it is the `per_page` the forge is asked for
+# (`{size}` in the path table) *and* the bound a page is measured against to
+# decide whether there is another one. Written in two places they drift — a
+# `per_page` above the bound asks for pages for ever, one below stops on a full
+# page and calls a first page the tracker ([76]).
+forge__page_size() {
+  local n="${FORGE_PAGE:-100}"
+  case "$n" in
+    '' | 0 | *[!0-9]*) n=100 ;;
+  esac
+  printf '%s\n' "$n"
+  return 0
+}
+
+# How many pages one listing may ask for. A bound on this pack and not a fact
+# about the tracker, which is why reaching it is refused rather than served short
+# — see `forge__listing`.
+forge__page_max() {
+  local n="${FORGE_PAGES:-20}"
+  case "$n" in
+    '' | 0 | *[!0-9]*) n=20 ;;
+  esac
+  printf '%s\n' "$n"
+  return 0
+}
+
 # Every issue of the repository, as the forge's own JSON, memoised for this shell.
 #
 # Paged until a page comes back short: a tracker of a hundred tickets is ordinary
@@ -462,26 +489,69 @@ forge_json_string() {
 # [59]'s rule in a place it costs the most — a listing read as empty turns every
 # ticket into a ticket that is not there, which is a frontier of nothing and a
 # `tracker_ids` that tells the scope-guard nobody owns anything.
+#
+# The pages are **one document**: their leaves are renumbered as they arrive, and
+# a listing this function returns is the array the whole tracker would be if the
+# forge had answered it in one go. Without that, a forge numbering the elements of
+# every page from zero hands the first issue of page two the path `0.number`, and
+# `forge__records` reads it as the first issue of page one — so page two does not
+# extend the tracker, it overwrites it ([76]).
 forge__listing() {
-  local flavour="$1" repo key page=1 path body all='' count
+  local flavour="$1" repo key page=1 path body all='' count size max offset=0 whole=0
   repo="$(forge__repo)" || return 1
   key="$flavour/$repo"
   if [ "$FORGE__CACHE_KEY" = "$key" ]; then
     printf '%s\n' "$FORGE__CACHE"
     return 0
   fi
-  while [ "$page" -le 20 ]; do
+  size="$(forge__page_size)"
+  max="$(forge__page_max)"
+  while [ "$page" -le "$max" ]; do
     path="$(forge__path "$flavour" list "$page")" || return 1
     body="$(forge__api "$flavour" GET "$path")" || return 1
     body="$(printf '%s\n' "$body" | forge_json)" || return 1
+    # How full the page is, counted on the **set** of top-level indices it holds
+    # and not on a run of them. An awk array subscript is a string, where the run
+    # this used to walk compared `f[1]` — a strnum — against an uninitialised
+    # variable, which awk compares *numerically*: `0 == 0` was true, the first
+    # record of every page went uncounted, and a full page of a hundred came back
+    # as ninety-nine. `99 >= 100` is false, so page two was never asked for on any
+    # tracker ([76]).
+    count="$(printf '%s' "$body" | LC_ALL=C awk -F'\t' '
+      { split($1, f, ".")
+        if (f[1] ~ /^[0-9]+$/ && !(f[1] in seen)) { seen[f[1]] = 1; n++ } }
+      END { print n + 0 }')"
+    if [ "$offset" -gt 0 ]; then
+      body="$(printf '%s' "$body" | LC_ALL=C awk -v off="$offset" '
+        { p = $0
+          d = index(p, ".")
+          t = index(p, "\t")
+          if (d > 0 && (t == 0 || d < t)) {
+            rec = substr(p, 1, d - 1)
+            if (rec ~ /^[0-9]+$/) { moved = (rec + off) substr(p, d); print moved; next }
+          }
+          print p }')"
+    fi
     all="$all$body
 "
-    count="$(printf '%s' "$body" | LC_ALL=C awk -F'\t' '
-      { split($1, f, "."); if (f[1] != last) { n++; last = f[1] } }
-      END { print n + 0 }')"
-    [ "${count:-0}" -ge "${FORGE_PAGE:-100}" ] || break
+    offset=$((offset + count))
+    if [ "$count" -lt "$size" ]; then
+      whole=1
+      break
+    fi
     page=$((page + 1))
   done
+  # A listing stopped by this pack's own bound is **said**, never served short. It
+  # is [59]'s rule one layer up: a short list is not a shorter tracker, it is a
+  # tracker with tickets missing from it, and no caller can tell the two apart —
+  # the frontier simply would not hold them, `forge__is_unblocked` would block
+  # every ticket that names one, and the scope-guard would answer that nobody
+  # declared their write-surface ([76]).
+  [ "$whole" = 1 ] || {
+    printf 'forge: the tracker did not end within %s pages of %s issues — refusing a listing that would be missing tickets (raise FORGE_PAGES, or FORGE_PAGE if the forge allows a larger page)\n' \
+      "$max" "$size" >&2
+    return 1
+  }
   FORGE__CACHE="$all"
   FORGE__CACHE_KEY="$key"
   printf '%s\n' "$all"
@@ -501,6 +571,9 @@ forge__forget() {
 # One record per issue: `<number><TAB><slug><TAB><assignee><TAB><state><TAB><body>`,
 # the body still escaped, ordered by number ascending — which is the "min-NN
 # first" every consumer of `frontier` and `ids` relies on.
+#
+# One record per **issue** and not per array element: see the `emitted` guard
+# below, and `forge__listing` for the other half of it.
 #
 # A page of a forge listing may hold objects that are not issues: GitHub answers
 # `GET /issues` with pull requests too, and one of them carrying a `Status:` line
@@ -535,6 +608,14 @@ forge__records() {
         rec = order[k]
         if (rec in pr) continue
         if (num[rec] == "") continue
+        # A record **is** the number the forge gave the issue, never the place it
+        # held in an array. The listing is several pages, and a forge asked for
+        # page two after an issue was opened answers with a window that has slid:
+        # the last issue of page one comes back as the first of page two. Keyed by
+        # position that is two tickets with one number; keyed by the number it is
+        # one ticket, and the first sighting is the one kept ([76]).
+        if (num[rec] in emitted) continue
+        emitted[num[rec]] = 1
         slug = ""
         b = body[rec]
         # The `Slug:` field, read off the escaped body: `\n` is the separator
@@ -1567,6 +1648,10 @@ forge__ci_normalise() {
 # the repository and not the argument would print the path **twice** — and a
 # template built out of a value the project configured is a format string the
 # project writes. Parameter expansion has neither behaviour.
+#
+# `{size}` is the third, and it is substituted here rather than written into each
+# table so that the `per_page` a forge is asked for and the bound `forge__listing`
+# measures a page against cannot be two numbers ([76]).
 forge__path() {
   local flavour="$1" which="$2" arg="${3:-}" tmpl repo enc path
   tmpl="$(forge__spec "$flavour" "path-$which")" || return 1
@@ -1574,6 +1659,7 @@ forge__path() {
   enc="$(printf '%s' "$repo" | forge__urlenc)"
   path="${tmpl//\{repo\}/$enc}"
   path="${path//\{arg\}/$(printf '%s' "$arg" | forge__urlenc)}"
+  path="${path//\{size\}/$(forge__page_size)}"
   printf '%s\n' "$path"
   return 0
 }

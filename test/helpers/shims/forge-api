@@ -127,15 +127,26 @@ issue_json() {
   printf ']}'
 }
 
+# One page of the listing, sliced out of `order` the way a forge slices it: the
+# `page` and the `per_page` are read off the URL rather than assumed, so a test
+# drives the pagination boundary with `FORGE_PAGE` instead of seeding a hundred
+# issues — and a test that does mean to hold more than a page gets real pages.
+#
+# What this replaced was the reason nobody saw [76]: it answered the whole tracker
+# to `page=1` and `[]` to everything else, said so in its own comment ("this fake
+# holds fewer tickets than a page"), and therefore could not make the pack ask for
+# page two even once. A correction delivered against it would have been green
+# while proving nothing.
 listing() {
-  local first=1 num
+  local page="${1:-1}" per="${2:-100}" first=1 num
   printf '['
   while IFS= read -r num; do
     [ -n "$num" ] || continue
     [ "$first" = 1 ] || printf ','
     first=0
     issue_json "$num"
-  done <"$dir/order"
+  done < <(LC_ALL=C awk -v p="$page" -v n="$per" \
+    'NF { i++; if (i > (p - 1) * n && i <= p * n) print }' "$dir/order")
   printf ']'
 }
 
@@ -143,15 +154,17 @@ listing() {
 
 case "$method $path" in
   "GET "*"/issues?"* | "GET "*"/issues")
-    case "$path" in
-      *"page=1"* | *"page="*) ;;
-    esac
-    # Page two and beyond are empty: this fake holds fewer tickets than a page.
-    case "$path" in
-      *"page=1"*) answer "$(listing)" ;;
-      *"page="*) answer '[]' ;;
-      *) answer "$(listing)" ;;
-    esac
+    # Read off the query rather than matched as substrings: `*"page=1"*` also
+    # matched `page=10`, and `per_page=100` carries the letters of `page=` too.
+    # The last `?` or `&` before the name is what makes each of these one
+    # parameter.
+    page="${path##*[?&]page=}"
+    page="${page%%[!0-9]*}"
+    [ -n "$page" ] || page=1
+    per="${path##*[?&]per_page=}"
+    per="${per%%[!0-9]*}"
+    [ -n "$per" ] || per=100
+    answer "$(listing "$page" "$per")"
     ;;
   "GET "*"/users?username="*)
     answer '[{"id":7}]'

@@ -470,6 +470,36 @@ forge_seed_tickets() {
   done
 }
 
+# A run of issues, seeded without a subshell each. What it buys is the only test
+# that can measure the page bound with the shipped `per_page`: a tracker of more
+# than one full page ([76]). The body is the smallest one the frontier accepts, so
+# every ticket seeded here is a ticket the pack would work on.
+forge_seed_many() {
+  local from="$1" to="$2" slug="${3:-bulk}" d="$SHIM_STATE/forge" num next
+  num="$from"
+  while [ "$num" -le "$to" ]; do
+    printf '%s' "$slug-$num" >"$d/issue.$num.title"
+    printf '**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** `src/%s-%s.txt`\n\n**Slug:** %s-%s\n' \
+      "$slug" "$num" "$slug" "$num" >"$d/issue.$num.body"
+    printf 'open\n' >"$d/issue.$num.state"
+    : >"$d/issue.$num.assignee"
+    printf '%s\n' "$num" >>"$d/order"
+    num=$((num + 1))
+  done
+  next="$(cat "$d/next")"
+  [ "$to" -lt "$next" ] || printf '%s\n' "$((to + 1))" >"$d/next"
+}
+
+# One issue served on two pages, which is not a fake being odd: a forge asked for
+# page two after an issue was opened answers with a window that has slid, and the
+# last issue of page one comes back as the first of page two. The listing is the
+# order file, so the same number twice in it is the same issue in two pages.
+forge_serve_twice() {
+  local num="$1" d="$SHIM_STATE/forge"
+  LC_ALL=C awk -v n="$num" '{ print; if ($0 == n) print }' "$d/order" >"$d/order.next"
+  mv -f "$d/order.next" "$d/order"
+}
+
 forge_body() { cat "$SHIM_STATE/forge/issue.$1.body" 2>/dev/null; }
 forge_state() { cat "$SHIM_STATE/forge/issue.$1.state" 2>/dev/null; }
 forge_assignee() { cat "$SHIM_STATE/forge/issue.$1.assignee" 2>/dev/null; }

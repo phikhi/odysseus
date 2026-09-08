@@ -1030,3 +1030,204 @@ T
     *) fail "a session that overflowed its surface left the ticket $(forge_field 1 Status)" ;;
   esac
 }
+
+# ── pagination ───────────────────────────────────────────────────────────────
+#
+# A tracker is not the first page of it ([76]). Two defects were stacked here and
+# the second was hidden by the first: the page bound never counted the first
+# record of a page, so page two was never asked for on any tracker — and when it
+# was, the records of page two landed on the array indices of page one and
+# overwrote them.
+#
+# The fake forge pages for real (`test/helpers/shims/forge-api` reads `page` and
+# `per_page` off the URL), which is the half of this that had to be built first:
+# the fake it replaced held fewer tickets than a page and could not make the pack
+# ask for a second one.
+
+@test "a tracker of more than one full page is the whole tracker" {
+  # The shipped page — a hundred — and a tracker that does not fit in it. This is
+  # the only test here that measures the bound as it ships; the ones below drive
+  # it with FORGE_PAGE, which is cheaper and proves something narrower.
+  use_forge github
+  forge_seed_many 1 101
+
+  pack_run 'tracker_ids'
+  assert_success
+  assert_equal "$(printf '%s\n' "$output" | grep -c .)" "101"
+  assert_output_contains "1-bulk-1"
+  assert_output_contains "100-bulk-100"
+  assert_output_contains "101-bulk-101"
+
+  # And the forge was really asked twice: a hundred and one ids out of one request
+  # would mean the fake stopped paging, not that the pack did.
+  assert_equal "$(forge_calls | grep -c 'page=2')" "1"
+}
+
+@test "the page after a full one does not overwrite the page before it" {
+  # `FORGE_PAGE 2` says a full page holds two records, which is what the fake then
+  # serves. Four tickets are two pages, and every one of them has to survive.
+  use_forge github
+  set_config FORGE_PAGE 2
+  remote__two
+  forge_seed 3 gamma Gamma <<'T'
+# 3 — Gamma
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/c.txt`
+T
+  forge_seed 4 delta Delta <<'T'
+# 4 — Delta
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/d.txt`
+T
+
+  pack_run 'tracker_ids'
+  assert_success
+  assert_equal "$output" "1-alpha
+2-beta
+3-gamma
+4-delta"
+
+  pack_run 'tracker_frontier'
+  assert_success
+  assert_equal "$output" "1-alpha
+2-beta
+3-gamma
+4-delta"
+}
+
+@test "a ticket of the first page is still readable when there is a second" {
+  # The witness for the identity half, kept apart from the one above on purpose:
+  # a listing where page two lands on page one's indices answers "no such ticket"
+  # for 1-alpha while `tracker_ids` merely comes back short — one test would read
+  # the two defects as one missing ticket.
+  use_forge github
+  set_config FORGE_PAGE 2
+  remote__two
+  forge_seed 3 gamma Gamma <<'T'
+# 3 — Gamma
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/c.txt`
+T
+  forge_seed 4 delta Delta <<'T'
+# 4 — Delta
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/d.txt`
+T
+
+  pack_run 'tracker_field 1-alpha Write-surface'
+  assert_success
+  assert_output_contains "src/a.txt"
+
+  pack_run 'tracker_read_ticket 1-alpha'
+  assert_success
+  assert_output_contains "# 1 — Alpha"
+
+  pack_run 'tracker_read_ticket 4-delta'
+  assert_success
+  assert_output_contains "# 4 — Delta"
+}
+
+@test "an issue served on two pages is one ticket and not two" {
+  # What a forge answers when an issue is opened between the two requests: the
+  # window slides and the last issue of page one comes back as the first of page
+  # two. Identified by its place in an array that is two tickets with one number.
+  use_forge github
+  set_config FORGE_PAGE 2
+  remote__two
+  forge_seed 3 gamma Gamma <<'T'
+# 3 — Gamma
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/c.txt`
+T
+  forge_serve_twice 2
+
+  pack_run 'tracker_ids'
+  assert_success
+  assert_equal "$output" "1-alpha
+2-beta
+3-gamma"
+}
+
+@test "the per_page asked for and the bound a page is measured against are one number" {
+  # Two numbers written in two files drift, and the drift is silent both ways: a
+  # per_page above the bound asks for pages for ever, one below stops on a full
+  # page and calls it the tracker. So the URL is asserted, not the ids — a table
+  # still saying 100 would answer the whole tracker on page one and be *right*.
+  use_forge github
+  set_config FORGE_PAGE 2
+  remote__two
+
+  local calls
+  pack_run 'tracker_ids'
+  assert_success
+  # Read into a variable rather than asserted through `$output`, which the `run`
+  # above owns: a negative assertion aimed at the wrong output can never fail.
+  calls="$(forge_calls)"
+  assert_equal "$(printf '%s\n' "$calls" | grep -c 'per_page=2')" "2"
+  case "$calls" in
+    *per_page=100*) fail "the listing asked for a page of 100 while measuring against 2: $calls" ;;
+  esac
+}
+
+@test "a listing stopped by the page ceiling refuses instead of coming back short" {
+  # [59]'s rule one layer up: a short list is not a shorter tracker, it is a
+  # tracker with tickets missing from it, and no caller can tell the two apart.
+  use_forge github
+  set_config FORGE_PAGE 1
+  set_config FORGE_PAGES 2
+  remote__two
+  forge_seed 3 gamma Gamma <<'T'
+# 3 — Gamma
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+T
+
+  pack_run 'set +e; tracker_ids; printf "rc=%s\n" "$?"'
+  assert_output_contains "rc=1"
+  assert_output_contains "refusing a listing that would be missing tickets"
+  refute_output_contains "1-alpha"
+}
+
+@test "the same tracker under a ceiling that fits is listed whole" {
+  # The paired witness: without it, "it refused" could be a listing that refuses
+  # whatever the ceiling. A separate @test because a `pack_run` runs the fake.
+  use_forge github
+  set_config FORGE_PAGE 1
+  set_config FORGE_PAGES 4
+  remote__two
+  forge_seed 3 gamma Gamma <<'T'
+# 3 — Gamma
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+T
+
+  pack_run 'tracker_ids'
+  assert_success
+  assert_equal "$output" "1-alpha
+2-beta
+3-gamma"
+}

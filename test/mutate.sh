@@ -243,6 +243,7 @@ PLAYTHROUGH=".claude/lib/playthrough.sh"
 FORENSIC=".claude/lib/forensic.sh"
 FORGE=".claude/lib/forge.sh"
 GITLAB=".claude/lib/tracker-gitlab.sh"
+GITHUB=".claude/lib/tracker-github.sh"
 HARNESS="test/helpers/harness.bash"
 # A test file, like the three below it: the rule it holds is about the shipped
 # source, so the only thing that can break it is the check itself ([59]). No
@@ -5491,6 +5492,49 @@ mutation "18 the dossier prints the file reserve on a remote receipt" "$ROUTER" 
 mutation "18 the dossier prints the remote reserve on a file receipt" "$ROUTER" \
   's#    if tracker_receipt_dir >/dev/null 2>&1; then#    if false; then#' \
   test/tracker-remote.bats "still says what a file receipt is"
+
+# ── [76] a tracker is not the first page of it ───────────────────────────────
+
+# The page bound, counted along a run of indices instead of on the set of them:
+# `split()` hands back a strnum and the variable it was compared against is not
+# initialised, so awk compares `0 == 0` and the first record of every page goes
+# uncounted. A full page of a hundred counts ninety-nine, and page two is never
+# asked for. The witness has to read a tracker of **more than one full page** —
+# on a short tracker the bound is never reached and nothing differs.
+mutation "76 the page bound counts along a run again" "$FORGE" \
+  's#        if \(f\[1\] ~ /\^\[0-9\]\+\$/ && !\(f\[1\] in seen\)\) \{ seen\[f\[1\]\] = 1; n\+\+ \} \}#        if (f[1] != last) { n++; last = f[1] } }#' \
+  test/tracker-remote.bats "more than one full page"
+
+# The other half, and it is a separate entry because a single test would read the
+# two as one missing ticket: `forge_json` numbers the elements of every document
+# from zero, so without the renumbering the first issue of page two lands on the
+# first issue of page one. The witness reads a ticket of the **first** page while
+# there is a second — `tracker_ids` merely comes back short, which is what the
+# entry above already says.
+mutation "76 the pages of a listing are numbered from zero each" "$FORGE" \
+  's#    if \[ "\$offset" -gt 0 \]; then#    if false; then#' \
+  test/tracker-remote.bats "first page is still readable"
+
+# And the identity itself: a record is the number the forge gave the issue, not
+# the slot it arrived in. A window that slides between two requests serves one
+# issue on both pages, which is two records with one number when the slot decides.
+mutation "76 a record is its place in the array again" "$FORGE" \
+  's#        if \(num\[rec\] in emitted\) continue#        if (0 \&\& num[rec] in emitted) continue#' \
+  test/tracker-remote.bats "served on two pages is one ticket"
+
+# A listing stopped by this pack's own ceiling, served short instead of refused —
+# [59]'s rule one layer up. Nothing downstream can tell a short tracker from a
+# small one.
+mutation "76 the page ceiling serves a short list instead of refusing" "$FORGE" \
+  's#  \[ "\$whole" = 1 \] \|\| \{#  [ 1 = 1 ] || {#' \
+  test/tracker-remote.bats "page ceiling refuses"
+
+# `per_page` and the bound written as two numbers again. The ids stay right here,
+# which is the whole reason this entry exists: the drift is only visible in the
+# URL, and it is silent in both directions.
+mutation "76 per_page and the bound are two numbers again" "$GITHUB" \
+  's#per_page=\{size\}#per_page=100#' \
+  test/tracker-remote.bats "are one number"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

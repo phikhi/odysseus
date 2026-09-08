@@ -101,3 +101,22 @@ minimiser la reprise, jamais l'urgence.
 
 `Blocked by:` écrit en conséquence : `[76] None`, `[74] None`, `[77] None`,
 `[75] 77`, `[73] 74, 75, 77`, et `[19]` gagne `73, 74, 75, 76, 77`.
+
+## Contrainte écrite par [76] (livré le 08/09/2026)
+
+Le budget que ce ticket doit chiffrer a changé de forme : **une lecture de tracker
+n'est plus une requête, c'en est une par page** (`FORGE_PAGE`, 100 issues par page),
+et `forge__api` réessaie une lecture jusqu'à `FORGE_READ_TRIES` (3) fois. Un tracker
+de 21 pages coûte donc jusqu'à 63 requêtes dans le pire cas, contre 3 avant — et
+c'est exactement ce que la relecture par ticket multiplie.
+
+Deux propriétés de la mémoïsation existante à ne pas casser en la déplaçant :
+
+- elle est posée **seulement en cas de succès**. Un refus — une page qui refuse,
+  ou le plafond de `FORGE_PAGES` atteint — n'est pas mis en cache, donc l'appelant
+  suivant repaie tout. C'est délibéré : un tracker partiellement lu n'est pas un
+  tracker, et le mettre en cache serait servir une liste courte depuis la mémoire.
+  Un cache qui survit à un shell doit reprendre cette décision explicitement.
+- elle est clé sur `<flavour>/<repo>` et vidée par `forge__forget` à **chaque
+  écriture**, pour la raison écrite là-bas : l'état d'avant une écriture est une
+  frontière qui tient encore le ticket.

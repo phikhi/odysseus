@@ -42,7 +42,7 @@ tracker_gitlab_forge_spec() {
     # No `state=` here: this endpoint answers with every issue of the project
     # whatever its state, which is what the scope-guard needs — a closed ticket
     # owns its write-surface just as much as an open one.
-    path-list) printf '/projects/{repo}/issues?per_page=100&page={arg}\n' ;;
+    path-list) printf '/projects/{repo}/issues?per_page={size}&page={arg}\n' ;;
     path-issue) printf '/projects/{repo}/issues/{arg}\n' ;;
     path-create) printf '/projects/{repo}/issues\n' ;;
     path-note) printf '/projects/{repo}/issues/{arg}/notes\n' ;;

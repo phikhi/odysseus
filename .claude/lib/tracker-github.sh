@@ -50,7 +50,7 @@ tracker_github_forge_spec() {
     # an open one — the scope-guard asks `tracker_ids` for **every** ticket
     # whatever its state, and a listing of open issues would tell it that nobody
     # declared a path a closed ticket declares.
-    path-list) printf '/repos/{repo}/issues?state=all&per_page=100&page={arg}\n' ;;
+    path-list) printf '/repos/{repo}/issues?state=all&per_page={size}&page={arg}\n' ;;
     path-issue) printf '/repos/{repo}/issues/{arg}\n' ;;
     path-create) printf '/repos/{repo}/issues\n' ;;
     path-note) printf '/repos/{repo}/issues/{arg}/comments\n' ;;
