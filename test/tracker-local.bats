@@ -339,10 +339,15 @@ printf "the caller is still here\n"'
 # ── the interface itself ─────────────────────────────────────────────────────
 
 @test "an unimplemented backend fails loudly instead of silently" {
-  set_config TRACKER_BACKEND github
+  # A name no file in `lib/` implements, and it has to stay one: this test named
+  # `github` until [18] shipped that backend, at which point it would have been
+  # measuring an adapter rather than the dispatcher's refusal. The pack ships
+  # `local`, `github` and `gitlab`; anything else is what a project typing a
+  # backend name wrong gets.
+  set_config TRACKER_BACKEND jira
   pack_run 'tracker_frontier'
   assert_failure 3
-  assert_output_contains 'backend "github" does not implement frontier'
+  assert_output_contains 'backend "jira" does not implement frontier'
 }
 
 # ── atomicity ────────────────────────────────────────────────────────────────

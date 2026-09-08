@@ -120,6 +120,18 @@ forensic__receipt_dir() {
   return 0
 }
 
+# The same question one zone over, and it is not a zone this file witnesses: the
+# tickets. Asked here because `forensic_uncovered` is the one place a run says out
+# loud what nothing in it covers, and because the answer decides a sentence a human
+# reads rather than anything this module compares.
+forensic__tickets_dir() {
+  local dir
+  dir="$(tracker_tickets_dir 2>/dev/null)" || return 1
+  [ -n "$dir" ] || return 1
+  printf '%s\n' "$dir"
+  return 0
+}
+
 # The feature's playthrough, or nothing when this shell has no feature to name
 # one for. Asked of `playthrough.sh` rather than composed here, for the reason
 # above.
@@ -236,7 +248,20 @@ forensic_witness() {
 forensic_uncovered() {
   local said=1
   if ! forensic__receipt_dir >/dev/null 2>&1; then
-    printf 'this backend does not keep audit receipts in a directory, so nothing in this run witnesses them: a receipt the human sink points at is attested by nothing here, and what does attest a receipt this backend keeps is [18]'"'"'s question\n'
+    printf 'this backend does not keep audit receipts in a directory, so nothing in this run witnesses them: a receipt the human sink points at is attested by nothing here, and a receipt that is a pull request is an object a session reaches over the network, which no scope-guard, no rollback and no witness of this pack sees ([18])\n'
+    said=0
+  fi
+  # The tickets, and it is a different guarantee under the same sentence ([18]).
+  # `failures_protect_tracker` restores what a session wrote in the tracker by
+  # comparing two git trees of the directory the tickets live in, and that is what
+  # makes the write-surface the scope-guard judges against the contract as it stood
+  # at spawn time. A backend that keeps its tickets elsewhere has no such directory:
+  # the guard takes its "nothing here to compare" branch, nothing is restored, and
+  # this line is the whole of what the run says about it. Said here rather than by
+  # the guard because the guard runs once per iteration and this is a property of
+  # the night — [64]'s lesson about eight identical lines on a console.
+  if ! forensic__tickets_dir >/dev/null 2>&1; then
+    printf 'this backend does not keep its tickets in a directory of this repository, so nothing here restores what a session writes in the tracker: the write-surface the scope-guard judges against is read from a ticket the session it judges can reach, and the two tree snapshots taken around every session compare nothing ([18] on [21])\n'
     said=0
   fi
   [ "$said" = 0 ] || return 1

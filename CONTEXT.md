@@ -253,8 +253,16 @@ _À éviter_ : verrou de session (pas d'artefact séparé), mutex, flock, zombie
 _(Ajouté par le durcissement v2, ticket [16] — étend [09].)_
 
 **Adaptateur de tracker**:
-L'interface fixe de fonctions shell (`frontier`, `read_ticket`, `claim`, `mark_*`, `open_ticket`, `append_note`) que la boucle appelle sans connaître le backend. Trois implémentations pluggables : `local` (fichiers, défaut), `github`, `gitlab`. Ops durables remote-ables, liveness du claim toujours locale.
+L'interface fixe de fonctions shell (`frontier`, `read_ticket`, `claim`, `mark_*`, `open_ticket`, `append_note`, …) que la boucle appelle sans connaître le backend. Trois implémentations pluggables : `local` (fichiers, défaut), `github`, `gitlab`. Ops durables remote-ables, liveness du claim toujours locale.
 _À éviter_ : driver, connecteur, plugin.
+
+**Forge** _(ticket [18])_:
+Le service qui héberge les tickets d'un backend distant — une instance GitHub ou GitLab. `lib/forge.sh` en est le **noyau partagé** : c'est là que vit tout ce qu'un backend distant *fait*, et `lib/tracker-github.sh` / `lib/tracker-gitlab.sh` n'en portent que la table de ce que chaque forge *appelle comment* (`tracker_<backend>_forge_spec`). Le préfixe est `forge_` et non `tracker_remote_` délibérément : le dispatcher route `TRACKER_BACKEND=<nom>` vers `tracker_<nom>_<op>`, donc un noyau nommé d'après un backend ferait de `remote` un backend à moitié fonctionnel.
+_À éviter_ : provider, hébergeur, SCM.
+
+**Requête** _(pull request, merge request ; ticket [18])_:
+Ce qu'est le **reçu d'audit** sur un backend distant. Une par ticket, ouverte au marquage et réécrite à l'émission, avec la branche de l'itération poussée dedans — c'est ce qui fait résoudre les références git que le reçu porte pour qui n'a pas le dépôt. C'est aussi ce que `wait_ci` attend.
+_À éviter_ : PR/MR dans la prose française du dépôt, sauf en nommant l'API.
 
 ### L'auto-chaînage
 

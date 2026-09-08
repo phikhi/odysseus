@@ -34,6 +34,8 @@
 #                                     still there; non-zero when there is none
 #   tracker_receipt_dir               the directory this backend keeps receipts
 #                                     in; non-zero when it keeps them elsewhere
+#   tracker_tickets_dir               the directory this backend keeps tickets
+#                                     in; non-zero when it keeps them elsewhere
 #
 # Marking is the loop's job, after the gate — never the session's.
 #
@@ -124,7 +126,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | receipt_path | receipt_dir | emit_receipt)
+    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -312,6 +314,28 @@ tracker_receipt_path() { tracker__dispatch receipt_path "$@"; }
 # [18], which owes the question what attests the provenance of a receipt that is
 # a pull request.
 tracker_receipt_dir() { tracker__dispatch receipt_dir "$@"; }
+# Where a backend keeps its **tickets**, as a directory, or a refusal when it does
+# not keep them in one — the issues of a remote backend live on a service and are
+# a path in no tree at all. A read, and therefore not noted in the register.
+#
+# It is here for the reason `receipt_dir` is, one zone over ([18] on [21]).
+# `failures_protect_tracker` snapshots a git tree of the tickets around every
+# session and restores what moved: that is what makes the write-surface the
+# scope-guard judges against the contract as it stood at spawn time. The path it
+# snapshots was composed by `failures.sh` itself, which made it a second author for
+# a layout only the adapter knows — and on a backend that keeps no tickets in this
+# tree the pathspec matched nothing, both snapshots were the empty tree, and the
+# guard **returned zero without a word** about a tracker nobody had looked at. A
+# silent vouch is the shape of false green this pack exists to refuse.
+#
+# So the question is asked of the backend, and a refusal here is an answer: the
+# guard takes its "there is nothing in this tree to compare" branch knowingly, and
+# the run says once at startup that nothing witnesses the tracker of this backend
+# (`forensic_uncovered`). What that leaves open — a session editing its own ticket
+# over the network, which no snapshot, no rollback and no witness of this pack sees
+# — is [18]'s answer, and it is in `docs/frontiere-de-confiance.md` rather than
+# implied by a return code.
+tracker_tickets_dir() { tracker__dispatch tickets_dir "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

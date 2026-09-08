@@ -1578,14 +1578,37 @@ router_dossier() {
   # The reserve, on whichever of the two is there — and never on a line that said
   # there is nothing to read, which would be a caveat about an absence. See the
   # header for why it is printed rather than replaced by a control.
+  #
+  # **Two reserves and not one, since [18].** The sentence below was written for a
+  # receipt that is a file: "a receipt lives in the main tree, which is not the
+  # worktree a scope-guard compares" is what makes it reachable *and* what makes
+  # [70]'s witness able to see it move. On a backend that keeps no receipts in a
+  # directory the same sentence is simply **false** — the receipt is a pull request,
+  # a path in no tree of this repository at all — and the reserve would be telling a
+  # human that a thing is witnessed by a witness that refused to take it
+  # (`forensic_uncovered` says so once at startup). Which reserve to print is
+  # therefore asked of the adapter, exactly as the receipt's location is: a drain
+  # that decided this from the shape of the string would be a second author for a
+  # layout only the backend knows.
   if [ "$shown" = 1 ]; then
     printf '           A branch and a receipt are written by a run, into zones the\n'
     printf '           sessions that run judges can reach: a ref is a path in no\n'
-    printf '           working tree, and a receipt lives in the main tree, which is\n'
-    printf '           not the worktree a scope-guard compares. A run that was up\n'
-    printf '           when one of them moved says so in run.log ([70]); one that\n'
-    printf '           moved with no run up is in every witness there is, the pin of\n'
-    printf '           this drain included. Read them, do not rely on them.\n'
+    if tracker_receipt_dir >/dev/null 2>&1; then
+      printf '           working tree, and a receipt lives in the main tree, which is\n'
+      printf '           not the worktree a scope-guard compares. A run that was up\n'
+      printf '           when one of them moved says so in run.log ([70]); one that\n'
+      printf '           moved with no run up is in every witness there is, the pin of\n'
+      printf '           this drain included. Read them, do not rely on them.\n'
+    else
+      printf '           working tree. The receipt is not a path in this repository\n'
+      printf '           at all: this backend keeps it on its own service, which a\n'
+      printf '           session reaches over the network — no scope-guard, no\n'
+      printf '           rollback and no witness of this pack sees a write made\n'
+      printf '           there, and nothing here attests who wrote what you are\n'
+      printf '           about to read. What does attest it is that service'"'"'s own\n'
+      printf '           record of authors and edits, which this pack neither reads\n'
+      printf '           nor checks ([18]). Read them, do not rely on them.\n'
+    fi
   fi
 
   lines="$(router_journal_lines "$id")"

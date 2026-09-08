@@ -736,6 +736,18 @@ tracker_local_receipt_dir() {
   printf '%s/receipts/%s\n' "$(ralph_project_root)" "${FEATURE:?ralph: FEATURE is not set}"
 }
 
+# Where this backend keeps its tickets, which is the directory every scan above
+# walks. Named through the adapter rather than composed by the guard that
+# snapshots it ([18] on [21]): a second author for this layout is wrong the first
+# time a backend keeps its tickets anywhere else, and the way it is wrong is a
+# pathspec that matches nothing and a guard that vouches in silence.
+#
+# Absolute, like `receipt_dir`, and the one caller that needs it relative to the
+# project root says so itself.
+tracker_local_tickets_dir() {
+  tracker_local__issues_dir
+}
+
 # Where the last one can be read — the same name `emit_receipt` publishes, and
 # derived from it rather than restated, so the two cannot drift.
 #

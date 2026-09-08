@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Fake `curl` on PATH — stands in for GET /api/oauth/usage.
+# Fake `curl` on PATH — two endpoints behind one name.
 #
-# Serves whatever `usage_respond` installed, honours `-o <file>`, records every
-# invocation (so a test can assert the User-Agent the endpoint demands), and
-# exits with whatever `usage_exit` asked for.
+# The first is GET /api/oauth/usage: it serves whatever `usage_respond`
+# installed, honours `-o <file>`, records every invocation (so a test can assert
+# the User-Agent the endpoint demands), and exits with whatever `usage_exit`
+# asked for.
 #
 # One body per call when `usage_respond` was given several, which is what lets a
 # test drive a run *through* a wall: the budget gate asks again after it has
@@ -15,6 +16,12 @@
 # in this pack calls curl concurrently today — the budget gate runs in the loop's
 # own shell — and a counter that is only correct while that stays true is the
 # fake `claude`'s old `cat + 1`, which was green and wrong ([06]).
+#
+# The second is the **forge** of [18], and it is a stateful mock rather than a
+# canned body: the adapters read the tracker, write it, and read back what they
+# wrote, so a fake that answered one fixed document could only ever stage a run
+# that reads. It is off unless a test asked for it (`use_forge`), which is what
+# keeps every existing assertion about this shim exactly what it was.
 set -uo pipefail
 
 state="${RALPH_SHIM_STATE:?curl shim: RALPH_SHIM_STATE is not set}"
@@ -39,10 +46,30 @@ done
 
 out=""
 prev=""
+method=GET
+data=""
+url=""
+wants_code=0
 for arg in "$@"; do
-  [ "$prev" = "-o" ] && out="$arg"
+  case "$prev" in
+    -o) out="$arg" ;;
+    -X) method="$arg" ;;
+    --data-binary) data="$arg" ;;
+    -w) wants_code=1 ;;
+  esac
+  case "$arg" in
+    http://* | https://*) url="$arg" ;;
+  esac
   prev="$arg"
 done
+
+if [ -d "$state/forge" ] && [ -n "$url" ]; then
+  case "$url" in
+    *"$(cat "$state/forge/base" 2>/dev/null || printf '///none///')"*)
+      exec "$(dirname "$0")/forge-api" "$method" "$url" "$data" "$wants_code"
+      ;;
+  esac
+fi
 
 body=""
 if [ -f "$state/curl.body.$n" ]; then
