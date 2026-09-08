@@ -342,3 +342,23 @@ minimiser la reprise, jamais l'urgence.
 
 `Blocked by:` écrit en conséquence : `[76] None`, `[74] None`, `[77] None`,
 `[75] 77`, `[73] 74, 75, 77`, et `[19]` gagne `73, 74, 75, 76, 77`.
+
+## Contrainte écrite par [76] (livré le 08/09/2026)
+
+Deux clés de configuration neuves à installer, **déjà déclarées** dans
+`.claude/ralph.config.sh.example` et dans la liste de `test/smoke.bats` — les deux
+sont tenues en égalité dans les deux sens, donc une clé qui existe d'un côté et pas
+de l'autre est un test rouge :
+
+- **`FORGE_PAGE`** (défaut 100) — la taille de page demandée à la forge *et* la
+  borne à laquelle une page est comparée pour décider s'il y en a une autre. **Un
+  seul nombre** : il est substitué dans le gabarit d'URL par `forge__path`
+  (`{size}`) au lieu d'être écrit dans les tables de backend, parce que deux
+  nombres dérivent et que la dérive est silencieuse dans les deux sens.
+- **`FORGE_PAGES`** (défaut 20) — le nombre de pages qu'un listing peut demander
+  avant de **refuser**. Atteindre le plafond n'est pas une liste courte, c'est un
+  refus avec une phrase qui nomme ces deux clés ; un dépôt de plus de
+  `FORGE_PAGE × FORGE_PAGES` issues ne se lit pas.
+
+Comme `TRACKER_REPO` et les siennes, ces deux clés ne sont lues que par un backend
+distant. Un projet sur `local` n'en a rien à faire.

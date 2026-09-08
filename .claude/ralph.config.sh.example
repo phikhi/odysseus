@@ -354,6 +354,23 @@ TRACKER_TOKEN_CMD="${TRACKER_TOKEN_CMD:-}"
 # ticket, which is what every read of this pack goes through.
 TRACKER_USER="${TRACKER_USER:-}"
 
+# How many issues one page of the tracker listing holds — and, the same number,
+# the bound a page is measured against to decide whether there is another one.
+# 100 is what both forges allow; lower it only for an instance that will not
+# answer that much at once. One number on purpose: written twice they drift, and
+# the drift is silent in both directions — a page larger than the bound makes the
+# listing ask for pages for ever, a smaller one makes it stop on a full page and
+# call the first page the tracker ([76]).
+FORGE_PAGE="${FORGE_PAGE:-100}"
+
+# How many of those pages one listing may ask for. Reaching it is a **refusal**
+# and never a short list: a tracker with tickets missing from it is a frontier
+# missing them, a scope-guard answering that nobody declared their write-surface,
+# and a `Blocked by:` nobody can satisfy — and no caller can tell any of that from
+# a smaller tracker. Raise it for a repository holding more than
+# FORGE_PAGE × FORGE_PAGES issues, which is what the refusal says.
+FORGE_PAGES="${FORGE_PAGES:-20}"
+
 # Where the branch an iteration leaves is pushed, and what the pull (or merge)
 # request is opened against. The receipt of a remote backend **is** that request,
 # and pushing the branch is what makes the git objects the receipt names resolve

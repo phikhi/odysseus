@@ -75,3 +75,27 @@ minimiser la reprise, jamais l'urgence.
 
 `Blocked by:` écrit en conséquence : `[76] None`, `[74] None`, `[77] None`,
 `[75] 77`, `[73] 74, 75, 77`, et `[19]` gagne `73, 74, 75, 76, 77`.
+
+## Contrainte écrite par [76] (livré le 08/09/2026)
+
+Le listing distant a désormais **une source de refus de plus**, et elle n'a besoin
+d'aucune panne réseau pour arriver : `forge__listing` refuse quand il a atteint son
+plafond de pages (`FORGE_PAGES`, 20, sur des pages de `FORGE_PAGE`, 100) sans
+qu'aucune page ne soit venue courte. Un dépôt de plus de 2 000 issues rend donc
+`forge_ids` et `forge_frontier` non zéro, avec une phrase, **à tous les coups**.
+
+Ce que ça change pour ce ticket : le cas que la ligne du tableau de confiance
+décrivait comme « un listing qui a refusé arrive au pilote comme une frontière
+vide, et une frontière vide déclenche le gate de valeur terminal » n'est plus
+seulement un 404 ou un timeout — c'est aussi un dépôt trop gros, c'est-à-dire un
+état stable et reproductible plutôt qu'un incident. Le correctif attendu ici (faire
+lire à `loop.sh` le statut que la substitution de commande en heredoc avale) est le
+même ; ce qui change est le coût de ne pas le faire.
+
+**Et un second avaleur, trouvé en livrant [76] et non réparé là-bas** :
+`forge__slug_taken` lit `forge__records` dans un heredoc avec `|| printf ''`, donc
+un listing refusé s'y lit « ce slug n'est pas pris » et `forge_open_unique` ouvre un
+doublon. Il est dans l'adaptateur et non dans `loop.sh`, mais c'est la même règle —
+un refus n'est pas une réponse — et il devient certain plutôt qu'accidentel dès que
+le plafond de pages refuse : sur un gros dépôt, chaque ticket `retro-*` ou
+`capability-*` censé être ouvert une seule fois est rouvert à chaque run.
