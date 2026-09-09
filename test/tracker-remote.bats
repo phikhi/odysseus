@@ -1231,3 +1231,146 @@ T
 2-beta
 3-gamma"
 }
+
+# ── the two refusals the loop used to swallow ────────────────────────────────
+#
+# [74], and the reason these scenarios live here rather than in the canary: both
+# defects are in `loop.sh`, and neither is reachable on a backend that is a
+# directory this process owns. A local `frontier` cannot refuse and a local
+# `mark_resolved` almost never does — which is exactly why the loop read both of
+# them through constructions that throw a status away, and why nothing noticed
+# until an adapter that publishes existed.
+
+@test "a marking the forge refused is not a resolved line in the journal" {
+  # The shipped integration form and a pipeline that comes back red: the adapter
+  # escalates the ticket and refuses. This is a night's most ordinary refusal on
+  # this backend, not an incident — and the loop used to write `resolved` behind
+  # it without a glance, so the tracker said `ready-for-human` and `run.log` said
+  # `resolved` about the same ticket in the same minute.
+  use_forge github
+  set_config PLAYTHROUGH off
+  forge_seed 1 alpha Alpha <<'T'
+# 1 — Alpha
+
+**What to build:** Write the alpha marker file.
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+  forge_remote auto
+  forge_ci failure
+  remote__session_writing src/alpha.txt
+
+  run_loop
+  # The tracker is the authority, and it is where the adapter left it.
+  assert_equal "$(forge_field 1 Status)" "ready-for-human"
+  assert_equal "$(forge_field 1 Escalation)" "ci-red"
+  # And the journal now says the same thing about the same minute. Asserted on
+  # the tabulated pair and not on the word alone: `resolved` appears in this file
+  # for other reasons, and a refutation that matched one of those would pass for
+  # the wrong reason.
+  assert_file_contains "$FEATURE_DIR/run.log" "$(printf '1-alpha\tnot-marked')"
+  refute_file_contains "$FEATURE_DIR/run.log" "$(printf '1-alpha\tresolved')"
+  # Said once on the run's own output too, with what the tracker answers *now* —
+  # the sentence a human needs is "which of the two refusals was it".
+  assert_output_contains "refused to mark it resolved"
+  # The work is on the branch all the same, and the failure policy stayed out of
+  # it: nothing was wrong with this iteration, so nothing of this ticket's retry
+  # budget is spent on somebody else's refusal.
+  assert_file_contains "$PROJECT_DIR/src/alpha.txt" "written"
+  assert_equal "$(forge_field 1 Failures)" ""
+  # And the document this route already owed: the same audit receipt a `resolved`
+  # iteration produces — it emitted one before this outcome existed, under a word
+  # that was false — with a summary that now says what happened. On this backend
+  # the receipt is the pull request's description.
+  assert_equal "$(forge_request_body 1 | grep -c 'refused to mark the ticket resolved')" "1"
+  assert_equal "$(forge_request_body 1 | grep -c 'outcome: `not-marked`')" "1"
+}
+
+@test "a listing the forge refused does not start the terminal value gate" {
+  # The value gate is the one session entitled to close a feature, and an empty
+  # frontier is the only thing that starts it. A listing that refused is not one.
+  #
+  # Since [76] it is not a network blip either, and that is what this scenario
+  # stages: a repository past the pack's own page ceiling refuses **every**
+  # listing, at every pass, until somebody raises the ceiling. `FORGE_PAGE 2` and
+  # `FORGE_PAGES 1` put that ceiling two issues up, and the session — like any
+  # session that opens a ticket — grows the tracker past it while it works.
+  #
+  # What the run then looks like, measured rather than assumed: the ceiling is
+  # reached from *inside* the iteration too, so the scope-guard cannot say whose
+  # surface `src/alpha.txt` is ([76] again, and it says so), the iteration ends
+  # without a verdict and the ticket goes back. That is not what is under test and
+  # it does not have to be: what matters here is that an iteration happened — so
+  # the frontier scan below is on the path to `exit 0` where the value gate lives
+  # — and that the pass which finds the tracker unreadable does not take it for a
+  # drained frontier.
+  use_forge github
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 1
+  forge_seed 1 alpha Alpha <<'T'
+# 1 — Alpha
+
+**What to build:** Write the alpha marker file.
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'mkdir -p src && printf "written\\n" >>src/alpha.txt\n'
+    printf 'd="$RALPH_SHIM_STATE/forge"\n'
+    printf 'printf "extra" >"$d/issue.9.title"\n'
+    printf 'printf "**Status:** ready-for-human\\n\\n**Slug:** extra\\n" >"$d/issue.9.body"\n'
+    printf 'printf "open\\n" >"$d/issue.9.state"\n'
+    printf ': >"$d/issue.9.assignee"\n'
+    printf 'printf "9\\n" >>"$d/order"\n'
+    printf '%s\n' \
+      "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"total_cost_usd\":0.02}'"
+  } | script_claude
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "refused to list the frontier"
+  # In `run.log` and not only on a console, which is the rule every other thing
+  # this loop stops on follows ([49]): a night that ended on a tracker nobody
+  # could read has to appear in the file a human opens in the morning.
+  assert_file_contains "$FEATURE_DIR/run.log" "frontier-refused"
+  # The assertion the whole scenario exists for, and the one beside it that keeps
+  # it from being true for the wrong reason: the value gate never runs at
+  # `iteration = 0`, so "no value gate" only means something once a session has
+  # been spawned. One session and one only — no lens, no retro, no value gate.
+  assert_equal "$(playthrough_call_count)" "0"
+  assert_equal "$(claude_call_count)" "1"
+  # And it did not report a night of finished work either.
+  refute_output_contains "frontier empty after"
+}
+
+@test "the frontier count refuses rather than answering zero" {
+  # `select_frontier_count` answered with a pipeline, and a pipeline answers for
+  # its **last** command: `awk` printed `0` on a listing that never happened.
+  # Nobody in the pack reads this function today, which is why it is written down
+  # here rather than left alone — it is the shape [74] came to remove, and the
+  # next caller would inherit "the frontier is empty" from a tracker that refused.
+  use_forge github
+  set_config FORGE_PAGE 1
+  set_config FORGE_PAGES 1
+  remote__two
+
+  pack_run 'set +e; n="$(select_frontier_count)"; printf "rc=%s n=[%s]\n" "$?" "$n"'
+  assert_output_contains "rc=1 n=[]"
+
+  # The paired witness: a ceiling that fits, and the same call answers a number.
+  # Without it, "it refused" could be a function that refuses whatever it is
+  # given.
+  set_config FORGE_PAGES 4
+  pack_run 'select_frontier_count'
+  assert_success
+  assert_equal "$output" "2"
+}

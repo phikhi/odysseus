@@ -112,6 +112,15 @@
   dans des répertoires dont les gardes visent une autre forme »), qui n'avait
   été refermée que pour `issues/` ([49]).
 
+## Note écrite par [74] (livré le 09/09/2026)
+
+Un voisin dans le même fichier, ouvert le même jour : **[78]** — `forge__slug_taken`
+lit le listing dans un heredoc avec `|| printf ''`, donc un refus s'y lit « ce slug
+n'est pas pris » et `forge_open_unique` ouvre un doublon (certain, à chaque run,
+dès que le plafond de pages de [76] refuse). Ce n'est pas de la famille de ce
+ticket-ci — c'est [59] et non la zone comptable — mais il touche `forge.sh` et
+`test/tracker-remote.bats`, donc les livrer voisins économise une relecture.
+
 ## Place dans la file
 
 Ordre validé par Philippe le 08/09/2026, après la passe transversale du même

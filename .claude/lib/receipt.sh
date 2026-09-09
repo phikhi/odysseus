@@ -256,6 +256,9 @@ receipt__summary() {
     tracker-write)
       printf 'The session on `%s` edited the tracker, which takes the green away whatever the branches said. Read the verdicts below as a statement about the code and not as the reason this iteration failed: they may all be green.\n' "$ticket"
       ;;
+    not-marked)
+      printf 'The gate on `%s` was green, the work reached the branch, and the tracker refused to mark the ticket resolved ([74]). Read the verdicts below as this run'"'"'s verdict on the code — they are the same ones a `resolved` iteration would carry — and read the ticket itself for where the refusal left it: on a backend that waits for a pipeline, a red one escalates it to a human and this is what that looks like from here.\n' "$ticket"
+      ;;
     not-integrated)
       printf 'The gate on `%s` was green and the work never reached the branch. It stayed in a worktree this run then destroyed, so it did not happen: the ticket went back with no retry consumed and the run stopped.\n' "$ticket"
       ;;

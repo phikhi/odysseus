@@ -4,16 +4,125 @@
 
 **Blocked by:** None
 
-**Write-surface:** `.claude/loop.sh`, `.claude/lib/select.sh`, `test/loop-happy-path.bats`, `test/tracker-remote.bats`
+**Write-surface:** `.claude/loop.sh`, `.claude/lib/select.sh`, `test/loop-happy-path.bats`, `test/tracker-remote.bats` — plus `.claude/lib/receipt.sh`, `.claude/lib/retro.sh`, `test/retro.bats`, `test/mutate.sh` et `docs/frontiere-de-confiance.md`, **écart déclaré** (voir les commentaires de livraison).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Un `tracker_mark_resolved` refusé ne produit pas une ligne de journal `resolved`.
-- [ ] Une frontière que l'adaptateur a **refusé** de lire ne déclenche pas le gate de valeur terminal.
-- [ ] Aucune des deux corrections n'apprend à la boucle ce qu'est un backend : ce sont deux codes de retour de l'interface, lus.
-- [ ] Le chemin `local` garde exactement le comportement qu'il a aujourd'hui, `run.log` compris.
+- [x] Un `tracker_mark_resolved` refusé ne produit pas une ligne de journal `resolved`.
+- [x] Une frontière que l'adaptateur a **refusé** de lire ne déclenche pas le gate de valeur terminal.
+- [x] Aucune des deux corrections n'apprend à la boucle ce qu'est un backend : ce sont deux codes de retour de l'interface, lus.
+- [x] Le chemin `local` garde exactement le comportement qu'il a aujourd'hui, `run.log` compris.
 
 ## Comments
+
+### Livré le 09/09/2026 — ce que le code ne dit pas
+
+- **Ce qui a été livré, dans l'ordre des deux endroits.** *(1)* `loop.sh` teste
+  `tracker_mark_resolved` : vrai → `outcome=resolved`, faux → `outcome=not-marked`
+  et une ligne de run qui dit ce que le tracker répond **après** l'appel
+  (`tracker_field ID Status`), donc laquelle des deux formes de refus c'était — un
+  pipeline rouge laisse `ready-for-human`, un refus d'écriture laisse le ticket où
+  il était. *(2)* `loop__next_ticket` lit la frontière sur une ligne à elle
+  (`frontier="$(select_frontier)" || return 1`) au lieu de la lire dans le heredoc,
+  et rend `1` ; le pilote lit ce refus, attend tant qu'une itération est en vol,
+  puis journalise `frontier-refused`, imprime la phrase et sort en **4**. Rien
+  dans les deux ne sait ce qu'est un backend.
+
+- **La décision qui a coûté le plus de réflexion : un mot, et pas un état.** Le
+  commentaire d'ouverture prévenait qu'une valeur d'`outcome` de plus touche la
+  politique d'échec, le reçu et le compteur de stérilité. Ce qui a été fait :
+  `not-marked` est exempté de `failures_handle` **à côté de `resolved`** (l'itération
+  a livré ce qu'on lui demandait ; le budget de reprise du ticket n'a pas à payer le
+  refus d'un autre), il émet le reçu d'audit comme avant, et il reste demandé par le
+  rétro. Les deux dernières ne sont pas des ajouts : cette route produisait déjà un
+  document **et** une leçon, sous un mot qui était faux. Les enlever aurait été un
+  changement de comportement caché dans un renommage. `retro_wanted` a donc été
+  relu contre son critère et non contre ses mots ([31], [45]) : « qu'est-ce qui a
+  jugé le code » répond la même chose pour `not-marked` que pour `resolved`, le
+  gate ayant tourné, été vert, et le travail ayant atteint la branche.
+
+- **Ce qui change vraiment de comportement, et c'est assumé : le compteur de
+  stérilité.** Seul `resolved` le remet à zéro, donc une itération `not-marked` en
+  compte une. Conséquence sur un backend distant avec `WAIT_CI` : `STERILE_K`
+  pipelines rouges d'affilée arrêtent la nuit (exit 4) au lieu de la laisser
+  tourner. C'est cohérent avec la seule chose que le compteur mesure — « ce run n'a
+  rien résolu » — et avec le fait qu'une escalade le compte déjà. Avant [74] la
+  même nuit sortait en 0 après avoir mis chaque ticket dans le puits humain.
+
+- **Ce que la boucle ne fait pas, volontairement** : elle ne touche pas au claim
+  après un refus de marquage. Il est là où l'adaptateur l'a laissé — déposé sur
+  `ci-red` (la voie ordinaire), gardé sur un refus d'écriture, et la liveness de
+  [12] le récupère alors quand ce run est mort. Un `tracker_unclaim` ajouté ici
+  serait la boucle en train de décider à la place de l'adaptateur sur un tracker
+  qu'elle vient de ne pas pouvoir écrire.
+
+- **Le pilote attend, puis s'arrête.** Attendre tant qu'une itération est en vol :
+  celles-là vont écrire le tracker et un aléa peut avoir guéri d'ici là. S'arrêter
+  ensuite : `forge__api` a déjà redemandé la lecture trois fois, et depuis [76] le
+  refus le plus probable n'est pas un aléa mais un **état** — un dépôt au-delà du
+  plafond de pages refuse tous les listings, à tous les passages. Boucler dessus
+  serait une nuit à interroger une forge qui répond toujours la même chose.
+
+- **`select_frontier_count` a été corrigé aussi, bien que personne ne l'appelle.**
+  Même forme un cran plus bas : un pipeline répond pour son **dernier** maillon,
+  donc `awk` imprimait `0` pour un listing qui n'a pas eu lieu. Piège trouvé en
+  l'écrivant : `printf '%s\n' "$frontier"` sur une frontière vide donne une ligne
+  vide, donc `NR = 1` — le compte d'une frontière vide serait passé de `0` à `1`,
+  ce qu'un test existant de `test/tracker-local.bats` attrape. C'est `printf '%s'`.
+
+- **Sondes du run réel** (les deux scénarios ont été exécutés avec un dump avant
+  d'écrire les assertions, pas devinés) :
+  1. *Marquage refusé* — `WAIT_CI auto` + `forge_ci failure` : le ticket finit
+     `ready-for-human` / `ci-red`, `run.log` porte `1-alpha<TAB>not-marked`, la
+     requête ouverte porte le reçu d'audit complet avec la phrase de `not-marked`
+     et `outcome: not-marked`, `Failures:` est vide. C'est le run entier, pas
+     l'adaptateur seul.
+  2. *Listing refusé* — le plafond de pages atteint **pendant** que la session
+     travaille : une session (`claude=1`), **zéro** gate de valeur, sortie 4,
+     `frontier-refused` au journal. Ce que la sonde a montré et que rien ne
+     laissait prévoir : le plafond refuse aussi **à l'intérieur** de l'itération,
+     donc le scope-guard ne peut pas dire à qui appartient `src/alpha.txt` (il le
+     dit, [76]), et l'itération meurt sans verdict — `iteration-lost`, ticket rendu
+     à la frontière. Pas de faux vert au bout, et le test le dit au lieu de
+     raconter un run qu'il ne fait pas.
+
+- **Trois choses vues et non prises**, écrites ici et au tableau plutôt que
+  laissées à retrouver :
+  1. `forge__slug_taken` lit le listing dans un heredoc avec `|| printf ''` : un
+     refus s'y lit « ce slug est libre » et `forge_open_unique` ouvre un doublon.
+     C'est dans l'adaptateur, hors write-surface de ce ticket → **ticket [78]**
+     ouvert le 09/09/2026.
+  2. `claim_reclaim_stale` lit `tracker_ids` dans un heredoc de la même façon. Un
+     listing refusé y devient « aucun ticket », donc la balayeuse **n'agit pas**
+     au lieu d'agir à tort : le refus échoue du côté sûr, et c'est la raison de ne
+     pas en faire un ticket — mais c'est la même forme, donc c'est écrit.
+  3. Un refus de listing **pendant** une itération tue son sous-shell (la politique
+     d'échec écrit dans le tracker, et le refus voyage sous `set -e`). Le pilote le
+     nomme `iteration-lost` et rend le ticket ; personne ne ment, mais une
+     itération payée est perdue là où un message aurait suffi.
+
+- **Pièges de harnais, pour le suivant.** `FORGE_PAGE 2` + `FORGE_PAGES 1` avec
+  deux issues est la façon la moins chère de faire refuser **tous** les listings
+  d'un run sans simuler de panne — et ça met en scène l'état stable de [76]
+  plutôt qu'un incident. Une session scriptée peut faire grossir le faux tracker :
+  le shim `claude` exécute le script avec son propre environnement, donc
+  `$RALPH_SHIM_STATE/forge` est atteignable depuis la session (écrire `issue.N.*`
+  et une ligne dans `order`). Et sur un backend distant, le reçu d'audit se lit
+  avec `forge_request_body N`, pas dans un fichier.
+
+- **Ce que ce ticket a ajouté aux gates** : cinq tests (deux runs entiers dans
+  `test/tracker-remote.bats`, un unitaire sur `select_frontier_count`, le témoin
+  local dans `test/loop-happy-path.bats`, un unitaire sur `retro_wanted` dans
+  `test/retro.bats`) et **sept** mutations, dont deux témoins appairés — le mot
+  posé en dur dans l'autre sens (le run local doit redevenir rouge) et la liste du
+  rétro réduite à ce qu'elle était.
+
+- **Écart de write-surface, déclaré.** `receipt.sh` gagne la phrase de
+  `not-marked` (sans elle le reçu tombait dans le cas générique et disait « rien
+  ci-dessous n'est un verdict » d'une itération dont le gate était vert) ;
+  `retro.sh` gagne le mot dans `retro_wanted` (voir plus haut) ; `test/retro.bats`
+  et `test/mutate.sh` tiennent ces deux-là ; `docs/frontiere-de-confiance.md` était
+  obligatoire — trois lignes du tableau nommaient ce ticket comme propriétaire.
 
 - **Ouvert par [18], livré le 08/09/2026 : deux endroits, une seule forme.** La
   boucle lit l'interface de l'adaptateur à travers des constructions qui **jettent

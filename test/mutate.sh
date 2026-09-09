@@ -242,6 +242,7 @@ ROUTER=".claude/lib/router.sh"
 PLAYTHROUGH=".claude/lib/playthrough.sh"
 FORENSIC=".claude/lib/forensic.sh"
 FORGE=".claude/lib/forge.sh"
+SELECT=".claude/lib/select.sh"
 GITLAB=".claude/lib/tracker-gitlab.sh"
 GITHUB=".claude/lib/tracker-github.sh"
 HARNESS="test/helpers/harness.bash"
@@ -5535,6 +5536,57 @@ mutation "76 the page ceiling serves a short list instead of refusing" "$FORGE" 
 mutation "76 per_page and the bound are two numbers again" "$GITHUB" \
   's#per_page=\{size\}#per_page=100#' \
   test/tracker-remote.bats "are one number"
+
+# ── [74] the loop swallows the adapter's refusals ────────────────────────────
+
+# The marking, read. `resolved` posted behind a call nobody looked at was true of
+# a backend that is a file this process writes and false of one that publishes:
+# on a red pipeline the adapter escalates the ticket and refuses, and the journal
+# said `resolved` about a ticket the tracker calls `ready-for-human`.
+mutation "74 the marking's refusal is swallowed again" "$LOOP" \
+  's#        if tracker_mark_resolved "\$ticket"; then#        if tracker_mark_resolved "\$ticket" || true; then#' \
+  test/tracker-remote.bats "not a resolved line in the journal"
+
+# The paired witness, and it is the half that says the word is an answer rather
+# than a constant: a marking the tracker accepted has to still be `resolved`, on
+# the backend where it never refuses and in the file a human opens in the morning.
+mutation "74 a marking that succeeded is journalled as a refusal" "$LOOP" \
+  's#          outcome=resolved\n        else#          outcome=not-marked\n        else#' \
+  test/loop-happy-path.bats "because the marking said so"
+
+# The receipt of that iteration, which is the same document `resolved` produces
+# and must not describe it as one. Removing the case leaves the fallback, which
+# names the outcome and says nothing about what happened.
+mutation "74 the receipt of a refused marking says nothing about it" "$RECEIPT" \
+  's#    not-marked\)\n      printf \x27The gate on.*?\n      ;;\n##s' \
+  test/tracker-remote.bats "not a resolved line in the journal"
+
+# The frontier read, on the line where a status still exists. Back in the heredoc
+# it is a value with no status, and a listing that refused is indistinguishable
+# from a frontier that is empty — which is what starts the terminal value gate.
+mutation "74 a refused listing is an empty frontier again" "$LOOP" \
+  's#  frontier="\$\(select_frontier\)" \|\| return 1#  frontier="\$(select_frontier)" || frontier=\x27\x27#' \
+  test/tracker-remote.bats "does not start the terminal value gate"
+
+# And the pilot acting on it, which is a second entry because it is a second
+# thing: the function may refuse all it likes if the caller reads the refusal as
+# "no ticket this pass".
+mutation "74 the pilot reads a refused listing as no ticket" "$LOOP" \
+  's#    if \[ "\$frontier_refused" = 1 \]; then#    if false; then#' \
+  test/tracker-remote.bats "does not start the terminal value gate"
+
+# The fourth layer's list, read against its criterion rather than against the
+# outcomes that existed when it was written ([31], [45]): a green gate whose
+# marking the tracker refused judged the code exactly as `resolved` did.
+mutation "74 a refused marking is not lesson material" "$RETRO" \
+  's#    resolved \| not-marked \| gate-red\) ;;#    resolved | gate-red) ;;#' \
+  test/retro.bats "still an iteration that judged the code"
+
+# The same shape in the same file, on the function nobody calls yet: a pipeline
+# answers for its last command, so `awk` printed `0` for a tracker that refused.
+mutation "74 the frontier count answers zero on a refusal" "$SELECT" \
+  's#  local frontier\n  frontier="\$\(tracker_frontier\)" \|\| return 1\n  printf \x27%s\x27 "\$frontier" \| awk#  tracker_frontier | awk#' \
+  test/tracker-remote.bats "frontier count refuses"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

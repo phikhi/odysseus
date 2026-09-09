@@ -12,10 +12,11 @@
 #      working tree
 #   2  cannot run: no config, or a config that would make the gate meaningless
 #   4  stopped by a guard: stop requested, iteration cap, sterile run, a lock
-#      this run no longer holds, a rollback that could not put the tree back, or
-#      a feature the terminal value gate did not close ([11]) — the frontier
-#      emptied and the playthrough was not green and persisted, so this run
-#      ground everything it could and the feature still does not work
+#      this run no longer holds, a rollback that could not put the tree back, a
+#      frontier the tracker refused to list ([74]), or a feature the terminal
+#      value gate did not close ([11]) — the frontier emptied and the playthrough
+#      was not green and persisted, so this run ground everything it could and the
+#      feature still does not work
 #   5  nothing to grind: the frontier was already empty when the run started
 #   6  the usage budget blocks this run: a weekly limit, or a session window
 #      whose reset this run must not sleep to ([08])
@@ -567,7 +568,7 @@ loop__orphaned() {
 # did not create is one it could not clean up after a child that died hard.
 loop__iterate() {
   local ticket="$1" slot="$2" tree="$3" start="$4" provisioned="${5:-0}"
-  local outfile base pre seen issues rc turns cost tokens outcome
+  local outfile base pre seen issues rc turns cost tokens outcome tracker_says
   local tracker_written changed commit mark emit attempt
   local drift_subject drift_outcome drift_message
   local RALPH_ROLLBACK_FAILED=0
@@ -789,8 +790,29 @@ loop__iterate() {
       fi
       if [ -n "$commit" ] &&
         concurrency_integrate "$ticket" "$start" "$commit" "$changed"; then
-        tracker_mark_resolved "$ticket"
-        outcome=resolved
+        # **The other status this loop used to throw away** ([74]). The call was
+        # made and `resolved` written behind it without a glance, which was true
+        # for as long as the only backend was a file this process writes. It is
+        # not true of an adapter that publishes: on a remote backend `WAIT_CI` is
+        # on by default, a red pipeline makes the adapter escalate the ticket and
+        # refuse, and the journal then said `resolved` about a ticket the tracker
+        # calls `ready-for-human`. Both were exact — this run's gate was green,
+        # the forge's verdict came after it — and the pair is unreadable at eight
+        # in the morning.
+        #
+        # No new state is invented for it and the failure policy stays out: the
+        # ticket is where the adapter left it, this iteration delivered what it
+        # was asked for, and `Failures:` is not a retry budget to spend on
+        # somebody else's refusal. What changes is the word, and the sentence
+        # under it says what the tracker itself says now — asked *after* the call,
+        # so it reports the state rather than a guess about which refusal it was.
+        if tracker_mark_resolved "$ticket"; then
+          outcome=resolved
+        else
+          outcome=not-marked
+          tracker_says="$(tracker_field "$ticket" Status 2>/dev/null)" || tracker_says=''
+          loop_log "$ticket: the gate was green and the work is on the branch, and the tracker refused to mark it resolved — it says ${tracker_says:-nothing readable} now"
+        fi
         # The commit *this iteration wrote*, and deliberately not the branch tip
         # read back afterwards ([13]). At MAX_PARALLEL=1 they are the same object;
         # above it the fold may have replayed these paths onto a sibling's tip, and
@@ -925,7 +947,7 @@ loop__iterate() {
   fi
 
   case "$outcome" in
-    resolved | not-integrated) ;;
+    resolved | not-marked | not-integrated) ;;
     *)
       # Typed failures: the tree goes back to where the session found it, and
       # what happens to the ticket depends on what kind of failure this was —
@@ -1033,6 +1055,13 @@ FORENSIC
   # — which is what separates them from a fresh retry, and from the sterile stop,
   # where every iteration had its chance at a document and the ticket is intact:
   #
+  #   not-marked      the gate was green, the work reached the branch and the
+  #                   adapter refused the marking ([74]). No later iteration is
+  #                   coming: the ticket is wherever that refusal left it — in the
+  #                   human sink on a red pipeline — and it is not this run's to
+  #                   move. The document is the same one `resolved` produces, and
+  #                   it costs exactly what it cost before this outcome existed:
+  #                   that route emitted one too, under a word that was false.
   #   not-integrated  the gate was green, the work was committed inside a worktree
   #                   this run then destroyed, and the run stops. No commit on any
   #                   branch, no `failed/` ref, no change to the ticket: outside
@@ -1045,6 +1074,7 @@ FORENSIC
   #                   misses it exactly when the admissions matter most.
   emit=0
   [ "$outcome" != resolved ] || emit=1
+  [ "$outcome" != not-marked ] || emit=1
   [ "$outcome" != not-integrated ] || emit=1
   case "${RALPH_FAILURE_ACTION:-none}" in escalated:*) emit=1 ;; esac
   [ "${RALPH_ROLLBACK_FAILED:-0}" != 1 ] || emit=1
@@ -1126,15 +1156,28 @@ FORENSIC
 #
 # Nothing is not the same as an empty frontier, and the caller has to tell them
 # apart: a frontier full of tickets that all clash is a run with work left to do.
+#
+# **And neither of those is a frontier the adapter refused to read** ([74]). The
+# scan used to live in the heredoc itself — `<<FRONTIER` over `$(select_frontier)`
+# — and a command substitution there is a value with no status: a listing that
+# refused arrived as no lines at all, which is exactly what an empty frontier
+# looks like, and an empty frontier is the one thing that starts the terminal
+# value gate. So the read happens on a line of its own, where a status exists, and
+# this function answers `1` instead of answering nothing.
+#
+# Nothing here learns what a backend is. It is one return code of the adapter
+# interface, read — the same one `select_next_ticket` has always read, on the path
+# the pilot actually takes ([18] left this side of it to a ticket of its own).
 loop__next_ticket() {
-  local inflight="$1" candidate
+  local inflight="$1" candidate frontier
+  frontier="$(select_frontier)" || return 1
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
     concurrency_clashes "$candidate" "$inflight" && continue
     printf '%s\n' "$candidate"
     return 0
   done <<FRONTIER
-$(select_frontier)
+$frontier
 FRONTIER
   return 0
 }
@@ -1662,7 +1705,7 @@ UNCOVERED
     loop_log "no baseline of what a fresh session loads as a capability — a lens, an agent, a skill or a hook appearing under this run would go unremarked"
   fi
 
-  local iteration=0 sterile=0 ticket reclaimed rid rdisposition
+  local iteration=0 sterile=0 ticket frontier_refused=0 reclaimed rid rdisposition
   local budget_posture='' budget_paused=0 span pin
   local stop_code='' playthrough_rc=0
   local RALPH_FRONTIER_PIN=''
@@ -1817,7 +1860,34 @@ RECLAIMED
     # here is not the same as an empty frontier: a frontier whose every ticket
     # shares a write-surface with a running one is a run with work left to do, and
     # it waits instead of reporting a night finished.
-    ticket="$(loop__next_ticket "$(loop__inflight_ids)")"
+    frontier_refused=0
+    ticket="$(loop__next_ticket "$(loop__inflight_ids)")" || frontier_refused=1
+
+    # **A refusal is not an answer, and here it is not an empty one** ([74] on
+    # [59]). Everything below this line treats "no ticket" as "the frontier is
+    # drained", which spends the terminal value gate and then reports a finished
+    # night — on a listing that never happened. The status is read here rather than
+    # further down because the two answers part company at this exact point: an
+    # empty frontier is news, a refused one is the absence of news.
+    #
+    # It waits while anything is still in flight, for the reason the empty case
+    # does: those iterations are going to write the tracker, and a run that stops
+    # on a blip the pass after it healed costs a night. Once nothing is in flight
+    # there is nothing left to wait for — `forge__api` has already asked a read
+    # again before giving it up, and a refusal that survives that is a state and
+    # not a hiccup: a repository past the pack's own page ceiling refuses every
+    # listing, at every pass, for as long as it is that big ([76]).
+    if [ "$frontier_refused" = 1 ]; then
+      if [ -n "$LOOP_SLOTS" ]; then
+        loop__reap 1
+        continue
+      fi
+      loop_log "the tracker refused to list the frontier after $iteration iterations — stopping rather than reading a refusal as a night finished (feature=$FEATURE backend=$TRACKER_BACKEND)"
+      loop_journal_append - frontier-refused 0 0 0
+      stop_code=4
+      continue
+    fi
+
     if [ -z "$ticket" ]; then
       if [ -n "$LOOP_SLOTS" ]; then
         loop__reap 1

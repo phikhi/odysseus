@@ -37,6 +37,21 @@ teardown() {
   assert_equal "$(playthrough_call_count)" "1"
 }
 
+@test "the journal says resolved because the marking said so, not because it ran" {
+  # [74]'s other side, from the one that must not have moved. On this backend
+  # `mark_resolved` writes a file this process owns and does not refuse, so
+  # `run.log` says exactly what it said before the loop started reading that
+  # status — and the word is now the tracker's answer rather than a constant
+  # posted behind the call.
+  use_tickets 01-alpha
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  assert_file_contains "$FEATURE_DIR/run.log" "$(printf '01-alpha\tresolved')"
+  refute_file_contains "$FEATURE_DIR/run.log" "not-marked"
+}
+
 @test "resolving a blocker pulls the blocked ticket in, within the same run" {
   use_tickets 01-alpha 03-blocked
 
