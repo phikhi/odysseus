@@ -44,7 +44,14 @@
 
 ## Place dans la file
 
-Pas dans l'ordre validé par Philippe le 08/09/2026 ([74] → [77] → [75] → [73] →
-[19]) : ce ticket est né après. Il ne bloque personne et personne ne le bloque ;
-il touche `forge.sh`, comme [77], donc le livrer près de lui économise une
-relecture du même fichier. À ordonner par Philippe.
+**Placé par Philippe le 09/09/2026, juste après [77]** : la file devient
+**[77] → [78] → [75] → [73] → [19]**. Le critère est celui du dépôt — minimiser la
+reprise, jamais l'urgence : [77] et [78] touchent tous deux `forge.sh` et
+`test/tracker-remote.bats`, donc les livrer voisins économise une relecture du même
+fichier, et [78] est la plus petite des deux surfaces.
+
+**`Blocked by:` reste `None`, et c'est une décision.** Rien de [78] ne dépend de
+[77] : la position dans la file est un choix d'ordonnancement, pas une dépendance,
+et écrire une fausse arête ferait sortir ce ticket de la frontière si [77] était
+mis de côté. Ce qui suit [78] ne change pas non plus — `[75] 77`, `[73] 74, 75,
+77`, `[19] 73, 74, 75, 76, 77`.

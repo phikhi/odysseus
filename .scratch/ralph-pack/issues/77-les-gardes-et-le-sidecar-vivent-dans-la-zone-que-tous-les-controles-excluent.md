@@ -120,6 +120,9 @@ n'est pas pris » et `forge_open_unique` ouvre un doublon (certain, à chaque ru
 dès que le plafond de pages de [76] refuse). Ce n'est pas de la famille de ce
 ticket-ci — c'est [59] et non la zone comptable — mais il touche `forge.sh` et
 `test/tracker-remote.bats`, donc les livrer voisins économise une relecture.
+**Philippe l'a placé juste derrière ce ticket le 09/09/2026** : la file est
+**[77] → [78] → [75] → [73] → [19]**. Sans arête entre les deux — ce qui est
+livré ici ne conditionne rien de [78], et inversement.
 
 ## Place dans la file
 
