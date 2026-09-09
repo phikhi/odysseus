@@ -1374,3 +1374,335 @@ T
   assert_success
   assert_equal "$output" "2"
 }
+
+# ── [77] the local facts this backend keeps in a file of this tree ───────────
+#
+# Three things only this machine knows live in `.scratch/<feature>/.forge-claims`,
+# append-only with the last line winning: who holds a ticket (which is the whole
+# of `claim.sh`'s liveness on a backend where a pid means nothing on another
+# host), the number of the open request, and the URL the human sink shows as the
+# audit receipt. That directory is the one every control of this pack steps over
+# — `gate_is_bookkeeping` takes it out of the scope-guard, `failures_protect_tracker`
+# only ever looked at `issues/`, and the witness of [70] knows refs, receipt
+# **files** and the playthrough.
+#
+# Measured on 08/09/2026 (`sondes/passe-08-09/q2-*.bats`), on **green** iterations
+# each time: one appended line with a live pid silenced `claim_reclaim_stale` and
+# emptied the frontier; one appended `receipt` line made the drain's dossier send a
+# human to a request of the session's choosing, under a reserve written about a
+# network the URL never came from.
+#
+# What is delivered is the **remise** — a run reads the copy it took before its
+# first session, so a line appended under it decides nothing — plus the naming,
+# because the file on disk keeps the line and every reader outside a run, the
+# drain included, reads the file.
+
+remote__sidecar() { printf '%s/.forge-claims\n' "$FEATURE_DIR"; }
+
+# A sink ticket for the drain, and one the loop can actually deliver.
+remote__sink_and_work() {
+  forge_seed 1 decision 'For the drain' <<'T'
+# 1 — For the drain
+
+**What to build:** Something a human has to arbitrate.
+
+**Status:** ready-for-human
+
+**Escalation:** decision
+
+**Write-surface:** `src/one.txt`
+
+**Blocked by:** None
+T
+  forge_seed 2 alpha Alpha <<'T'
+# 2 — Alpha
+
+**What to build:** Write the alpha marker file.
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+}
+
+@test "a receipt line a session appends to the sidecar is named on both documents" {
+  use_forge github
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+  remote__sink_and_work
+  # A remote to push the branch of the iteration to, which is what makes the
+  # receipt of this backend a request that exists.
+  forge_remote off
+
+  # The session reaches the main tree the way any session does — `git worktree
+  # list` names it, and the harness hands the same path to a fake — and appends
+  # one line about a ticket it never touched.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
+main="$(cat "$RALPH_SHIM_STATE/project-dir")"
+feature="$(basename "$(ls -d "$main"/.scratch/*/ | head -1)")"
+printf '1-decision\treceipt\thttps://forge.invalid/pull/9999\n' \
+  >>"$main/.scratch/$feature/.forge-claims"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  # The iteration was green — this is a run nobody has any reason to look at, and
+  # that is the whole point.
+  assert_equal "$(forge_field 2 Status)" "resolved"
+
+  # What the run said, and what it wrote down. The sentence goes to the run's own
+  # output and the line to the journal, which is the pair every other drift of
+  # this loop travels as ([15]: the journal is the one durable document on the
+  # iteration a run stops on, and it has to say where to go and look).
+  assert_output_contains \
+    "the local record this backend keeps about a ticket moved while this run was in flight"
+  assert_output_contains "receipt appeared in"
+  assert_output_contains "1-decision"
+  assert_file_contains "$FEATURE_DIR/run.log" "sidecar-drift"
+  assert_file_contains "$FEATURE_DIR/run.log" ".forge-claims"
+  # And the receipt, which on this backend is the request's body.
+  assert_equal "$(forge_request_body 1 |
+    grep -c 'the local record this backend keeps about a ticket moved')" "1"
+
+  # It named and put nothing back: the line is still where the session wrote it.
+  assert_file_contains "$(remote__sidecar)" "https://forge.invalid/pull/9999"
+}
+
+@test "a run that wrote its own records accuses nobody of them" {
+  # The paired witness, and it is the assertion that costs the most: this run
+  # writes the sidecar itself on an ordinary green iteration — a claim, a request
+  # and a receipt — so a comparison that read the file against its baseline alone
+  # would report every one of them, on every night, and the line above would mean
+  # nothing.
+  use_forge github
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+  remote__sink_and_work
+  # A remote to push the branch of the iteration to, which is what makes the
+  # receipt of this backend a request that exists.
+  forge_remote off
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_equal "$(forge_field 2 Status)" "resolved"
+  # The run really did write records of its own, or this would be a witness on an
+  # empty file.
+  assert_file_contains "$(remote__sidecar)" "receipt"
+  assert_file_contains "$(remote__sidecar)" "claim"
+  refute_file_contains "$FEATURE_DIR/run.log" "sidecar-drift"
+  refute_output_contains "the local record this backend keeps about a ticket moved"
+}
+
+@test "the receipt of an iteration goes into the request this run opened, not the one a session named" {
+  # The remise, measured on the record where obeying a forged line is a **write**
+  # this pack makes somewhere it was never asked to. `forge__request` opens the
+  # request once and rewrites it afterwards, and which one it rewrites is the
+  # `request` record of this file: one appended line and the receipt of this
+  # iteration is `PATCH`ed into a request of the session's choosing — with the
+  # branch of the iteration pushed under it.
+  use_forge github
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+  remote__sink_and_work
+  # A remote to push the branch of the iteration to, which is what makes the
+  # receipt of this backend a request that exists.
+  forge_remote off
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+mkdir -p src && printf 'alpha\n' >src/alpha.txt
+main="$(cat "$RALPH_SHIM_STATE/project-dir")"
+feature="$(basename "$(ls -d "$main"/.scratch/*/ | head -1)")"
+printf '2-alpha\trequest\t4242\n' >>"$main/.scratch/$feature/.forge-claims"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_equal "$(forge_field 2 Status)" "resolved"
+  # Nothing was written into the request the session named.
+  assert_equal "$(forge_request_body 4242)" ""
+  # And the receipt really was emitted, into the request this run opened — or the
+  # line above would be true of a run that emitted nothing at all.
+  assert_equal "$(forge_request_body 1 | grep -c '## Verdicts')" "1"
+  assert_file_contains "$FEATURE_DIR/run.log" "sidecar-drift"
+}
+
+@test "a claim a session appends is neither read nor swallowed" {
+  # `forge__claimed` answers `tracker_field ID Claimed` out of this file, so one
+  # line with a pid that answers `kill -0` is a ticket `claim_reclaim_stale`
+  # leaves `claimed` — for the rest of the night, and for ever with `CLAIM_TTL`
+  # disabled, the reading [12] allows on purpose.
+  #
+  # Driven through the module rather than through a run, for the reason the probe
+  # of the pass was: what is under test is which file a read resolves against, and
+  # a run reclaims on its first scan — before any session exists to append
+  # anything.
+  use_forge github
+  forge_seed 2 alpha Alpha <<'T'
+# 2 — Alpha
+
+**Status:** claimed
+
+**Claimed:** owner=pid:999999 at=2020-01-01T00:00:00Z
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+  mkdir -p "$FEATURE_DIR"
+  printf '2-alpha\tclaim\towner=pid:999999 at=2020-01-01T00:00:00Z\n' \
+    >>"$(remote__sidecar)"
+
+  # A witness, then a line a session could leave behind in one `printf`: this
+  # shell's own pid, which certainly answers. The drift is read **before** the
+  # reclaim, because the reclaim drops the claim record itself — a record the
+  # pack has since rewritten is not a forgery any more, and asserting after it
+  # would be asserting on the wrong instant.
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  export TMPDIR="$RALPH_TEST_DIR/tmp"
+  pack_run '
+    d="$(mktemp -d "$TMPDIR/ralph-test-witness.XXXXXX")"
+    tracker_sidecar_witness "$d"
+    printf "2-alpha\tclaim\towner=pid:$$ at=$(ralph_now)\n" >>"$(tracker_sidecar_path)"
+    printf "claimed=[%s]\n" "$(tracker_field 2-alpha Claimed)"
+    tracker_sidecar_drift "$d"
+    printf "reclaim=[%s]\n" "$(claim_reclaim_stale)"'
+  # Not read: the record this run holds is the dead one, so the ticket comes back.
+  assert_output_contains "claimed=[owner=pid:999999 at=2020-01-01T00:00:00Z]"
+  assert_output_contains "reclaim=[2-alpha "
+  assert_equal "$(forge_field 2 Status)" "ready-for-agent"
+  # Not swallowed either.
+  assert_output_contains "sidecar-drift"
+  assert_output_contains "which is the whole of its liveness"
+}
+
+@test "the same line, with no witness, is the tracker's answer" {
+  # The paired witness of the line above, and it is the whole of what [77]
+  # delivers: without the copy this is what every reader gets, and it is what the
+  # drain still gets — which is why the dossier names the file.
+  use_forge github
+  forge_seed 2 alpha Alpha <<'T'
+# 2 — Alpha
+
+**Status:** claimed
+
+**Claimed:** owner=pid:999999 at=2020-01-01T00:00:00Z
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+  mkdir -p "$FEATURE_DIR"
+  printf '2-alpha\tclaim\towner=pid:999999 at=2020-01-01T00:00:00Z\n' \
+    >>"$(remote__sidecar)"
+
+  pack_run '
+    printf "2-alpha\tclaim\towner=pid:$$ at=$(ralph_now)\n" >>"$(tracker_sidecar_path)"
+    printf "claimed=[%s]\n" "$(tracker_field 2-alpha Claimed)"
+    printf "reclaim=[%s]\n" "$(claim_reclaim_stale)"'
+  refute_output_contains "claimed=[owner=pid:999999"
+  assert_output_contains "reclaim=[]"
+  assert_equal "$(forge_field 2 Status)" "claimed"
+}
+
+@test "the instant between the two writes is not a record somebody deleted" {
+  # `forge__record_local` writes the copy first and the file second, and that
+  # order opens a window on purpose: for as long as it lasts, the copy holds a
+  # record the file does not. A comparison that reported it would accuse this run
+  # of deleting what it is in the middle of writing — and it would do it on every
+  # ordinary claim, which is the false alarm that makes a morning line unreadable.
+  # Only a key of the **baseline** is reported as gone.
+  #
+  # Staged directly and not through a run: the window is microseconds wide, so a
+  # scenario that raced it would be a test that passes by luck. What is under test
+  # is which side of that window the comparison errs on.
+  use_forge github
+  remote__sink_and_work
+  mkdir -p "$FEATURE_DIR"
+  printf '1-decision\treceipt\thttps://forge.invalid/pull/1\n' >>"$(remote__sidecar)"
+
+  mkdir -p "$RALPH_TEST_DIR/tmp"
+  export TMPDIR="$RALPH_TEST_DIR/tmp"
+  pack_run '
+    d="$(mktemp -d "$TMPDIR/ralph-test-witness.XXXXXX")"
+    tracker_sidecar_witness "$d"
+    printf "2-alpha\tclaim\towner=pid:$$ at=$(ralph_now)\n" >>"$d/sidecar"
+    printf "midwrite=[%s]\n" "$(tracker_sidecar_drift "$d")"
+    : >"$(tracker_sidecar_path)"
+    printf "truncated=[%s]\n" "$(tracker_sidecar_drift "$d")"'
+
+  # The record the run is writing: nothing said about it.
+  assert_output_contains "midwrite=[]"
+  # And its paired witness, which is what keeps the silence above from being a
+  # comparison that never speaks: a record of the baseline that the file no longer
+  # carries **is** a session emptying the file, and it is named.
+  assert_output_contains "receipt is gone from"
+  assert_output_contains "1-decision"
+  # And still nothing about the record this run added and the file never held.
+  refute_output_contains "claim is gone from"
+}
+
+@test "the dossier says where a remote receipt's URL was read, which is not the network" {
+  # [70] put a reserve under the two objects the dossier shows, and [18] made it
+  # two reserves because on this backend the receipt is a request nothing in this
+  # repository attests. Both are about the **object**. Where the object *is* is
+  # read here, in a file of this tree that a session appends to — so the reserve
+  # sent a human to look at a service they had never been sent to by anything but
+  # this line.
+  use_forge github
+  remote__sink_and_work
+  mkdir -p "$FEATURE_DIR"
+  printf '1-decision\treceipt\thttps://forge.invalid/pull/9999\n' >>"$(remote__sidecar)"
+
+  run bash -c 'printf "n\nq\n" | bash "$0"' "$PACK_DIR/human-loop.sh"
+  assert_output_contains "https://forge.invalid/pull/9999"
+  assert_output_contains "Where that receipt is, though, is not read over the network"
+  assert_output_contains ".forge-claims"
+  assert_output_contains "The URL above is whichever line won"
+  # The reserve written for the object itself is still there: this adds a
+  # sentence, it does not replace one.
+  assert_output_contains "this backend keeps it on its own service"
+
+  # And never under a line that says there is none, which is the rule the reserve
+  # above already follows ([70]): a caveat about an absence teaches a reader to
+  # distrust the one certain sentence of this dossier. A ticket with a branch and
+  # no receipt record is the case that tells the two apart — the rest of the
+  # reserve is printed for the branch, and this sentence is not.
+  git -C "$PROJECT_DIR" update-ref refs/heads/failed/2-alpha HEAD
+  pack_run 'router_dossier 2-alpha'
+  assert_output_contains "receipt  none was kept for this ticket."
+  assert_output_contains "a ref is a path in no"
+  refute_output_contains "is not read over the network"
+}
+
+@test "a backend that keeps no such file says nothing about one" {
+  # The paired witness, on the local backend: its claim is a field of the ticket
+  # file, which `failures_protect_tracker` puts back around every session, and its
+  # receipt is a path composed from an id rather than a location it remembers. A
+  # reserve about a file it does not keep would be a caveat about nothing, and the
+  # three refusals are one answer rather than three gaps.
+  use_tickets 09-escalated
+  pack_run 'set +e
+    tracker_sidecar_path; printf "path=%s\n" "$?"
+    tracker_sidecar_witness /nonexistent; printf "witness=%s\n" "$?"
+    tracker_sidecar_drift /nonexistent; printf "drift=%s\n" "$?"'
+  assert_output_contains "path=1"
+  assert_output_contains "witness=1"
+  assert_output_contains "drift=1"
+  # And no backend of this pack ever prints the dispatcher's "does not implement".
+  refute_output_contains "does not implement"
+
+  pack_run 'router_dossier 09-escalated'
+  assert_output_contains "receipt"
+  refute_output_contains "is not read over the network"
+  refute_output_contains ".forge-claims"
+}

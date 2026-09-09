@@ -212,6 +212,47 @@ forensic__green_session_that() {
   assert_output_contains "(nothing to say)"
 }
 
+@test "the same sentence says what of a remote backend is in this tree after all" {
+  # [77]. The line above is true of the receipt and reads as "nothing local is
+  # held", which is what made a whole file invisible: on this backend *where* the
+  # receipt is, and *who* holds a ticket, are records of `.scratch/<feature>/`,
+  # which no scope-guard judges and no rollback undoes. A run says both halves in
+  # the same breath, or the first one teaches a reader to look in the wrong place.
+  use_forge github
+  pack_run 'forensic_uncovered'
+  assert_success
+  assert_output_contains "does not keep audit receipts in a directory"
+  assert_output_contains ".forge-claims"
+  assert_output_contains "reads the copy it took before its first session"
+  assert_output_contains "[77]"
+}
+
+@test "a run that cannot copy the tracker's local facts is a run with no witness" {
+  # The refusal is the same one the manifest gives, for the same reason: a run
+  # holding half a copy of the liveness of its own tracker would reclaim tickets
+  # nobody abandoned. Refused here and not swallowed — `loop.sh` keeps the night
+  # and says the line, which is [70]'s posture for a witness it could not take.
+  use_forge github
+  mkdir -p "$FEATURE_DIR"
+  printf '2-alpha\tclaim\towner=pid:1 at=2020-01-01T00:00:00Z\n' \
+    >"$FEATURE_DIR/.forge-claims"
+  chmod 0000 "$FEATURE_DIR/.forge-claims"
+
+  mkdir -p "$RALPH_TEST_DIR/witness"
+  pack_run 'set +e
+    forensic_witness "$(cat "$RALPH_SHIM_STATE/project-dir")/../witness"
+    printf "rc=%s\n" "$?"'
+  chmod 0644 "$FEATURE_DIR/.forge-claims"
+  assert_output_contains "rc=1"
+
+  # The paired witness: the same call on a file it can read answers zero, or the
+  # line above would be true of a function that refuses whatever it is given.
+  pack_run 'set +e
+    forensic_witness "$(cat "$RALPH_SHIM_STATE/project-dir")/../witness"
+    printf "rc=%s\n" "$?"'
+  assert_output_contains "rc=0"
+}
+
 # ── what a run says about a session that wrote one ───────────────────────────
 
 @test "a green iteration whose session writes a forensic ref is named on both documents" {

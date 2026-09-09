@@ -153,3 +153,25 @@ minimiser la reprise, jamais l'urgence.
 
 `Blocked by:` écrit en conséquence : `[76] None`, `[74] None`, `[77] None`,
 `[75] 77`, `[73] 74, 75, 77`, et `[19]` gagne `73, 74, 75, 76, 77`.
+
+## Note écrite par [77] (livré le 09/09/2026)
+
+Deux précédents à reprendre, tous deux mesurés sur le sidecar :
+
+- **une opération d'interface qui prend le répertoire témoin du run en argument**
+  (`tracker_sidecar_witness DIR` / `tracker_sidecar_drift DIR`), rangée dans le
+  bras des **lectures** de `tracker__dispatch` : elle n'écrit aucun ticket, donc
+  elle n'a rien à faire dans le registre de [13]. Un backend qui ne garde rien de
+  ce genre refuse explicitement les trois, plutôt que de ne pas les implémenter —
+  sinon le dispatcher imprime « does not implement » sur la console de chaque
+  drain ;
+- **un adaptateur qui rend `subject<TAB>outcome<TAB>message`** plutôt que
+  d'imprimer, et que `forensic_drift` fait voyager sur les deux canaux de [70].
+  La phrase est celle de l'adaptateur, parce que lui seul sait ce qu'un de ses
+  records décide ; les canaux sont ceux du module, pour qu'une itération n'ait
+  qu'une lecture.
+
+Et une contrainte : la remise que [77] livre est **par run** et ne remet rien sur
+le disque. Ce que ce ticket-ci ajoute — une restauration du tracker distant — doit
+dire ce qu'il fait du sidecar, qui est ce qui décide *qui tient* les tickets
+restaurés.

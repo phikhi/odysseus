@@ -193,7 +193,9 @@ gate_preflight() {
 #
 # One finding per line since [49], because the second one is not a sentence about
 # `$TMPDIR` at all: what a killed run leaves in the feature directory is an
-# exclusion guard, and it is counted on liveness rather than on age.
+# exclusion guard, and it is counted on liveness rather than on age. Since [77]
+# that half is two lines and two directories — a guard nobody owns any more, and
+# a guard somebody *does*, which is the one that stops a night.
 #
 # The count was six names out of eighteen until [62], which is [31]'s shape and
 # [45]'s: a criterion written in the sentence — *what a killed run left in
@@ -288,6 +290,86 @@ NAMES
   return 0
 }
 
+# **Two directories and not one, since [77].** A guard belongs where the thing it
+# serialises is, which is a decision [49] made on purpose: the guard of the whole
+# tracker sits beside the run lock, and the guard of one ticket sits beside that
+# ticket. The local backend's claim guard is therefore `issues/<id>.md.guard`, one
+# level below the two globs this used to walk — so the one exclusion that can
+# refuse a claim ticket by ticket was the one nothing counted. Which directory
+# holds the tickets is asked of the adapter and never composed here, for
+# `tracker_tickets_dir`'s own reason; a backend that keeps them on a service
+# answers nothing and this walks one directory, as before.
+#
+# One line per guard, `<path><TAB><pid><TAB><since>`, with an empty pid for a
+# guard that names none. The path and not the basename: with two directories in
+# play, `01-alpha.md.guard` said alone no longer says where to go and look.
+gate_guards() {
+  local dir guard owner since
+  set --
+  if [ -n "${FEATURE:-}" ]; then
+    dir="$(ralph_feature_dir)" || dir=''
+    [ -n "$dir" ] && [ -d "$dir" ] && set -- "$@" "$dir"
+  fi
+  dir="$(tracker_tickets_dir 2>/dev/null)" || dir=''
+  [ -n "$dir" ] && [ -d "$dir" ] && set -- "$@" "$dir"
+  [ "$#" -gt 0 ] || return 1
+  for dir in "$@"; do
+    for guard in "$dir"/*.guard "$dir"/.*.guard; do
+      [ -d "$guard" ] || continue
+      owner="$(cat "$guard/pid" 2>/dev/null)" || owner=''
+      since="$(cat "$guard/since" 2>/dev/null)" || since=''
+      printf '%s\t%s\t%s\n' "$guard" "$owner" "$since"
+    done
+  done
+  return 0
+}
+
+# The guards that were already there when this entry point took its locks, one
+# path per line, into the run's own witness directory ([77]).
+#
+# It is the only thing that makes "not this run's" measurable at all. `state.sh`
+# has no compare-and-swap to offer and says so, and "foreign" cannot be decided
+# after the fact from a pid — but a guard that exists **before** a run has started
+# anything is one no iteration of that run is holding, whoever owns it. Taken at
+# the same instant as the other witnesses of the night, in `$TMPDIR` under a
+# `mktemp` name the pilot never exports ([30], [40]).
+gate_guard_witness() {
+  local dir="${1:-}"
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  { gate_guards || true; } | cut -f1 >"$dir/guards" 2>/dev/null || return 1
+  return 0
+}
+
+# The exclusion guards of this tree that are held **right now** by a process that
+# answers, and whether this run met each of them before it started anything.
+# Non-zero when there are none, so a caller reads it like every other event
+# channel here ([45]).
+#
+# What it is for is a sentence and never a decision: nothing in this pack breaks a
+# live guard. Breaking one is the outcome [77] refused — "foreign" is not
+# measurable after the fact, and a run that displaced a live guard would take a
+# ticket from whoever legitimately holds it.
+gate_guard_note() {
+  local dir="${1:-}" guard owner since names='' n=0 when
+  while IFS="$(printf '\t')" read -r guard owner since; do
+    [ -n "$guard" ] || continue
+    [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null || continue
+    when='and it appeared while this run was already running'
+    if [ -n "$dir" ] && [ -f "$dir/guards" ] &&
+      grep -qxF -- "$guard" "$dir/guards" 2>/dev/null; then
+      when='and it was already there when this run took its locks, so no iteration of this run is holding it'
+    fi
+    n=$((n + 1))
+    names="$names; $guard is held by pid $owner${since:+ since $since}, $when"
+  done <<GUARDS
+$(gate_guards || true)
+GUARDS
+  [ "$n" -gt 0 ] || return 1
+  printf '%s exclusion guard(s) of this tree are held by a live process%s\n' \
+    "$n" "$names"
+  return 0
+}
+
 # And what a killed run leaves *inside* the feature directory: an exclusion guard
 # nobody owns any more ([49]).
 #
@@ -304,25 +386,54 @@ NAMES
 # Liveness rather than the age used above, and the difference is which question
 # each one can answer. `$TMPDIR` is shared with runs of other repositories, so
 # ownership there is unknowable and a day of silence is the only evidence
-# available. This directory belongs to one feature of one tree, which this run
+# available. These directories belong to one feature of one tree, which this run
 # holds the lock on: a guard whose owner still answers `kill -0` belongs to
 # something alive, and one whose owner does not belongs to nobody at all.
+#
+# **And a live owner is a second line since [77], where it used to be silence.**
+# It was left out on the reading that naming it would be a false alarm — "a
+# sibling run of another feature, this very process". That reading does not hold
+# where these guards actually are: both directories are this feature's, and this
+# entry point holds the run lock on it, so no other run of this pack can be in
+# them. What a live owner here really is, measured on 08/09/2026
+# (`sondes/passe-08-09/q2`, Q2e and Q2f): a directory with a live pid in it stops
+# the night on both backends — every claim refused, `STERILE_K` sterile
+# iterations, `rc=4` — while the run says the tracker refused the write and names
+# nobody. This runs before a single iteration exists, which is the one instant at
+# which "not this run's" is a fact and not a guess, and it is the same fact
+# `gate_guard_witness` writes down for the sentence a refused claim prints.
 gate__stale_guards() {
-  local dir guard owner names='' n=0
-  [ -n "${FEATURE:-}" ] || return 1
-  dir="$(ralph_feature_dir)" || return 1
-  [ -d "$dir" ] || return 1
-  for guard in "$dir"/*.guard "$dir"/.*.guard; do
-    [ -d "$guard" ] || continue
-    owner="$(cat "$guard/pid" 2>/dev/null)" || owner=''
-    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then continue; fi
-    n=$((n + 1))
-    names="$names $(basename "$guard")"
-  done
-  [ "$n" -gt 0 ] || return 1
-  printf '%s exclusion guard(s) left in %s by an earlier run:%s — the owner is gone, nothing here removes them, and the next caller that needs one takes it over without a word\n' \
-    "$n" "$dir" "$names"
-  return 0
+  local guard owner since gone='' live='' nd=0 nl=0 rc=1
+  while IFS="$(printf '\t')" read -r guard owner since; do
+    [ -n "$guard" ] || continue
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+      nl=$((nl + 1))
+      live="$live $guard (pid $owner${since:+, since $since})"
+    else
+      nd=$((nd + 1))
+      gone="$gone $guard"
+    fi
+  done <<GUARDS
+$(gate_guards || true)
+GUARDS
+  if [ "$nd" -gt 0 ]; then
+    printf '%s exclusion guard(s) left in this tree by an earlier run:%s — the owner is gone, nothing here removes them, and the next caller that needs one takes it over without a word\n' \
+      "$nd" "$gone"
+    rc=0
+  fi
+  # And the one that bites, which this counted as nothing until [77]: a guard
+  # whose owner **answers**. `state_guard_take` respects it, so every claim of the
+  # ticket it covers is refused for as long as that process lives — after
+  # `STERILE_K` of those the night stops. This entry point has just taken its
+  # locks and started nothing, so a guard alive at this instant is one it does not
+  # hold. Said and not swept, like its neighbour: displacing a live guard would be
+  # this pack stealing a ticket from whoever legitimately holds it.
+  if [ "$nl" -gt 0 ]; then
+    printf '%s exclusion guard(s) in this tree are held by a live process that is not this run, which has started nothing yet:%s — while one is held every write it serialises is refused, and nothing here takes it over or removes it\n' \
+      "$nl" "$live"
+    rc=0
+  fi
+  return "$rc"
 }
 
 # And what a successor nobody woke leaves beside the tree lock ([53]).

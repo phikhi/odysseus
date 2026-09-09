@@ -2677,8 +2677,13 @@ mutation "10 the attempt is always the first one" "$LOOP" \
 # compare", not "did it touch the disk". The guarantee under test is unchanged and
 # was re-checked before the anchor moved: `emit_receipt` is still on the read side,
 # so it still hands no id to the restore and the quarantine.
+# Re-anchored again by [77], which added `sidecar_path`, `sidecar_witness` and
+# `sidecar_drift` to the same list — three reads by the same criterion: none of
+# them writes a ticket, and `sidecar_witness` writes only into the run's own
+# directory in `$TMPDIR`. The guarantee under test is unchanged and was re-checked
+# before the anchor moved.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | sidecar_path | sidecar_witness | sidecar_drift)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -3357,11 +3362,13 @@ mutation "49 a guard a dead run left behind is counted by nobody" "$GATE" \
   's/^gate__stale_guards\(\) \{/gate__stale_guards() { return 1;/m' \
   test/gate.bats "left holding inside the feature"
 
-# Its twin, and the reason the count is asserted rather than the sentence: a guard
-# whose owner still answers belongs to something alive, and naming it would be the
-# false alarm that makes a morning line unreadable.
+# Its twin, and what it asserts changed shape with [77] without changing what it
+# is for: a guard whose owner still answers is a different fact from one nobody
+# owns, and putting it on the line that says an earlier run left it behind is the
+# false alarm that makes a morning line unreadable. It now has a line of its own
+# instead of silence, and this entry is what keeps the two apart.
 mutation "49 a guard something alive is holding is counted as a leak" "$GATE" \
-  's/    if \[ -n "\$owner" \] && kill -0 "\$owner" 2>\/dev\/null; then continue; fi\n//' \
+  's/    if \[ -n "\$owner" \] && kill -0 "\$owner" 2>\/dev\/null; then\n      nl=/    if false; then\n      nl=/' \
   test/gate.bats "left holding inside the feature"
 
 # A ticket no iteration could claim had no line in `run.log` at all: the run ended
@@ -5587,6 +5594,95 @@ mutation "74 a refused marking is not lesson material" "$RETRO" \
 mutation "74 the frontier count answers zero on a refusal" "$SELECT" \
   's#  local frontier\n  frontier="\$\(tracker_frontier\)" \|\| return 1\n  printf \x27%s\x27 "\$frontier" \| awk#  tracker_frontier | awk#' \
   test/tracker-remote.bats "frontier count refuses"
+
+# ── [77] the guards and the sidecar, in the zone every control steps over ────
+
+# The remise itself: which file a read of this backend resolves against. Back on
+# the sidecar, one line a session appends is the answer `tracker_field ID Claimed`
+# gives — and `claim_reclaim_stale` leaves the ticket `claimed` for the night.
+mutation "77 a read resolves against the file a session appends" "$FORGE" \
+  's#  if \[ -n "\$FORGE__SIDECAR_COPY" \] \&\& \[ -f "\$FORGE__SIDECAR_COPY" \]; then\n    printf \x27%s\\n\x27 "\$FORGE__SIDECAR_COPY"\n    return 0\n  fi\n##' \
+  test/tracker-remote.bats "neither read nor swallowed"
+
+# The half that keeps the copy usable: a record this run writes has to be in it,
+# or the run reads a tracker frozen at the instant of its own baseline — and
+# accuses itself of every record it wrote.
+mutation "77 the run's own records never reach its copy" "$FORGE" \
+  's#      >>"\$FORGE__SIDECAR_COPY" 2>/dev/null \|\| return 1#      >>"\$file" 2>/dev/null || return 1#' \
+  test/tracker-remote.bats "accuses nobody of them"
+
+# And the naming half, which is what the remise does not do: the file on disk
+# keeps the line, and every reader outside a run reads the file.
+mutation "77 nothing is named of a record the run did not write" "$FORGE" \
+  's#        if \(\(k SUBSEP now\[k\]\) in ours\) continue#        continue#' \
+  test/tracker-remote.bats "named on both documents"
+
+# The baseline, and it is not a second copy of the line above: without it a key
+# this run added and the file does not carry **yet** is reported as a record
+# somebody deleted — an accusation aimed at the run that is writing it.
+mutation "77 a record being written is a record somebody deleted" "$FORGE" \
+  's#      for \(k in had\) \{\n        if \(k in now\) continue#      for (k in wrote) \{\n        if (k in now) continue#' \
+  test/tracker-remote.bats "instant between the two writes"
+
+# The witness, taken at the same instant as the three of [70] and by the same
+# function. Without it there is no copy, so the reads fall back to the file and
+# nothing is compared against anything.
+mutation "77 no copy of the tracker's local facts is taken" "$FORENSIC" \
+  's#  if tracker_sidecar_path >/dev/null 2>\&1; then\n    tracker_sidecar_witness "\$dir" \|\| return 1\n  fi\n##' \
+  test/tracker-remote.bats "named on both documents"
+
+# And the two channels, which are this module's rather than the adapter's: a
+# sentence nobody carries to `run.log` and to the receipt is a sentence on a
+# console at eight in the morning ([45], [64]).
+mutation "77 the adapter's drift reaches neither document" "$FORENSIC" \
+  's#\$\(tracker_sidecar_drift "\$dir" 2>/dev/null \|\| true\)#\x27\x27#' \
+  test/tracker-remote.bats "named on both documents"
+
+# The dossier, and the reserve that was aimed at a network the URL never came
+# from. Where a remote receipt *is* is read in a file of this tree.
+mutation "77 the dossier says nothing about where the URL was read" "$ROUTER" \
+  's#  if \[ "\$kept" = 1 \] \&\& sidecar="\$\(tracker_sidecar_path 2>/dev/null\)" \&\&#  if false \&\& sidecar="\$(tracker_sidecar_path 2>/dev/null)" \&\&#' \
+  test/tracker-remote.bats "dossier says where"
+
+# And never under a line that says there is none: the reserve of [70] follows that
+# rule and this one has to follow it too.
+mutation "77 the reserve is printed over an absent receipt" "$ROUTER" \
+  's#  if \[ "\$kept" = 1 \] \&\& sidecar=#  if [ "\$shown" = 1 ] \&\& sidecar=#' \
+  test/tracker-remote.bats "dossier says where"
+
+# The second directory a backend of this pack puts an exclusion guard in, one
+# level below the two globs this swept: `issues/<id>.md.guard`, the claim guard
+# of the local backend ([49] put it there on purpose).
+mutation "77 the sweep forgets where a ticket's own guard lives" "$GATE" \
+  's#  dir="\$\(tracker_tickets_dir 2>/dev/null\)" \|\| dir=\x27\x27\n  \[ -n "\$dir" \] \&\& \[ -d "\$dir" \] \&\& set -- "\$@" "\$dir"\n##' \
+  test/gate.bats "earlier run left holding"
+
+# And the guard that bites, which this counted as nothing: an owner that answers
+# is what refuses every write it serialises, and this runs before an iteration
+# exists — the one instant at which "not this run's" is a fact.
+mutation "77 a live guard is silence again" "$GATE" \
+  's#  if \[ "\$nl" -gt 0 \]; then#  if false; then#' \
+  test/gate.bats "earlier run left holding"
+
+# The sentence a refused claim prints, which named the tracker and a holder that
+# does not exist. Both halves were false whenever a directory of this tree was
+# what refused.
+mutation "77 a refused claim accuses the tracker again" "$LOOP" \
+  's#  elif note="\$\(gate_guard_note "\$\{RALPH_FRONTIER_COMMON:-\}"\)"; then#  elif false; then#' \
+  test/gate.bats "names the guard and not the tracker"
+
+# And its paired witness: the fallback has to say what this run **cannot** say,
+# or the sentence above is printed for every refusal there is.
+mutation "77 the fallback infers the tracker refused" "$LOOP" \
+  's#and no exclusion guard of this tree is held now: this run cannot say what refused, which is the tracker\x27s own exclusion, a guard released since, or the write itself#and the tracker refused the write: nobody is named as holding it#' \
+  test/gate.bats "says what this run cannot say"
+
+# The census, which is the only thing that makes "not this run's" measurable
+# after the fact: a guard standing before a run took its locks is one no
+# iteration of that run can be holding.
+mutation "77 nothing records which guards predate the run" "$GATE" \
+  's#  \{ gate_guards \|\| true; \} \| cut -f1 >"\$dir/guards" 2>/dev/null \|\| return 1#  : >"\$dir/guards" 2>/dev/null || return 1#' \
+  test/gate.bats "names the guard and not the tracker"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

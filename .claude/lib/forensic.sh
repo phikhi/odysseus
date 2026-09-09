@@ -71,6 +71,23 @@
 # forges the object of a ticket the pack overwrites in the same iteration. The
 # pack's own write lands on top, and what a human reads afterwards is the pack's.
 #
+# ## The fourth zone, which is not one of these
+#
+# [77] added one, and it is here rather than in the manifest below because it is
+# not the same kind of object. On a backend whose tickets and receipts are not
+# files of this repository, what *is* a file of this repository is the record of
+# **where they are** and **who holds them** — the claim's liveness, the number of
+# the open request, and the URL the human sink shows as the receipt. The adapter
+# owns that file, so the adapter witnesses it (`tracker_sidecar_witness`) and the
+# adapter says what moved under it (`tracker_sidecar_drift`); this module takes
+# the baseline at the same instant as its own, and passes the lines on through the
+# same two channels, so that a run has one place where it says what moved.
+#
+# Why the adapter and not a fourth arm of `forensic__manifest`: that file is read
+# for an **answer** and not only shown to a human, so the ticket's repair is a run
+# that reads its own copy of it. A witness here would have named the forgery and
+# obeyed it.
+#
 # Public API
 #   forensic_failed_refs         every `refs/heads/failed/*`, `<oid><TAB><ref>`;
 #                                non-zero when git would not answer
@@ -129,6 +146,17 @@ forensic__tickets_dir() {
   dir="$(tracker_tickets_dir 2>/dev/null)" || return 1
   [ -n "$dir" ] || return 1
   printf '%s\n' "$dir"
+  return 0
+}
+
+# Where the adapter keeps the local facts it has about tickets, or non-zero when
+# it keeps none. Asked of the adapter for `forensic__receipt_dir`'s reason, and
+# never composed here.
+forensic__sidecar() {
+  local file
+  file="$(tracker_sidecar_path 2>/dev/null)" || return 1
+  [ -n "$file" ] || return 1
+  printf '%s\n' "$file"
   return 0
 }
 
@@ -235,6 +263,15 @@ forensic_witness() {
   manifest="$(forensic__manifest)" || return 1
   printf '%s\n' "$manifest" >"$dir/forensic.witness" 2>/dev/null || return 1
   : >"$dir/forensic.written" 2>/dev/null || return 1
+  # And the adapter's own zone, at the same instant and for the same reason
+  # ([77]). Asked only of a backend that says it keeps one: a refusal from
+  # `sidecar_path` is "there is no such file", which is the local backend's
+  # answer and not a failure, while a backend that has one and cannot be copied
+  # is a run whose tracker's liveness it holds no copy of — the same refusal the
+  # manifest gives, for the same reason.
+  if tracker_sidecar_path >/dev/null 2>&1; then
+    tracker_sidecar_witness "$dir" || return 1
+  fi
   return 0
 }
 
@@ -250,6 +287,17 @@ forensic_uncovered() {
   if ! forensic__receipt_dir >/dev/null 2>&1; then
     printf 'this backend does not keep audit receipts in a directory, so nothing in this run witnesses them: a receipt the human sink points at is attested by nothing here, and a receipt that is a pull request is an object a session reaches over the network, which no scope-guard, no rollback and no witness of this pack sees ([18])\n'
     said=0
+    # And what *is* in this tree on such a backend, said in the same breath so
+    # that the sentence above is not read as "nothing local is held" ([77]).
+    # Where that receipt is, and who holds the ticket, are records of a file of
+    # this repository that a session appends to: this run reads its own copy of
+    # them and names what it did not write, and the file itself is still whatever
+    # the last line says to anybody reading it outside a run — the human sink
+    # included, which is why its dossier names the file.
+    if forensic__sidecar >/dev/null 2>&1; then
+      printf 'where that receipt is, and who holds a ticket, are records this backend keeps in %s — a file of this tree that no scope-guard judges and no rollback undoes: this run reads the copy it took before its first session and names any record it did not write, which puts nothing back and stops nothing ([77])\n' \
+        "$(forensic__sidecar)"
+    fi
   fi
   # The tickets, and it is a different guarantee under the same sentence ([18]).
   # `failures_protect_tracker` restores what a session wrote in the tracker by
@@ -425,7 +473,7 @@ forensic__clause() {
 # the only durable document on the iteration a run stops on, and a line reading
 # `receipt forensic-drift` sends a human looking without saying where.
 forensic_drift() {
-  local dir="${1:-}" kind key was now clause
+  local dir="${1:-}" kind key was now clause subject outcome message
   while IFS="$(printf '\t')" read -r kind key was now; do
     [ -n "$key" ] || continue
     clause="$(forensic__clause "$kind" "$key" "$was" "$now")"
@@ -434,5 +482,16 @@ forensic_drift() {
   done <<MOVED
 $(forensic__moved "$dir" || true)
 MOVED
+  # And the adapter's zone, passed on unchanged ([77]). The sentence is the
+  # adapter's because only it knows what one of its records decides; both
+  # channels are this module's, so an iteration has one reading and a run one
+  # place that says what moved under it.
+  while IFS="$(printf '\t')" read -r subject outcome message; do
+    [ -n "$subject" ] || continue
+    receipt_gap "$message"
+    printf '%s\t%s\t%s\n' "$subject" "${outcome:-sidecar-drift}" "$message"
+  done <<SIDECAR
+$(tracker_sidecar_drift "$dir" 2>/dev/null || true)
+SIDECAR
   return 0
 }

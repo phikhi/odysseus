@@ -1198,23 +1198,34 @@ loop__inflight_count() {
 # A ticket that was on the frontier a moment ago and could not be claimed, said in
 # the file a human opens in the morning and not only on a console ([49]).
 #
-# What it says is what it observed, and the two cases have nothing in common. The
-# status having moved is the ordinary one: a sibling took the ticket between the
-# frontier scan and here, and there is an owner to name. The status *not* having
-# moved means the tracker's own exclusion refused the read-modify-write — nobody
-# holds the ticket, and the single sentence this used to print ("someone else has
-# it") named a holder that does not exist. That was also everything a run said
-# about it: `run.log` had no line at all for a ticket no iteration could take, so a
-# run that ended sterile against one left a journal in which it never appears, and
-# a console nobody reads at eight in the morning ([45]).
+# What it says is what it observed, and the three cases have nothing in common.
+# The status having moved is the ordinary one: a sibling took the ticket between
+# the frontier scan and here, and there is an owner to name. The status *not*
+# having moved used to print one sentence — "the tracker refused the write:
+# nobody is named as holding it" — and that sentence was an **inference**, not an
+# observation. Measured on 08/09/2026 (`sondes/passe-08-09/q2`, Q2e and Q2f), on
+# both backends: a directory with a live pid in `.scratch/<feature>/.forge.guard`
+# or in `issues/<id>.md.guard` refuses every claim of this run, the night stops
+# `rc=4` sterile, and both halves of that sentence are false — the tracker refused
+# nothing, and what holds the ticket is a directory of this tree.
+#
+# So the exclusion is looked for and named when it is there ([77]). Two things it
+# is careful not to claim: it is read **after** the refusal, so a guard released
+# in between is a guard this cannot name — which is why the sentence for that case
+# says what this run cannot say rather than blaming the tracker; and nothing here
+# breaks a guard, for the reason `state_guard_take` documents and [77] wrote down.
+# The night still stops, exactly as before: what changes is that a human reading
+# `run.log` in the morning is sent to the right object.
 loop__claim_refused() {
-  local ticket="$1" status owner
+  local ticket="$1" status owner note
   status="$(tracker_field "$ticket" Status 2>/dev/null)" || status=''
   owner="$(tracker_field "$ticket" Claimed 2>/dev/null)" || owner=''
   if [ -n "$status" ] && [ "$status" != ready-for-agent ]; then
     loop_log "could not claim $ticket — it is $status now${owner:+ ($owner)}"
+  elif note="$(gate_guard_note "${RALPH_FRONTIER_COMMON:-}")"; then
+    loop_log "could not claim $ticket — its status is still ${status:-unreadable} and nobody is named as holding it, so what refused is not the tracker's own state: $note"
   else
-    loop_log "could not claim $ticket — its status is still ${status:-unreadable} and the tracker refused the write: nobody is named as holding it"
+    loop_log "could not claim $ticket — its status is still ${status:-unreadable} and nobody is named as holding it, and no exclusion guard of this tree is held now: this run cannot say what refused, which is the tracker's own exclusion, a guard released since, or the write itself"
   fi
   loop_journal_append "$ticket" claim-refused 0 0 0
 }
@@ -1652,7 +1663,19 @@ LEFTOVERS
   # A run that cannot take it keeps the night and loses the witness: refusing to
   # start would trade a night of delivered tickets for a namespace nobody moved.
   if ! forensic_witness "$RALPH_FRONTIER_COMMON"; then
-    loop_log "no witness of the record a human is sent to read — the forensic refs, the audit receipts and this feature's playthrough could be created, moved or destroyed under this run with nothing here to say so ([70])"
+    loop_log "no witness of the record a human is sent to read — the forensic refs, the audit receipts and this feature's playthrough could be created, moved or destroyed under this run with nothing here to say so ([70]), and on a backend that keeps the location of a receipt and the liveness of a claim in a file of this tree, that file is read as it stands ([77])"
+  fi
+
+  # And which exclusion guards were already there, taken at the one instant where
+  # the answer is a fact ([77]). This run holds both locks and has started
+  # nothing, so a guard standing here is one no iteration of this run can be
+  # holding — which is the whole of what makes the sentence a refused claim prints
+  # true rather than an accusation aimed at the tracker.
+  #
+  # A run that cannot take it keeps the night and loses one clause: the sentence
+  # then says a live guard is held without saying since when this run has seen it.
+  if ! gate_guard_witness "$RALPH_FRONTIER_COMMON"; then
+    loop_log "no census of the exclusion guards this tree already held — a claim refused by one of them will be named as held by a live process, without this run being able to say whether it was there before it started ([77])"
   fi
   # And the zone this witness cannot cover on this backend, said out loud once for
   # the reason every unguarded zone is ([24]): a control that excludes something

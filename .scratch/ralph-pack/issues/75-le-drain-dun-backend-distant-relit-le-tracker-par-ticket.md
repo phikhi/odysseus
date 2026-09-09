@@ -120,3 +120,21 @@ Deux propriétés de la mémoïsation existante à ne pas casser en la déplaça
 - elle est clé sur `<flavour>/<repo>` et vidée par `forge__forget` à **chaque
   écriture**, pour la raison écrite là-bas : l'état d'avant une écriture est une
   frontière qui tient encore le ticket.
+
+## Note écrite par [77] (livré le 09/09/2026)
+
+**Le logement du cache est choisi, et c'est la raison pour laquelle [77] passait
+devant ce ticket dans la file.** `forge_sidecar_witness` range la copie que le run
+tient dans le **répertoire témoin du run** — celui que `gate_frontier_common`
+fabrique, en `$TMPDIR` sous un `mktemp` que le pilote n'exporte pas ([30], [40]) —
+et l'opération d'interface qui la prend (`tracker_sidecar_witness DIR`) reçoit ce
+répertoire en argument plutôt que de le composer. Trois choses à reprendre telles
+quelles :
+
+- la prise se fait **avant la première session**, dans `forensic_witness`, qui est
+  le seul endroit du pack où « avant que quoi que ce soit d'écrivable existe » est
+  vrai ;
+- l'ajout ne coûte **aucun nom** à `gate_tmp_names` ni au balayeur de [19], parce
+  que le répertoire est déjà sur la liste ;
+- une lecture du module passe par un accesseur unique (`forge__reading`) qui
+  choisit la copie ou le fichier, jamais par un `if` recopié au point d'appel.
