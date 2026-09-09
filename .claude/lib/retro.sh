@@ -489,7 +489,14 @@ retro_brief() {
 #
 # Two discriminants, both in the document itself rather than guessed:
 #
-#   the outcome    `resolved` and `gate-red` are verdicts on a diff. `not-integrated`
+#   the outcome    `resolved`, `not-marked` and `gate-red` are verdicts on a diff —
+#                  the second is the first with the tracker's refusal after it
+#                  ([74]): the gate ran, it was green, the work reached the branch,
+#                  and what came back non-zero was the marking. Read against the
+#                  criterion and not against the word, it is lesson material for
+#                  exactly the reasons `resolved` is, and it costs what it cost
+#                  before the word existed — that iteration was journalled
+#                  `resolved` until [74]. `not-integrated`
 #                  is a green gate whose work vanished, `tracker-write` is a rule
 #                  broken beside verdicts that may all be green, `nothing-delivered`
 #                  and the three session deadlines are facts this pack measured
@@ -508,7 +515,7 @@ retro_wanted() {
   local outcome="$1" verdicts="$2" rollback="${3:-0}"
   [ "$rollback" != 1 ] || return 1
   case "$outcome" in
-    resolved | gate-red) ;;
+    resolved | not-marked | gate-red) ;;
     *) return 1 ;;
   esac
   [ -n "$verdicts" ] || return 1

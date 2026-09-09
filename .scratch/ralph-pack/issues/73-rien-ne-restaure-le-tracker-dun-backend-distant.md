@@ -99,6 +99,36 @@
   tickets se touchent sur une question : ce qui restaure le tracker d'un backend
   distant restaure-t-il aussi ce que ce backend garde en local ?
 
+## Contrainte écrite par [74] (livré le 09/09/2026)
+
+Ce ticket ajoute une opération d'adaptateur, donc un **refus** de plus que la
+boucle devra lire ; [74] a tranché comment, et le précédent est à reprendre plutôt
+qu'à réinventer.
+
+1. **Un refus est un code de retour, lu à l'endroit où il existe.** La forme qui
+   l'avale est la substitution de commande dans un heredoc (`<<X` sur `$(f)`) et le
+   pipeline (qui répond pour son dernier maillon). Les deux ont coûté un défaut
+   chacune ici. Écrire `x="$(f)" || …` et décider.
+2. **La boucle a maintenant un mot pour « le tracker a refusé après un gate
+   vert » : `not-marked`.** Il est exempté de `failures_handle` à côté de
+   `resolved` et de `not-integrated` (`case "$outcome" in resolved | not-marked |
+   not-integrated)`), il émet le reçu, il est demandé par `retro_wanted`, et il ne
+   remet pas le compteur de stérilité à zéro. Si [73] a besoin d'un mot pour « le
+   snapshot du tracker a refusé », c'est cette liste-là qu'il faut relire — trois
+   endroits, plus `receipt__summary`, et aucun n'est déductible des autres.
+3. **L'AC 4 de ce ticket (« un backend distant qui refuse le snapshot n'est pas
+   rouge à chaque itération ») est exactement la tension que [74] a rencontrée à
+   l'autre bout** : le pilote *s'arrête* sur un listing refusé parce qu'un listing
+   refusé est reproductible depuis [76] et qu'il n'y a rien à moudre sans
+   frontière. Un snapshot refusé n'a pas cette propriété — il reste des tickets à
+   moudre — donc la même réponse serait une nuit perdue sur un garde. Ne pas
+   recopier la posture, recopier la question : *qu'est-ce que ce refus rend
+   impossible, et est-ce que la suite du run a encore un sens sans ça ?*
+4. **Une itération dont l'adaptateur refuse une lecture au milieu meurt déjà**
+   (`iteration-lost`, ticket rendu à la frontière) : le refus voyage sous `set -e`
+   depuis la politique d'échec. Mesuré par [74], sans faux vert au bout. Un
+   snapshot/restore qui refuse en plein milieu tombera sur le même chemin.
+
 ## Place dans la file
 
 Ordre validé par Philippe le 08/09/2026, après la passe transversale du même

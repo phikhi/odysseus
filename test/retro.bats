@@ -497,6 +497,26 @@ FAKE
   assert_file_contains "$(receipt_path 01-alpha)" "nothing here judged its code"
 }
 
+@test "a marking the tracker refused is still an iteration that judged the code" {
+  # The same list, read against the same criterion, for the outcome [74] added.
+  # `not-marked` is a green gate whose work reached the branch and whose *marking*
+  # came back non-zero: what judged the code is exactly what judges it on
+  # `resolved`, and the tracker's refusal arrived after all of it. Excluding it
+  # would have been a behaviour change smuggled in with a word — that iteration
+  # was journalled `resolved` until [74], and it distilled a lesson like any other.
+  #
+  # Driven at the function rather than through a run: the refusal it stands for
+  # belongs to a backend that publishes, and this module has nothing to do with
+  # which backend that is.
+  pack_run 'set +e
+            retro_wanted not-marked "tests=green"; printf "not-marked=%s\n" "$?"
+            retro_wanted not-integrated "tests=green"; printf "not-integrated=%s\n" "$?"'
+  assert_output_contains "not-marked=0"
+  # The paired half: a list that answers yes to everything would pass the line
+  # above and mean nothing.
+  assert_output_contains "not-integrated=1"
+}
+
 @test "an iteration with no verdict at all distils nothing" {
   # The second discriminant, and it is in the document rather than guessed: an
   # empty verdict line means no gate ran. A session that answered and wrote
