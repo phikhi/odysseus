@@ -748,6 +748,23 @@ tracker_local_tickets_dir() {
   tracker_local__issues_dir
 }
 
+# **Three refusals, and they are one answer** ([77]). This backend keeps no local
+# fact about a ticket outside the ticket: the claim is a `Claimed:` field of the
+# file, which `failures_protect_tracker` snapshots as a git tree around every
+# session and puts back ([21]), and the receipt is a path this backend composes
+# from an id rather than a location it remembers. A remote backend has to keep
+# both somewhere this tree can hold, and that file is what `sidecar_*` is about.
+#
+# What this backend does keep beside a ticket is `<id>.md.guard`, and it is not a
+# record: it is the exclusion `tracker_local_claim` takes for the length of one
+# read-modify-write. Nothing reads it for an answer, so there is nothing here to
+# witness — what it costs when somebody else is holding it is counted by
+# `gate__stale_guards`, which walks this directory since [77], and said by the
+# sentence `loop.sh` prints when a claim is refused.
+tracker_local_sidecar_path() { return 1; }
+tracker_local_sidecar_witness() { return 1; }
+tracker_local_sidecar_drift() { return 1; }
+
 # Where the last one can be read — the same name `emit_receipt` publishes, and
 # derived from it rather than restated, so the two cannot drift.
 #

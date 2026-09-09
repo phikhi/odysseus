@@ -114,6 +114,10 @@
 #   forge_append_note F ID         a comment from stdin
 #   forge_emit_receipt F ID        the receipt from stdin, into the request
 #   forge_receipt_path F ID        where that request is, if this machine knows
+#   forge_sidecar_path             the file in this tree holding the records above
+#   forge_sidecar_witness DIR      the run's own copy of it, before any session
+#   forge_sidecar_drift DIR        what a session wrote into it, as
+#                                  `subject<TAB>outcome<TAB>message`
 #   forge_json                     a JSON document on stdin, one leaf per line
 #   forge_json_string              a value on stdin, as a JSON string
 
@@ -124,6 +128,9 @@ FORGE__CACHE_KEY=''
 # The user id a forge that assigns by id needs, looked up once per shell.
 FORGE__USER_ID=''
 FORGE__USER_ID_KEY=''
+# The run's own copy of the sidecar, when a run took one. A variable of this
+# shell and never a path anybody can guess: see `forge_sidecar_witness`.
+FORGE__SIDECAR_COPY=''
 
 # ── the flavour table ────────────────────────────────────────────────────────
 
@@ -962,12 +969,88 @@ forge__sidecar() {
   printf '%s/.forge-claims\n' "$(ralph_feature_dir)"
 }
 
+# ── the run's own copy of it, because a session appends to a file ────────────
+#
+# The sidecar is a file of `.scratch/<feature>/`, which is the zone every control
+# of this pack steps over: `gate_is_bookkeeping` takes it out of the scope-guard,
+# `failures_protect_tracker` only ever looked at `issues/` (and on this backend at
+# nothing at all), and the witness of [70] knows refs, receipt **files** and the
+# playthrough. Append-only with the last line winning means one line from a
+# session is the whole of what it takes to change a record. Measured on
+# 08/09/2026 (`sondes/passe-08-09/q2-*.bats`): one line with a live pid silences
+# `claim_reclaim_stale`, leaves the ticket `claimed` and empties the frontier; one
+# `receipt` line makes the drain's dossier send a human to a request of the
+# session's choosing.
+#
+# **So a run reads its own copy, and what it did not write it names** ([77]). The
+# copy is taken before the first session of the night, into the run's own witness
+# directory — `$TMPDIR` under a `mktemp` name the pilot never exports ([30],
+# [40]) — and every record this backend writes goes into it as well as into the
+# file. That is the **remise** half: for the length of the run, a line a session
+# appends changes nothing this pack reads. It is not a restore — nothing is put
+# back, the file on disk keeps the forged line — and the naming half is
+# `forge_sidecar_drift`, which reaches `run.log` and the receipt through
+# `forensic_drift`.
+#
+# What that does **not** buy, written here rather than discovered:
+#
+#   - a run is the unit. A line appended when no run is up is in the next run's
+#     baseline, exactly as [70]'s witness is, and nothing here can tell it from a
+#     record an earlier run wrote.
+#   - the drain has no copy. `human-loop.sh` takes no witness directory, so
+#     `router_dossier` reads the file — which is why the reserve it prints for a
+#     remote receipt names this file by its path.
+#   - `forge__sidecar` is still the only durable copy, and it has to be: the
+#     liveness of a claim is what one run tells the next, so a sidecar that lived
+#     in `$TMPDIR` would give every run a tracker with no memory.
+
+# The file itself, for the one reader outside this module that has to name it:
+# the reserve `router_dossier` prints under the URL of a remote receipt. Public
+# for that reason and not as a convenience — a drain that composed this path
+# would be a second author for a layout only this backend knows.
+forge_sidecar_path() {
+  forge__sidecar
+}
+
+# The run's copy, and the baseline beside it. Two files rather than one because
+# they answer two different questions, and the second one is what keeps a
+# concurrent write from being read as a forgery: `sidecar` is everything this run
+# holds — the baseline plus every record it has written since — and
+# `sidecar.base` is the baseline alone, so a key that is missing from the file on
+# disk can be told apart from a key this run is in the middle of appending.
+#
+# Refuses rather than writes half a copy: a run reading a truncated copy of its
+# own tracker's liveness would reclaim tickets nobody abandoned.
+forge_sidecar_witness() {
+  local dir="${1:-}" file
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  file="$(forge__sidecar)" || return 1
+  : >"$dir/sidecar.base" 2>/dev/null || return 1
+  if [ -f "$file" ]; then
+    cat "$file" >"$dir/sidecar.base" 2>/dev/null || return 1
+  fi
+  cat "$dir/sidecar.base" >"$dir/sidecar" 2>/dev/null || return 1
+  FORGE__SIDECAR_COPY="$dir/sidecar"
+  return 0
+}
+
+# What every read of this module goes through: the run's copy when it has one,
+# the file otherwise. The fallback is the whole of what a drain and a `pack_run`
+# outside a run get, and it is the behaviour this backend had before [77].
+forge__reading() {
+  if [ -n "$FORGE__SIDECAR_COPY" ] && [ -f "$FORGE__SIDECAR_COPY" ]; then
+    printf '%s\n' "$FORGE__SIDECAR_COPY"
+    return 0
+  fi
+  forge__sidecar
+}
+
 # The last record for an id, or nothing. Append-only with the last line winning:
 # every writer here appends one short line, which a POSIX filesystem does not
 # interleave, so two iterations recording two tickets never need a lock for this.
 forge__local_record() {
   local id="$1" kind="$2" file value
-  file="$(forge__sidecar)"
+  file="$(forge__reading)"
   [ -f "$file" ] || return 1
   # `ENVIRON` and not `-v`, for `forge__patch_field`'s reason: awk interprets the
   # escapes of a `-v` assignment, and an id may carry the `\\` this transport
@@ -981,12 +1064,124 @@ forge__local_record() {
   return 0
 }
 
+# The copy first and the file second, and the order is the guarantee rather than
+# a preference. A sibling iteration comparing between the two writes has to find
+# the value it reads on disk somewhere in this run's copy: written the other way
+# round, the window between them is one in which a legitimate record is on disk
+# and not yet in the copy, and the comparison below would accuse this run of what
+# it is doing legally. It is [70]'s register rule — entered before the write and
+# never after — one file over.
+#
+# And a copy that cannot be appended to refuses the whole write, which is the safe
+# side and not an oversight: this run reads the copy, so a record that reached the
+# file and not the copy is one the run would go on not knowing about — a claim it
+# holds and cannot see, which is worse than a claim it failed to take.
 forge__record_local() {
   local id="$1" kind="$2" value="$3" file dir
   file="$(forge__sidecar)"
   dir="$(dirname "$file")"
   mkdir -p "$dir" 2>/dev/null || return 1
+  if [ -n "$FORGE__SIDECAR_COPY" ] && [ -f "$FORGE__SIDECAR_COPY" ]; then
+    printf '%s\t%s\t%s\n' "$id" "$kind" "$value" \
+      >>"$FORGE__SIDECAR_COPY" 2>/dev/null || return 1
+  fi
   printf '%s\t%s\t%s\n' "$id" "$kind" "$value" >>"$file" 2>/dev/null || return 1
+  return 0
+}
+
+# Every record whose value on disk is not one this run wrote or was handed,
+# `id<TAB>kind<TAB>was<TAB>now`, sorted so two readings say things in the same
+# order. Non-zero when nothing moved, which is every ordinary night.
+#
+# Membership in the **set** of values this run holds for a key, and not equality
+# with the last one: two iterations write the sidecar, so the last value this run
+# wrote for a key is a moving target and a record a sibling has just superseded
+# is not a forgery.
+#
+# A key the copy has and the file does not is only reported when it was in the
+# **baseline**: a key this run added and the file does not carry yet is the
+# window `forge__record_local` opens on purpose, and reporting it would make an
+# ordinary claim accuse the run that took it.
+forge__sidecar_moved() {
+  local dir="$1" file moved
+  file="$(forge__sidecar)" || return 1
+  [ -f "$file" ] || file=/dev/null
+  moved="$(LC_ALL=C awk -F'\t' -v OFS='\t' \
+    -v base="$dir/sidecar.base" -v copy="$dir/sidecar" '
+    function take(   k) {
+      if (NF < 3) return ""
+      k = $1 SUBSEP $2
+      id[k] = $1; kind[k] = $2; val = $3
+      return k
+    }
+    FILENAME == base { k = take(); if (k != "") had[k] = val; next }
+    FILENAME == copy {
+      k = take()
+      if (k != "") { ours[k SUBSEP val] = 1; wrote[k] = val }
+      next
+    }
+    { k = take(); if (k != "") now[k] = val }
+    END {
+      for (k in now) {
+        if ((k SUBSEP now[k]) in ours) continue
+        print id[k], kind[k], ((k in wrote) ? wrote[k] : "-"), now[k]
+      }
+      for (k in had) {
+        if (k in now) continue
+        print id[k], kind[k], ((k in wrote) ? wrote[k] : had[k]), "-"
+      }
+    }' "$dir/sidecar.base" "$dir/sidecar" "$file" | LC_ALL=C sort)" || return 1
+  [ -n "$moved" ] || return 1
+  printf '%s\n' "$moved"
+  return 0
+}
+
+# One clause naming what moved and what it costs. Three kinds of record times
+# three directions, because a reader acts on each of them differently — and the
+# kind matters more here than anywhere else in this pack: the three records of
+# this file decide who holds a ticket, which request gets rewritten, and which
+# URL a human is sent to.
+forge__sidecar_clause() {
+  local id="$1" kind="$2" was="$3" now="$4" what where
+  where="$(forge__sidecar)"
+  case "$kind" in
+    claim)
+      what="the \`Claimed:\` this backend answers for \`$id\`, which is the whole of its liveness: an owner this pack can ping keeps the ticket out of the frontier for as long as that process lives, and with CLAIM_TTL disabled for good"
+      ;;
+    receipt)
+      what="where the audit receipt of \`$id\` is, which is the URL the human sink shows as its verdicts, its findings and the zones nothing judged"
+      ;;
+    request)
+      what="which request of the forge this pack rewrites with the receipt of \`$id\`"
+      ;;
+    *)
+      what="a \`$kind\` record of \`$id\`, which this pack does not write and does not read"
+      ;;
+  esac
+  case "$was:$now" in
+    -:*) printf '%s appeared in %s while this run was in flight, and no iteration of this run wrote it. It is %s\n' "$kind" "$where" "$what" ;;
+    *:-) printf '%s is gone from %s, and this run did not remove it. It said `%s`, and it was %s\n' "$kind" "$where" "$was" "$what" ;;
+    *) printf '%s in %s says `%s` and this run wrote `%s`. It is %s\n' "$kind" "$where" "$now" "$was" "$what" ;;
+  esac
+  return 0
+}
+
+# The iteration's channel, in the shape `forensic_drift` passes on:
+# `subject<TAB>outcome<TAB>message`. The subject is the file and not the record,
+# because a subject is what sends somebody somewhere ([15]) and the record is in
+# the sentence.
+forge_sidecar_drift() {
+  local dir="${1:-}" id kind was now clause
+  [ -n "$dir" ] || return 1
+  [ -f "$dir/sidecar" ] && [ -f "$dir/sidecar.base" ] || return 1
+  while IFS="$(printf '\t')" read -r id kind was now; do
+    [ -n "$kind" ] || continue
+    clause="$(forge__sidecar_clause "$id" "$kind" "$was" "$now")"
+    printf '%s\t%s\t%s\n' "$(forge__sidecar)" sidecar-drift \
+      "the local record this backend keeps about a ticket moved while this run was in flight: $clause — this run read its own copy, so nothing it decided came from that line, and nothing here puts the file back or refuses over it"
+  done <<MOVED
+$(forge__sidecar_moved "$dir" || true)
+MOVED
   return 0
 }
 

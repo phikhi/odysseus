@@ -109,3 +109,13 @@ tracker_github_receipt_dir() { return 1; }
 # rollback and no witness of this pack sees. Said once per run through
 # `forensic_uncovered`, with its row in `docs/frontiere-de-confiance.md`.
 tracker_github_tickets_dir() { return 1; }
+
+# **And the zone that is not a refusal** ([77]). This backend does keep local
+# facts about a ticket in this tree — the claim's liveness, the number of the
+# open request, and where the receipt of a ticket is — because a pid means
+# nothing on another host (spec §152). They are in a file of `.scratch/<feature>/`
+# that a session appends to, so a run reads its own copy of them and names what
+# it did not write.
+tracker_github_sidecar_path() { forge_sidecar_path; }
+tracker_github_sidecar_witness() { forge_sidecar_witness "$@"; }
+tracker_github_sidecar_drift() { forge_sidecar_drift "$@"; }

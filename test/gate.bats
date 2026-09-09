@@ -2746,20 +2746,104 @@ $hits"
   mkdir -p "$FEATURE_DIR/.open.guard"
   printf '%s\n' "$dead" >"$FEATURE_DIR/.open.guard/pid"
 
+  # And a claim guard of the local backend, one directory down — where a guard
+  # about one ticket belongs ([49]) and where nothing looked until [77]. The two
+  # globs of this sweep were the feature directory's, so the one exclusion that
+  # refuses a claim ticket by ticket was the one nobody counted.
+  mkdir -p "$TRACKER_DIR/01-alpha.md.guard"
+  printf '%s\n' "$dead" >"$TRACKER_DIR/01-alpha.md.guard/pid"
+
   # And its witness, which is what keeps the count from being a constant: a guard
-  # whose owner still answers belongs to something alive — a sibling run of another
-  # feature, this very process — and naming it would be the false alarm that makes
-  # a morning line unreadable.
+  # whose owner still answers is a different fact and gets a different line.
   mkdir -p "$FEATURE_DIR/.busy.guard"
   printf '%s\n' "$$" >"$FEATURE_DIR/.busy.guard/pid"
 
   run_loop
-  assert_output_contains "1 exclusion guard(s) left in"
-  assert_output_contains ".open.guard"
-  refute_output_contains ".busy.guard"
-  # Said, not swept, like its neighbour above.
+  local stale live
+  stale="$(printf '%s\n' "$output" | grep 'left in this tree by an earlier run' || true)"
+  live="$(printf '%s\n' "$output" | grep 'held by a live process that is not this run' || true)"
+
+  # Two guards nobody owns any more, in two directories, on the line about an
+  # owner that is gone — and neither the live one nor a count of one.
+  case "$stale" in
+    *"2 exclusion guard(s) left in this tree by an earlier run:"*) ;;
+    *) fail "expected two dead guards on one line, got: $stale" ;;
+  esac
+  case "$stale" in *".open.guard"*) ;; *) fail "the feature guard is not named: $stale" ;; esac
+  case "$stale" in *"01-alpha.md.guard"*) ;; *) fail "the ticket's claim guard is not named: $stale" ;; esac
+  case "$stale" in *".busy.guard"*) fail "a live guard is on the dead line: $stale" ;; esac
+
+  # And the guard that bites, which this said nothing about until [77]: a live
+  # owner is what refuses every claim of the ticket it covers, and this entry
+  # point has just taken its locks and started nothing, so it is not this run's.
+  case "$live" in *".busy.guard"*) ;; *) fail "a live guard is named nowhere: $live" ;; esac
+  case "$live" in *".open.guard"*) fail "a dead guard is on the live line: $live" ;; esac
+
+  # Said, not swept, like its neighbour above — and that is now true of the live
+  # one as well, which is the outcome [77] refused to trade for a takeover.
   [ -d "$FEATURE_DIR/.open.guard" ] ||
     fail "the run removed a guard it is only supposed to name"
+  [ -d "$FEATURE_DIR/.busy.guard" ] ||
+    fail "the run removed a live guard it is only supposed to name"
+}
+
+@test "a claim refused by a live guard of this tree names the guard and not the tracker" {
+  # The sentence a run prints for a ticket it could not take used to be an
+  # inference: "the tracker refused the write: nobody is named as holding it".
+  # Measured on 08/09/2026 (`sondes/passe-08-09/q2`, Q2f) — a directory with a
+  # live pid in `issues/<id>.md.guard`, which is one `mkdir` from a session or a
+  # human, refuses every claim of this run, and after `STERILE_K` of those the
+  # night stops. Both halves of that sentence were false: the tracker refused
+  # nothing, and what holds the ticket is a directory of this tree.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+
+  # A process this user owns that certainly answers `kill -0`, which is what
+  # `state_guard_take` respects.
+  sleep 120 &
+  local victim=$!
+  mkdir -p "$TRACKER_DIR/01-alpha.md.guard"
+  printf '%s\n' "$victim" >"$TRACKER_DIR/01-alpha.md.guard/pid"
+
+  run_loop
+  kill "$victim" 2>/dev/null || true
+
+  assert_failure 4
+  # What refused, named, and the clause that says how this run knows it is not
+  # its own: the census taken after the locks and before the first iteration.
+  assert_output_contains "so what refused is not the tracker's own state"
+  assert_output_contains "01-alpha.md.guard"
+  assert_output_contains "already there when this run took its locks"
+  refute_output_contains "the tracker refused the write"
+  # And nothing was broken to get past it.
+  [ -d "$TRACKER_DIR/01-alpha.md.guard" ] ||
+    fail "the run displaced a live guard instead of naming it"
+  assert_equal "$(ticket_status 01-alpha)" "ready-for-agent"
+}
+
+@test "a claim refused with no guard held says what this run cannot say" {
+  # The paired witness, and it carries the other half of the guarantee: the
+  # sentence above must not be printed for every refusal. Here nothing of this
+  # tree is holding anything — the tracker's own exclusion is what refused, or the
+  # write did — and a run that named a guard would be the same false accusation
+  # pointing the other way.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+
+  # A tracker whose claim cannot be written at all: the directory is read-only, so
+  # the test-and-set refuses without any guard of this tree ever standing. The
+  # directory and not the file — a write here goes through `state_write_atomic`,
+  # which renames a temporary file over the target, and a rename answers to the
+  # directory's mode and not to the file's.
+  chmod 0555 "$TRACKER_DIR"
+  run_loop
+  chmod 0755 "$TRACKER_DIR"
+
+  assert_failure 4
+  assert_output_contains "this run cannot say what refused"
+  refute_output_contains "so what refused is not the tracker's own state"
 }
 
 # ── [52] what decides which program the pack runs at all ─────────────────────

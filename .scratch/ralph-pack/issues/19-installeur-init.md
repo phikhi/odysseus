@@ -362,3 +362,14 @@ de l'autre est un test rouge :
 
 Comme `TRACKER_REPO` et les siennes, ces deux clés ne sont lues que par un backend
 distant. Un projet sur `local` n'en a rien à faire.
+
+## Contrainte écrite par [77] (livré le 09/09/2026)
+
+Un nom de plus à provisionner ou à ignorer dans le projet cible :
+`.scratch/<feature>/.forge-claims`, le sidecar d'un backend distant. Il porte le
+claim (donc toute la liveness de [12] sur ce backend), le numéro de la requête
+ouverte et l'URL du reçu ; il doit **survivre au run** — c'est ce qu'un run dit au
+suivant — et il ne doit pas entrer dans l'historique du projet, exactement comme
+`run.log`. `gate_is_bookkeeping` l'exclut déjà du scope-guard, mais un `git add -A`
+d'un projet qui ne l'ignore pas le commiterait. Rien dans [77] ne l'ajoute au
+`.gitignore` : c'est ce ticket-ci qui provisionne cette zone.

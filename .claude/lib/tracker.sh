@@ -126,7 +126,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt)
+    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -336,6 +336,43 @@ tracker_receipt_dir() { tracker__dispatch receipt_dir "$@"; }
 # — is [18]'s answer, and it is in `docs/frontiere-de-confiance.md` rather than
 # implied by a return code.
 tracker_tickets_dir() { tracker__dispatch tickets_dir "$@"; }
+
+# ── the local facts a backend keeps about tickets, in this tree ──────────────
+#
+# A third zone of the same family as the two above, and the one that had no
+# question ([77]). A backend whose tickets live on a service still has to answer
+# `Claimed:` in the shape `claim.sh` reads, and a pid means nothing on another
+# host — so it keeps the liveness of a claim, and whatever else only this machine
+# knows, in a file of this repository. That file is in `.scratch/<feature>/`,
+# which `gate_is_bookkeeping` takes out of the scope-guard, which
+# `failures_protect_tracker` does not restore, and which the witness of [70] does
+# not know: what a session appends there decides who holds a ticket and which URL
+# a human is sent to read.
+#
+# Three operations, all reads as far as the register of [13] is concerned — none
+# of them writes a ticket:
+#
+#   sidecar_path       where those records are, so the human sink can name the
+#                      file under the URL it shows. A refusal means this backend
+#                      keeps no such file, and every caller reads it that way.
+#   sidecar_witness D  the run's own copy of them, into the run's witness
+#                      directory, before its first session exists. A backend that
+#                      answers `sidecar_path` and refuses here is a run whose
+#                      tracker's liveness nothing holds a copy of, and
+#                      `forensic_witness` says so.
+#   sidecar_drift D    what moved under that copy, `subject<TAB>outcome<TAB>message`
+#                      — the shape `capability_drift`, `gate_path_drift` and
+#                      `forensic_drift` already use. Silent when nothing did.
+#
+# **A backend that refuses `sidecar_path` is saying it keeps no local fact about a
+# ticket outside the ticket**, which is what the local backend says: its claim is
+# a field of the ticket file, restored around every session by [21]. The one
+# thing it keeps beside a ticket is an exclusion guard, which is not a record —
+# `gate__stale_guards` counts those, in both of the directories a backend of this
+# pack puts one in.
+tracker_sidecar_path() { tracker__dispatch sidecar_path "$@"; }
+tracker_sidecar_witness() { tracker__dispatch sidecar_witness "$@"; }
+tracker_sidecar_drift() { tracker__dispatch sidecar_drift "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

@@ -91,3 +91,9 @@ tracker_gitlab_receipt_path() { forge_receipt_path gitlab "$@"; }
 # `docs/frontiere-de-confiance.md`.
 tracker_gitlab_receipt_dir() { return 1; }
 tracker_gitlab_tickets_dir() { return 1; }
+
+# And the same third zone, which is not a refusal on either forge — see
+# `tracker-github.sh` and [77].
+tracker_gitlab_sidecar_path() { forge_sidecar_path; }
+tracker_gitlab_sidecar_witness() { forge_sidecar_witness "$@"; }
+tracker_gitlab_sidecar_drift() { forge_sidecar_drift "$@"; }

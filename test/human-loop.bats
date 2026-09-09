@@ -2308,8 +2308,11 @@ drain_own_tmp() {
     "$RALPH_TEST_DIR/tmp/ralph-slot.writes.deadrun"
 
   # A pid that is certainly gone: a subshell's own, read after it exited. And its
-  # witness beside it — a guard whose owner still answers belongs to something
-  # alive, and naming it would be the false alarm that makes a morning unreadable.
+  # witness beside it — a guard whose owner still answers is a different fact, and
+  # since [77] it gets a line of its own rather than silence: a drain has just
+  # taken the same locks a run takes and has started nothing, so a guard alive at
+  # this instant is one it is not holding, and it is what refuses every write it
+  # serialises.
   local dead
   dead="$(bash -c 'printf %s "$$"')"
   mkdir -p "$FEATURE_DIR/.open.guard"
@@ -2328,9 +2331,12 @@ ANSWERS
   assert_success
 
   assert_output_contains "3 temporary file(s) and director(ies) from earlier runs are still in"
-  assert_output_contains "exclusion guard(s) left in"
-  assert_output_contains ".open.guard"
-  refute_output_contains ".busy.guard"
+  local stale live
+  stale="$(printf '%s\n' "$output" | grep 'left in this tree by an earlier run' || true)"
+  live="$(printf '%s\n' "$output" | grep 'held by a live process that is not this run' || true)"
+  case "$stale" in *".open.guard"*) ;; *) fail "the dead guard is not named: $stale" ;; esac
+  case "$stale" in *".busy.guard"*) fail "a live guard is on the dead line: $stale" ;; esac
+  case "$live" in *".busy.guard"*) ;; *) fail "the live guard is named nowhere: $live" ;; esac
   assert_output_contains "a one-shot successor marker is still in"
   assert_output_contains "armed 2026-08-29T00:00:00Z with at"
 
@@ -2384,6 +2390,7 @@ ANSWERS
 
   refute_output_contains "from earlier runs are still in"
   refute_output_contains "exclusion guard(s) left in"
+  refute_output_contains "held by a live process that is not this run"
   refute_output_contains "a one-shot successor marker is still in"
   refute_output_contains "still registered in this repository"
 }

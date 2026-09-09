@@ -1518,6 +1518,7 @@ IDS
 # ticket refused to ship.
 router_dossier() {
   local id="${1:?router: a ticket id}" desk reason surface receipt lines n shown
+  local kept sidecar
   desk="$(router_desk "$id")"
   reason="$(router__field "$id" Escalation)" || reason=''
   n="$(router_unblocks "$id")"
@@ -1567,10 +1568,12 @@ router_dossier() {
     printf '  branch   there is none. %s\n' "$(router__no_branch "$desk")"
   fi
 
+  kept=0
   if receipt="$(tracker_receipt_path "$id" 2>/dev/null)" && [ -n "$receipt" ]; then
     printf '  receipt  %s — verdicts, findings, and the zones nothing judged.\n' "$receipt"
     printf '           It references git objects a `gc` may already have collected; `failed/%s` is a ref and survives.\n' "$id"
     shown=1
+    kept=1
   else
     printf '  receipt  none was kept for this ticket.\n'
   fi
@@ -1609,6 +1612,34 @@ router_dossier() {
       printf '           record of authors and edits, which this pack neither reads\n'
       printf '           nor checks ([18]). Read them, do not rely on them.\n'
     fi
+  fi
+
+  # **And the half of that reserve which was aimed at the wrong place** ([77]).
+  # The sentence above sends a reader towards the network, which is where the
+  # *object* is. Where the object **is** is not read there: this backend keeps the
+  # URL as a record of a file of this tree, and the line printed above is whichever
+  # line of that file won. Measured on 08/09/2026 (`sondes/passe-08-09/q2`, Q2a,
+  # paired witness Q2b): a green iteration whose session appends one line sends a
+  # human to the request of its choosing, under a reserve about a service it never
+  # touched.
+  #
+  # Under the URL and never under "there is none", for the reason the reserve above
+  # is: a caveat on an absence teaches a reader to distrust the one certain
+  # sentence of this dossier. Asked of the adapter, like the receipt's location
+  # itself — a drain that named this file would be a second author for a layout
+  # only the backend knows — and silent on a backend that keeps no such file,
+  # whose claim and whose receipt are the ticket and a path composed from an id.
+  if [ "$kept" = 1 ] && sidecar="$(tracker_sidecar_path 2>/dev/null)" &&
+    [ -n "$sidecar" ]; then
+    printf '           Where that receipt is, though, is not read over the network.\n'
+    printf '           It is the last record for this ticket in\n'
+    printf '             %s\n' "$sidecar"
+    printf '           a file of this tree that an AFK run appends to and that a\n'
+    printf '           session of that run appends to just as easily: no scope-guard\n'
+    printf '           judges it, no rollback undoes it, and this drain holds no copy\n'
+    printf '           of it. A run that was up when a record moved says so in\n'
+    printf '           run.log ([77]); one that moved with no run up is in every\n'
+    printf '           baseline there is. The URL above is whichever line won.\n'
   fi
 
   lines="$(router_journal_lines "$id")"
