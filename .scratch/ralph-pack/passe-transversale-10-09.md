@@ -338,8 +338,13 @@ pas de `loop__next_ticket` devant lui.
 - **[40]** — sa phrase (« ce qui garde un secret n'est pas où il vit mais à qui on
   dit son nom ») est vraie et incomplète, et la moitié qui manque est §1.
 
-## L'ordre — à valider
+## L'ordre — validé
 
 Trois tickets ouverts par cette passe — [80], [81], [82] — plus [79], ouvert par
-[78] et non placé. Proposition dans le message qui accompagne cette passe ; rien
-n'est écrit dans `Blocked by:` avant validation.
+[78] et resté non placé jusqu'ici.
+
+**Validé par Philippe le 10/09/2026 :
+[80] → [81] → [79] → [82] → [75] → [73] → [19].** Le raisonnement est écrit dans
+la section « Place dans la file » de chacun des quatre. `Blocked by:` reste
+`None` pour les quatre — la position est un ordonnancement, pas une dépendance,
+et c'est le précédent que [78] a posé.
