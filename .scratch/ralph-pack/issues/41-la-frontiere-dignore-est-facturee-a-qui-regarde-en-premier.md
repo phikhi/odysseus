@@ -121,3 +121,23 @@
 - **[46], le 29/08/2026 : « un seul appelant par itération » est devenu une propriété du registre.** Ce ticket avait écrit la règle comme une convention sur les sites d'appel, et [43] avait dû poser `RALPH_GATE_FRONTIER_READ` pour l'honorer, parce qu'un mouvement **qu'aucune remise ne peut défaire** est re-détecté à chaque regard. [46] ajoute un quatrième appelant (`gate_frontier_put_back`, dès le retour de la session, en amont du garde du tracker) et la convention a cassé sur-le-champ : sondé, un `core.fsmonitor` posé dans `~/.gitconfig` produisait **deux** constats identiques sur la sortie du scope-guard, donc une itération facturée deux fois et tout frère en vol avec elle. `gate__frontier_record` refuse maintenant d'ajouter une ligne que **ce pin** a déjà enregistrée et **pas encore lue** ; la portée « pas encore lue » garde le cas du re-slice de [32] facturé. Le témoin par run, la marque, la part et la ligne « personne ne peut être départagé » sont inchangés.
 
 - **Renommage.** `gate_ignore_common` → `gate_frontier_common`, `RALPH_IGNORE_COMMON` → `RALPH_FRONTIER_COMMON`, `gate__ignore_{record,share,mark,ledger_len}` → `gate__frontier_*`, et le témoin du run porte maintenant une troisième copie, `attributes`. L'entrée `41 a destroyed run witness reads as no witness at all` a été ré-ancrée sur la ligne élargie : la garantie (fail-closed sur un témoin détruit) est inchangée et couvre une source de plus.
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**Le critère de `gate__frontier_pin_broken` est le bon et sa liste ne le suit
+pas.** Le commentaire dit : « they live in the same `$TMPDIR` under the same kind
+of unguessable name, so a session that can reach one can reach the other ». La
+vérification est :
+
+    [ -f "$common/manifest" ] && [ -f "$common/exclude" ] &&
+      [ -f "$common/attributes" ] && [ -f "$common/ledger" ] || return 0
+
+Le répertoire porte **neuf** fichiers sur le backend local et **onze** sur un
+backend distant. `global` — copié par `gate_frontier_common` dans la même boucle
+que `exclude` et `attributes`, et venant donc de [30] comme eux — n'y est pas.
+
+Mesuré (`../sondes/passe-10-09/q3-*.bats`, Q3c à Q3h) : effacer `ledger` ou
+`manifest` arrête la nuit ; effacer `global`, `path` ([52]), `guards` ([77]) ou
+`forensic.witness` ([70]) laisse le run finir `resolved` en `rc=0` **sans un
+mot**. C'est la forme de [31], [45] et [62] : un critère dans la phrase, une liste
+copiée à la main à côté. Repris par **[81]**.

@@ -328,3 +328,15 @@ quand on revient à `command -v`.
   des tests à deadline, dont un VACUOUS se rejoue seul avant d'être lu comme une
   régression. Pas de charge artificielle pour reproduire : les gaps de cette
   famille sont du wall-clock, pas du CPU.
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**La baseline de PATH que ce ticket prend s'efface sans un mot.** Elle est écrite
+dans `$TMPDIR/ralph-frontier.*/path` par `gate_path_witness`, et une session qui
+globbe la supprime : run `rc=0`, ticket `resolved`, aucune phrase (mesuré,
+`../sondes/passe-10-09/q3-*.bats`, Q3e). `gate_path_drift` et `gate_path_residue`
+se replient alors sur « il n'y a rien à comparer », qui est un silence et pas une
+réponse.
+
+Le fichier n'est pas dans les quatre que `gate__frontier_pin_broken` vérifie
+([41]). Repris par **[81]**.

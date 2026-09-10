@@ -373,3 +373,21 @@ suivant — et il ne doit pas entrer dans l'historique du projet, exactement com
 `run.log`. `gate_is_bookkeeping` l'exclut déjà du scope-guard, mais un `git add -A`
 d'un projet qui ne l'ignore pas le commiterait. Rien dans [77] ne l'ajoute au
 `.gitignore` : c'est ce ticket-ci qui provisionne cette zone.
+
+## Contrainte écrite par la passe transversale du 10/09/2026
+
+**Le balayeur de `$TMPDIR` de ce ticket lit la même liste que [81] doit
+dériver.** `gate_tmp_names` est aujourd'hui une liste de dix-sept motifs tenue
+par un test qui lit les `mktemp` du pack ([62]) ; [81] doit dériver une **seconde**
+liste, celle des objets que le run range là pour s'en servir de témoin. Les deux
+ne sont pas la même — la première est « ce que le pack laisse derrière lui », la
+seconde « ce dont un contrôle dépend » — et l'installeur consomme la première.
+
+Ce qu'il ne faut pas faire en livrant ici : recopier l'une ou l'autre. Si [81]
+passe devant, lire ce qu'il expose ; s'il passe derrière, ne pas lui préparer une
+troisième liste.
+
+Et un fait que la passe a mesuré et qui touche l'installeur : la session jugée
+énumère `$TMPDIR` (`ls "$TMPDIR"/ralph-*` rend huit entrées) et lit `gate_tmp_names`
+dans la source du pack. Un balayeur qui *déplacerait* ces objets ailleurs
+n'achèterait rien — c'est la conclusion de [80] et [81], pas de celui-ci.

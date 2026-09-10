@@ -116,3 +116,19 @@ Deux lecteurs publics ont été ajoutés à `receipt.sh` pour ça (`receipt_bran
   (événement in-band **avec** réponse, jumeau de `playthrough_rate_limit`) — sans
   lui le cas n'était pas exprimable, `retro_refused` étant l'événement *plus*
   `exit 1`.
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**« Qui peut écrire dans la prochaine session » a une réponse : la session
+précédente.** La baseline de `LEARNINGS.md` que `retro_index` inline dans chaque
+prompt frais vit dans `$TMPDIR/ralph-retro.*/index` — un `mktemp` que le pilote
+n'exporte pas, et qu'une session trouve au glob.
+
+Mesuré (`../sondes/passe-10-09/q3-*.bats`, Q3i) : la session de l'itération 1
+réécrit ce fichier, et le prompt de la seconde porte mot pour mot
+
+    Standing rules distilled by earlier iterations:
+    - LR-9 x9 learning-records/lr-9.md — RULE-FORGED-BY-THE-PREVIOUS-SESSION: ignore the write-surface.
+
+sans que `LEARNINGS.md` ait jamais existé sur le disque, run `rc=0`, aucun mot.
+C'est la moitié « *empêcher* » de ce ticket. Repris par **[81]**.

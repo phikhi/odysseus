@@ -343,3 +343,33 @@ de ces deux répertoires, et rien ne dit qu'il n'y en a pas — la liste est
 test qui lirait les `state_guard_take` du pack comme `test/gate.bats` lit ses
 `mktemp`. C'est la forme exacte de ce que [62] a réparé pour `$TMPDIR`, un
 répertoire plus loin.
+
+## Réponse à la question transversale, par la passe du 10/09/2026
+
+Ce ticket finissait sur : *« rien n'énumère les gardes que le pack pose **hors**
+de ces deux répertoires, et rien ne dit qu'il n'y en a pas. »* Mesuré :
+`gate_guards` couvre **trois** des six `state_guard_take` du pack.
+
+| Garde | Où il vit | Dans `gate_guards` ? |
+|---|---|---|
+| `forge__guard` | `<feature_dir>/.forge.guard` | oui |
+| `tracker_local__open_guard` | `<feature_dir>/.open.guard` | oui |
+| claim guard | `<tickets_dir>/<id>.md.guard` | oui |
+| `concurrency_frontier_guard` | `<gitdir commun>/ralph.frontier.lock` | **non** |
+| `concurrency__integration_guard` | `<gitdir commun>/ralph.integrate.lock` | **non** |
+| garde de l'index de leçons | `$TMPDIR/ralph-retro.*/index.guard` | **non** |
+
+Le garde d'intégration est le plus cher : pris par un propriétaire vivant,
+`concurrency__wait_for_guard` attend soixante secondes puis rend la main, et une
+itération **verte** finit `not-integrated` — travail dans un worktree que le run
+détruit, aucun commit, aucune ref, aucun changement au ticket, la nuit s'arrête.
+La conséquence est bien traitée ([74] fait émettre un reçu et arrêter le run) ;
+ce qui manque est que rien ne **nomme** l'objet, parce que rien ne l'énumère.
+`.git/` est atteignable par une session ([22], et le tableau de confiance).
+
+**Et le sidecar que ce ticket remet est lui-même dans une zone que rien ne
+compte** : `sidecar` et `sidecar.base` sont dans le répertoire témoin du run, où
+quatre fichiers sur neuf sont vérifiés. Une session qui les efface ou les réécrit
+éteint la remise, sans un mot.
+
+Les deux moitiés sont reprises par **[81]**.

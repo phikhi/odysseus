@@ -470,3 +470,19 @@ pour que la prochaine lecture de `playthrough.sh` les trouve.
   dans la même zone avec le même mécanisme absent, et il est nommé dans **[70]**
   comme le troisième objet de cette liste, pour que le correctif ne soit pas plus
   étroit que son critère ([31], [45]).
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**La phrase de `playthrough.sh` — « a delivery session, during a run : this copy
+is already taken; the rewrite changes nothing here » — est fausse.** La copie est
+`$TMPDIR/ralph-spec.*`, un `mktemp` que le pilote n'exporte pas et qu'une session
+trouve au glob.
+
+Mesuré (`../sondes/passe-10-09/q3-*.bats`, Q3a et son témoin appairé Q3b) : la
+session réécrit la copie, le gate de valeur rejoue
+`THIS-FLOW-WAS-FORGED-BY-THE-SESSION`, `spec.md` sur le disque est intact, run
+`rc=0`, feature fermée en vert, aucun mot. Q3b — la même réécriture sur le
+fichier du disque — donne bien le comportement documenté.
+
+C'est aussi [68] rouvert : [68] a tranché sur le run **suivant**, en s'appuyant
+sur le fait que le run courant était couvert. Repris par **[81]**.
