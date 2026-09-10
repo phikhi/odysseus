@@ -138,3 +138,21 @@ quelles :
   que le répertoire est déjà sur la liste ;
 - une lecture du module passe par un accesseur unique (`forge__reading`) qui
   choisit la copie ou le fichier, jamais par un `if` recopié au point d'appel.
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**Le logement tranché par [77] n'est pas remis en cause, et il hérite d'une
+obligation.** Le répertoire témoin du run reste le bon endroit — il n'y en a pas
+de meilleur dans ce pack, et la passe l'a mesuré plutôt que supposé : la zone est
+énumérable par la session jugée (`ls "$TMPDIR"/ralph-*`), mais toutes les
+alternatives le sont autant ou davantage.
+
+Ce que ça ajoute : ce cache **décide de ce que le tracker dit** — la frontière,
+le claim, la write-surface que le scope-guard juge. Il est donc, au sens de
+**[81]**, un témoin et pas un fichier de travail : il entre dans le recensement
+et il porte un digest, au même titre que la copie du sidecar de [77]. Ne pas
+l'écrire comme une exception « c'est un cache, pas un témoin ».
+
+Et la borne de fraîcheur que ce ticket doit poser ne dispense pas du digest : un
+cache périmé est une décision de ce ticket, un cache **réécrit** est un contrôle
+qui lit ce que la chose contrôlée a écrit.

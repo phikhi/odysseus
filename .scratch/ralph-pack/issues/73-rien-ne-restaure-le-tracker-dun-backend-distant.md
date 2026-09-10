@@ -175,3 +175,16 @@ Et une contrainte : la remise que [77] livre est **par run** et ne remet rien su
 le disque. Ce que ce ticket-ci ajoute — une restauration du tracker distant — doit
 dire ce qu'il fait du sidecar, qui est ce qui décide *qui tient* les tickets
 restaurés.
+
+## Contrainte écrite par la passe transversale du 10/09/2026
+
+**Un champ qu'on n'a pas pu lire devient ici une remise qui efface.** La remise
+lit cinq champs plus le corps par ticket et par fenêtre ; `tracker_field` rend
+**un seul** code non nul pour « ce ticket ne porte pas ce champ » et pour « je
+n'ai pas pu savoir », et les vingt-huit sites du pack écrasent les deux en la
+chaîne vide (mesuré, `../sondes/passe-10-09/q1-*.bats`, Q1a). Une remise qui lit
+un refus comme un champ vide réécrit le ticket avec du vide.
+
+C'est **[82]**, ouvert par la même passe. Si [82] est livré devant, ce ticket
+consomme sa clause ; sinon, il doit la porter lui-même pour ses propres lectures
+— et le dire.

@@ -285,3 +285,19 @@ sont maintenant des tests de la suite : Q1a, Q1b, Q1c, Q3a, Q3b.
 
 - `bash test/run.sh` : **785 tests, 0 failures**, 6 skips opt-in (aucun dans le canari)
 - `bash test/mutate.sh` : **804 mutations, 0 not ok**
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**Le témoin que ce ticket prend s'éteint avec un `rm`, et rien ne le compte.**
+`forensic_witness` écrit `forensic.witness` et `forensic.written` dans le
+répertoire témoin du run, en `$TMPDIR`. Une session qui globbe les efface.
+
+Mesuré (`../sondes/passe-10-09/q4-*.bats`) : une session qui détruit un reçu
+d'audit d'un run précédent **et** ces deux fichiers laisse le run finir `rc=0`,
+ticket `resolved`, **aucun mot** ; le témoin appairé — la même destruction, les
+deux fichiers laissés — imprime « `receipts/demo/00-vieux.md` is gone, and this
+run did not remove it… ».
+
+Le seul contrôle du dépôt qui refuse un témoin manquant
+(`gate__frontier_pin_broken`, [41]) vérifie quatre fichiers écrits à la main sur
+les neuf du répertoire, et ceux-ci n'en sont pas. Repris par **[81]**.

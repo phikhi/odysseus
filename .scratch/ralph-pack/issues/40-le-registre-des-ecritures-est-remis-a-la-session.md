@@ -95,3 +95,24 @@
 
 - **Ce que [42] a ajouté à l'enjeu de ce ticket, livré le 06/08/2026.** Le registre est maintenant lu par les **deux** gardes de `issues/` et plus seulement par la restauration. Ce que l'`export` rachetait — une édition du tracker ni défaite ni annoncée — n'est donc plus le pire : une session qui connaîtrait ce chemin s'accorderait aussi un **ticket à elle sur la frontière**, la quarantaine sautant les ids que la boucle a écrits. L'entrée de mutation `40 the register is handed to the session in its environment` couvre toujours la même ligne et vise toujours la livraison, mais elle vaut plus cher qu'à sa livraison : ne pas la laisser dériver sans la rejouer.
 - **[46], le 29/08/2026 : renommage, sans changement de doctrine.** Ce ticket cite `RALPH_IGNORE_PIN` comme l'exemple du secret « jamais exporté, connu du seul pilote et de ses sous-shells ». La variable s'appelle maintenant `RALPH_FRONTIER_PIN`, et son voisin de [41] `RALPH_FRONTIER_COMMON` : la frontière épinglée porte deux questions depuis [46] (ce qu'un contrôle voit, et ce que git exécute), et le nom le dit. Rien ne change pour la leçon écrite ici — ce qui protège un secret est **qui en connaît le nom** — ni pour l'entrée de mutation de ce ticket, qui vise `RALPH_TRACKER_LOG`.
+
+## Note écrite par la passe transversale du 10/09/2026
+
+**La phrase de ce ticket — « ce qui garde un secret n'est pas où il vit mais à
+qui on dit son nom » — est vraie et c'est la moitié de la question.** L'autre
+moitié : la session n'a pas besoin qu'on lui dise le nom. Le registre est un
+`mktemp` sous `$TMPDIR`, et `for f in "${TMPDIR:-/tmp}"/ralph-slot.writes.*` le
+trouve ; le pack publie en plus les dix-sept motifs dans `gate_tmp_names` ([62]),
+qui est dans une source que la session lit.
+
+Mesuré (`../sondes/passe-10-09/q2-*.bats`, Q2b et son témoin appairé Q2c) : une
+ligne appendue au registre, `Write-surface:` réécrite en `*` dans l'arbre
+principal, et le run rend `rc=0`, `scope=green`, un fichier hors surface **folded
+onto the branch**, ticket `resolved`, pas un mot. C'est le faux vert que ce
+ticket a fermé, rouvert par une autre porte.
+
+**Et le test qui le tenait est plus étroit que son titre.** `test/failures.bats`,
+« a session cannot switch the guard off by writing the loop's own register »,
+commence par `if [ -n "${RALPH_TRACKER_LOG:-}" ]` : il fait varier l'`export`,
+c'est-à-dire la chose que ce ticket a réparée, et pas le geste. Repris par
+**[80]**.
