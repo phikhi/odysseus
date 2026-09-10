@@ -80,6 +80,41 @@ concurrency_preflight() {
 
 # ── how many may be in flight ────────────────────────────────────────────────
 
+# Whether two iterations of this run can be in flight at once.
+#
+# The question the register of [13] exists to answer, asked *before* that register
+# is read rather than assumed by its readers ([31] — read a list against its
+# criterion and not against the cases that prompted it). What the register holds is
+# the loop writing in `issues/` inside **another** iteration's window: a sibling's
+# claim, its retry counter, its marking, the children of its re-slice, the ticket a
+# sibling that died without a verdict was given back. Every one of them belongs to
+# a sibling, so a run that can never have one writes nothing under `issues/`
+# between the mark and the guard — in `loop__iterate` and in `failures_reslice`
+# alike — and the register is legitimately empty there.
+#
+# So the exemption that register carries is a parallelism feature, and [80] made it
+# switch off where parallelism does. That is not tidiness. The register is a
+# `mktemp` under `$TMPDIR` that the judged session **enumerates** — the name is
+# never exported ([40]) and never needs to be, `for f in "$TMPDIR"/ralph-slot.writes.*`
+# finds it and `gate_tmp_names` publishes the pattern ([62]) — and a forged line in
+# it cannot be told from a legitimate one: it is an id, appended to a file that
+# grows all night, so no digest and no census reaches it ([81] covers the objects
+# for which they do). At the shipped `MAX_PARALLEL=1` the two guards over `issues/`
+# now have no interrupter at all; above it, what stays reachable is a row of
+# `docs/frontiere-de-confiance.md`.
+#
+# Read here rather than beside the guards, and through the same sanitising
+# `concurrency_cap` does: a value this pack cannot read is refused whole at the
+# preflight, and a second `case` over `MAX_PARALLEL` in another module would be the
+# [25] defect again — wrong the first time this one changes.
+concurrency_may_overlap() {
+  local want="${MAX_PARALLEL:-1}"
+  case "$want" in
+    '' | *[!0-9]*) want=1 ;;
+  esac
+  [ "$want" -gt 1 ]
+}
+
 # The number of iterations this run may have in flight, MAX_PARALLEL throttled by
 # what the budget last measured.
 #

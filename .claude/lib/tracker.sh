@@ -203,6 +203,16 @@ tracker__dispatch() {
 # `failures_protect_tracker`. What keeps a secret is not where it lives but who
 # is told its name.
 #
+# **And that sentence covers the telling, not the finding** ([80]). A session that
+# globs `$TMPDIR` reads this file without being told anything, so the register is
+# not a channel a session cannot write — it is one whose entries buy as little as
+# they can be made to buy. Two clauses, both in `failures.sh` where the guards
+# are: an entry naming the iteration's **own** ticket exempts nothing, and the
+# register is not consulted at all by a run that can have no sibling in flight.
+# Above `MAX_PARALLEL=1` a forged line still shields a *sibling's* ticket from the
+# restore and a ticket a session created from the quarantine; that is written down
+# in `docs/frontiere-de-confiance.md` and is not fixed here.
+#
 # Everything but the four read operations counts as a write, derived from the list
 # rather than from the operations that happen to write today: an adapter that grows
 # an operation must not be able to slip past this by being forgotten ([31] — read
