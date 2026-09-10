@@ -2298,16 +2298,19 @@ mutation "13 the sealed config is resolved against the worktree, not the project
 # quote the expression would have to fight, and the bare name appears in the
 # comment above it.
 #
-# Aimed at a test that asserts on the **tracker and the branch** — the ticket's
-# write-surface put back, `rogue/backdoor` absent from HEAD — and not at the one
-# that lists the environment. Both go red, and only one of them says what the
-# export costs: a session told this path buys itself a surface of `*`, and the
-# iteration commits and folds a file the ticket never declared. An entry aimed at
-# the environment listing would report `ok` for a fix that hid the name somewhere
-# else and left the delivery open.
+# **Re-aimed by [80], and the move is the ticket's finding rather than upkeep.**
+# This entry used to name the scenario that asserts on the tracker and the branch,
+# with the argument that an entry aimed at the environment listing would report
+# `ok` for a fix that hid the name somewhere else. That argument held only while
+# the export was what the delivery needed: it is not. The session finds this file
+# by listing `$TMPDIR`, so that scenario is red with the export or without it, and
+# an entry aimed at it now says nothing about the export at all — it would report
+# VACUOUS about a test that is fine. What the export still costs is exactly what
+# the environment listing measures: a name handed to `claude`, which is the last
+# thing [40] took away and the only thing this edit puts back.
 mutation "40 the register is handed to the session in its environment" "$LOOP" \
   's/  RALPH_TRACKER_LOG="\$\(mktemp/  export RALPH_TRACKER_LOG\n  RALPH_TRACKER_LOG="\$(mktemp/' \
-  test/failures.bats "switch the guard off"
+  test/loop-happy-path.bats "handed the loop's register"
 
 # ── [42] the two guards over the tracker read that register ──────────────────
 
@@ -2339,6 +2342,41 @@ mutation "42 the quarantine reads the register" "$FAILURES" \
 mutation "42 a creation is noted under the id it produced" "$TRACKER_IFACE" \
   's/      \[ -z "\$out" \] \|\| printf .%s\\n. "\$out"\n      tracker__note_write "\$out"/      [ -z "\$out" ] || printf "%s\\n" "\$out"\n      tracker__note_write "\${1:-}"/' \
   test/failures.bats "left alone by the quarantine"
+
+# ── [80] a register a session reaches by listing $TMPDIR ────────────────────
+#
+# The channel could not be closed, so what these entries hold is how little a line
+# in it buys. A forged entry is an id appended to an append-only file: nothing can
+# tell it from a legitimate one, which is why the two clauses below are narrowings
+# and not a seal — and why each of them needs its own entry. Remove one and the
+# other still closes the scenario it was measured on, so a single entry aimed at
+# the delivered gesture would report `ok` for half a fix.
+#
+# Both are aimed at the **delivered** consequence and never at a log line: the
+# ticket's write-surface rewritten to `*` and read by the gate, or a ticket the
+# session gave itself walking onto the frontier.
+
+# The clause that holds at any parallelism. Aimed at the half of the gesture that
+# runs with the register live — at `MAX_PARALLEL=1` the entry below closes the
+# same scenario, so an entry named there would stay green without this line.
+mutation "80 the register exempts the iteration's own ticket too" "$FAILURES" \
+  's/    \[ "\$id" = "\$ticket" \] \|\| ! failures__in_list/    ! failures__in_list/' \
+  test/failures.bats "buys nothing where the register is live"
+
+# And the clause that holds at the shipped one. Aimed at the quarantine, which has
+# no second clause: the restore would stay green on the ticket of the iteration
+# itself, so an entry named there would be VACUOUS about a guard that really did
+# stop reading the register.
+mutation "80 a run that can have no sibling reads the register anyway" "$FAILURES" \
+  's/  \[ -n "\$mark" \] \|\| return 0\n  concurrency_may_overlap \|\| return 0/  [ -n "\$mark" ] || return 0/' \
+  test/failures.bats "no sibling reads no register"
+
+# The other direction, and it is the half [13] and [42] paid for: a narrowing that
+# refused every entry would satisfy both entries above and put back the run where
+# a sibling's marking is undone by whichever iteration comes back first.
+mutation "80 no run is ever allowed a sibling" "$CONCURRENCY" \
+  's/^concurrency_may_overlap\(\) \{/concurrency_may_overlap() { return 1;/m' \
+  test/concurrency.bats "a re-slice beside a marking"
 
 # ── [44] a run that is gone, and an iteration that goes on delivering ────────
 #

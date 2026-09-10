@@ -116,3 +116,22 @@ ticket a fermé, rouvert par une autre porte.
 commence par `if [ -n "${RALPH_TRACKER_LOG:-}" ]` : il fait varier l'`export`,
 c'est-à-dire la chose que ce ticket a réparée, et pas le geste. Repris par
 **[80]**.
+
+
+## Note écrite en livrant [80] (10/09/2026)
+
+- **La phrase de ce ticket est vraie et couvre la moitié qu'elle nomme.** « Ce qui
+  garde un secret n'est pas où il vit mais à qui on **dit** son nom » — mesuré le
+  10/09 : personne n'a besoin qu'on le lui dise. `for f in "$TMPDIR"/ralph-slot.writes.*`
+  trouve le registre, et `gate_tmp_names` ([62]) publie le motif. [80] est ce qui a
+  été fait avec ça : le canal n'est pas refermable (relecture depuis l'offset 0,
+  ligne forgée indiscernable d'une ligne légitime), donc c'est ce qu'une ligne
+  achète qui a été réduit.
+
+- **Et l'entrée de mutation de ce ticket a changé de cible, ce qui est une
+  trouvaille et pas de l'entretien.** Elle visait
+  `test/failures.bats "switch the guard off"` — un scénario qui, depuis [80], est
+  rouge avec l'`export` comme sans lui. Elle aurait donc rendu **VACUOUS** sur un
+  test qui va bien. Elle vise maintenant
+  `test/loop-happy-path.bats "handed the loop's register"`, qui mesure ce que
+  l'`export` coûte encore : un nom passé à `claude` dans son environnement.

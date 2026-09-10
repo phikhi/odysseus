@@ -493,9 +493,22 @@ failures_tracker_snapshot() {
 # An empty mark means "no register was taken", which is a caller driving one
 # iteration at a time: the shape these guards had before there was ever a sibling,
 # and the answer is the empty list rather than a refusal.
+#
+# And a run that can have no sibling gets that same empty list whatever the mark
+# says ([80]). The exemption exists because the loop legitimately writes in
+# `issues/` inside *another* iteration's window; with nothing else in flight it
+# writes nothing there between the mark and the guard, so every entry the register
+# could hand back is one the loop did not put there. That is the whole of what can
+# be done about a channel a session reaches: the register is a `mktemp` under
+# `$TMPDIR` the judged session enumerates, and a forged line — an id, appended to a
+# file that grows all night — is indistinguishable from a legitimate one, so it
+# cannot be made noisy the way a missing witness can. It can only be made to buy
+# less. `concurrency_may_overlap` is where the criterion lives, next to the setting
+# it reads.
 failures__register_since() {
   local mark="${1:-}"
   [ -n "$mark" ] || return 0
+  concurrency_may_overlap || return 0
   tracker_writes_since "$mark"
 }
 
@@ -841,8 +854,20 @@ failures_protect_tracker() {
     # A ticket this run wrote itself inside the window: a sibling's claim, its
     # retry counter, its marking. Skipped before the status is even looked at,
     # because restoring it is how two iterations in flight destroy each other.
+    #
+    # **Never the ticket this iteration was handed** ([80]), and that clause is
+    # what takes the delivered false green away rather than a tightening. The loop
+    # has no legitimate reason to write this ticket inside this window: the claim
+    # is written before the mark is taken, the marking and the retry counter after
+    # this guard has returned, and the register is read here precisely to spare a
+    # **sibling's**. So an entry naming it can only have come from the one writer
+    # that is not the loop — the session being judged, which reaches the register by
+    # globbing `$TMPDIR` and needs no name for it. Measured before this line
+    # existed: one `printf` of its own id, `Write-surface:` rewritten to `*`, and
+    # the scope-guard then read the contract the session had just given itself —
+    # green, committed, folded onto the branch, ticket `resolved`, not a word.
     id="$(basename "$path" .md)"
-    ! failures__in_list "$id" "$ours" || continue
+    [ "$id" = "$ticket" ] || ! failures__in_list "$id" "$ours" || continue
     case "$status" in
       A)
         # Left where it is: a created ticket belongs to the quarantine, which

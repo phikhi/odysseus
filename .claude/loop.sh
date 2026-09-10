@@ -1623,6 +1623,22 @@ LEFTOVERS
   # write-surface the session gave itself. Out of the tree was never the property
   # that mattered; **who knows the name** is. Same treatment as `RALPH_FRONTIER_PIN`
   # ([30]), which is the same secret in the same directory, for the same reason.
+  #
+  # **And who knows the name is half the answer — the other half was a delivered
+  # false green** ([80]). Nobody has to be *told* this name: `$TMPDIR` is a
+  # directory, `for f in "$TMPDIR"/ralph-slot.writes.*` returns it, and this pack
+  # publishes the seventeen patterns itself in `gate_tmp_names` ([62]). `mktemp`
+  # buys an unguessable name and nothing at all against a reader who enumerates.
+  # The channel could not be closed where it stands: the file is read back by
+  # processes that are not this one, an unlinked descriptor does not reopen the
+  # same way on every platform, and a forged line here is an id in an append-only
+  # file — indistinguishable from a legitimate one, so no digest and no census
+  # reaches it. What was done instead is to make it buy less, and both halves live
+  # next to the guards that pay for them: `failures_protect_tracker` never exempts
+  # the ticket its own iteration was handed, and `failures__register_since` hands
+  # back nothing at all when the run can have no sibling in flight — which is the
+  # shipped `MAX_PARALLEL=1`. What stays reachable above that is a row of
+  # `docs/frontiere-de-confiance.md` rather than a silence.
   RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")" ||
     RALPH_TRACKER_LOG=''
 

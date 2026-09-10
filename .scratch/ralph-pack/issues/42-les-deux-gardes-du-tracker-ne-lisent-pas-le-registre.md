@@ -87,3 +87,29 @@
 - **État final mesuré.** `bash test/run.sh` : **394 tests** (388 avant, six neufs : quatre dans `concurrency.bats` — les deux sondes et leurs témoins — et deux dans `failures.bats` pour la quarantaine au niveau lib), **1 rouge**, `a run killed mid-session leaves a claim…`, le symptôme de [44]. L'autre rouge connu (`a stop request lets the iterations in flight finish`, famille [38]) est passé sur ce run et avait rougi sur le run précédent : la liste des noms reste celle du briefing, le nombre varie, comme [38] le dit. `bash test/mutate.sh` complet : **359 entrées, 1 `not ok`**, `23 a TERM nobody answers hangs the run for ever`, VACUOUS — l'entrée attendue.
 
 - **Une régression attrapée par le pack sur lui-même, et elle vaut d'être gardée.** Les deux helpers partagés s'appelaient d'abord `failures__loop_writes` et `failures__is_loop_write` : `test/layering.bats` les a lus comme un lib appelant `loop.sh`, parce qu'il cherche `loop_[a-z0-9_]*` dans les libs et qu'un nom de fonction *contenant* le préfixe d'un autre module est indistinguable d'un appel vers lui. Renommés `failures__register_since` / `failures__in_register`. La leçon n'est pas le nom : c'est qu'un préfixe de module est un espace de noms réservé **à l'intérieur des identifiants**, pas seulement en tête.
+
+
+## Note écrite en livrant [80] (10/09/2026)
+
+- **L'exemption que ce ticket a câblée aux deux gardes est désormais
+  conditionnelle, et la condition est son propre critère.** `failures__register_since`
+  demande `concurrency_may_overlap` avant de rendre quoi que ce soit : le registre
+  existe parce que la boucle écrit *légitimement* dans `issues/` pendant la fenêtre
+  d'une **autre** itération, et un run qui ne peut pas avoir de sœur n'y écrit rien
+  entre la marque et la garde (vérifié site par site, dans `loop__iterate` comme
+  dans `failures_reslice`). À `MAX_PARALLEL=1` — la valeur livrée — les deux gardes
+  n'ont donc plus d'interrupteur du tout.
+
+- **Et la restauration n'exempte jamais le ticket de l'itération en cours**, à
+  toute parallélisme : la boucle écrit le claim avant que la marque soit prise et
+  le marquage après le retour de la garde, donc une entrée qui nomme ce
+  ticket-là ne peut venir que de la session jugée. La quarantaine, elle, garde son
+  exemption entière au-dessus de un — c'est ce qui reste atteignable, et c'est
+  écrit dans `docs/frontiere-de-confiance.md`.
+
+- **Ce que ça change pour les tests de ce ticket** : `a ticket the loop wrote
+  itself is left alone by the guard`, `a ticket the loop created itself is left
+  alone by the quarantine` et `a register naming one id does not exempt a stray
+  that shares a word with it` tournent maintenant à `MAX_PARALLEL=2`, faute de
+  quoi ils mettraient en scène une exemption qui n'existe plus à cette valeur. Les
+  scénarios de `test/concurrency.bats` étaient déjà à 2 et n'ont pas bougé.

@@ -142,6 +142,29 @@
   rollback s'arrête. Une assertion sur `rc=4` seul ne distinguerait pas ce refus
   d'un autre : asserter les phrases.
 
+- **Ce que [80] a tranché en livrant (10/09/2026), et qui est une contrainte
+  d'entrée pour ce ticket.** Le registre `ralph-slot.writes.*` est **le seul** des
+  douze objets de cette zone pour lequel « recenser et vérifier » ne peut rien :
+  une ligne forgée y est un id appendu à un fichier append-only, indiscernable
+  d'une ligne légitime, et le fichier bouge légalement entre deux lectures — donc
+  ni digest ni recensement de contenu. La réparation livrée là-bas n'est pas un
+  témoin : c'est une réduction de ce qu'une ligne achète (`failures_protect_tracker`
+  n'exempte jamais le ticket de l'itération courante, et `failures__register_since`
+  ne consulte rien quand `concurrency_may_overlap` est faux). **Conséquence pour
+  ce ticket** : si le recensement inclut `ralph-slot.writes.*`, ce ne peut être
+  que pour son **existence**, jamais pour son contenu — et la dernière AC
+  ci-dessus (« y compris le cas du registre, qui appartient à [80] et pas ici »)
+  est déjà satisfaite par la ligne que [80] a écrite dans
+  `docs/frontiere-de-confiance.md`, qui nomme ce qui reste atteignable
+  au-dessus de `MAX_PARALLEL=1`. Ne pas la réécrire, la citer.
+
+  Deux sorties écartées là-bas et qui vaudraient pour d'autres objets d'ici, pour
+  éviter de les re-sonder : le **descripteur délié** (`exec 9>f; rm -f f`) ne sert
+  que pour un objet que personne ne relit depuis le début — bash ne rembobine pas
+  un fd et `/dev/fd/N` est un `dup` sur darwin ; et un **MAC par ligne** est hors
+  de portée de l'outillage du pack, dont le seul digest est `cksum`, un CRC donc
+  affine et forgeable depuis quelques couples connus.
+
 ## Place dans la file
 
 **Validée par Philippe le 10/09/2026, à la passe transversale du même jour.** La
