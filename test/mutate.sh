@@ -5393,8 +5393,22 @@ mutation "18 a second request is opened instead of rewritten" "$FORGE" \
 
 # [47]\x27s operation: the question and the write on the same side of one guard.
 mutation "18 open_unique opens a second ticket under one slug" "$FORGE" \
-  's#  if \[ -n "\$unique" \] && forge__slug_taken "\$flavour" "\$slug"; then#  if false \&\& forge__slug_taken "\$flavour" "\$slug"; then#' \
+  's#    if forge__slug_taken "\$records" "\$slug"; then#    if false \&\& forge__slug_taken "\$records" "\$slug"; then#' \
   test/tracker-remote.bats "open_unique opens once"
+
+# [78]. The listing\x27s status back inside a swallow, which is the shipped defect:
+# a refused listing becomes an empty list, an empty list reads "nobody carries this
+# slug", and `open_unique` opens a duplicate at every run of a repository the page
+# ceiling of [76] refuses.
+mutation "78 a refused listing is read as a free slug" "$FORGE" \
+  's#    records="\$\(forge__records "\$flavour"\)" \|\| \{\n      forge__guard_release\n      printf [^\n]*\n        "\$slug" >&2\n      return 1\n    \}#    records="\$(forge__records "\$flavour")" \|\| records=""#' \
+  test/tracker-remote.bats "not a free slug"
+
+# And the other half of the same AC: a refusal nobody can see is a run that opened
+# nothing and said nothing about it. The status stays, the sentence goes.
+mutation "78 the refusal to open a unique ticket is silent" "$FORGE" \
+  's#      printf \x27forge: the tracker could not be listed[^\n]*\n        "\$slug" >&2\n##' \
+  test/tracker-remote.bats "not a free slug"
 
 # The slug in the id, which is what two readers of [65] read out of the id text.
 mutation "18 an id carries no slug" "$FORGE" \

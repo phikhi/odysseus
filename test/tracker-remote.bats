@@ -433,6 +433,66 @@ T
 3-cap-thing"
 }
 
+@test "a listing the forge refused is not a free slug, and open_unique refuses" {
+  # [78]. The refusal needs no outage since [76]: a tracker that does not end
+  # within `FORGE_PAGES` refuses **every** listing, at every pass, so the empty
+  # list `forge__slug_taken` used to read out of its own heredoc said "nobody
+  # carries cap-thing" on a tracker holding it — and every run reopened it.
+  #
+  # `FORGE_PAGE 2` and `FORGE_PAGES 1` put that ceiling on the two issues already
+  # seeded, which is the cheapest way to stage this without simulating a failure.
+  use_forge github
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 1
+  remote__two
+
+  pack_run 'RALPH_TRACKER_LOG="'"$RALPH_TEST_DIR"'/register"
+    : >"$RALPH_TRACKER_LOG"
+    set +e
+    printf "**Status:** ready-for-human\n\n**Blocked by:** None\n" |
+      tracker_open_unique cap-thing "A capability"
+    printf "rc=%s\n" "$?"
+    printf "register:[%s]\n" "$(tr "\n" " " <"$RALPH_TRACKER_LOG")"'
+  # The status is the channel, because stdout has none left: an empty stdout is
+  # already "one is waiting", which is a success. It survives `tracker__dispatch`,
+  # so the refusal is what a caller of the *interface* reads.
+  assert_output_contains "rc=1"
+  # And it says which slug and why, on the run's stderr, without anybody counting
+  # tickets before and after.
+  assert_output_contains "the tracker could not be listed"
+  assert_output_contains "refusing to open \"cap-thing\""
+  refute_output_contains "3-cap-thing"
+  # Nothing opened, read off the forge itself and not through the pack.
+  [ -z "$(forge_state 3)" ] || fail "a ticket was opened behind a listing nobody could read"
+  # And nothing written to the register of [13]: a creation that did not happen is
+  # not a write for the two guards over `issues/` to exempt.
+  assert_output_contains "register:[]"
+}
+
+@test "the same slug under a ceiling that fits still opens once and answers nothing twice" {
+  # The paired witness: without it, "it refused" could be an `open_unique` that
+  # refuses whatever the ceiling. Same tracker, same slug, one number changed.
+  use_forge github
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 4
+  remote__two
+
+  pack_run 'printf "**Status:** ready-for-human\n\n**Blocked by:** None\n" |
+    tracker_open_unique cap-thing "A capability"'
+  assert_success
+  assert_equal "$output" "3-cap-thing"
+
+  pack_run 'printf "**Status:** ready-for-human\n\n**Blocked by:** None\n" |
+    tracker_open_unique cap-thing "A capability"'
+  assert_success
+  assert_equal "$output" ""
+
+  pack_run 'tracker_ids'
+  assert_equal "$output" "1-alpha
+2-beta
+3-cap-thing"
+}
+
 @test "an opened ticket carries the slug in its id, which is what two readers of [65] need" {
   # `playthrough__opened_slug` and `playthrough__strangers` both read the slug out
   # of the id **text**. A backend numbering server-side and dropping the slug would

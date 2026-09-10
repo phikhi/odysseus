@@ -109,7 +109,9 @@
 #   forge_bump_failures F ID       count one; the new count on stdout
 #   forge_clear_failures F ID      the retry budget back
 #   forge_open_ticket F SLUG TITLE     create from stdin; id on stdout
-#   forge_open_unique F SLUG TITLE     the same, unless the slug is taken
+#   forge_open_unique F SLUG TITLE     the same, unless the slug is taken —
+#                                  and non-zero, with nothing on stdout, when
+#                                  the tracker could not be listed at all
 #   forge_renumber F ID            the id it carries, which is the one given
 #   forge_append_note F ID         a comment from stdin
 #   forge_emit_receipt F ID        the receipt from stdin, into the request
@@ -1480,7 +1482,7 @@ forge_open_unique() {
 # reads it before allocating a number: under the guard, the whole creation path
 # would wait on somebody else's stdin.
 forge__open() {
-  local flavour="$1" slug="$2" title="$3" unique="${4:-}" body payload num id rc=0
+  local flavour="$1" slug="$2" title="$3" unique="${4:-}" body payload num id records rc=0
   body="$(cat)"
   slug="$(forge__slug "$slug")"
   [ -n "$slug" ] || slug=ticket
@@ -1491,9 +1493,34 @@ forge__open() {
   }
   forge__forget
 
-  if [ -n "$unique" ] && forge__slug_taken "$flavour" "$slug"; then
-    forge__guard_release
-    return 0
+  # The listing is taken **here**, on a statement of its own, and the scan below
+  # is handed records rather than a flavour ([78]). `forge__slug_taken` used to
+  # read `forge__records` inside the heredoc that feeds it, where a status cannot
+  # survive: a listing that refused arrived as an empty list, an empty list reads
+  # "no ticket carries this slug", and this function opened. That is [59]'s rule
+  # in the one place where the answer is a **write** — and since [76] the refusal
+  # needs no outage to happen, because a tracker that does not end within
+  # `FORGE_PAGES` refuses every listing of every run. Each `retro-*` and each
+  # `capability-*` meant to exist once was reopened at every pass, on a human's
+  # tracker, with nothing saying so.
+  #
+  # **A refusal is not "the slug is free", and it is not "the slug is taken"
+  # either.** The signature of `open_unique` says an empty stdout means "one is
+  # already waiting", and that is a success; there is no third thing it can print
+  # without becoming a different operation. So the third answer goes on the
+  # channel that is left — a non-zero status, which `tracker__dispatch` carries
+  # back to the caller, and a sentence saying which slug and why.
+  if [ -n "$unique" ]; then
+    records="$(forge__records "$flavour")" || {
+      forge__guard_release
+      printf 'forge: the tracker could not be listed — refusing to open "%s", because a listing that refused does not say the slug is free\n' \
+        "$slug" >&2
+      return 1
+    }
+    if forge__slug_taken "$records" "$slug"; then
+      forge__guard_release
+      return 0
+    fi
   fi
 
   # The slug is a field of the body and not a decoration of the title, because it
@@ -1533,15 +1560,21 @@ forge__create() {
   return 0
 }
 
+# Does any ticket already carry this slug — asked of records the caller already
+# holds, and that argument is the whole of [78]. Reading the tracker here would
+# put the read back inside the heredoc, where the only two answers are "a line
+# matched" and "no line matched": a listing that refused has no way to be either,
+# so it was the second one. The caller reads the listing on its own line and
+# decides; this stays a scan over lines, which is all it ever settled.
 forge__slug_taken() {
-  local flavour="$1" slug="$2" line s
+  local records="$1" slug="$2" line s
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     s="$(forge__field_at 2 "$line")" || continue
     [ "$s" = "$slug" ] || continue
     return 0
   done <<RECORDS
-$(forge__records "$flavour" || printf '')
+$records
 RECORDS
   return 1
 }
