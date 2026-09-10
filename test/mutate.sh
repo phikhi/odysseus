@@ -699,9 +699,13 @@ mutation "21 the tracker is only watched through its ids" "$LOOP" \
 mutation "21 an edit to a ticket is not put back" "$FAILURES" \
   's/        GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__gap "\$ticket: could not restore \$path"/        :/' \
   test/canary.bats "widen its own write-surface"
+# Re-anchored by [81], which put `retro_hold_index` between the snapshot and the
+# spawn: the edit is the same move — read the tracker *after* the session — split
+# into a delete and an insert, so a third line landing in that block does not make
+# it drift again.
 
 mutation "21 the write-surface is read after the session, not at spawn" "$LOOP" \
-  's/  issues="\$\(failures_tracker_tree\)" \|\| issues=""\n  rc=0\n  loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?/  rc=0\n  loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n  issues="\$(failures_tracker_tree)" || issues=""/' \
+  's/  issues="\$\(failures_tracker_tree\)" \|\| issues=""\n//; s/  loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?\n/  loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n  issues="\$(failures_tracker_tree)" || issues=""\n/' \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 an edited tracker still buys a green iteration" "$LOOP" \
@@ -2556,9 +2560,13 @@ mutation "41 a crashed iteration's movement never reaches its siblings" "$GATE" 
 
 # Fail-closed on the two things [41] added to `$TMPDIR`. Both had a fallback that
 # reads the live sources, so a session that destroyed either would have bought back
+# Re-anchored by [81]: the four names typed out here are gone — what holds the
+# nine of them is `gate_witness_moved`, a walk of what the pack wrote — and what
+# is left is the floor a `gate_*` driven outside a run falls to. It is still the
+# line that makes a destroyed witness cost what a destroyed pin costs.
 # the pack before this ticket — quietly, where destroying the pin stops the night.
 mutation "41 a destroyed run witness reads as no witness at all" "$GATE" \
-  's/  \[ -f "\$common\/manifest" \] && \[ -f "\$common\/exclude" \] &&\n    \[ -f "\$common\/attributes" \] && \[ -f "\$common\/ledger" \] \|\| return 0\n//' \
+  's/  \[ -d "\$common" \] \&\& \[ -f "\$common\/ledger" \] \|\| return 0\n//' \
   test/gate.bats "closes the control, like a destroyed pin"
 
 mutation "41 a register that got shorter is nobody's business" "$GATE" \
@@ -5704,9 +5712,12 @@ mutation "77 the reserve is printed over an absent receipt" "$ROUTER" \
 
 # The second directory a backend of this pack puts an exclusion guard in, one
 # level below the two globs this swept: `issues/<id>.md.guard`, the claim guard
+# Re-anchored by [81], which moved the walk into `gate__guard_paths` so that a
+# third zone could join the two: the edit still takes the tickets directory out
+# of the census, which is where a claim guard lives.
 # of the local backend ([49] put it there on purpose).
 mutation "77 the sweep forgets where a ticket's own guard lives" "$GATE" \
-  's#  dir="\$\(tracker_tickets_dir 2>/dev/null\)" \|\| dir=\x27\x27\n  \[ -n "\$dir" \] \&\& \[ -d "\$dir" \] \&\& set -- "\$@" "\$dir"\n##' \
+  's#  dir="\$\(tracker_tickets_dir 2>/dev/null\)" \|\| dir=\x27\x27\n  gate__guards_in "\$dir"\n##' \
   test/gate.bats "earlier run left holding"
 
 # And the guard that bites, which this counted as nothing: an owner that answers
@@ -5735,6 +5746,114 @@ mutation "77 the fallback infers the tracker refused" "$LOOP" \
 mutation "77 nothing records which guards predate the run" "$GATE" \
   's#  \{ gate_guards \|\| true; \} \| cut -f1 >"\$dir/guards" 2>/dev/null \|\| return 1#  : >"\$dir/guards" 2>/dev/null || return 1#' \
   test/gate.bats "names the guard and not the tracker"
+
+# ── [81] the witnesses of the run, counted rather than listed ────────────────
+#
+# `gate__frontier_pin_broken` carried the criterion in its sentence and four
+# names beside it, where the directory holds nine. Every entry below either takes
+# the census back to a list, or takes away what one of the witnesses is held to,
+# or takes away the run's ability to say which one moved — and the last of those
+# is a guarantee of its own here: four of the nine fell in complete silence, and
+# a night that stops without naming what stopped it is the same half-truth as a
+# night that does not stop.
+
+# The census itself. Without it the seal is empty, and empty means silent
+# everywhere: `gate_witness_moved` is written to be quiet where no pilot sealed
+# anything, so that `gate_*` stays drivable outside a run.
+mutation "81 nothing is sealed, so nothing is held" "$GATE" \
+  's/^gate_witness_seal\(\) \{/gate_witness_seal() { return 0;/m' \
+  test/gate.bats "a missing one is named"
+
+# And the census reaching only the first holder it is handed, which is the shape
+# a hand-written list has: right about the directory somebody was thinking of,
+# blind to the two the run puts beside it.
+mutation "81 the census covers the first holder and no other" "$GATE" \
+  's/  for root in "\$@"; do/  for root in "\$1"; do/' \
+  test/gate.bats "a missing one is named"
+
+# The refusal. Without it a witness that is gone is named and walked past, which
+# is the pack before this ticket for five of the nine and worse for the four it
+# already held: the fallbacks in that directory are "read the live sources".
+mutation "81 a destroyed witness of the run refuses nothing" "$GATE" \
+  's/  if gate_witness_moved "\$common" >\/dev\/null; then return 0; fi\n//' \
+  test/gate.bats "a missing one is named"
+
+# Existence in place of content, which is where §3 of the pass lands: two of the
+# most expensive objects here do not disappear, they change.
+mutation "81 a witness that is there is the witness that was taken" "$GATE" \
+  's/    if \[ "\$now" = "\$digest" \]; then continue; fi/    if [ "\$now" != "-" ]; then continue; fi/' \
+  test/gate.bats "costs what a missing one costs"
+
+# And the bound on the three that grow legally. Without it a register rewritten
+# shorter than the run sealed it reads as one that grew.
+mutation "81 a register rewritten shorter is a register that grew" "$GATE" \
+  's/        if \[ "\$\{now##\*\.\}" -ge "\$\{digest##\*\.\}" \]; then continue; fi/        if true; then continue; fi/' \
+  test/gate.bats "got shorter than its seal"
+
+# The mode list read the other way: a name on it is a witness exempted from its
+# digest, so a list that answered `grows` for everything would be a seal that
+# checks nothing at all.
+mutation "81 every witness of the run is one this run rewrites" "$GATE" \
+  's/  printf .fixed\\n.\n  return 0\n\}/  printf "grows\\n"\n  return 0\n}/' \
+  test/gate.bats "costs what a missing one costs"
+
+# The seal reaching the iterations at all, which is what keeps the library's
+# silence from being the shipped behaviour.
+mutation "81 the run throws its own seal away" "$LOOP" \
+  's#  if \[ -z "\$\{RALPH_WITNESS_SEAL:-\}" \]; then#  RALPH_WITNESS_SEAL=\x27\x27\n  if [ -z "\$\{RALPH_WITNESS_SEAL:-\}" ]; then#' \
+  test/gate.bats "stops the night and the run names it"
+
+# And the run saying which one moved. The gate still refuses; what goes is the
+# line a morning reader needs, which is exactly what the four unheld witnesses
+# cost before this ticket.
+mutation "81 the run stops without naming the witness" "$LOOP" \
+  's/^\$\(gate_witness_note \|\| true\)\n//m' \
+  test/gate.bats "stops the night and the run names it"
+
+# The clause on the refusal itself, for the same reason one layer down: the
+# snapshot is the one document a stopped night leaves.
+mutation "81 the refusal names the control and not the file" "$GATE" \
+  's/refusing to snapshot a tree whose visibility nothing vouches for\$\(gate__witness_clause "\$\{RALPH_FRONTIER_COMMON:-\}"\)/refusing to snapshot a tree whose visibility nothing vouches for/' \
+  test/gate.bats "a missing one is named"
+
+# The value gate's own refusal, which is the false green of §3: the copy is
+# there, its content is a flow the session wrote, and the feature closes on it.
+mutation "81 the value gate replays whatever is in its copy" "$PLAYTHROUGH" \
+  's/  if ! gate_witness_intact "\$spec"; then/  if false; then/' \
+  test/playthrough.bats "does not get the feature closed"
+
+# The lesson index, held by the copy the iteration keeps in its own memory —
+# without which the session of iteration 1 writes the prompt of iteration 2.
+mutation "81 a rewritten lesson index reaches the next prompt" "$RETRO" \
+  's/^retro_index_note\(\) \{/retro_index_note() { return 1;/m' \
+  "test/retro.bats" "does not write the next session's prompt"
+
+mutation "81 the iteration holds no copy of the index it was handed" "$LOOP" \
+  's/  retro_hold_index \|\| true\n//' \
+  "test/retro.bats" "does not write the next session's prompt"
+
+# And the one place the put-back must not happen: a sibling's lesson is a legal
+# move, and putting it back would drop it.
+mutation "81 a sibling's lesson is put back as a forgery" "$RETRO" \
+  's/  if concurrency_may_overlap; then/  if false; then/' \
+  test/retro.bats "named and never put back"
+
+# The two zones [77] left unenumerated. The fold's guard is the one that costs:
+# held by an owner that answers, a green iteration ends `not-integrated` and the
+# night stops with nothing naming the object.
+mutation "81 the guards of the common git directory are counted by nobody" "$GATE" \
+  's/  concurrency_guards 2>\/dev\/null \|\| true\n//' \
+  test/gate.bats "stale guard of the common git directory"
+
+mutation "81 the guard of the lesson index is counted by nobody" "$GATE" \
+  's/  retro_guards 2>\/dev\/null \|\| true\n//' \
+  test/gate.bats "three zones the pack locks in"
+
+# And the module that answers for its own zone, rather than a path composed in
+# the census: one of the two, dropped, is a guard nothing can name.
+mutation "81 only one of the two locks of the fold's zone is named" "$CONCURRENCY" \
+  's/  printf .%s\\n%s\\n. "\$frontier" "\$integration"/  printf "%s\\n" "\$frontier"/' \
+  test/gate.bats "three zones the pack locks in"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

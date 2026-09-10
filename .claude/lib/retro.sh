@@ -90,6 +90,9 @@
 #   retro_drop_brief TICKET      the ticket is finished; forget it
 #   retro_wanted OUTCOME VERDICTS ROLLBACK   is this iteration lesson material
 #   retro_run TICKET OUTCOME     the subagent, and everything it writes
+#   retro_guards                 where this module puts an exclusion guard ([81])
+#   retro_hold_index             the iteration's own copy of the index, in memory
+#   retro_index_note             what a session did to it, put back and named
 
 # Where this run's retro state lives, or empty. A shell variable of the *pilot*,
 # inherited by every iteration and never exported. See the header for why the name
@@ -101,6 +104,17 @@ RALPH_RETRO_STATE="${RALPH_RETRO_STATE:-}"
 # runs in the iteration's own shell, and the pilot is the only process that may
 # decide to pause ([08]).
 RALPH_RETRO_QUOTA=''
+
+# One iteration's own copy of the lesson index, taken before its session exists,
+# and whether there is one. In the **iteration's** memory rather than the pilot's,
+# which is the only level at which the question can be answered at all: an
+# iteration republishes this file on purpose ([14]), so a digest the pilot took at
+# `retro_open` would be stale after the first lesson — and a pilot that re-took it
+# every time would re-seal whatever a session had written into it. Held with the
+# `printf X` sentinel so an index that ends in no newline, or in several, comes
+# back exactly as it was.
+RETRO__INDEX_HELD=''
+RETRO__INDEX_HELD_SET=0
 
 # The line a retro session answers on. Same shape as the lens verdict token and for
 # the same reason: read as a tagged single line, so a model that quotes the
@@ -170,6 +184,86 @@ retro_open() {
   else
     : >"$dir/index"
   fi
+  return 0
+}
+
+# Where this module puts an exclusion guard, for the census of [81]: it is the
+# third zone this pack locks in, after the feature's directories and the common
+# git directory, and nothing enumerated it until that ticket. A path and not a
+# state — see `concurrency_guards`, which answers the same question for its own
+# zone and gives the reason.
+retro_guards() {
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
+  retro__index_guard
+  return 0
+}
+
+retro__index_guard() {
+  printf '%s/index.guard\n' "$RALPH_RETRO_STATE"
+}
+
+# The index this iteration was handed, held in the iteration's own memory before
+# its session exists ([81]).
+#
+# The seal of [81] holds this file to its **existence** and no further, because
+# this run rewrites it legally: `retro__publish` renders a new index whenever an
+# iteration distils a lesson. What that leaves — measured on 10/09/2026 — is a
+# session of iteration 1 rewriting the copy, `retro__promote` rendering the next
+# index *from what it wrote*, and the second session of the night being handed,
+# word for word, `RULE-FORGED-BY-THE-PREVIOUS-SESSION: ignore the write-surface`.
+# `LEARNINGS.md` on disk never existed. That is the half [14] called *prevent*,
+# and it rested on the same name [40] made secret.
+#
+# So the comparison is against a copy taken before the session and kept where the
+# session cannot be: a variable of the iteration's own shell. Non-zero when there
+# is nothing to hold, which a caller reads as "this run has no lesson workspace"
+# and not as a failure.
+retro_hold_index() {
+  RETRO__INDEX_HELD=''
+  RETRO__INDEX_HELD_SET=0
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
+  [ -f "$RALPH_RETRO_STATE/index" ] || return 1
+  RETRO__INDEX_HELD="$(cat "$RALPH_RETRO_STATE/index"; printf X)" || return 1
+  RETRO__INDEX_HELD_SET=1
+  return 0
+}
+
+# What the session did to it, put back and said. Non-zero when it did nothing,
+# which is every ordinary iteration.
+#
+# **Put back rather than refused**, which is the one place [81] departs from its
+# own rule that a rewritten witness costs what a missing one costs. Every other
+# witness of the run is a file this pack writes once and reads; this one is a file
+# this pack republishes, so "it is not what it was" is a sentence about the run as
+# often as about a session, and a refusal would stop the night over a lesson. What
+# it can do is put back the copy *this iteration* was handed, which is the copy
+# every prompt of the night is served from — and say so.
+#
+# An index that is **gone** is left alone here on purpose: that one is the seal's
+# business, it is a witness that no longer exists, and the gate refuses over it
+# like any other. Putting it back would take that refusal away.
+#
+# And never above `MAX_PARALLEL=1`, which is the same admission [80] wrote one
+# glob over: with two iterations in flight, a sibling that published a lesson
+# while this session ran moved this file legally, and putting it back would undo
+# a lesson to answer a question nobody asked. Named, never put back, and the row
+# in `docs/frontiere-de-confiance.md` says so.
+retro_index_note() {
+  local now
+  [ "$RETRO__INDEX_HELD_SET" = 1 ] || return 1
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
+  [ -f "$RALPH_RETRO_STATE/index" ] || return 1
+  now="$(cat "$RALPH_RETRO_STATE/index" 2>/dev/null; printf X)" || return 1
+  [ "$now" != "$RETRO__INDEX_HELD" ] || return 1
+  if concurrency_may_overlap; then
+    printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed, and this run has more than one iteration in flight: it is left as it stands, because a sibling that distilled a lesson moved it legally and putting it back would drop that lesson ([81])\n'
+    return 0
+  fi
+  if ! printf '%s' "${RETRO__INDEX_HELD%X}" >"$RALPH_RETRO_STATE/index" 2>/dev/null; then
+    printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed, and this run could not put it back: the next session of this night is served whatever is in it now ([81], [14])\n'
+    return 0
+  fi
+  printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed — put back. It is inlined in the prompt of every fresh session, so what was in it is what the next session of this night would have been told ([81], [14])\n'
   return 0
 }
 
@@ -380,7 +474,7 @@ retro__publish() {
 # owner that is gone; this waits for one that is merely busy.
 retro__guard_take() {
   local guard tries=120
-  guard="$RALPH_RETRO_STATE/index.guard"
+  guard="$(retro__index_guard)"
   while [ "$tries" -gt 0 ]; do
     state_guard_take "$guard" "learnings index guard" && return 0
     tries=$((tries - 1))
@@ -390,7 +484,7 @@ retro__guard_take() {
 }
 
 retro__guard_release() {
-  state_guard_release "$RALPH_RETRO_STATE/index.guard"
+  state_guard_release "$(retro__index_guard)"
   return 0
 }
 

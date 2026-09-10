@@ -15,6 +15,27 @@
 
 ## Comments
 
+- **Contrainte écrite en livrant [81] (10/09/2026) — le cache hérite du sceau.**
+  [77] a logé la zone de ce backend dans le répertoire-témoin du run, et [81]
+  scelle **tout** ce que ce répertoire porte : un digest par fichier, pris à
+  l'instant où le pilote finit de prendre ses témoins, gardé dans une variable du
+  pilote que rien n'exporte. Deux conséquences pour ce ticket, à choisir
+  explicitement plutôt qu'à découvrir :
+
+  - un fichier de cache créé **avant** la prise du sceau est tenu à son **digest**,
+    c'est-à-dire immuable pour la durée du run. Ce n'est probablement pas ce qu'un
+    cache veut.
+  - un fichier créé **après** n'est tenu par rien du tout, et c'est le résidu que
+    [81] a nommé sans le fermer (`capability.seen` est le cas déjà présent).
+
+  Si le cache doit bouger pendant le run, il lui faut une ligne dans
+  `gate_witness_mutable` avec sa borne — `grows` (longueur, pour un fichier
+  append-only) ou `rewritten` (existence ici, contenu tenu par son propre
+  propriétaire, comme `retro_hold_index` le fait pour l'index des leçons). Une
+  troisième borne demanderait de dire ce qu'elle achète, et la passe du 10/09 a
+  montré ce que coûte une liste dont le critère n'est écrit que dans une phrase.
+
+
 - **Ouvert par [18], livré le 08/09/2026, et le chiffre est mesuré et non estimé.**
   `lib/forge.sh` mémoïse le listing des issues dans une **variable du shell
   appelant**. Ce que ça achète est exactement une chose : les lectures d'un

@@ -2208,6 +2208,411 @@ FAKE
   assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
 }
 
+# ── [81] the witnesses of the run, held to their criterion ───────────────────
+#
+# `gate__frontier_pin_broken` carried the right sentence and a list of four
+# names beside it; the directory holds nine on the local backend and eleven on a
+# remote one, and a run puts three more objects in `$TMPDIR` for the same use.
+# Measured on 10/09/2026: `ledger` and `manifest` stop the night, `global`,
+# `path`, `guards` and `forensic.witness` cost a `rm` and nothing else.
+#
+# What follows is not that list written out a second time — that would be the
+# defect one layer up, and it is the one [62] took out of the sweep — but the
+# pack's own witnesses, taken by the pack, listed by the pack, and put to the
+# control one at a time.
+
+# Everything a run takes before its first session, in the order `loop.sh` takes
+# it, and the seal over all of it. Emitted as a script rather than run inline so
+# each test below stages its own gesture against the same starting state.
+gate_witness_setup() {
+  cat <<'SETUP'
+work="$(mktemp -d)"
+RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
+forensic_witness "$RALPH_FRONTIER_COMMON" || true
+gate_guard_witness "$RALPH_FRONTIER_COMMON" || true
+playthrough_witness || true
+retro_open || true
+capability_witness "$RALPH_RETRO_STATE" || true
+RALPH_WITNESS_SEAL="$(gate_witness_seal "$RALPH_FRONTIER_COMMON" \
+  "$RALPH_PLAYTHROUGH_SPEC" "$RALPH_RETRO_STATE")"
+RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+SETUP
+}
+
+gate_witness_teardown() {
+  cat <<'DOWN'
+rm -rf "$work" "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON" "$RALPH_RETRO_STATE"
+rm -f "$RALPH_PLAYTHROUGH_SPEC"
+DOWN
+}
+
+@test "every witness this run takes is sealed, and a missing one is named" {
+  # The census is derived and not typed: what is staged below is whatever the
+  # pack just wrote into its own witness holders. A thirteenth object put there
+  # by a later ticket is staged by this test without a line being added to it,
+  # which is the whole point of deriving it.
+  #
+  # Two questions per witness, because they have two different answers and the
+  # second one is deliberately not global (see `gate_witness_moved`): *is it
+  # named* — of every one of them — and *does the tree snapshot refuse* — of the
+  # ones in the shared witness, whose fallback is reading the live sources.
+  use_tickets 01-alpha
+
+  local script="$RALPH_TEST_DIR/witness-gone.sh" report="$RALPH_TEST_DIR/gone.out"
+  {
+    gate_witness_setup
+    cat <<'ASK'
+printf '%s\n' "$RALPH_WITNESS_SEAL" | while IFS="$(printf '\t')" read -r path digest; do
+  [ -n "$path" ] || continue
+  cp "$path" "$work/kept"
+  rm -f "$path"
+  said=named
+  gate_witness_note >"$work/note" 2>&1 || said=UNNAMED
+  grep -q "$path" "$work/note" || said=UNNAMED
+  case "$path" in
+    "$RALPH_FRONTIER_COMMON"/*)
+      if gate_tree_snapshot >/dev/null 2>"$work/refusal"; then
+        said=PASSED
+      elif ! grep -q "$path is gone" "$work/refusal"; then
+        said=UNNAMED
+      fi
+      ;;
+  esac
+  printf '%s %s\n' "$said" "$path"
+  cp "$work/kept" "$path"
+done
+ASK
+    gate_witness_teardown
+  } >"$script"
+  pack_run ". '$script' >'$report'"
+  assert_success
+
+  # The floor, because a seal that came out empty would pass every assertion
+  # under it. Twelve is what a run of the local backend takes today: the nine of
+  # the shared witness, the copy of the user flow, the lesson index and the
+  # capability baseline. A ticket that adds a witness moves it up; one that takes
+  # a witness away has to say so here.
+  local total
+  total="$(wc -l <"$report" | tr -d ' ')"
+  [ "$total" -ge 12 ] ||
+    fail "the seal covers $total witnesses, which is fewer than a run takes:
+$(cat "$report")"
+
+  ! grep -q '^PASSED' "$report" ||
+    fail "a witness of the shared frontier that a session can destroy for nothing:
+$(cat "$report")"
+  ! grep -q '^UNNAMED' "$report" ||
+    fail "a destroyed witness that this run does not name:
+$(cat "$report")"
+}
+
+@test "a witness that was rewritten costs what a missing one costs" {
+  # The half that existence alone does not reach: the two most expensive objects
+  # here do not disappear, they change content. Each witness is rewritten in
+  # place, and what the pack may still accept is asked of `gate_witness_mutable`
+  # rather than decided here — a register this run appends to all night cannot be
+  # held to a digest, and the lesson index is republished by this run on purpose
+  # ([14]), so its content is held one layer over, by the copy the iteration keeps
+  # in its own memory.
+  #
+  # Asked of `gate_witness_intact`, which is the one question every reader of a
+  # witness asks: what each of them then *does* about a `1` is its own — the tree
+  # snapshot refuses, the value gate refuses to conclude, the lesson index is put
+  # back — and each of those lives in the file that owns it.
+  use_tickets 01-alpha
+
+  local script="$RALPH_TEST_DIR/witness-rewritten.sh"
+  local report="$RALPH_TEST_DIR/rewritten.out"
+  {
+    gate_witness_setup
+    cat <<'ASK'
+printf '%s\n' "$RALPH_WITNESS_SEAL" | while IFS="$(printf '\t')" read -r path digest; do
+  [ -n "$path" ] || continue
+  mode="$(gate__witness_mode "${path##*/}")"
+  cp "$path" "$work/kept"
+  printf 'FORGED-BY-THE-SESSION\n' >"$path"
+  rc=0
+  gate_witness_intact "$path" || rc=$?
+  printf '%s\t%s\t%s\n' "$mode" "$rc" "$path"
+  cp "$work/kept" "$path"
+done
+ASK
+    gate_witness_teardown
+  } >"$script"
+  pack_run ". '$script' >'$report'"
+  assert_success
+
+  local mode rc path fixed=0
+  while IFS="$(printf '\t')" read -r mode rc path; do
+    [ -n "$path" ] || continue
+    case "$mode" in
+      fixed)
+        fixed=$((fixed + 1))
+        [ "$rc" != 0 ] ||
+          fail "a witness rewritten in place reads as the one that was taken: $path"
+        ;;
+      *)
+        # Named rather than asserted red: what these are held to is written in
+        # `gate_witness_mutable`, and the assertion that they are held at all
+        # belongs where their own owner can make it.
+        [ "$rc" = 0 ] ||
+          fail "a witness this run rewrites itself ($mode) closes the control: $path"
+        ;;
+    esac
+  done <"$report"
+
+  [ "$fixed" -ge 8 ] ||
+    fail "only $fixed witnesses are held to their content, which is fewer than this run takes:
+$(cat "$report")"
+}
+
+@test "the only witnesses this run moves itself are the ones the mode list names" {
+  # The list read backwards, and it is what keeps `gate_witness_mutable` from
+  # growing a name that buys a session a free rewrite. Two questions, and the
+  # first one needs a real run: which sealed witnesses did *this pack* move
+  # between two iterations? Anything that moved and is not on the list would be a
+  # false accusation on an ordinary night; anything on the list that no
+  # redirection in the pack creates is a name kept for a mechanism that is gone.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 1
+  gate__witness_digest_fake
+
+  run_loop_own_tmp
+  assert_success
+
+  local first last moved name mode
+  first="$SHIM_STATE/witness-digests.1"
+  last="$SHIM_STATE/witness-digests.2"
+  [ -s "$first" ] && [ -s "$last" ] ||
+    fail "the session listed no witness of the run at all, so this proves nothing"
+
+  moved="$(LC_ALL=C comm -3 <(LC_ALL=C sort "$first") <(LC_ALL=C sort "$last") |
+    awk '{ print $1 }' | LC_ALL=C sort -u)"
+  [ -n "$moved" ] ||
+    fail "nothing moved between two iterations, so this test asserts nothing:
+$(cat "$first")"
+
+  # The list, asked of the pack rather than retyped here.
+  local exempt
+  pack_run 'gate_witness_mutable'
+  assert_success
+  exempt="$output"
+
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf '%s\n' "$exempt" | LC_ALL=C grep -q "^$name	" ||
+      fail "this pack moved $name between two iterations and gate_witness_mutable does not name it, so an ordinary night would be refused over a witness nobody touched"
+  done <<MOVED
+$moved
+MOVED
+
+  # And the same rule read backwards, cheaply: a name on the list that no
+  # redirection in the shipped pack creates. It does not prove the name is still
+  # *used* — a run of the local backend never makes a sidecar — but it does catch
+  # a name kept after the object it exempts from its digest is gone.
+  while IFS="$(printf '\t')" read -r name mode; do
+    [ -n "$name" ] || continue
+    LC_ALL=C grep -rq ">\"\$[A-Za-z_]*/$name\"" "$PACK_DIR" ||
+      fail "gate_witness_mutable exempts $name from its digest and nothing in the pack creates a witness by that name"
+  done <<NAMES
+$exempt
+NAMES
+}
+
+# An honest session that also writes down, once per spawn, the digest of every
+# witness this run left in `$TMPDIR`. It receives no name and asks for none: it
+# globs, exactly as the 10/09 pass measured a session can.
+gate__witness_digest_fake() {
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+n=1
+while [ -e "$RALPH_SHIM_STATE/witness-digests.$n" ]; do n=$((n + 1)); done
+out="$RALPH_SHIM_STATE/witness-digests.$n"
+: >"$out"
+for f in "${TMPDIR:-/tmp}"/ralph-frontier.*/* "${TMPDIR:-/tmp}"/ralph-spec.* \
+  "${TMPDIR:-/tmp}"/ralph-retro.*/index; do
+  [ -f "$f" ] || continue
+  printf '%s %s\n' "${f##*/}" "$(cksum <"$f" | tr -d ' ')" >>"$out"
+done
+prompt="$(cat)"
+surface="$(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' ')"
+for t in $surface; do mkdir -p "$(dirname "$t")"; printf 'written\n' >"$t"; done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+}
+
+# A session that destroys one named file of the run's shared witness, and says
+# whether it found one — a glob that matched nothing would make every assertion
+# below pass for the wrong reason ([80]'s own lesson about a vacuous scenario).
+gate__witness_kill_fake() {
+  local target="$1" remove="${2:-1}"
+  script_claude <<FAKE
+#!/usr/bin/env bash
+found=NONE
+for d in "\${TMPDIR:-/tmp}"/ralph-frontier.*; do
+  [ -d "\$d" ] || continue
+  [ -f "\$d/$target" ] || continue
+  found="\$d/$target"
+  [ "$remove" = 1 ] && rm -f "\$d/$target"
+done
+printf '%s\n' "\$found" >"\$RALPH_SHIM_STATE/witness-found"
+prompt="\$(cat)"
+surface="\$(printf '%s' "\$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '\`\r' | tr ',' ' ')"
+for t in \$surface; do mkdir -p "\$(dirname "\$t")"; printf 'written\n' >"\$t"; done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+}
+
+@test "a session that destroys the guard census stops the night and the run names it" {
+  # `guards` is one of the four that cost nothing until [81], and it is [77]'s
+  # own witness: destroy it and the sentence a refused claim prints goes back to
+  # exactly the one [77] had just corrected. The session is handed no name — it
+  # lists `$TMPDIR`, which is what `run_loop_own_tmp` makes this run's own.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  gate__witness_kill_fake guards
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+
+  run cat "$SHIM_STATE/witness-found"
+  refute_output_contains "NONE"
+
+  [ "$code" = 4 ] || fail "the night went on over a destroyed witness: rc=$code"
+
+  # Two sentences and not one, because they are two guarantees and a mutation
+  # that takes either away has to be seen. The gate's refusal names the file it
+  # refused over; the run's own line is the one a morning reader gets, and it
+  # says what that file *was* — which is the whole of what the four silent
+  # witnesses of the 10/09 pass cost.
+  case "$said" in
+    *"a witness this run took before its first session is gone"*"/guards"*) ;;
+    *) fail "the run does not say which witness went, in its own words: $said" ;;
+  esac
+  case "$said" in
+    *"nothing vouches for"*"/guards is gone"*) ;;
+    *) fail "the gate's refusal does not name the file it refused over: $said" ;;
+  esac
+  assert_ticket_status 01-alpha ready-for-agent
+}
+
+@test "the same run with the census left in place delivers the ticket" {
+  # The paired witness, without which the assertions above could be about any
+  # error at all: byte for byte the same fake, the `rm` alone removed.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  gate__witness_kill_fake guards 0
+
+  run_loop_own_tmp
+  local said="$output"
+
+  run cat "$SHIM_STATE/witness-found"
+  refute_output_contains "NONE"
+
+  case "$said" in
+    *"is gone"*) fail "a witness nobody touched is reported gone: $said" ;;
+  esac
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a register of the run that got shorter than its seal is not a witness" {
+  # The one exception the seal admits, and its bound. Three of these grow all
+  # night — the ledger, the register of what this pack is about to write, and a
+  # remote backend's copy of its sidecar — so a digest would refuse an ordinary
+  # iteration. What they are held to instead is their length: a register below
+  # what the run sealed is one somebody rewrote, which is not a state this pack
+  # can produce. What that does **not** catch is written down rather than implied
+  # and is [80]'s own answer one glob over: a forged *line* appended to any of
+  # them is indistinguishable from a legitimate one.
+  local script="$RALPH_TEST_DIR/witness-grows.sh"
+  cat >"$script" <<'ASK'
+d="$(mktemp -d)"
+printf 'a	claim	one
+b	claim	two
+' >"$d/sidecar"
+RALPH_WITNESS_SEAL="$(gate_witness_seal "$d")"
+printf 'sealed:  '; gate_witness_moved || printf '(quiet)
+'
+printf 'c	claim	three
+' >>"$d/sidecar"
+printf 'grew:    '; gate_witness_moved || printf '(quiet)
+'
+printf 'a	claim	one
+' >"$d/sidecar"
+printf 'shorter: '; gate_witness_moved || printf '(quiet)
+'
+rm -rf "$d"
+ASK
+  pack_run ". '$script'"
+  assert_success
+
+  assert_output_contains "sealed:  (quiet)"
+  assert_output_contains "grew:    (quiet)"
+  case "$output" in
+    *"shorter: "*"/sidecar	shorter"*) ;;
+    *) fail "a register rewritten shorter than its seal reads as one that grew: $output" ;;
+  esac
+}
+
+@test "the census of guards names all three zones the pack locks in" {
+  # The list read as a list, beside the two run-real tests that read it as a
+  # sweep: a zone dropped from it is a guard nothing can ever name, and neither
+  # of those tests would notice the third one going.
+  local script="$RALPH_TEST_DIR/guard-zones.sh"
+  cat >"$script" <<'ASK'
+RALPH_RETRO_STATE="$(mktemp -d)"
+mkdir -p "$RALPH_RETRO_STATE/index.guard"
+printf '%s
+' "$$" >"$RALPH_RETRO_STATE/index.guard/pid"
+gate__guard_paths
+gate_guards | cut -f1
+rm -rf "$RALPH_RETRO_STATE"
+ASK
+  pack_run "FEATURE=demo; . '$script'"
+  assert_success
+
+  assert_output_contains "ralph.frontier.lock"
+  assert_output_contains "ralph.integrate.lock"
+  assert_output_contains "index.guard"
+}
+
+@test "a stale guard of the common git directory is named, like one in the tree" {
+  # [77] closed on an open question — nothing enumerates the guards this pack
+  # puts outside the feature's two directories, and nothing says there are none —
+  # and the answer, measured on 10/09/2026, was three of six. The one that costs
+  # is the fold's: held by an owner that answers, a **green** iteration ends
+  # `not-integrated`, its work is in a worktree the run then destroys, and the
+  # night stops with nothing naming the object.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  local dead common
+  dead="$(bash -c 'printf %s "$$"')"
+  common="$(cd "$PROJECT_DIR" && git rev-parse --git-common-dir)"
+  case "$common" in /*) ;; *) common="$PROJECT_DIR/$common" ;; esac
+  mkdir -p "$common/ralph.integrate.lock"
+  printf '%s\n' "$dead" >"$common/ralph.integrate.lock/pid"
+
+  run_loop
+  local stale
+  stale="$(printf '%s\n' "$output" | grep 'left in this tree by an earlier run' || true)"
+  case "$stale" in
+    *"ralph.integrate.lock"*) ;;
+    *) fail "the guard of the fold is named nowhere: $stale" ;;
+  esac
+
+  # And not "said, not swept" here, unlike the guards of the tree: this one is
+  # taken over during the run — `state_guard_take` displaces an owner that is
+  # gone, and the fold of a green iteration is the next caller that needs it.
+  # That is the recovery `gate__stale_guards` already documents, and it is why
+  # naming it is the whole of what this ticket buys: a run that silently takes
+  # over a guard an earlier run died holding is a run whose morning log cannot be
+  # read backwards.
+  refute_output_contains "not-integrated"
+}
+
 # ── an iteration that delivered nothing ──────────────────────────────────────
 #
 # [35]. Not one of the three objective branches asks whether the session changed

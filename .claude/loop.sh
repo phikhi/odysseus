@@ -570,7 +570,7 @@ loop__iterate() {
   local ticket="$1" slot="$2" tree="$3" start="$4" provisioned="${5:-0}"
   local outfile base pre seen issues rc turns cost tokens outcome tracker_says
   local tracker_written changed commit mark emit attempt
-  local drift_subject drift_outcome drift_message
+  local drift_subject drift_outcome drift_message witness_note
   local RALPH_ROLLBACK_FAILED=0
   # Declared here rather than left to the failure policy's own assignment, and the
   # locality is the point: these belong to *this* iteration, and with two in flight
@@ -682,6 +682,13 @@ loop__iterate() {
   # about to be judged on.
   seen="$(failures_tracker_snapshot)"
   issues="$(failures_tracker_tree)" || issues=""
+  # And this iteration's own copy of the lesson index ([81]). Held here, in the
+  # iteration's memory and before the session exists, because it is the one
+  # witness of the night this run rewrites legally: the seal can hold it to its
+  # existence and no further, and only the shell that was handed it can tell this
+  # run's republication from a session's rewrite. Never fatal — a run with no
+  # lesson workspace has nothing to hold, and that is already said above.
+  retro_hold_index || true
   rc=0
   loop_spawn_session "$ticket" "$outfile" || rc=$?
 
@@ -723,6 +730,27 @@ loop__iterate() {
   # writes nothing, here as everywhere ([44]), and a killed run leaving the
   # frontier where its session left it is the residue [30] already carries.
   gate_frontier_put_back >/dev/null || true
+
+  # And what the session did to the witnesses this run took before it existed
+  # ([81]). Here, after the session and before the first thing below reads one:
+  # the gate refuses over a witness that is gone or rewritten — that is
+  # `gate__frontier_pin_broken`, which now asks the seal instead of naming four
+  # files — and this is where the run gets to say **which**. The split matters:
+  # four of the nine witnesses fell in complete silence until this ticket, and a
+  # night that stops without naming what stopped it is the same half-truth as a
+  # night that does not stop.
+  #
+  # The lesson index is asked separately and answers differently, and its own
+  # comment says why: it is put back rather than refused, because this run
+  # republishes it on purpose.
+  while IFS= read -r witness_note; do
+    [ -n "$witness_note" ] || continue
+    loop_log "$ticket: $witness_note"
+    receipt_note "$witness_note"
+  done <<WITNESSES
+$(gate_witness_note || true)
+$(retro_index_note || true)
+WITNESSES
 
   # Before the gate reads a single field out of the tracker: the write-surface
   # it is about to judge against is a line in a file the session could just have
@@ -1742,6 +1770,28 @@ UNCOVERED
   # main tree nor the operator's home is that tree.
   elif ! capability_witness "$RALPH_RETRO_STATE"; then
     loop_log "no baseline of what a fresh session loads as a capability — a lens, an agent, a skill or a hook appearing under this run would go unremarked"
+  fi
+
+  # And what every one of the witnesses above **is**, at the instant they were
+  # taken ([81]). Last of the five, deliberately: this is a walk of what the pack
+  # just wrote, so it has to run after the last writer of the night's baselines
+  # and before the first session — a census taken earlier would count the ones
+  # that existed when it was written, which is the defect this closes.
+  #
+  # It is held in a shell variable of this pilot and never a file, and that is the
+  # whole of what makes it different from one more object beside the ones it
+  # vouches for: `claude` is spawned with an environment, this is not in it, and
+  # an iteration is a `fork` of this shell — so every check inherits the seal and
+  # nothing downstream of the fork can put it back. [40] made the *names* secret;
+  # the 10/09 pass measured what that bought, which is `ls "$TMPDIR"/ralph-*`.
+  #
+  # A run that cannot take it keeps the night and loses the check, the way the
+  # three witnesses above are lost: refusing to start would trade a night of
+  # delivered tickets for a `cksum`.
+  RALPH_WITNESS_SEAL="$(gate_witness_seal "${RALPH_FRONTIER_COMMON:-}" \
+    "${RALPH_PLAYTHROUGH_SPEC:-}" "${RALPH_RETRO_STATE:-}")" || RALPH_WITNESS_SEAL=''
+  if [ -z "${RALPH_WITNESS_SEAL:-}" ]; then
+    loop_log "no seal of this run's own witnesses — the pinned rules, the PATH baseline, the guard census, the forensic witness, the flow the value gate replays and the lesson index are held by their names alone from here, and a session that reaches one of them costs nothing ([81])"
   fi
 
   local iteration=0 sterile=0 ticket frontier_refused=0 reclaimed rid rdisposition

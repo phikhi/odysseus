@@ -300,26 +300,71 @@ NAMES
 # `tracker_tickets_dir`'s own reason; a backend that keeps them on a service
 # answers nothing and this walks one directory, as before.
 #
+# **Three zones and not two, since [81].** [77] closed its ticket on an open
+# question — "nothing enumerates the guards this pack puts *outside* these two
+# directories, and nothing says there are none" — and the answer, measured on
+# 10/09/2026, is that this covered three of the pack's six `state_guard_take`
+# sites. The three it did not are not decorative:
+#
+#   `<common git dir>/ralph.integrate.lock`   the fold's guard. Held by a live
+#     owner, `concurrency__wait_for_guard` waits a minute and gives up, and a
+#     **green** iteration ends `not-integrated`: the work is in a worktree the run
+#     then destroys, no commit, no ref, no change to the ticket, and the night
+#     stops. [74] made that emit a receipt and stop the run; what was missing is
+#     that nothing **names** the object, because nothing enumerated it.
+#   `<common git dir>/ralph.frontier.lock`    the restore's guard ([41]), in the
+#     same directory for the same reason.
+#   `$TMPDIR/ralph-retro.*/index.guard`       the lesson index's ([14]).
+#
+# The two directories are walked, because a claim guard is named after a ticket
+# and cannot be listed in advance; the other three are asked of the module that
+# owns them and never composed here, for `tracker_tickets_dir`'s own reason. A
+# module that answers nothing — a drain with no lesson workspace, a machine with
+# no common git directory — contributes nothing, which is the honest answer and
+# not a hole.
+#
 # One line per guard, `<path><TAB><pid><TAB><since>`, with an empty pid for a
 # guard that names none. The path and not the basename: with two directories in
-# play, `01-alpha.md.guard` said alone no longer says where to go and look.
+# play, `01-alpha.md.guard` said alone no longer says where to go and look — and
+# with three zones it is the only thing that says which one.
 gate_guards() {
-  local dir guard owner since
-  set --
+  local guard owner since list found=1
+  list="$(gate__guard_paths)"
+  while IFS= read -r guard; do
+    [ -n "$guard" ] || continue
+    [ -d "$guard" ] || continue
+    owner="$(cat "$guard/pid" 2>/dev/null)" || owner=''
+    since="$(cat "$guard/since" 2>/dev/null)" || since=''
+    printf '%s\t%s\t%s\n' "$guard" "$owner" "$since"
+    found=0
+  done <<GUARDS
+$list
+GUARDS
+  return "$found"
+}
+
+# Every path this pack may be holding an exclusion guard at, whether or not one is
+# standing there. The three zones, in one place, so that the walk above and the
+# census `gate_guard_witness` writes cannot come to differ.
+gate__guard_paths() {
+  local dir
   if [ -n "${FEATURE:-}" ]; then
     dir="$(ralph_feature_dir)" || dir=''
-    [ -n "$dir" ] && [ -d "$dir" ] && set -- "$@" "$dir"
+    gate__guards_in "$dir"
   fi
   dir="$(tracker_tickets_dir 2>/dev/null)" || dir=''
-  [ -n "$dir" ] && [ -d "$dir" ] && set -- "$@" "$dir"
-  [ "$#" -gt 0 ] || return 1
-  for dir in "$@"; do
-    for guard in "$dir"/*.guard "$dir"/.*.guard; do
-      [ -d "$guard" ] || continue
-      owner="$(cat "$guard/pid" 2>/dev/null)" || owner=''
-      since="$(cat "$guard/since" 2>/dev/null)" || since=''
-      printf '%s\t%s\t%s\n' "$guard" "$owner" "$since"
-    done
+  gate__guards_in "$dir"
+  concurrency_guards 2>/dev/null || true
+  retro_guards 2>/dev/null || true
+  return 0
+}
+
+gate__guards_in() {
+  local dir="${1:-}" guard
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  for guard in "$dir"/*.guard "$dir"/.*.guard; do
+    [ -d "$guard" ] || continue
+    printf '%s\n' "$guard"
   done
   return 0
 }
@@ -1325,6 +1370,250 @@ NAMES
   [ "$(gate__frontier_current "$name")" = "$pinned" ]
 }
 
+# ── the witnesses of the run, counted rather than listed ([81]) ───────────────
+#
+# A run puts twelve objects in `$TMPDIR` and reads them back as evidence: the
+# rules every check sees through ([30], [41], [46]), the copy of the *global*
+# ignore rules ([30]), the PATH baseline ([52]), the witness of the three zones
+# nothing else looks at ([70]), the census of the exclusion guards this tree
+# already held and the copy of a remote backend's sidecar ([77]), the user flow
+# the value gate replays ([11], [68]), and the lesson index every prompt of the
+# night is served from ([14], [15]).
+#
+# What held them until this ticket was **a name**: a `mktemp` the pilot never
+# exports ([40]). Measured on 10/09/2026, one file per run, the session doing
+# nothing but `rm` after a glob: destroying `ledger` or `manifest` stops the
+# night, because those two are in a list `gate__frontier_pin_broken` wrote by
+# hand; destroying `global`, `path`, `guards` or `forensic.witness` leaves the
+# run `resolved` at `rc=0` **without a word** — and `global` is copied by the
+# same loop, in the same function, as two of the four that are held. The list
+# never drifted: it was written short on the first day, which is [31]'s shape,
+# [45]'s and [62]'s — *a criterion in the sentence and a list copied beside it*.
+#
+# So the census is derived here the way [62] derived the sweep one directory up:
+# it is a **walk of what the pack just wrote**, taken at the instant the
+# witnesses are taken, and no second list beside the writers. A thirteenth object
+# put in one of these directories tomorrow is sealed by the line that creates it
+# and by nothing else.
+#
+# And the seal itself lives in **a shell variable of the pilot**, which is the
+# one store in this pack a judged session provably cannot reach: `claude` is
+# spawned with an environment, this is never exported, and an iteration is a
+# `fork` of the pilot rather than a fresh shell — so every check inherits it and
+# nothing downstream of the fork can put it back. That is the difference between
+# this and one more file beside the ones it vouches for.
+#
+# What it does **not** buy, written here rather than discovered ([80] settled the
+# same question one glob over): `gate__digest` is `cksum`, a CRC, which is affine
+# — a session that knows a witness's content can compute its digest and craft a
+# rewrite that keeps it. The seal raises the cost of a rewrite from `cat >` to a
+# deliberate forgery against a digest nobody handed out; it does not make one
+# impossible, and `docs/frontiere-de-confiance.md` says so on the row this ticket
+# rewrites.
+
+# Every regular file the run put in one of its witness holders, as
+# `path<TAB>digest`. A holder is a directory or a single file, and the top level
+# of a directory is all of it: what a call puts *inside* a directory this walk
+# already covers goes with that directory when it goes.
+gate_witness_seal() {
+  local root file
+  for root in "$@"; do
+    [ -n "$root" ] || continue
+    if [ -f "$root" ]; then
+      printf '%s\t%s\n' "$root" "$(gate__digest "$root")"
+      continue
+    fi
+    [ -d "$root" ] || continue
+    for file in "$root"/* "$root"/.*; do
+      [ -f "$file" ] || continue
+      printf '%s\t%s\n' "$file" "$(gate__digest "$file")"
+    done
+  done
+  return 0
+}
+
+# The witnesses whose content this run changes while it is up, `name<TAB>mode`,
+# and the only ones the check below does not hold to their digest. Matched on the
+# file name and never on a pattern: `sidecar` moves under this run and
+# `sidecar.base` is the baseline it is compared against, so a rule that caught
+# both would take away the comparison it exists to protect.
+#
+# Two modes and two different admissions:
+#
+#   grows      a register this run appends to — `ledger` ([41]), the pack's own
+#              register of what it is about to write ([70]) and a remote
+#              backend's copy of its sidecar ([77]). Held to its **length**: it
+#              may only ever get longer. A forged *line* in one of them is out of
+#              reach, for the reason [80] wrote down about the loop's own
+#              register — an appended line is indistinguishable from a legitimate
+#              one, so neither a census nor a digest reaches it.
+#   rewritten  the lesson index, which an iteration republishes on purpose
+#              ([14]). Held to its **existence** here; its content is held by the
+#              copy the iteration takes in its own memory before its session
+#              exists, which is `retro_hold_index` and the only place that can
+#              tell this run's republication from a session's rewrite.
+#
+# Enumerated here rather than read out of the pack at run time, for the oldest
+# reason in `docs/frontiere-de-confiance.md` and the one [62] gives in full: the
+# pack's own source sits in a tree a session writes to. The derivation lives in
+# the test, which drives a real run and asks which sealed witnesses this pack
+# moved by itself.
+gate_witness_mutable() {
+  printf '%s\t%s\n' \
+    ledger grows \
+    forensic.written grows \
+    sidecar grows \
+    index rewritten
+  return 0
+}
+
+gate__witness_mode() {
+  local want="$1" name mode
+  while IFS="$(printf '\t')" read -r name mode; do
+    if [ "$name" = "$want" ]; then
+      printf '%s\n' "$mode"
+      return 0
+    fi
+  done <<MODES
+$(gate_witness_mutable)
+MODES
+  printf 'fixed\n'
+  return 0
+}
+
+# The witnesses that are not the ones that were taken, `path<TAB>what`, `what`
+# being `gone`, `rewritten` or `shorter`. Non-zero when none of them moved, which
+# is every ordinary night, so a caller reads it like every other event channel
+# here ([45]).
+#
+# With an argument, only the witnesses a holder carries — and that argument is
+# how a refusal stays true rather than merely loud. **Every** witness of the run
+# is *named* by `gate_witness_note`, which is what the four silent ones of the
+# 10/09 pass cost; what each of them is *refused* over belongs to the check that
+# reads it, because the fallbacks are not the same fallback:
+#
+#   the shared witness   `gate__frontier_pin_broken` refuses the tree snapshot,
+#                        because everything in that directory decides what a
+#                        check can see and the fallback is "read the live
+#                        sources" ([41]).
+#   the copy of the flow `playthrough_close` refuses to conclude, because its
+#                        fallback is the file on disk a session can write ([11]).
+#   the lesson index     `retro_index_note` puts it back and says so, because
+#                        this run republishes it on purpose ([14]).
+#   the capability
+#   baseline             named and no more: its reader is an event channel that
+#                        goes silent, not a control that falls back ([15]), and
+#                        stopping a night over it would trade the work for the
+#                        bookkeeping — the same trade `loop.sh` refuses when it
+#                        cannot take that witness at all.
+#
+# A single global refusal was written first and thrown away: it stopped a run
+# over a rewritten copy of `spec.md` with `scope=red` and *the scope-guard could
+# not read the working tree*, which is a false accusation about a file that has
+# nothing to do with the tree. A bill nobody can contest is what this pack
+# refuses everywhere else.
+#
+# Silent with no seal, and that is deliberate rather than an oversight: `gate_*`
+# stays drivable outside a run — a `pack_run`, the drain, a project's own script
+# — and a check that refused wherever no pilot had sealed anything would refuse
+# there. What keeps that from being the shipped behaviour is `loop.sh` taking the
+# seal before its first session and the test that fails if it stops.
+gate_witness_moved() {
+  local root="${1:-}" seal="${RALPH_WITNESS_SEAL:-}" path digest now mode moved=1
+  [ -n "$seal" ] || return 1
+  while IFS="$(printf '\t')" read -r path digest; do
+    [ -n "$path" ] || continue
+    if [ -n "$root" ]; then
+      case "$path" in
+        "$root" | "$root"/*) ;;
+        *) continue ;;
+      esac
+    fi
+    now="$(gate__digest "$path")"
+    if [ "$now" = "$digest" ]; then continue; fi
+    if [ "$now" = '-' ]; then
+      printf '%s\t%s\n' "$path" gone
+      moved=0
+      continue
+    fi
+    mode="$(gate__witness_mode "${path##*/}")"
+    case "$mode" in
+      rewritten) continue ;;
+      grows)
+        # The byte count is the tail of the digest — `cksum` answers with the CRC
+        # and the length, and `gate__digest` joins them — so a register that grew
+        # is told from one that was rewritten shorter without a second stat.
+        if [ "${now##*.}" -ge "${digest##*.}" ]; then continue; fi
+        printf '%s\t%s\n' "$path" shorter
+        ;;
+      *) printf '%s\t%s\n' "$path" rewritten ;;
+    esac
+    moved=0
+  done <<SEAL
+$seal
+SEAL
+  return "$moved"
+}
+
+# Whether one named witness is still the one that was taken. For the reader that
+# has a path in hand and a sentence of its own to print — the value gate, whose
+# refusal has to say what it refused to replay.
+gate_witness_intact() {
+  local want="$1" path what
+  while IFS="$(printf '\t')" read -r path what; do
+    if [ "$path" = "$want" ]; then return 1; fi
+  done <<MOVED
+$(gate_witness_moved || true)
+MOVED
+  return 0
+}
+
+# The same measurement as the sentences a morning reader gets, one per witness.
+# Non-zero when nothing moved.
+#
+# The gate refuses over any of these — `gate__frontier_pin_broken` reads the same
+# channel — and this is what makes the refusal *nameable*. That split is the
+# whole finding of the 10/09 pass: four of the nine witnesses fell in complete
+# silence, and a night that stops without naming what stopped it is the same
+# half-truth as a night that does not stop.
+gate_witness_note() {
+  local path what said=1
+  while IFS="$(printf '\t')" read -r path what; do
+    [ -n "$path" ] || continue
+    case "$what" in
+      gone)
+        printf 'a witness this run took before its first session is gone (%s), and nothing in this run removed it: it is what a check here reads instead of the live source a session can write, so no guard downstream of it can see\n' "$path"
+        ;;
+      shorter)
+        printf 'a register this run appends to has got shorter (%s), which is not a state this pack can produce: it is append-only by construction, so a line that was in it has been erased\n' "$path"
+        ;;
+      *)
+        printf 'a witness this run took before its first session is not the one that was taken (%s): the file is there and its content is not, so a check here would read a source this run never vouched for\n' "$path"
+        ;;
+    esac
+    said=0
+  done <<MOVED
+$(gate_witness_moved || true)
+MOVED
+  return "$said"
+}
+
+# The clause the snapshot's refusal carries, so that a night stopped by a
+# destroyed witness names the file rather than only the control. One line, the
+# first finding: the refusal is a single sentence and the rest reaches `run.log`
+# and the receipt through `gate_witness_note`.
+gate__witness_clause() {
+  local root="${1:-}" path what
+  while IFS="$(printf '\t')" read -r path what; do
+    [ -n "$path" ] || continue
+    printf ' — %s is %s' "$path" "$what"
+    return 0
+  done <<MOVED
+$(gate_witness_moved "$root" || true)
+MOVED
+  return 0
+}
+
 # A pin that was set and cannot be read. Refused rather than ignored: the point of
 # the pin is that what the checks can see does not depend on what the session left
 # behind, so a missing one is a control that cannot see.
@@ -1335,13 +1624,28 @@ NAMES
 # reach the other — and the fallbacks around them are "read the live sources",
 # which is a quiet return to the behaviour this ticket removed. Destroying the pin
 # stops the night; destroying these would have cost nothing.
+#
+# **And "these" was four names typed out here** until [81], where the directory
+# held nine — so `global`, `path`, `guards` and `forensic.witness` were reachable
+# by exactly the session that reaches the pin and cost nothing at all. The list is
+# gone: what is asked now is `gate_witness_moved`, which is a walk of what the
+# pack itself wrote. Two lines survive it and neither is a list. The floor below
+# is for a `gate_*` driven outside a run, where no pilot sealed anything: the
+# directory has to be there and the register has to be readable, because the check
+# under it reads that register. The ledger's own mark stays here rather than
+# moving into the seal, and that is not tidiness — a register is *expected* to
+# grow, so what makes a shorter one a finding is this iteration's own mark and not
+# the length the run started with.
 gate__frontier_pin_broken() {
   local pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}" seen total
   [ -n "$pin" ] || return 1
   [ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ] || return 0
   [ -n "$common" ] || return 1
-  [ -f "$common/manifest" ] && [ -f "$common/exclude" ] &&
-    [ -f "$common/attributes" ] && [ -f "$common/ledger" ] || return 0
+  # The seal first and the floor second, and the order is what makes a stopped
+  # night nameable: a witness the seal covers is refused *by name* here, where
+  # the floor below can only say that something is missing.
+  if gate_witness_moved "$common" >/dev/null; then return 0; fi
+  [ -d "$common" ] && [ -f "$common/ledger" ] || return 0
 
   # A register that got shorter is one somebody rewrote: it is append-only by
   # construction, so a length below this iteration's own mark is not a state this
@@ -2460,7 +2764,7 @@ gate_tree_snapshot() {
       # through a command substitution, so a diagnosis on stdout would be captured
       # into the variable and thrown away with the failed status — leaving the
       # refusal downstream with no cause. Probed by destroying a pin mid-session.
-      gate__log 'the pinned ignore rules cannot be read — refusing to snapshot a tree whose visibility nothing vouches for' >&2
+      gate__log "the pinned ignore rules cannot be read — refusing to snapshot a tree whose visibility nothing vouches for$(gate__witness_clause "${RALPH_FRONTIER_COMMON:-}")" >&2
       return 1
     fi
     # `--ignore-errors` so that this answers `1` with everything readable in the

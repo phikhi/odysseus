@@ -257,6 +257,17 @@ RECEIPTS
 #
 # Refuses rather than writes half a witness: a baseline missing a zone is one
 # whose comparison accuses a session of emptying it.
+#
+# And what keeps the two files below from being *removed* is not in this module
+# since [81]: they are sealed with everything else the run puts in that directory,
+# by a walk of what the pack wrote rather than by a list naming them. Measured on
+# 10/09/2026, before that: a session that destroyed an audit receipt of an earlier
+# run **and** `forensic.witness` got a run at `rc=0`, a `resolved` ticket and not
+# one word — where the paired witness, the same destruction with the file left
+# alone, names it. A whole ticket of findings switched off by one `rm`. The
+# register beside it grows all night, so what the seal holds it to is its length;
+# `forensic_expect`'s "entered before the write and never after" is what makes
+# that the right bound.
 forensic_witness() {
   local dir="${1:-}" manifest
   [ -n "$dir" ] && [ -d "$dir" ] || return 1
