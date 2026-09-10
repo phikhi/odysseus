@@ -348,3 +348,13 @@ Trois tickets ouverts par cette passe — [80], [81], [82] — plus [79], ouvert
 la section « Place dans la file » de chacun des quatre. `Blocked by:` reste
 `None` pour les quatre — la position est un ordonnancement, pas une dépendance,
 et c'est le précédent que [78] a posé.
+
+## La cadence, fixée par Philippe le 10/09/2026
+
+Le rythme du dépôt était « tous les 4 ou 5 tickets ». Il est fixé à **tous les
+5 tickets livrés** (CLAUDE.md, même commit que cette ligne) : le compte est celui
+des tickets livrés **depuis la passe précédente**, une passe n'en est pas un, et
+un ticket qu'une passe ouvre compte le jour de sa livraison.
+
+Appliqué à la file validée ce jour — [80] → [81] → [79] → [82] → [75] → [73] →
+[19] — **la prochaine passe transversale tombe après [75] et avant [73]**.
