@@ -18,7 +18,7 @@ Un ticket n'est pas livré parce que la suite est verte. Seize tests de ce dép�
 8. **Consigner dans le ticket** ce que le code ne dit pas : écarts de write-surface, décisions, pièges, ce qui reste à faire ailleurs. Et **écrire les contraintes créées dans les tickets concernés**, pas seulement dans le sien — personne ne relit les commentaires d'un ticket clos au bon moment.
 9. **Une branche par ticket**, commit en français, `merge --no-ff` sur `main`, push.
 
-Tous les 4 ou 5 tickets, faire une **passe transversale** : rejouer les sondes « run réel » sur les tickets déjà livrés, avec les questions 4 et 5 en tête. C'est ce qui attrape ce qu'une review par ticket ne peut pas voir.
+**Tous les 5 tickets livrés**, faire une **passe transversale** : rejouer les sondes « run réel » sur les tickets déjà livrés, avec les questions 4 et 5 en tête. C'est ce qui attrape ce qu'une review par ticket ne peut pas voir. Le compte est celui des tickets **livrés depuis la passe précédente** — une passe elle-même n'en est pas un, et un ticket ouvert par une passe compte le jour où il est livré, pas le jour où il est ouvert. Cinq et pas « quatre ou cinq » : le nombre décide de la date de la prochaine passe, donc il ne se négocie pas ticket par ticket.
 
 ### Ce qui est vérifié et ce qui est seulement demandé
 
