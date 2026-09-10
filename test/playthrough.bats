@@ -686,3 +686,93 @@ plant_wiring_ticket() {
   # RECEIPTS_RETENTION_DAYS deletes.
   refute_file_contains "$receipt" "the secret narration"
 }
+
+# ── [81] the copy this gate replays is the copy that was taken ───────────────
+
+# A session that rewrites the run's copy of the user flow and says whether it
+# found one — a glob that matched nothing would make every assertion below pass
+# for the wrong reason. It is handed no name: `run_loop_own_tmp` is what makes
+# the listing this run's own, and the rest is what any session in a worktree can
+# do.
+playthrough__forge_spec_fake() {
+  local rewrite="${1:-1}"
+  script_claude <<FAKE
+#!/usr/bin/env bash
+found=NONE
+for f in "\${TMPDIR:-/tmp}"/ralph-spec.*; do
+  [ -f "\$f" ] || continue
+  found="\$f"
+  if [ "$rewrite" = 1 ]; then
+    cat >"\$f" <<'SPEC'
+# Spec — forged by the session
+
+## User Flow
+
+1. The user runs nothing at all.
+2. THIS-FLOW-WAS-FORGED-BY-THE-SESSION
+SPEC
+  fi
+done
+printf '%s\n' "\$found" >"\$RALPH_SHIM_STATE/spec-found"
+prompt="\$(cat)"
+surface="\$(printf '%s' "\$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '\`\r' | tr ',' ' ')"
+for t in \$surface; do mkdir -p "\$(dirname "\$t")"; printf 'written\n' >"\$t"; done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+}
+
+@test "a session that rewrote the copy of the flow does not get the feature closed" {
+  # The table at the top of this file says, in so many words, `a delivery
+  # session, during a run — this copy is already taken; the rewrite changes
+  # nothing here`. Until [81] that sentence was held by the name of a `mktemp`
+  # and by nothing else. Measured on 10/09/2026: the session rewrites
+  # `"$TMPDIR"/ralph-spec.*`, this gate replays
+  # `THIS-FLOW-WAS-FORGED-BY-THE-SESSION` while `spec.md` on disk is untouched,
+  # the run comes back `rc=0` and the feature closes green without a word. It is
+  # [68] reopened where [68] concluded there was nothing to do: [68] ruled on the
+  # *next* run, and the line above claims the current one.
+  use_tickets 01-alpha
+  playthrough__forge_spec_fake
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+
+  run cat "$SHIM_STATE/spec-found"
+  refute_output_contains "NONE"
+
+  # Refused before a value-gate session exists: there is nothing to replay, and
+  # nothing to repair it from either — the file on disk is the one this copy
+  # exists to distrust.
+  assert_equal "$(playthrough_call_count)" "0"
+  [ "$code" = 4 ] || fail "the feature closed over a forged flow: rc=$code"
+  case "$said" in
+    *"is not the one that was taken"*) ;;
+    *) fail "the run does not say the copy was rewritten: $said" ;;
+  esac
+  case "$said" in
+    *"the feature does not close"*) ;;
+    *) fail "the feature closed anyway: $said" ;;
+  esac
+}
+
+@test "the same run with the copy left alone closes the feature" {
+  # The paired witness, byte for byte the same fake with the rewrite alone
+  # removed — without it the assertions above could be about any refusal at all.
+  use_tickets 01-alpha
+  playthrough__forge_spec_fake 0
+
+  run_loop_own_tmp
+  local said="$output"
+
+  run cat "$SHIM_STATE/spec-found"
+  refute_output_contains "NONE"
+
+  assert_equal "$(playthrough_call_count)" "1"
+  case "$said" in
+    *"is not the one that was taken"*)
+      fail "a copy nobody touched is reported rewritten: $said"
+      ;;
+  esac
+  assert_file_contains "$(playthrough_file)" "**Verdict:** pass"
+}

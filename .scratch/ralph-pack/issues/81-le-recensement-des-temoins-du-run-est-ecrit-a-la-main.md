@@ -4,15 +4,15 @@
 
 **Blocked by:** None
 
-**Write-surface:** `.claude/lib/gate.sh`, `.claude/lib/forensic.sh`, `.claude/lib/playthrough.sh`, `.claude/lib/retro.sh`, `.claude/loop.sh`, `test/gate.bats`, `test/mutate.sh`
+**Write-surface:** `.claude/lib/gate.sh`, `.claude/lib/forensic.sh`, `.claude/lib/playthrough.sh`, `.claude/lib/retro.sh`, `.claude/loop.sh`, `test/gate.bats`, `test/mutate.sh` — **plus, en livrant : `.claude/lib/concurrency.sh`, `test/playthrough.bats`, `test/retro.bats`, `docs/frontiere-de-confiance.md`** (écarts consignés en fin de ticket)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Chaque objet que le run range en `$TMPDIR` pour s'en servir de **témoin** est recensé, et le recensement est dérivé de la source du pack — pas une seconde liste écrite à la main.
-- [ ] Un témoin **manquant** est traité comme le pin cassé de [41] : refusé, jamais replié en silence sur « lire la source vivante ».
-- [ ] Un témoin **réécrit** se comporte comme un témoin manquant : le contenu est vérifié, pas seulement l'existence.
-- [ ] `gate_guards` énumère les gardes des trois zones où le pack en pose, pas de deux — la question transversale que [77] a laissée ouverte, avec son prix mesuré.
-- [ ] Ce qui reste hors de portée est écrit dans `docs/frontiere-de-confiance.md`, y compris le cas du registre, qui appartient à [80] et pas ici.
+- [x] Chaque objet que le run range en `$TMPDIR` pour s'en servir de **témoin** est recensé, et le recensement est dérivé de la source du pack — pas une seconde liste écrite à la main. `gate_witness_seal` **marche** le contenu des trois porteurs à l'instant où le run vient de les écrire ; aucun nom n'est tapé, ni dans le pack ni dans le test.
+- [x] Un témoin **manquant** est traité comme le pin cassé de [41] : refusé, jamais replié en silence sur « lire la source vivante ». **Refusé par le contrôle qui le lit, et nommé par le run dans tous les cas** — le découpage est délibéré et expliqué plus bas.
+- [x] Un témoin **réécrit** se comporte comme un témoin manquant : le contenu est vérifié, pas seulement l'existence. Trois exceptions, chacune avec sa borne et sa raison : les trois registres qui grandissent (longueur), et l'index des leçons (existence ici, contenu tenu par `retro_hold_index`).
+- [x] `gate_guards` énumère les gardes des trois zones où le pack en pose, pas de deux — l'arbre (deux répertoires), le répertoire git commun (`ralph.frontier.lock`, `ralph.integrate.lock`) et `$TMPDIR` (`ralph-retro.*/index.guard`). Chaque module répond pour sa zone ; le recensement n'en compose aucun chemin.
+- [x] Ce qui reste hors de portée est écrit dans `docs/frontiere-de-confiance.md` — trois lignes réécrites (le témoin, la leçon, le flux), et le cas du registre cité depuis la ligne que [80] avait écrite, pas réécrit.
 
 ## Comments
 
@@ -193,3 +193,173 @@ est un choix d'ordonnancement, pas une dépendance, et écrire une fausse arête
 ferait sortir un ticket de la frontière si son voisin était mis de côté. Les
 arêtes réelles ne bougent pas : `[75] 77`, `[73] 74, 75, 77`,
 `[19] 73, 74, 75, 76, 77`.
+
+## Livré le 10/09/2026
+
+Branche `ticket-81`. `bash test/run.sh` et `bash test/mutate.sh` verts, canari
+compris. Baseline après ce ticket : **run.sh 867 tests, 0 failures, 6 skips
+opt-in / mutate.sh 888 mutations, 0 not ok** (avant : 854 / 872).
+
+### Ce que le code ne dit pas
+
+- **La forme de la réparation est celle de [62], et le magasin est neuf.** Le
+  recensement se dérive — `gate_witness_seal` marche le contenu de
+  `$RALPH_FRONTIER_COMMON`, `$RALPH_PLAYTHROUGH_SPEC` et `$RALPH_RETRO_STATE` à
+  l'instant où le pilote vient de les écrire, dernier des cinq gestes de
+  démarrage. Ce que [62] n'avait pas et qui compte plus que la dérivation : la
+  référence est **une variable de shell du pilote**, jamais un fichier et jamais
+  exportée. `claude` est lancé avec un environnement, une itération est un `fork`
+  du pilote — donc tout contrôle en aval hérite du sceau, et rien en aval du fork
+  ne peut le replacer. C'est le seul magasin de ce pack qu'une session jugée ne
+  peut prouvablement pas atteindre, et c'est la différence entre ce sceau et un
+  treizième objet à côté des douze.
+
+- **Le refus est découpé par témoin, et un refus global a été écrit puis jeté.**
+  Le premier jet faisait consulter le sceau entier par `gate__frontier_pin_broken`.
+  Mesuré : une copie de `spec.md` réécrite arrêtait le run en disant `scope=red`
+  et *the scope-guard could not read the working tree*. C'est une accusation
+  fausse sur un fichier qui n'a rien à voir avec l'arbre — exactement ce que ce
+  dépôt refuse ailleurs (« une facture que personne ne peut contester »). Donc :
+  **tous** les témoins sont **nommés** par `gate_witness_note` (`run.log` + reçu),
+  et chacun est **refusé** par le contrôle qui le lit, parce que les replis ne
+  sont pas le même repli :
+
+  | Témoin | Qui refuse | Pourquoi celui-là |
+  |---|---|---|
+  | les 9/11 du témoin partagé | `gate__frontier_pin_broken` → le snapshot d'arbre | leur repli est « lire les sources vivantes » ([41]) |
+  | `ralph-spec.*` | `playthrough_close`, avant de dépenser une session | son repli est le fichier du disque ([11]) |
+  | `ralph-retro.*/index` | personne : **remis** et nommé | ce run le republie exprès ([14]) |
+  | `capability.witness` | personne : **nommé** et rien de plus | son lecteur est un canal d'événements qui se tait, pas un contrôle qui se replie ([15]) |
+
+- **`gate_witness_moved [ROOT]`** prend un porteur en argument pour ça, et
+  `gate_witness_intact PATH` est la question qu'un lecteur pose sur son propre
+  témoin. Un futur ticket qui ajoute un témoin doit choisir sa colonne : le mettre
+  dans le répertoire partagé le fait refuser le snapshot d'arbre, ce qui n'est pas
+  toujours ce qu'on veut.
+
+- **L'index des leçons est le seul cas où « réécrit = manquant » ne tient pas, et
+  c'est structurel.** Le run le republie (`retro__publish`), donc un digest pris à
+  `retro_open` est périmé dès la première leçon ; et un pilote qui le reprendrait à
+  chaque reap **rescellerait** ce qu'une session y aurait écrit — la contrefaçon
+  est blanchie une itération plus tard, parce que `retro__promote` rend l'index
+  suivant *à partir de* l'index courant. Trois sorties ont été écartées avant
+  celle-ci et il vaut mieux ne pas les re-sonder : (1) resceller avant chaque fork
+  — absorbe la réécriture de la session précédente ; (2) faire remonter au pilote
+  un « j'ai publié » par un fichier — le fichier est dans la zone atteignable, donc
+  ce n'est pas un contrôle ; (3) faire publier le pilote — `retro_run` est une
+  session entière, elle vit dans l'enfant. La sortie retenue : **l'enfant garde la
+  copie dans sa propre mémoire** (`retro_hold_index`, avant le spawn) et la remet
+  au retour (`retro_index_note`). C'est le seul niveau où la republication du run
+  se distingue d'une réécriture de session.
+
+- **Ce que la remise ne fait pas, et qui est un choix** : au-dessus de
+  `MAX_PARALLEL=1` elle **nomme et ne remet rien** — un frère qui distille une
+  leçon a bougé le fichier légalement, et le remettre ferait tomber la leçon. Même
+  aveu que [80] un glob plus loin, même ligne dans le tableau. Et une itération
+  **tuée** entre sa session et la comparaison laisse l'index tel que la session
+  l'a laissé : la remise est au plus tôt après le retour de session, juste après
+  `gate_frontier_put_back`, mais elle n'est pas dans un trap.
+
+- **Les trois registres qui grandissent** (`ledger`, `forensic.written`,
+  `sidecar`) sont tenus à leur **longueur** et pas à un digest, ce que le ticket
+  demandait. Deux choses à savoir avant de croire cette borne : (1) `ledger` et
+  `forensic.written` sont scellés **vides**, donc la borne de longueur n'achète
+  rien pour eux et ce qui tient le `ledger` reste la marque par itération de [41] ;
+  seul `sidecar` est scellé non vide. (2) une ligne **forgée** y est hors de
+  portée, ce que [80] avait déjà tranché — la contrainte d'entrée de ce ticket est
+  respectée à la lettre : le registre `ralph-slot.writes.*` n'entre pas dans le
+  sceau, et sa ligne du tableau est citée, pas réécrite.
+
+- **`gate_witness_mutable` est une liste, et elle est tenue des deux côtés.** Le
+  sens dangereux (un témoin que le pack bouge et que la liste ne nomme pas → une
+  nuit ordinaire refusée) est tenu par un **run réel** : deux itérations, la
+  session note le digest de chaque témoin à chaque spawn, et tout ce qui a bougé
+  entre les deux doit être sur la liste. L'autre sens (un nom gardé après la
+  disparition de l'objet) est tenu par un scan de source, et c'est le maillon
+  faible du ticket : il vérifie qu'une redirection crée un fichier de ce nom, pas
+  que le mécanisme est vivant. Un backend local ne fabrique jamais de `sidecar`.
+
+- **`cksum` est un CRC.** Le seul digest du pack est affine, donc une session qui
+  connaît le contenu d'un témoin peut fabriquer une réécriture qui conserve le
+  digest. Le sceau fait passer le prix d'une réécriture de `cat >` à une
+  contrefaçon délibérée contre un digest que personne ne lui a donné ; il ne la
+  rend pas impossible, et le tableau le dit. Les deux sorties que [80] avait
+  disqualifiées n'ont pas été re-sondées (fd délié, MAC par ligne).
+
+- **Le sceau est un instantané.** Ce que le pack crée dans un porteur **après**
+  l'avoir scellé n'est tenu par rien : le compteur de vues de [15]
+  (`ralph-retro.*/capability.seen`, créé à la première revue de capacités) est le
+  cas réel aujourd'hui. Nommé dans le tableau, pas réparé ici — le fermer demande
+  de décider si un compteur est un témoin, ce que ce ticket n'a pas à trancher.
+  **C'est la trouvaille à emporter à la passe suivante.**
+
+- **Le drain ne prend aucun sceau.** `human-loop.sh` n'appelle ni
+  `gate_witness_seal` ni les trois témoins ; `gate_witness_moved` est silencieux
+  sans sceau **par construction**, pour que `gate_*` reste pilotable hors run
+  (`pack_run`, un script de projet). Ce qui empêche ce silence d'être le
+  comportement livré est la ligne du pilote et l'entrée de mutation
+  « 81 the run throws its own seal away ».
+
+- **`gate_guards`, trois zones.** Les deux répertoires de l'arbre sont *marchés*
+  (un garde de claim porte le nom d'un ticket) ; les trois autres gardes sont
+  *demandés* au module qui les possède — `concurrency_guards` (neuf, public) et
+  `retro_guards` (neuf, public) — et `gate__guard_paths` n'en compose aucun. Deux
+  conséquences à connaître : `gate_guard_note` peut désormais nommer le garde
+  d'intégration d'un frère vivant, et `gate__stale_guards` nomme un
+  `ralph.integrate.lock` laissé par un run tué. Ce dernier est **repris** pendant
+  le run (`state_guard_take` déplace un propriétaire mort, et le repli d'une
+  itération verte est le prochain appelant) — donc contrairement aux gardes de
+  l'arbre, la règle « nommé, jamais balayé » ne s'applique pas à lui, et le test
+  le dit.
+
+### Écarts de write-surface
+
+Quatre chemins hors de la surface déclarée, tous nécessaires :
+
+- **`.claude/lib/concurrency.sh`** — `concurrency_guards`, neuf et public. La
+  seule alternative était que `gate.sh` compose `<gitdir>/ralph.*.lock`, c'est-à-dire
+  un second auteur pour un agencement que ce module seul connaît ; ou qu'il appelle
+  `concurrency__integration_guard`, ce que `test/layering.bats` refuse — et la
+  règle du dépôt est de renommer, pas d'appeler quand même.
+- **`test/playthrough.bats`**, **`test/retro.bats`** — les deux garanties de §3
+  vivent dans ces modules, donc leurs sondes de run réel aussi. Les mettre dans
+  `test/gate.bats` aurait mis la preuve loin du code.
+- **`docs/frontiere-de-confiance.md`** — c'est une AC du ticket ; la surface
+  déclarée l'avait simplement oublié.
+
+### Pièges rencontrés
+
+- **Trois entrées de `test/mutate.sh` ont dérivé** et sont ré-ancrées, avec la
+  raison écrite au-dessus de chacune : « 21 the write-surface is read after the
+  session » (une ligne s'est insérée entre le snapshot et le spawn — l'édition est
+  désormais un *delete* plus un *insert*, donc une quatrième ligne dans ce bloc ne
+  la fera pas dériver à nouveau), « 41 a destroyed run witness reads as no witness
+  at all » (les quatre noms ont disparu ; le porteur est le plancher hors-run),
+  « 77 the sweep forgets where a ticket's own guard lives » (la marche est passée
+  dans `gate__guard_paths`).
+- **Une entrée neuve est sortie VACUOUS au premier jet** — « 81 the run stops
+  without naming the witness ». Le test assertait `is gone` … `/guards`, et la
+  **clause du gate** contient déjà ces mots : retirer la phrase de la boucle
+  laissait le test vert. Le test assère maintenant les deux phrases séparément,
+  parce que ce sont deux garanties.
+- **Le prix d'un refus global**, mesuré et jeté : voir plus haut. C'est le genre
+  d'erreur qu'un test vert n'aurait pas montrée — la nuit s'arrêtait bien, en
+  accusant le mauvais objet.
+
+### Ce qui est écrit ailleurs
+
+- **[19]** — la liste que ce ticket dérive n'est **pas** celle que l'installeur
+  balaye. `gate_tmp_names` ([62]) reste la spécification de balayage, au niveau des
+  noms du premier étage de `$TMPDIR` ; `gate_witness_seal` descend d'un cran, dans
+  le contenu de trois de ces répertoires, et ne sert qu'au run. [19] n'a rien à
+  consommer d'ici.
+- **[75]** — son cache loge dans le répertoire-témoin du run ([77]). Il **hérite
+  du sceau** : un fichier de cache créé avant la prise du sceau est tenu à son
+  digest — donc immuable pour le run, ce qui n'est probablement pas ce qu'un cache
+  veut — et un fichier créé après n'est tenu par rien. Choisir explicitement, et
+  si le cache doit bouger, l'inscrire dans `gate_witness_mutable` avec sa borne.
+- **[15]** — `capability.seen` est créé après le sceau, donc hors de portée. Voir
+  plus haut.
+- **[77]** — sa question transversale de fin de ticket est répondue dans le code
+  (`gate_guards`) et ici : trois zones, six `state_guard_take`, aucun chemin
+  composé hors de son module.

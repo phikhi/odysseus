@@ -394,6 +394,24 @@ concurrency_frontier_guard() {
   printf '%s/ralph.frontier.lock\n' "$dir"
 }
 
+# The two of them, as paths, for the one caller outside this module that has to
+# name them: the census of [81], which enumerates every zone this pack puts an
+# exclusion guard in. Public for that reason and not as a convenience — a caller
+# that composed these paths would be a second author for a layout only this module
+# knows, and the whole point of the census is that it cannot drift from the
+# guards it counts.
+#
+# The paths whether or not a guard is standing at one: what is held *now* is the
+# reader's question, and answering it here would make the census a snapshot of
+# this instant rather than a list of where to look.
+concurrency_guards() {
+  local frontier integration
+  frontier="$(concurrency_frontier_guard)" || return 1
+  integration="$(concurrency__integration_guard)" || return 1
+  printf '%s\n%s\n' "$frontier" "$integration"
+  return 0
+}
+
 # Bounded much shorter than the fold's, and the difference is not a tuning: the
 # fold *must* be exclusive to be correct — it is a compare-and-swap on a ref — so
 # it is worth a minute of waiting. This one is not correctness. What it restores is

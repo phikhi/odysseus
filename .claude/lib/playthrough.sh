@@ -872,6 +872,27 @@ playthrough_close() {
     return 2
   fi
 
+  # And the copy being *there* is not the copy being the one that was taken
+  # ([81]). The table above says "this copy is already taken; the rewrite changes
+  # nothing here", and until [81] that sentence was held by the name of a
+  # `mktemp` and nothing else. Measured on 10/09/2026: a session rewrites
+  # `"$TMPDIR"/ralph-spec.*`, this gate replays the forged flow while `spec.md` on
+  # disk is untouched, and the feature closes green with no word anywhere. It is
+  # [68] reopened at the place [68] concluded there was nothing to do — [68] ruled
+  # on the *next* run, and the line above claims the current one.
+  #
+  # Refused and not repaired: there is nothing to repair it from. The file on disk
+  # is the one this copy exists to distrust, so re-reading it would be the fallback
+  # this whole family of witnesses refuses ([41]).
+  if ! gate_witness_intact "$spec"; then
+    outcome='nothing was judged: the copy of this feature'"'"'s user flow taken before the first session is not the one that was taken — a session of this run rewrote it, and the flow this gate would replay is the flow it was handed rather than the one this feature promised'
+    playthrough__log "$outcome"
+    playthrough__write refused "$outcome" "$tree" '' - - "$dir/run.out" "$dir/visual.out" ||
+      playthrough__log 'and the document could not be written either'
+    rm -rf "$dir"
+    return 2
+  fi
+
   if [ -z "$tree" ]; then
     outcome='nothing was judged: this run could not read the tree it would have concluded on'
     playthrough__log "$outcome"

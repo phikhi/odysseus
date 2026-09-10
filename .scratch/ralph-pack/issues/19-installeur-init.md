@@ -16,6 +16,15 @@
 
 ## Comments
 
+- **Écrit en livrant [81] (10/09/2026) : la liste que [81] dérive n'est pas la
+  tienne, et il ne faut pas les confondre.** [81] dérive le **contenu** des trois
+  répertoires-témoins d'un run (`gate_witness_seal`), qui ne sert qu'au run et
+  meurt avec lui. Ce que l'installeur balaye reste `gate_tmp_names` ([62]) : les
+  noms du **premier étage** de `$TMPDIR`, dérivés de leur critère et tenus par
+  `test/gate.bats` depuis [62]. Rien à consommer d'ici — et surtout pas une
+  troisième liste.
+
+
 - **Contrainte posée par [05] et par la revue de [01]–[04] : ce que l'installeur doit désormais garantir pour qu'un premier run démarre.** La boucle refuse maintenant de démarrer (exit 2) sur `FEATURE` vide, sur un `FEATURE` qui ne désigne aucun tracker, sur `TEST_CMD` vide, sur `TYPECHECK_CMD` vide (`none` est la façon explicite de déclarer qu'il n'y en a pas) et hors dépôt git. C'est exactement la liste que la validation des préconditions doit couvrir — et la confirmation forcée doit porter sur le *contenu* des commandes, pas seulement sur leur présence : `TEST_CMD="true"` passe tous les contrôles automatiques du pack et rend le gate vert sans rien prouver. Aucun code de retour ne peut attraper ça ; seul l'humain, au moment de l'install, le peut.
 - L'installeur doit provisionner `.scratch/<feature>/` : la boucle ne le crée plus toute seule (une faute de frappe créait un tracker fantôme et le run sortait en succès).
 - À ajouter au `.gitignore` du projet cible : `.scratch/*/run.log`, `.scratch/*/.run.lock/`, `.scratch/*/.session.*.jsonl`. Sans ça, le commit-sur-vert de [07] embarquera le journal et le flux de session dans l'historique du projet.
