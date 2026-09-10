@@ -144,6 +144,29 @@
 
 ## Place dans la file
 
-**Non placée.** Proposée par la passe du 10/09 juste après [80] : les deux
-touchent `loop.sh` et la zone `$TMPDIR`, et [80] tranche ce qui reste à ce
-ticket. À arbitrer par Philippe.
+**Validée par Philippe le 10/09/2026, à la passe transversale du même jour.** La
+file devient **[80] → [81] → [79] → [82] → [75] → [73] → [19]**. Le critère est
+celui du dépôt — minimiser la reprise, jamais l'urgence — avec la seule exception
+que ce dépôt s'autorise et qu'il a déjà payée : **un faux vert livré passe
+devant**, comme [76] l'a fait à la passe du 08/09.
+
+1. **[80]** — le faux vert livré du lot ([40] rouvert par un glob). Il tranche
+   aussi ce qui reste à [81] : la seule chose que « recenser et vérifier » ne peut
+   pas attraper.
+2. **[81]** — même zone (`$TMPDIR`), et il consomme la décision de [80]. Livrés
+   voisins, ils s'écrivent contre une seule relecture de `loop.sh` et de
+   `gate.sh`.
+3. **[79]** — petit, indépendant, position libre. Placé ici parce qu'il ferme le
+   résidu de [78] avant que la file ne reparte sur un autre chantier.
+4. **[82]** — la famille des refus de lecture, et il touche `forge.sh` comme [75].
+5. **[75]** — le cache, qui donne son budget à la remise de [73].
+6. **[73]** — la remise, qui hérite de la clause de [82] autant que du cache de
+   [75].
+7. **[19]** — l'installeur lit ce que les six autres décident.
+
+**`Blocked by:` reste `None` pour [79], [80], [81] et [82], et c'est une
+décision** — le précédent est celui que [78] a écrit : la position dans la file
+est un choix d'ordonnancement, pas une dépendance, et écrire une fausse arête
+ferait sortir un ticket de la frontière si son voisin était mis de côté. Les
+arêtes réelles ne bougent pas : `[75] 77`, `[73] 74, 75, 77`,
+`[19] 73, 74, 75, 76, 77`.
