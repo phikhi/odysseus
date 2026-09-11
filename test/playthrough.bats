@@ -601,6 +601,51 @@ plant_wiring_ticket() {
   assert_equal "$(opened_of_kind gap 01-alpha 60-playthrough-wiring-forged)" "1"
 }
 
+# ── [79] a tracker that refused is not a tracker that already has it ─────────
+
+@test "a wiring ticket the tracker refused to open is not read as one already there" {
+  # The branch `playthrough_close` has carried since [65] for exactly this case,
+  # and which had never once run: `playthrough__inject` ended on `return 0`, and
+  # under `id="$(playthrough__inject …)" || openrc=$?` errexit is suspended for
+  # the whole dynamic extent — command substitution included — so the adapter's
+  # refusal died inside the substitution and `openrc` was zero whatever happened.
+  #
+  # What the gate said instead is the reason this is a defect and not a tidy-up:
+  # an empty stdout reads "a ticket already carries this slug", and since this run
+  # opened none, the sentence that came out was the one accusing a session of
+  # having forged a ticket under the slug this gate would have used.
+  use_tickets 01-alpha
+  answer_internal_hole
+  hold_open_guard
+
+  run_loop
+  assert_failure
+  assert_equal "$status" "4"
+
+  # The refusal, named as one.
+  assert_output_contains "the tracker refused to open a ticket for"
+  # And the accusation this used to print in its place, refused twice over: the
+  # slug sentence, and the clause [65] added to it.
+  refute_output_contains "already carries a ticket for"
+  refute_output_contains "did not open it"
+
+  # The escalation went the same way — the guard refuses every opening of this
+  # run — so the line must not stop at "asking a human instead" while the sink
+  # holds nothing at all.
+  assert_output_contains "except the tracker refused it, so nothing is waiting for a human"
+  assert_equal "$(opened_of_kind wiring 01-alpha)" "0"
+  assert_equal "$(opened_of_kind gap 01-alpha)" "0"
+
+  # And the night ended the way a feature that does not close ends, in the file a
+  # human opens in the morning: the refusal is a `2` from the value gate and not a
+  # re-injection, so this run put nothing back on its frontier.
+  assert_file_contains "$FEATURE_DIR/run.log" "playthrough-blocked"
+  refute_file_contains "$FEATURE_DIR/run.log" "playthrough-reinjected"
+  # The document too: a decision that reaches neither a human nor a file is the
+  # same as no decision ([11] AC2).
+  assert_file_contains "$(playthrough_file)" "the tracker refused to open a ticket for"
+}
+
 @test "a ticket under the slug this gate would use, opened by nobody here, is named as one" {
   use_tickets 01-alpha
   # The slug `playthrough__slug` builds from the title in `answer_internal_hole`,

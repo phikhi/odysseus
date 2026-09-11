@@ -740,6 +740,36 @@ wait_for_file() {
   return 1
 }
 
+# A ticket-open guard nobody can take, which is how a test stages "the tracker
+# refused to open a ticket". It is the cheapest refusal the local backend has:
+# `tracker_local__open_guard_take` waits out its bound and gives up, and nothing
+# else in a run is touched, where a listing refused at the page ceiling stops the
+# run before the value gate is ever reached ([76], [74]).
+#
+# The holder is **this test's own process**, and that is the part worth writing
+# down: `state_guard_take` takes over a guard whose owner it cannot see, so the
+# holder has to be alive for as long as the staging lasts. A forked `sleep` is
+# alive for as long as somebody guessed right — fine in front of one `pack_run`,
+# a false green in front of a `run_loop` that takes longer than the guess, and
+# the failure is silent because the opening then *succeeds*. The test process
+# outlives everything it launches by construction.
+#
+# Here rather than in each of the three files that use it, for the reason
+# `write_middle_shell` is here: a second copy is a second place for the staging
+# to drift from what it is meant to stage.
+hold_open_guard() {
+  mkdir -p "$FEATURE_DIR/.open.guard"
+  printf '%s\n' "$$" >"$FEATURE_DIR/.open.guard/pid"
+  printf '2026-09-11T00:00:00Z\n' >"$FEATURE_DIR/.open.guard/since"
+}
+
+# The pack cannot release it — `state_guard_release` only ever drops a guard the
+# calling process owns — so a test that wants the same call to go through
+# afterwards releases it here.
+release_open_guard() {
+  rm -rf "$FEATURE_DIR/.open.guard"
+}
+
 # ── scripting the shims ──────────────────────────────────────────────────────
 
 # Replace the fake claude's behaviour. Reads a bash script on stdin; it is run

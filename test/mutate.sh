@@ -4651,7 +4651,7 @@ mutation "11 the wiring tickets already opened are counted by nobody" "$PLAYTHRO
   test/playthrough.bats "past its bound"
 
 mutation "11 the same hole opens a second ticket instead of asking a human" "$PLAYTHROUGH" \
-  's/  tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" <<BODY\n/  tracker_open_ticket "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" <<BODY\n/' \
+  's/  tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" <<BODY \|\| rc=\$\?\n/  tracker_open_ticket "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" <<BODY || rc=\$?\n/' \
   test/playthrough.bats "the same hole twice"
 
 mutation "11 a wiring ticket may declare the harness's own configuration" "$PLAYTHROUGH" \
@@ -4714,6 +4714,47 @@ mutation "65 the sentence at the bound names the bound and nothing else" "$PLAYT
 mutation "65 the clause is printed over an empty list" "$PLAYTHROUGH" \
   's/    \[ -z "\$strangers" \] \|\|\n      printf/    printf/' \
   test/playthrough.bats "past its bound"
+
+# ── [79] a tracker that refused is not a tracker that already has it ─────────
+#
+# The third answer of `open_unique`, and the channel it takes. An opening prints
+# an id, a slug already taken prints nothing — both with a zero status, both a
+# success — and a refusal has no fourth thing to print, so it leaves on the
+# status. Both producers used to end on `return 0`, so it left on nothing: an
+# empty stdout reads "one is already waiting", which is the sentence saying a
+# human already has this, on a tracker that never answered.
+#
+# The staging in every test below is `hold_open_guard`: the local backend's
+# ticket-open guard held by the test's own pid, which is the only refusal that
+# does not stop the run before the value gate is reached.
+
+mutation "79 a refused capability proposal comes back as one already waiting" "$CAPABILITY" \
+  's/  tracker_open_unique "\$slug" "\$title" <<BODY \|\| rc=\$\?\n/  tracker_open_unique "\$slug" "\$title" <<BODY\n/' \
+  test/capability.bats "is not an open it deduplicated"
+
+# The paired witness of the one above, and it is not decoration: both callers of
+# this function test the **id** first, so a status that is wrong on every call
+# changes nothing a run does — only the assertion that an opening still answers
+# zero can see it.
+mutation "79 the capability proposal refuses whatever it is given" "$CAPABILITY" \
+  's/  local slug="\$1" title="\$2" body rc=0\n/  local slug="\$1" title="\$2" body rc=1\n/' \
+  test/capability.bats "is not an open it deduplicated"
+
+mutation "79 the two silences under a proposal are merged back into one" "$CAPABILITY" \
+  's/  elif \[ "\$prc" != 0 \]; then\n/  elif false; then\n/' \
+  test/capability.bats "is not one already waiting"
+
+mutation "79 a refused wiring ticket comes back as one already there" "$PLAYTHROUGH" \
+  's/  tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" <<BODY \|\| rc=\$\?\n/  tracker_open_unique "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" <<BODY\n/' \
+  test/playthrough.bats "is not read as one already there"
+
+mutation "79 the escalation of the value gate swallows its own refusal" "$PLAYTHROUGH" \
+  's/  capability_propose "\$\(playthrough__slug "\$PLAYTHROUGH_GAP_PREFIX" "\$title"\)" "\$title" <<BODY \|\| rc=\$\?\n/  capability_propose "\$(playthrough__slug "\$PLAYTHROUGH_GAP_PREFIX" "\$title")" "\$title" <<BODY\n/' \
+  test/playthrough.bats "is not read as one already there"
+
+mutation "79 asking a human says so when nobody was asked" "$PLAYTHROUGH" \
+  's/  elif \[ "\$rc" != 0 \]; then\n/  elif false; then\n/' \
+  test/playthrough.bats "is not read as one already there"
 
 # ── [48] a ticket name that carries a newline ────────────────────────────────
 #

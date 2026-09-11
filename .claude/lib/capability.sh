@@ -345,9 +345,21 @@ capability_bar() {
 #
 # Deduplicated against the tracker rather than against a list of its own: a
 # proposal already waiting for a human is the same proposal, and a second one
-# buries the first. Prints the id it opened, and nothing at all when it opened
-# nothing — the caller reads emptiness, never an exit code, because "already
-# waiting" is a success.
+# buries the first. Three answers, and the third one is [79]: the id it opened,
+# on stdout; nothing at all with a zero status, when one was already waiting,
+# which is a success; and a **non-zero status** when the adapter refused to open
+# anything, which is neither of those two.
+#
+# The old contract said "the caller reads emptiness, never an exit code", and
+# that sentence is what killed the refusal here: an empty stdout reads "already
+# waiting for a human" on a tracker that never answered. There is no fourth thing
+# to print without becoming a different operation, and no variable a caller could
+# read either — every caller takes this through a command substitution, where an
+# assignment made in here dies on the way back ([65]). So it is a change of
+# interface, taken as one: a status, which is the one channel that crosses a
+# subshell. Its three callers are `capability_review` just below, `retro__escalate`
+# and `playthrough__escalate`; each one now either reads the status or says on its
+# own line why it does not.
 #
 # The deduplication is `tracker_open_unique` and no longer a `tracker_ids` read
 # here, and that is [47] rather than tidying: reading the tracker and then opening
@@ -356,16 +368,16 @@ capability_bar() {
 # the number allocation, entered by the other end. The adapter asks the question
 # on the side of its own guard, where it settles something.
 capability_propose() {
-  local slug="$1" title="$2" body
+  local slug="$1" title="$2" body rc=0
   body="$(cat)"
-  tracker_open_unique "$slug" "$title" <<BODY
+  tracker_open_unique "$slug" "$title" <<BODY || rc=$?
 **Status:** ready-for-human
 
 **Blocked by:** None
 
 $body
 BODY
-  return 0
+  return "$rc"
 }
 
 # ── the fragment the retro carries ───────────────────────────────────────────
@@ -476,7 +488,7 @@ capability__cheapest() {
 # the night.
 capability_review() {
   local token="$1" ticket="$2" stream="$3" dir="$4"
-  local said why kind name bar route decision candidate where slug id body
+  local said why kind name bar route decision candidate where slug id body prc
 
   if [ "${CAPABILITY:-on}" != on ]; then
     receipt_note "the capability review is off (CAPABILITY=off): nothing looked at whether this iteration needed a lens, an agent or a skill this project does not have"
@@ -550,12 +562,22 @@ findings the retro read.
 BODY
   )"
 
-  id="$(printf '%s\n' "$body" | capability_propose "$slug" "a $kind called \`$name\` — a capability this run needed and does not have")" || id=''
+  # The status and not only the stdout, since [79]: the two silences underneath
+  # "no ticket was opened" send a human to two different places — one proposal is
+  # already waiting on the sink and there is nothing to do, or the tracker refused
+  # the write and nobody is holding this at all. `|| prc=$?` rather than
+  # `|| id=''`: the assignment already leaves `id` empty on a refusal, and the
+  # status is the only thing that crosses the substitution.
+  prc=0
+  id="$(printf '%s\n' "$body" | capability_propose "$slug" "a $kind called \`$name\` — a capability this run needed and does not have")" || prc=$?
   if [ -n "$id" ]; then
     capability__log "$ticket: the retro named a capability this loop must not build — opened $id"
     receipt_note "the retro named a $kind called \`$name\` that this project does not have, and this loop does not build capabilities: $id is on the human sink, with \"$decision\" as the cheapest answer"
+  elif [ "$prc" != 0 ]; then
+    capability__log "$ticket: the retro named a capability this loop must not build and the tracker refused to open a ticket for it"
+    receipt_note "the retro named a $kind called \`$name\` and the tracker refused to open a ticket for it — nothing is waiting for a human, so this is on nobody's list but this receipt"
   else
-    receipt_note "the retro named a $kind called \`$name\` and no ticket was opened for it — either one was already waiting for a human or the tracker refused the write"
+    receipt_note "the retro named a $kind called \`$name\` and no ticket was opened for it — one was already waiting for a human"
   fi
   return 0
 }

@@ -921,18 +921,9 @@ tracker_ids >/dev/null
 # happens under a guard, and the guard is not held while a body is being produced.
 
 # A guard held by a process that really is alive, which is the only state
-# `state_guard_take` refuses: an owner it cannot see is taken over.
-hold_open_guard() {
-  sleep 30 &
-  OPEN_GUARD_HOLDER=$!
-  mkdir -p "$FEATURE_DIR/.open.guard"
-  printf '%s\n' "$OPEN_GUARD_HOLDER" >"$FEATURE_DIR/.open.guard/pid"
-}
-
-release_open_guard() {
-  kill "$OPEN_GUARD_HOLDER" 2>/dev/null || true
-  rm -rf "$FEATURE_DIR/.open.guard"
-}
+# `state_guard_take` refuses: an owner it cannot see is taken over. The staging
+# is `hold_open_guard` in the harness, shared with the two files that need the
+# same refusal in front of a whole run ([79]).
 
 @test "an opening refuses a number it cannot allocate under the guard" {
   hold_open_guard
