@@ -196,6 +196,80 @@ opened_ticket() {
 
   run bash -c "ls '$TRACKER_DIR' | grep -c 'capability-skill-migrations'"
   assert_equal "$output" "1"
+
+  # And what the second iteration's receipt says about it, which is half of [79]:
+  # the deduplication is a **success**, so the sentence has to send a human to the
+  # proposal that is already waiting and nowhere else. The other half — a tracker
+  # that refused — is the test below, and the two sentences are asserted against
+  # each other on purpose.
+  assert_file_contains "$(receipt_path 02-beta)" "one was already waiting for a human"
+  refute_file_contains "$(receipt_path 02-beta)" "the tracker refused"
+}
+
+# ── [79] a refusal is not a deduplication ────────────────────────────────────
+#
+# `capability_propose` used to end on `return 0` with a contract behind it — "the
+# caller reads emptiness, never an exit code, because *already waiting* is a
+# success". Three callers read it that way, and the third answer had nowhere to
+# go: an adapter that refused to open anything arrived at every one of them as an
+# empty stdout, which is the sentence that says a human already has this.
+
+@test "an open the tracker refused is not an open it deduplicated" {
+  # Driven through the module rather than a run, because what is under test is the
+  # channel: which of the three answers came back, on what.
+  hold_open_guard
+  pack_run 'set +e
+    id="$(printf "%s\n" "**What to build:** a lens" |
+      capability_propose capability-lens-sql "a lens called sql")"
+    printf "refused rc=%s id=[%s]\n" "$?" "$id"'
+  held_output="$output"
+  release_open_guard
+
+  case "$held_output" in
+    *"refused rc=0 "*) fail "the refusal came back as a success: $held_output" ;;
+    *"refused rc="*"id=[]"*) ;;
+    *) fail "no refusal at all: $held_output" ;;
+  esac
+  assert_equal "$(opened_ticket 'capability-lens-sql')" ""
+
+  # The two answers that must not have changed, on the same call: an opening
+  # prints its id with a zero status, and a slug already taken prints nothing with
+  # a zero status. Without these the assertion above would hold for a function
+  # that refuses whatever it is given.
+  pack_run 'set +e
+    id="$(printf "%s\n" "**What to build:** a lens" |
+      capability_propose capability-lens-sql "a lens called sql")"
+    printf "opened rc=%s id=[%s]\n" "$?" "$id"
+    id="$(printf "%s\n" "**What to build:** a lens" |
+      capability_propose capability-lens-sql "a lens called sql")"
+    printf "again rc=%s id=[%s]\n" "$?" "$id"'
+  opened="$(opened_ticket 'capability-lens-sql')"
+  [ -n "$opened" ] || fail "the opening with a free guard opened nothing"
+  assert_output_contains "opened rc=0 id=[${opened%.md}]"
+  assert_output_contains "again rc=0 id=[]"
+}
+
+@test "a capability the tracker refused to open a ticket for is not one already waiting" {
+  # The receipt is the whole point: the retro named a capability, no ticket was
+  # opened, and the two reasons that can be behind that send a human to two
+  # different places — one proposal is on the sink and there is nothing to do, or
+  # nobody is holding this at all.
+  use_tickets 01-alpha
+  retro_on
+  retro_answer \
+    "RALPH-RETRO-CAPABILITY: lens sql" \
+    "RALPH-RETRO-CAPABILITY-WHY: this ticket wrote three migrations and nothing here read them"
+  hold_open_guard
+
+  run_loop
+  assert_success
+
+  assert_equal "$(opened_ticket 'capability-lens-sql')" ""
+  assert_file_contains "$(receipt_path 01-alpha)" "the tracker refused to open a ticket for it"
+  refute_file_contains "$(receipt_path 01-alpha)" "one was already waiting for a human"
+  # And the backend's own reason, on the same document: the sentence above says
+  # that nothing was opened, this one says why ([49]).
+  assert_file_contains "$(receipt_path 01-alpha)" "ticket-open guard"
 }
 
 @test "a proposal the loop opened is not quarantined as a ticket a session gave itself" {

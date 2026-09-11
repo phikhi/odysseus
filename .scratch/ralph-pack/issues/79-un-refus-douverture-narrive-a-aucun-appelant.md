@@ -6,12 +6,12 @@
 
 **Write-surface:** `.claude/lib/playthrough.sh`, `.claude/lib/capability.sh`, `test/playthrough.bats`, `test/capability.bats`, `test/mutate.sh`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Un `tracker_open_unique` qui **refuse** est distingué d'un `tracker_open_unique` qui n'a rien ouvert parce qu'un ticket portait déjà le slug : les deux appelants savent lequel des deux vient d'arriver.
-- [ ] La branche `openrc != 0` de `playthrough_close` est atteignable, et un test la fait passer — elle existe depuis [65] et n'a jamais pu s'exécuter.
-- [ ] La ligne de reçu de `capability__propose_from_retro` cesse de dire « soit une était déjà en attente, soit le tracker a refusé l'écriture » quand le pack sait laquelle des deux.
-- [ ] Rien ne change quand l'ouverture réussit ni quand le slug est déjà pris : c'est le troisième cas seul qui gagne un canal.
+- [x] Un `tracker_open_unique` qui **refuse** est distingué d'un `tracker_open_unique` qui n'a rien ouvert parce qu'un ticket portait déjà le slug : les deux appelants savent lequel des deux vient d'arriver.
+- [x] La branche `openrc != 0` de `playthrough_close` est atteignable, et un test la fait passer — elle existe depuis [65] et n'a jamais pu s'exécuter.
+- [x] La ligne de reçu de `capability__propose_from_retro` cesse de dire « soit une était déjà en attente, soit le tracker a refusé l'écriture » quand le pack sait laquelle des deux.
+- [x] Rien ne change quand l'ouverture réussit ni quand le slug est déjà pris : c'est le troisième cas seul qui gagne un canal.
 
 ## Comments
 
@@ -71,6 +71,81 @@
   ligne « Ce que `tracker_ids` et `tracker_frontier` rendent est **tout** le
   tracker », dernier paragraphe) : elle nomme ce résidu et désigne ce ticket. La
   mettre à jour fait partie des AC.
+
+## Livré le 11/09/2026
+
+- **La sonde du ticket a été rejouée avant d'écrire, et elle dit ce qu'elle
+  annonçait** : `rc=0; id="$(wrapper)" || rc=$?` avec un `return 7` dans la
+  fonction appelée rend `id=[x] rc=0`. La même forme avec le producteur qui
+  propage (`cmd <<BODY || rc=$?` puis `return "$rc"`) rend `rc=7`, y compris à
+  travers un pipeline (`printf … | wrapper`), qui est la façon dont
+  `capability_review` lit `capability_propose`.
+
+- **Décision prise : le changement d'interface, pas un second canal.** Le ticket
+  laissait les deux ouvertes ; le second canal est **impossible** ici et c'est
+  mesuré, pas préféré : les trois appelants de `capability_propose` la lisent
+  tous à travers une substitution de commande, donc une variable de statut
+  écrite dedans meurt au retour — c'est exactement [65] (`playthrough__note_opened`
+  est appelé depuis `playthrough_close` pour cette raison). Le statut est le seul
+  canal qui traverse un sous-shell.
+
+- **Les trois appelants, repris un par un.**
+  - `capability_review` (c'est son nom, pas `capability__propose_from_retro` —
+    le ticket nommait une fonction qui n'existe plus) lit `|| prc=$?` au lieu de
+    `|| id=''` : l'affectation laisse déjà `id` vide sur un refus. Le reçu a
+    trois branches là où il en avait deux, et la phrase « soit… soit… » a
+    disparu.
+  - `playthrough__escalate` propage aussi, et `playthrough__asked` — nouvelle,
+    trois appelants dans `playthrough_close` — en fait la clause que les phrases
+    portent. **C'est ce que le ticket ne demandait pas et que le scénario de son
+    propre test a rendu obligatoire** : dans un run où le garde d'ouverture est
+    tenu, l'escalade est refusée elle aussi, et la ligne se serait arrêtée sur
+    « asking a human instead » alors que le puits n'avait rien reçu. Les deux
+    chemins qui marchaient n'ont pas bougé : la forme `(on <id>)` est inchangée.
+  - `retro__escalate` garde son `return 0`, **délibérément** : `retro.sh` est
+    hors de la write-surface de ce ticket, et sa phrase (« soit une était déjà en
+    attente, soit le tracker a refusé ») reste *vraie* pour ce que cet appelant
+    sait. Le canal existe maintenant ; le lire est une ligne dans `retro_close`
+    pour qui voudra la prendre. C'est le seul résidu connu de [79].
+
+- **Écart de write-surface, assumé et écrit ici.** La write-surface déclarée
+  disait `playthrough.sh`, `capability.sh`, `test/playthrough.bats`,
+  `test/capability.bats`, `test/mutate.sh`. Deux fichiers de plus ont été
+  touchés, tous les deux côté test : `test/helpers/harness.bash` (la mise en
+  scène `hold_open_guard`/`release_open_guard`) et `test/tracker-local.bats` (sa
+  copie locale de la même mise en scène, retirée). Raison : la copie de
+  `test/tracker-local.bats` tenait le garde avec `sleep 30 &`, ce qui est correct
+  devant un `pack_run` et un **faux vert silencieux** devant un `run_loop` plus
+  long que la devinette — le garde redevient récupérable et l'ouverture
+  *réussit*. La version du harnais tient le garde avec le pid du test, qui
+  survit par construction à tout ce qu'il lance. Une troisième copie aurait été
+  la troisième version d'une mise en scène dont deux se comportent différemment.
+
+- **Pourquoi le garde d'ouverture et pas le plafond de pages.** Le ticket
+  proposait `FORGE_PAGE 2` + `FORGE_PAGES 1` comme refus le moins cher. Sondé :
+  ce refus-là arrête le run **avant** le gate de valeur — depuis [74] une
+  frontière illisible est un `exit 4` et `playthrough_call_count` vaut `0`
+  (c'est l'assertion de `test/tracker-remote.bats`, « a listing the forge refused
+  does not start the terminal value gate »). Il ne peut donc pas mettre en scène
+  la branche `openrc != 0`. Le garde d'ouverture du backend local est le seul
+  refus atteignable qui laisse le run arriver jusqu'au gate de valeur. Coût
+  mesuré : ~6 s par ouverture refusée (120 essais × 0,05 s), deux par run dans le
+  test de `playthrough.bats`.
+
+- **Ce que le défaut disait vraiment, et pourquoi les deux refutations du test
+  comptent autant que l'assertion.** Avant le correctif, un tracker qui refuse
+  faisait tomber `playthrough_close` dans sa dernière branche — « the tracker
+  already carries a ticket for under the slug this gate would have used, and this
+  run did not open it » — c'est-à-dire la phrase qui **accuse** une session
+  d'avoir forgé un ticket. Le test refuse les deux moitiés de cette phrase
+  (`already carries a ticket for`, `did not open it`) en plus d'exiger celle du
+  refus.
+
+- **Piège de mutation rencontré** : l'entrée `11 the same hole opens a second
+  ticket instead of asking a human` s'ancre sur la ligne `tracker_open_unique …
+  <<BODY`, qui a gagné ` || rc=$?`. Elle aurait rendu DRIFTED ; elle est mise à
+  jour dans le même commit. C'est le réflexe de [80]/[81] : greper `test/mutate.sh`
+  pour les lignes qu'on touche avant de livrer.
 
 ## Place dans la file
 

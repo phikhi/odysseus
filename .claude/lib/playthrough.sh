@@ -753,11 +753,19 @@ playthrough__steps_or_prose() {
 # is one ticket, and the second round finding nothing to open is how this path
 # terminates instead of spinning.
 #
-# Prints the id it opened, and nothing when it opened nothing.
+# Three answers, and the third one is [79]: the id it opened, on stdout; nothing
+# at all with a zero status, when a ticket already carried the slug; and the
+# adapter's **non-zero status** when it refused to open anything. The `return 0`
+# that used to end this function was a habit rather than a contract, and it cost
+# `playthrough_close` the whole branch it carries for a refusal — under
+# `id="$(playthrough__inject …)" || openrc=$?` errexit is suspended for the whole
+# of the dynamic extent, command substitution included, so a non-zero status from
+# inside never reached anybody and `openrc` was zero whatever happened. A tracker
+# that refused then made this gate say the sentence that *accuses* a forgery.
 
 playthrough__inject() {
-  local title="$1" hole="$2" surface="$3"
-  tracker_open_unique "$(playthrough__slug "$PLAYTHROUGH_SLUG_PREFIX" "$title")" "$title" <<BODY
+  local title="$1" hole="$2" surface="$3" rc=0
+  tracker_open_unique "$(playthrough__slug "$PLAYTHROUGH_SLUG_PREFIX" "$title")" "$title" <<BODY || rc=$?
 **Status:** ready-for-agent
 
 **Blocked by:** None
@@ -780,12 +788,12 @@ answered — is in \`docs/playthroughs/${FEATURE:-}.md\`.
 - [ ] The hole above is closed: the value reaches the user through the flow in \`spec.md\`.
 - [ ] The next playthrough of this feature is green.
 BODY
-  return 0
+  return "$rc"
 }
 
 playthrough__escalate() {
-  local title="$1" why="$2"
-  capability_propose "$(playthrough__slug "$PLAYTHROUGH_GAP_PREFIX" "$title")" "$title" <<BODY
+  local title="$1" why="$2" rc=0
+  capability_propose "$(playthrough__slug "$PLAYTHROUGH_GAP_PREFIX" "$title")" "$title" <<BODY || rc=$?
 **Escalation:** the terminal value gate of an autonomous run could not close this feature, and this is not a hole a session may close on its own.
 
 **What was found**
@@ -804,6 +812,29 @@ take decisions of that shape.
 \`docs/playthroughs/${FEATURE:-}.md\` — the flow step by step, the commands the
 loop ran, and what they answered.
 BODY
+  return "$rc"
+}
+
+# The escalation, and what became of it in the one clause a sentence can carry.
+#
+# Three places below ask a human the same way and want the same three answers,
+# and [79] is what gave the third one a channel: a ticket was opened and its id
+# is where a human goes; one was already waiting, and there is nothing to add
+# because the sink already holds it; or the adapter **refused**, in which case
+# nobody is holding this at all and a line that stopped at "asking a human
+# instead" would tell a human the opposite of what happened.
+#
+# Composed rather than spelled out three times, and the wording is deliberately
+# the kind that follows "asking a human": the id form is what these sentences
+# already printed, so nothing changes on the two paths that were never broken.
+playthrough__asked() {
+  local title="$1" why="$2" id rc=0
+  id="$(playthrough__escalate "$title" "$why")" || rc=$?
+  if [ -n "$id" ]; then
+    printf 'on %s\n' "$id"
+  elif [ "$rc" != 0 ]; then
+    printf 'except the tracker refused it, so nothing is waiting for a human\n'
+  fi
   return 0
 }
 
@@ -826,7 +857,7 @@ BODY
 # `test/layering.bats` refuses the other form.
 playthrough_close() {
   local dir tree spec stream verdict hole class title surface
-  local runrc=0 visrc=0 injected max id openrc rc=2 outcome=''
+  local runrc=0 visrc=0 injected max id asked openrc rc=2 outcome=''
 
   # The tree is witnessed through the ignore rules **as they stand**, and the pin
   # of the iteration that is over is deliberately dropped for the length of this
@@ -907,8 +938,8 @@ playthrough_close() {
     playthrough__log "$outcome"
     playthrough__write refused "$outcome" "$tree" '' - - "$dir/run.out" "$dir/visual.out" ||
       playthrough__log 'and the document could not be written either'
-    id="$(playthrough__escalate "this feature has no terminal value gate" "$outcome")" || id=''
-    [ -z "$id" ] || playthrough__log "asked a human, on $id"
+    asked="$(playthrough__asked "this feature has no terminal value gate" "$outcome")"
+    [ -z "$asked" ] || playthrough__log "asked a human, $asked"
     rm -rf "$dir"
     return 2
   fi
@@ -996,13 +1027,13 @@ playthrough_close() {
           rc=2
         fi
         if [ "$rc" = 2 ]; then
-          id="$(playthrough__escalate "$title" "$outcome")" || id=''
-          [ -z "$id" ] || outcome="$outcome (on $id)"
+          asked="$(playthrough__asked "$title" "$outcome")"
+          [ -z "$asked" ] || outcome="$outcome ($asked)"
         fi
       else
         outcome="$(playthrough__why_human "$class" "$injected" "$max" "$surface"): $hole"
-        id="$(playthrough__escalate "$title" "$outcome")" || id=''
-        [ -z "$id" ] || outcome="$outcome (on $id)"
+        asked="$(playthrough__asked "$title" "$outcome")"
+        [ -z "$asked" ] || outcome="$outcome ($asked)"
         rc=2
       fi
       ;;
