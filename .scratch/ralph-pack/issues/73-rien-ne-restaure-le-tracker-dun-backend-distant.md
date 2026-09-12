@@ -189,7 +189,7 @@ C'est **[82]**, ouvert par la même passe. Si [82] est livré devant, ce ticket
 consomme sa clause ; sinon, il doit la porter lui-même pour ses propres lectures
 — et le dire.
 
-### [82] est livré (11/09/2026) : ce ticket consomme la clause
+### [82] est livré (12/09/2026) : ce ticket consomme la clause
 
 Ce qui est disponible, et ce qu'il reste à faire ici :
 
