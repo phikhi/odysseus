@@ -188,3 +188,33 @@ un refus comme un champ vide réécrit le ticket avec du vide.
 C'est **[82]**, ouvert par la même passe. Si [82] est livré devant, ce ticket
 consomme sa clause ; sinon, il doit la porter lui-même pour ses propres lectures
 — et le dire.
+
+### [82] est livré (11/09/2026) : ce ticket consomme la clause
+
+Ce qui est disponible, et ce qu'il reste à faire ici :
+
+1. **La clause est sur l'interface**, en tête de `lib/tracker.sh` (« what a
+   refusal of a *read* means ») : `0` + valeur — un champ que le ticket ne porte
+   pas y compris, qui arrive comme une valeur vide — `1` « il n'y a pas de tel
+   ticket », `2` « je n'ai pas pu savoir », et tout autre code non nul lu comme
+   `2`. **Les cinq lectures de la remise doivent lire `2` et refuser**, jamais
+   réécrire le ticket avec ce qu'elles n'ont pas lu.
+2. **Le backend distant a déjà les trois réponses** : `forge__record` rend `2` sur
+   un listing refusé et `1` sur une issue absente, et `forge_field`,
+   `forge_read_ticket` et `forge__claimed` propagent par `|| return $?`. Rien à
+   ajouter côté adaptateur ; tout est côté lecteur.
+3. **La forme du lecteur existe** : `router__now` dans `lib/router.sh` — un
+   lecteur pour les douze sites d'un fichier dont la réponse est comparée à un
+   pin, avec le refus ramené à un seul code. Une remise a exactement la même
+   forme de question (*est-ce que c'est ce que ça disait quand la fenêtre s'est
+   ouverte ?*), donc un `failures__now` de la même forme est le précédent à
+   reprendre plutôt qu'un `2>/dev/null` par champ.
+4. **Le piège du corps** : `tracker_read_ticket` refuse aussi, et un digest pris
+   sur un refus est un corps qui a changé. `router__ticket_digest` s'était fait
+   avoir par un pipeline (`tracker_read_ticket … | cksum`, dont le statut est
+   celui de `cksum`) ; une remise qui compare des digests tombera sur le même
+   piège.
+5. **Ce que [82] n'a pas fermé et qui touche ce ticket** : rien du côté des
+   lectures que la remise fera. Les trois résidus nommés par [82]
+   (`router__field`, `router_unblocks`, `router_sink`) sont de la présentation et
+   du tri, pas de l'écriture.

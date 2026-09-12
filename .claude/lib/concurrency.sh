@@ -217,13 +217,19 @@ concurrency_clashes() {
   # with nothing running that it could be waiting on. The scheduler has one loop
   # and this is the line that keeps it from spinning in it.
   [ -n "${others# }" ] || return 1
-  mine="$(gate_write_surface "$ticket")"
+  # "A surface this pack cannot read is a clash, not a pass" was the sentence
+  # above and not the code until [82]: `gate_write_surface` refuses now, and a
+  # refusal read as an empty surface is the same clash — this ticket runs alone.
+  # Read rather than let travel, for the second reason too: `loop.sh` sources this
+  # under `set -e`, so a bare assignment from a function that returns `2` takes
+  # the run down instead of holding a ticket back.
+  mine="$(gate_write_surface "$ticket")" || return 0
   [ -n "$mine" ] || return 0
 
   for other in $others; do
     [ -n "$other" ] || continue
     [ "$other" != "$ticket" ] || continue
-    theirs="$(gate_write_surface "$other")"
+    theirs="$(gate_write_surface "$other")" || return 0
     [ -n "$theirs" ] || return 0
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue

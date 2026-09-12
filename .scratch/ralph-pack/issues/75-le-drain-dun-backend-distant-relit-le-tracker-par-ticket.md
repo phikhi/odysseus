@@ -177,3 +177,22 @@ l'écrire comme une exception « c'est un cache, pas un témoin ».
 Et la borne de fraîcheur que ce ticket doit poser ne dispense pas du digest : un
 cache périmé est une décision de ce ticket, un cache **réécrit** est un contrôle
 qui lit ce que la chose contrôlée a écrit.
+
+## Note écrite par [82] (livré le 11/09/2026)
+
+**Un cache ne mémorise jamais un refus.** `forge__listing` ne pose sa variable
+qu'après avoir vérifié que la pagination s'est terminée — un listing refusé ne
+laisse rien derrière lui, et c'est ce qui fait que le refus se répète à chaque
+lecture au lieu d'être remplacé par une liste vide qui, elle, aurait l'air d'une
+réponse. Un cache avec une durée de vie plus longue doit garder cette propriété
+**explicitement** : écrire un fichier de cache sur un listing refusé, ou lire un
+fichier de cache vide comme « ce tracker ne porte aucun ticket », rouvre [76],
+[74] et [82] d'un coup — la frontière, le scope-guard et la remise lisent tous
+cette liste.
+
+Corollaire pour l'interface de ce ticket : depuis [82], une lecture a **trois**
+réponses (`lib/tracker.sh`, « what a refusal of a *read* means »). Un accesseur
+qui choisit entre la copie et le réseau doit rendre les trois, pas deux — un
+`2` que le cache aplatit en `1` ferait lire « il n'y a pas de tel ticket » à
+`gate_write_surface`, `lenses_has_tag` et `router_pin`, qui est exactement la
+réponse que [82] leur a retirée.

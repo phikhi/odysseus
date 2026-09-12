@@ -198,6 +198,41 @@ ROUTER__PINNED_SPEC=''
 ROUTER__JOURNAL_WITNESS=''
 ROUTER__JOURNAL_BASE=0
 
+# One field of one ticket as this file reads the tracker: its value, or non-zero
+# when the tracker would not say.
+#
+# One reader for the twelve sites in this file whose answer is compared against
+# what this drain pinned, rather than twelve `2>/dev/null`s each deciding for
+# themselves — and they all used to decide the same thing, which was the wrong
+# one ([82]). The three that do not go through it read a field to *order* or to
+# *print*, never to say what moved: `router__field` falls back to the tracker for
+# a ticket nothing pinned, by design and with its own note, and `router_unblocks`
+# and `router_sink` count and sort.
+#
+# The interface answers three things (`lib/tracker.sh`, "what a refusal of a
+# *read* means"): the value, `1` for a ticket that is not there, `2` for "I could
+# not tell". This file needs two of them, and the one it must not lose is the
+# third: every question asked here is of the form *is this what it said when the
+# drain took it*, and a refusal read as an empty value answers "somebody emptied
+# it". The somebody is always the routed session — it is the one thing on this
+# path nothing judges — so the collapse does not merely lose information, it
+# manufactures an accusation.
+#
+#   0 and the value   read. An empty value is a value: a ticket carrying no
+#                     `Escalation:` is the ordinary shape of one this pack
+#                     escalated with no reason ([71]).
+#   1                 the tracker would not say
+router__now() {
+  local id="${1:?router: a ticket id}" name="${2:?router: a field name}" value rc=0
+  value="$(tracker_field "$id" "$name" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0 | 1) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$value"
+  return 0
+}
+
 # Pin one ticket. Called once per ticket by whatever drains the sink, before the
 # dossier and before any session — before the dossier included, so that what a
 # human reads and what the transitions decide on are one value.
@@ -248,14 +283,29 @@ ROUTER__JOURNAL_BASE=0
 router_pin() {
   local id="${1:?router: a ticket id}"
   ROUTER__PINNED_ID=''
-  ROUTER__PINNED_ESCALATION="$(tracker_field "$id" Escalation 2>/dev/null)" ||
-    ROUTER__PINNED_ESCALATION=''
-  ROUTER__PINNED_SURFACE="$(tracker_field "$id" 'Write-surface' 2>/dev/null)" ||
-    ROUTER__PINNED_SURFACE=''
-  ROUTER__PINNED_FAILURES="$(tracker_field "$id" Failures 2>/dev/null)" ||
-    ROUTER__PINNED_FAILURES=''
+  # The sentence above is the one this used to break ([82]). A field read through
+  # `|| VALUE=''` never fails halfway, so nothing was ever left unpinned: a
+  # tracker that would not answer pinned three empty values, every transition
+  # decided on them, and `router__say_drift` told the human the routed session had
+  # written whatever the tracker ended up saying. Now the read refuses, the id is
+  # not set, and the ticket is unpinned — which every transition already refuses,
+  # loudly, for [55]'s reason.
+  #
+  # No status to its caller, deliberately, and it is not [79]'s mistake: that one
+  # had no second channel, and this one *is* the second channel. `router_pin` is
+  # called bare from `human_loop__drain_one`, under `set -euo pipefail`, so a
+  # non-zero here would end a drain in the middle of a sink instead of refusing
+  # one ticket — and would buy nothing the pin does not already say to every
+  # reader that matters.
+  ROUTER__PINNED_ESCALATION="$(router__now "$id" Escalation)" || return 0
+  ROUTER__PINNED_SURFACE="$(router__now "$id" 'Write-surface')" || return 0
+  ROUTER__PINNED_FAILURES="$(router__now "$id" Failures)" || return 0
   ROUTER__PINNED_TREE="$(router__tree_dirt)" || ROUTER__PINNED_TREE=''
-  ROUTER__PINNED_TRACKER="$(router__tracker_state)" || ROUTER__PINNED_TRACKER=''
+  # The baseline the drain's report of `issues/` is measured against, and it is
+  # pinned on the same terms as the three fields: a line of it taken on a refusal
+  # is a ticket that reads as emptied, and `router_protect_tracker` says so and
+  # journals it. `router__tracker_state` refuses rather than filling in.
+  ROUTER__PINNED_TRACKER="$(router__tracker_state)" || return 0
   ROUTER__PINNED_REFS="$(forensic_failed_refs)" || ROUTER__PINNED_REFS=''
   ROUTER__PINNED_SPEC="$(router__spec_digest)" || ROUTER__PINNED_SPEC=''
   ROUTER__PINNED_ID="$id"
@@ -318,7 +368,13 @@ router__is_pinned() {
 router__say_drift() {
   local id="$1" name="$2" pinned now
   pinned="$(router__pinned "$id" "$name")" || return 0
-  now="$(tracker_field "$id" "$name" 2>/dev/null)" || now=''
+  # Silent when the tracker would not say what it reads now ([82]). The sentence
+  # below names a writer — "something wrote it in between, and the routed session
+  # is the one thing on this path that can" — so it may only be printed on a value
+  # somebody read. A refusal taken as the empty string prints it on every ticket
+  # whose pin was not empty, and the human is told their session did something it
+  # did not do.
+  now="$(router__now "$id" "$name")" || return 0
   [ "$pinned" != "$now" ] || return 0
   printf 'ralph: and `%s:` reads `%s` on that ticket now, which is not what it said when this drain took it (`%s`). Something wrote it in between, and the routed session is the one thing on this path that can — nothing judges it, which is what this refusal stands in for. The edit is still there: leave the drain and run it again to decide on the ticket as it now stands.\n' \
     "$name" "${now:-nothing}" "${pinned:-nothing}"
@@ -548,9 +604,22 @@ router_tree_note() {
 # here needs it to be hard to forge — a session that wants to hide an edit can
 # revert the edit. Taken through `tracker_read_ticket` and never off the file,
 # because the storage belongs to the tracker module.
+#
+# Non-zero when the ticket could not be read, and never a digest of the empty
+# string ([82]). The read has three answers and a pipeline has one status — its
+# last command's, here `awk`'s `0` — so a tracker that would not answer used to
+# hand this function nothing and get back the perfectly good digest of nothing,
+# which is a body that changed under whoever was last in the tree. A ticket that
+# is genuinely not there is the other answer and keeps its digest of nothing:
+# `router_protect_tracker` already has a sentence for a ticket that is gone.
 router__ticket_digest() {
-  tracker_read_ticket "${1:?router: a ticket id}" 2>/dev/null |
-    cksum | awk '{ print $1 "." $2 }'
+  local id="${1:?router: a ticket id}" body rc=0
+  body="$(tracker_read_ticket "$id" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0 | 1) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$body" | cksum | awk '{ print $1 "." $2 }'
 }
 
 # One field value on one line, whatever a session put in it.
@@ -577,21 +646,33 @@ router__flat() {
 # is six reads of a file a human is waiting on rather than two, which is the price
 # of naming what moved instead of only what could be put back.
 router__tracker_state() {
-  local id status escalation failures blocked digest tab
+  local id status escalation failures blocked digest tab ids
   tab="$(printf '\t')"
+  # The list itself first, and refused rather than read out of the heredoc it
+  # used to be taken in ([59], and [18] made `tracker_ids` say it). A tracker that
+  # would not list its tickets gave an empty baseline, which pins as "this drain
+  # saw no tickets" — and every ticket in `issues/` afterwards reads as one that
+  # appeared during the session.
+  ids="$(tracker_ids)" || return 1
+  # Non-zero when any one of the five could not be read, and the caller pins
+  # nothing ([82]). A baseline is whole or it is not a baseline: the six sentences
+  # hanging off this list all read "it says X now and said Y when this drain took
+  # it", so one field filled in with the empty string on a refusal is one ticket
+  # the drain will report as emptied by the session — and will journal as
+  # `tracker-drift`, in the run's own record.
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    status="$(tracker_field "$id" Status 2>/dev/null)" || status=''
-    escalation="$(tracker_field "$id" Escalation 2>/dev/null)" || escalation=''
-    failures="$(tracker_field "$id" Failures 2>/dev/null)" || failures=''
-    blocked="$(tracker_field "$id" 'Blocked by' 2>/dev/null)" || blocked=''
-    digest="$(router__ticket_digest "$id")" || digest=''
+    status="$(router__now "$id" Status)" || return 1
+    escalation="$(router__now "$id" Escalation)" || return 1
+    failures="$(router__now "$id" Failures)" || return 1
+    blocked="$(router__now "$id" 'Blocked by')" || return 1
+    digest="$(router__ticket_digest "$id")" || return 1
     printf '%s%s%s%s%s%s%s%s%s%s%s\n' \
       "$(router__flat "$status")" "$tab" "$(router__flat "$escalation")" "$tab" \
       "$(router__flat "$failures")" "$tab" "$(router__flat "$blocked")" "$tab" \
       "$digest" "$tab" "$id"
   done <<IDS
-$(tracker_ids 2>/dev/null)
+$ids
 IDS
 }
 
@@ -650,9 +731,16 @@ router__put_back() {
 router__say_unrestored() {
   local other="$1" was_fail="$2" was_block="$3" was_digest="$4"
   local now_fail now_block now_digest said=1
-  now_fail="$(router__flat "$(tracker_field "$other" Failures 2>/dev/null)")"
-  now_block="$(router__flat "$(tracker_field "$other" 'Blocked by' 2>/dev/null)")"
-  now_digest="$(router__ticket_digest "$other")" || now_digest=''
+  # `1` — nothing moved that this looks at — is also what "nothing here could tell"
+  # comes out as ([82]). The three sentences below each name a number or a body
+  # that changed, and a tracker that would not answer produced all three at once,
+  # about a ticket the routed session may never have touched. Silence is the only
+  # honest answer this function's own vocabulary has room for.
+  now_fail="$(router__now "$other" Failures)" || return 1
+  now_block="$(router__now "$other" 'Blocked by')" || return 1
+  now_digest="$(router__ticket_digest "$other")" || return 1
+  now_fail="$(router__flat "$now_fail")"
+  now_block="$(router__flat "$now_block")"
 
   if [ "$now_fail" != "$was_fail" ]; then
     printf 'ralph: %s reads `Failures: %s` after that session, where this drain took it as `%s`, and nothing here put it back: a retry budget has no verb that writes it — the loop adds one at a time and a delivery clears it — so a restore would be a second author for a number only a gate ever moved. What it decides is how many fresh sessions that ticket gets before the loop gives up on it, and which desk the next drain routes it to. No gate wrote that number.\n' \
@@ -716,7 +804,15 @@ router_protect_tracker() {
     return 1
   fi
   tab="$(printf '\t')"
-  now_ids="$(tracker_ids 2>/dev/null)" || now_ids=''
+  # Refused and not read as an empty tracker ([59], [82]). Every pinned ticket is
+  # checked against this list to decide whether it is still there, so an empty one
+  # taken on a refusal makes the drain announce that the routed session deleted
+  # every ticket in `issues/` — and journal one `tracker-drift gone` per ticket.
+  if ! now_ids="$(tracker_ids)"; then
+    printf 'ralph: %s: the tracker would not list its tickets after that session, so nothing here can say what it wrote in `issues/`. That is the whole of what is said about them — in particular, not that they are as this drain took them.\n' \
+      "$id" >&2
+    return 1
+  fi
 
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -740,8 +836,21 @@ router_protect_tracker() {
       continue
     fi
 
-    now_status="$(router__flat "$(tracker_field "$other" Status 2>/dev/null)")"
-    now_esc="$(router__flat "$(tracker_field "$other" Escalation 2>/dev/null)")"
+    # Read before anything is compared or written back ([82]). These two decide a
+    # **write**: a refusal read as the empty string does not match the pinned
+    # status, so the drain used to put a ticket back to a state it had no evidence
+    # it had left — the one place in this file where a value nobody read becomes a
+    # transition on somebody else's ticket.
+    if ! now_status="$(router__now "$other" Status)" ||
+      ! now_esc="$(router__now "$other" Escalation)"; then
+      printf 'ralph: %s cannot be read from the tracker after that session, so nothing here can say whether it moved while this drain was on %s — and nothing is put back on a state nobody read. If it left the frontier, no gate read a line of it.\n' \
+        "$other" "$id"
+      router_journal "$other" tracker-drift unreadable
+      said=0
+      continue
+    fi
+    now_status="$(router__flat "$now_status")"
+    now_esc="$(router__flat "$now_esc")"
     if [ "$now_status" = "$was_status" ] && [ "$now_esc" = "$was_esc" ]; then
       # The two states this drain can write are as it left them, so nothing is
       # put back — and the three things no verb writes back are looked at here,
