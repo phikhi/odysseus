@@ -2195,3 +2195,306 @@ remote__ceiling_refuses() {
   assert_output_contains "reslice=1"
   assert_equal "$(claude_call_count)" "0"
 }
+
+# ── one reading of the tracker, shared by the forks under it ([75]) ──────────
+#
+# What this backend costs is requests, and this pack reads a tracker through
+# command substitutions, which are forks: a memo in a shell dies in every one of
+# them. The reading is therefore taken in the shell the forks come from, held in a
+# variable nothing exports, and bounded three ways — the prime itself, the run's
+# register of its own writes, and `FORGE_CACHE_TTL`.
+
+# How many times the pack asked the forge for a listing. The *listing* and not
+# every call: a claim is two writes and a receipt is a request, and neither is
+# what this reading is about. Matched on the query the list path carries
+# (`state=all`), which is what tells it from `GET …/issues/<n>` and from the
+# pipeline a `WAIT_CI` asks about — and never on the repository, which travels
+# percent-encoded.
+remote__listings() {
+  forge_calls | grep -c '^GET .*/issues?state=' || true
+}
+
+remote__forget_calls() {
+  : >"$SHIM_STATE/forge/calls"
+}
+
+# Two tickets a human has to decide on, and ten around them — the number is what
+# matters: the drain pins the four deciding fields and a digest of **every**
+# ticket, once per ticket it offers ([58], [61]).
+remote__a_sink_of_twelve() {
+  forge_seed 1 decision 'For the drain' <<'T'
+# 1 — For the drain
+
+**What to build:** Something a human has to arbitrate.
+
+**Status:** ready-for-human
+
+**Escalation:** decision
+
+**Write-surface:** `src/one.txt`
+
+**Blocked by:** None
+T
+  forge_seed 2 second 'And another' <<'T'
+# 2 — And another
+
+**What to build:** Something else a human has to arbitrate.
+
+**Status:** ready-for-human
+
+**Escalation:** decision
+
+**Write-surface:** `src/two.txt`
+
+**Blocked by:** None
+T
+  forge_seed_many 3 12 bulk
+}
+
+@test "a drained ticket is one reading of the tracker and not one per question" {
+  # AC 1, measured on both sides of the same scenario rather than against a number
+  # written down once: the second drain is the same drain with the reading
+  # switched off, which is what this backend did before [75].
+  use_forge github
+  remote__a_sink_of_twelve
+
+  # Two tickets and a decision on the first, because that is what tells the two
+  # readings apart: closing a ticket is a write, every reading of this run stops
+  # being served the moment it lands, and what makes the second ticket cost one
+  # listing again is the reading taken at the top of its own pass.
+  remote__forget_calls
+  run bash -c 'printf "c\nn\nq\n" | bash "$0"' "$PACK_DIR/human-loop.sh"
+  # The drain really drained: a scenario that refused early would ask for nothing
+  # at all and pass this test by doing none of the work. Asserted before the count
+  # is taken, and never out of a variable read after the second `run`.
+  assert_output_contains "1-decision: closed"
+  assert_output_contains "── 2-second ──"
+  assert_output_contains "left in the sink"
+  local shared
+  shared="$(remote__listings)"
+
+  # The same scenario with the reading switched off, on a tracker put back where
+  # it was: a second drain over a sink of one ticket would be a different amount
+  # of work, and the comparison would be between two scenarios rather than two
+  # readings.
+  use_forge github
+  remote__a_sink_of_twelve
+  set_config FORGE_CACHE_TTL 0
+  remote__forget_calls
+  run bash -c 'printf "c\nn\nq\n" | bash "$0"' "$PACK_DIR/human-loop.sh"
+  assert_output_contains "1-decision: closed"
+  assert_output_contains "── 2-second ──"
+  local apiece
+  apiece="$(remote__listings)"
+
+  [ "$shared" -gt 0 ] && [ "$apiece" -gt 0 ] ||
+    fail "no listing was asked for at all, so this measures nothing: shared=$shared apiece=$apiece"
+  [ "$((shared * 10))" -le "$apiece" ] ||
+    fail "a drained ticket did not cost an order of magnitude fewer listings: $shared with the reading, $apiece without it"
+}
+
+@test "what a routed session wrote on the forge is read when that session returns" {
+  # The probe this ticket cannot be delivered without: a session writing the
+  # tracker **over the network**, which is the one write no register of this run,
+  # no snapshot and no witness of this pack sees ([18]). A reading taken before it
+  # and still being served would make the four readers of [56]/[58]/[66]/[68]
+  # report that nothing moved — a false green produced by a cache, on the entry
+  # point whose whole job is to say what an unjudged session did.
+  use_forge github
+  remote__sink_and_work
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+d="$RALPH_SHIM_STATE/forge"
+printf '**What to build:** Write the alpha marker file.\n\n**Status:** resolved\n\n**Blocked by:** None\n\n**Write-surface:** `src/alpha.txt`\n\n**Slug:** alpha\n' \
+  >"$d/issue.2.body"
+exit 0
+SCRIPT
+
+  run bash -c 'printf "o\nn\nq\n" | bash "$0"' "$PACK_DIR/human-loop.sh"
+  assert_output_contains "2-alpha was moved to \`Status: resolved\`"
+  assert_output_contains "put back to \`ready-for-agent\`"
+  # And on the forge, which is where this is true or not: the drain wrote the
+  # ticket back through the adapter, so a reading served from memory would show
+  # here as a tracker nobody corrected.
+  assert_equal "$(forge_field 2 Status)" "ready-for-agent"
+}
+
+@test "a write made in a fork is not a reading the shell that forked it keeps" {
+  # AC 3, and the trap the ticket named: `n="$(tracker_bump_failures …)"` is the
+  # ordinary shape of a write in this pack, and a subshell that drops its own memo
+  # leaves its parent holding the state before the write. Over-invalidating costs
+  # a request; under-invalidating is a ticket claimed twice.
+  use_forge github
+  remote__two
+
+  pack_run 'set +e
+    d="$(mktemp -d)"
+    tracker_cache_open "$d"; printf "open=%s\n" "$?"
+    tracker_cache_prime; printf "prime=%s\n" "$?"
+    n="$(tracker_bump_failures 1-alpha)"
+    printf "bumped=[%s]\n" "$n"
+    printf "read=[%s]\n" "$(tracker_field 1-alpha Failures)"
+    rm -rf "$d"'
+  assert_output_contains "open=0"
+  assert_output_contains "prime=0"
+  assert_output_contains "bumped=[1]"
+  # The forge is what holds the truth here, and this is the shell that was holding
+  # a reading taken before the write.
+  assert_output_contains "read=[1]"
+  assert_equal "$(forge_field 1 Failures)" "1"
+}
+
+# A human opening an issue on the forge, which no register of this run sees and
+# no write of this pack goes through — staged where a human does it, which is the
+# whole of what makes the bound the only thing that can bring it in.
+#
+# Written into the fake forge by hand rather than through `forge_seed`, because it
+# has to happen **inside** the process that is holding a reading: a helper of this
+# harness runs in the bats shell, and the reading lives in the shell `pack_run`
+# started.
+remote__opened_by_a_human() {
+  cat <<'ASK'
+opened_by_a_human() {
+  d="$RALPH_SHIM_STATE/forge"
+  printf 'nine' >"$d/issue.9.title"
+  printf '**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Slug:** nine\n' >"$d/issue.9.body"
+  printf 'open\n' >"$d/issue.9.state"
+  : >"$d/issue.9.assignee"
+  printf '9\n' >>"$d/order"
+}
+ASK
+}
+
+@test "a reading is served for as long as the bound the project set" {
+  # AC 4, first direction. The shipped bound is sixty seconds, so what is asserted
+  # here is that the reading really is being served — a test that read the forge
+  # again would pass every assertion of this ticket while buying nothing.
+  use_forge github
+  remote__two
+
+  local script="$RALPH_TEST_DIR/cache-within.sh"
+  {
+    remote__opened_by_a_human
+    cat <<'ASK'
+state="$(mktemp -d)"
+tracker_cache_open "$state"
+tracker_cache_prime
+opened_by_a_human
+printf 'within: %s\n' "$(tracker_ids | grep -c .)"
+rm -rf "$state"
+ASK
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "within: 2"
+}
+
+@test "and the tracker is read again once that bound has run out" {
+  # The paired witness, and AC 4's other direction: this pack's frontier is a scan
+  # with **no memory** ([04]), which is what makes a killed run, an edit a human
+  # makes between two iterations and a cold start behave alike. A reading with no
+  # bound would turn a night into one photograph of the tracker taken at its start.
+  #
+  # A bound of one second and a wait of two, so that what is measured is the bound
+  # and never the second this test happened to start in.
+  use_forge github
+  remote__two
+  set_config FORGE_CACHE_TTL 1
+
+  local script="$RALPH_TEST_DIR/cache-after.sh"
+  {
+    remote__opened_by_a_human
+    cat <<'ASK'
+state="$(mktemp -d)"
+tracker_cache_open "$state"
+tracker_cache_prime
+opened_by_a_human
+sleep 2
+printf 'after: %s\n' "$(tracker_ids | grep -c .)"
+rm -rf "$state"
+ASK
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "after: 3"
+}
+
+@test "a tracker that would not answer is not a reading, and the prime says nothing" {
+  # The clause [82] left on this ticket: a cache never memorises a refusal. A
+  # listing that refused leaves nothing behind, so the refusal repeats instead of
+  # being replaced by an empty list — which is what would read as a tracker
+  # holding no tickets at all ([59], [76]).
+  use_forge github
+  remote__two
+  remote__ceiling_refuses
+
+  # The prime is a **plain statement** and never `out="$(tracker_cache_prime)"`,
+  # and that is the difference between this test and one that cannot fail: a
+  # command substitution is a fork, so a reading taken inside one dies with it —
+  # which is the whole defect this ticket is about. Measured: with the prime in a
+  # substitution, a mutation that caches a refused listing left this test green.
+  pack_run 'set +e
+    d="$(mktemp -d)"
+    tracker_cache_open "$d"
+    tracker_cache_prime 2>"$d/said"; printf "prime=%s said=[%s]\n" "$?" "$(cat "$d/said")"
+    tracker_ids >/dev/null 2>&1; printf "ids=%s\n" "$?"
+    tracker_field 1-alpha Status >/dev/null 2>&1; printf "field=%s\n" "$?"
+    rm -rf "$d"'
+  assert_output_contains "prime=1 said=[]"
+  assert_output_contains "ids=1"
+  # Still the third answer of a read and not "there is no such ticket" ([82]).
+  assert_output_contains "field=2"
+}
+
+@test "the register of this run's tracker writes is a witness that may only grow" {
+  # What the 10/09/2026 pass asked of this ticket: the object it puts on a disk
+  # goes into the census of [81] rather than beside it. It is sealed empty and it
+  # is appended to by every write, so what it needs from `gate_witness_mutable` is
+  # the `grows` line — without it, the first claim of the night turns the run's own
+  # register into a witness this run is told it rewrote.
+  use_forge github
+  remote__two
+
+  local script="$RALPH_TEST_DIR/writes-grow.sh"
+  cat >"$script" <<'ASK'
+state="$(mktemp -d)"
+tracker_cache_open "$state"
+RALPH_WITNESS_SEAL="$(gate_witness_seal "$state")"
+printf 'sealed: '; gate_witness_moved || printf '(quiet)\n'
+tracker_claim 1-alpha >/dev/null 2>&1
+printf 'wrote:  %s line(s), ' "$(grep -c . "$state/tracker.writes")"
+gate_witness_moved || printf '(quiet)\n'
+rm -rf "$state"
+ASK
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "sealed: (quiet)"
+  # The claim really wrote the register: a count of zero would make the line below
+  # true about a file nothing touched.
+  case "$output" in
+    *"wrote:  0 line(s)"*) fail "the claim appended nothing, so this proves nothing: $output" ;;
+  esac
+  assert_output_contains "line(s), (quiet)"
+}
+
+@test "the local backend keeps no such reading, and refuses out loud" {
+  # The paired witness. Its tracker is a directory of files on this machine: a
+  # fork reads the same files as its parent, and a reading held in a shell would
+  # be a second answer about a file anything can open. Both refusals are explicit,
+  # because an operation a backend does not implement prints a sentence on the
+  # console of every run and every drain ([77]).
+  use_tickets 01-alpha
+
+  pack_run 'set +e
+    d="$(mktemp -d)"
+    out="$( { tracker_cache_open "$d"; printf "open=%s\n" "$?"; } 2>&1)"
+    printf "%s\n" "$out"
+    out="$( { tracker_cache_prime; printf "prime=%s\n" "$?"; } 2>&1)"
+    printf "%s\n" "$out"
+    printf "left=[%s]\n" "$(ls "$d")"
+    rm -rf "$d"'
+  assert_output_contains "open=1"
+  assert_output_contains "prime=1"
+  assert_output_contains "left=[]"
+  refute_output_contains "does not implement"
+}

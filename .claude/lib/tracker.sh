@@ -37,6 +37,13 @@
 #                                     in; non-zero when it keeps them elsewhere
 #   tracker_tickets_dir               the directory this backend keeps tickets
 #                                     in; non-zero when it keeps them elsewhere
+#   tracker_cache_open DIR            a directory of this run the backend may
+#                                     keep its own state in; non-zero when it
+#                                     keeps none
+#   tracker_cache_prime               one reading of the tracker, taken now and
+#                                     into this shell; non-zero when there is
+#                                     none to take, which is never a reason to
+#                                     stop
 #
 # Marking is the loop's job, after the gate — never the session's.
 #
@@ -175,7 +182,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift)
+    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -438,6 +445,46 @@ tracker_tickets_dir() { tracker__dispatch tickets_dir "$@"; }
 tracker_sidecar_path() { tracker__dispatch sidecar_path "$@"; }
 tracker_sidecar_witness() { tracker__dispatch sidecar_witness "$@"; }
 tracker_sidecar_drift() { tracker__dispatch sidecar_drift "$@"; }
+
+# ── what a backend may keep for the length of one run ────────────────────────
+#
+# The fourth zone of the same family, and the one that is about **cost** rather
+# than about what a session can write ([75]). A backend whose tickets live on a
+# service answers every read of this interface over the network, and this pack
+# reads a tracker the way a shell reads anything — through a command
+# substitution, which is a fork. So a caller that asks six questions about forty
+# tickets asks the service two hundred and forty times, and the drain does that
+# once per ticket it offers a human ([58], [61]).
+#
+# Two operations, both reads as far as the register of [13] is concerned — neither
+# writes a ticket:
+#
+#   cache_open D       a directory of this run the backend may keep its own state
+#                      in, handed in the way `sidecar_witness` is handed one and
+#                      for the same reason: which temporary directory belongs to
+#                      a run is the entry point's question. Taken once, after the
+#                      locks and before the first session exists. A refusal means
+#                      this backend keeps nothing of the sort — which is what the
+#                      local backend says, its tracker being a directory of files
+#                      this machine reads for nothing.
+#   cache_prime        one reading of the tracker, taken **now**, into the calling
+#                      shell, so that the substitutions that shell is about to
+#                      fork are served from it.
+#
+# **A refusal of either is never a reason to stop**, and that is the one clause a
+# caller has to know. The two refusals a caller cannot tell apart — a backend that
+# keeps no such reading, and a tracker that would not answer — are the same
+# instruction here: carry on and read the tracker the way this pack read it before
+# [75]. The second one is not swallowed by that: the read that follows asks again
+# and says what it could not do, in the sentence that belongs to it ([64] — a
+# refusal said twice is a refusal a human learns to skip).
+#
+# **And neither call is one an entry point may skip on a hunch**: the two moments
+# `cache_prime` is called are the two where a reading taken earlier would be wrong
+# — the top of a ticket, and the return of a session that may have written the
+# tracker where nothing of this pack can see it.
+tracker_cache_open() { tracker__dispatch cache_open "$@"; }
+tracker_cache_prime() { tracker__dispatch cache_prime "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

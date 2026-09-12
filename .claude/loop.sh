@@ -1710,6 +1710,24 @@ LEFTOVERS
     loop_log "no witness of the record a human is sent to read — the forensic refs, the audit receipts and this feature's playthrough could be created, moved or destroyed under this run with nothing here to say so ([70]), and on a backend that keeps the location of a receipt and the liveness of a claim in a file of this tree, that file is read as it stands ([77])"
   fi
 
+  # And where the tracker's backend may keep what this run has to share between
+  # its own processes ([75]). The run's own witness directory, for the reason the
+  # copy of the sidecar goes there ([77]): it is a `mktemp` name this shell never
+  # exports, it adds no name to `gate_tmp_names` and nothing new to unwind, and
+  # taken *here* — before the first session — the file it puts there is inside the
+  # seal of [81] rather than beside it.
+  #
+  # What it buys on this path is not the drain's two hundred and forty listings a
+  # ticket: it is the invalidation crossing a fork. Every write of this pack goes
+  # through a command substitution somewhere (`n="$(tracker_bump_failures …)"`),
+  # and without this register the shell that forked it would go on answering its
+  # own reads with the state before its own write.
+  #
+  # A run that cannot have it keeps the night and loses the sharing: refusing to
+  # start would trade a night of delivered tickets for a request count. A backend
+  # that keeps none refuses too, and says nothing — the local one does.
+  tracker_cache_open "$RALPH_FRONTIER_COMMON" || true
+
   # And which exclusion guards were already there, taken at the one instant where
   # the answer is a fact ([77]). This run holds both locks and has started
   # nothing, so a guard standing here is one no iteration of this run can be

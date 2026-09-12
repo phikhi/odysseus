@@ -125,9 +125,21 @@ human_loop_log() {
 # which is where that function is already called for the same kind of reason.
 HUMAN_LOOP__REACHED_THE_END=0
 
+# This drain's own directory in `$TMPDIR`, when it could make one ([75]). A
+# `mktemp` name this shell never exports — the same secret as every other
+# workspace of this pack ([30], [40]) — under a glob `gate_tmp_names` already
+# publishes, so it adds no name to the sweep an installer reads ([19], [62]).
+#
+# Unwound **here** rather than at the end of `human_loop_main`, for the reason the
+# locks are released here: this file has six exits and a signal can arrive at any
+# of them, and a workspace left behind is counted as the debris of a killed run by
+# the next drain and the next night.
+HUMAN_LOOP__STATE=''
+
 human_loop__on_exit() {
   local rc=$?
   state_locks_release
+  [ -z "$HUMAN_LOOP__STATE" ] || rm -rf "$HUMAN_LOOP__STATE"
   [ "$rc" = 0 ] || exit "$rc"
   if [ "${HUMAN_LOOP__REACHED_THE_END:-0}" != 1 ]; then
     printf 'ralph: this drain ended in the middle, where nothing in it decided to stop — something below it ended this shell. What was still in the sink is still in it, and the last ticket named above is where to start again. This is not an emptied sink: an operation of the tracker adapter that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' >&2
@@ -337,6 +349,15 @@ human_loop__session() {
   if [ "$rc" != 0 ]; then
     human_loop_log "$id: that session ended with status $rc — nothing was marked, the ticket is where it was"
   fi
+
+  # And a reading of the tracker taken **after** that conversation, before any of
+  # the four readers below asks anything ([75]). Not an optimisation: a routed
+  # session is a `claude` in this tree with the project's own credentials, so it
+  # can write this tracker over the network — where no register of this drain, no
+  # snapshot and no witness of this pack sees it ([18]) — and the four readers
+  # below exist precisely to say what it wrote. Served from a reading taken before
+  # the session, every one of them would report that nothing moved.
+  tracker_cache_prime || true
 
   # What that conversation left in the operator's own tree ([56]). Here, right
   # where the session returns, because this is the one moment at which "what did
@@ -586,6 +607,28 @@ human_loop_main() {
   # an AFK run reads and watches waits until here.
   human_loop__journal_tracker_findings
 
+  # And where the tracker's backend may keep what this drain has to share between
+  # its own processes ([75]). **After the locks**, which is [72]'s rule and not a
+  # preference: a name in `$TMPDIR` is a byte the other entry point reads — it is
+  # what `gate_leftovers` counts — so a drain refused by a run's lock must not
+  # have left one.
+  #
+  # This is the entry point the reading was built for. `router_pin` takes the four
+  # deciding fields and a digest of **every** ticket in the tracker, once per
+  # ticket it offers — six reads of every ticket for each ticket a human is shown,
+  # measured at two hundred and forty listings for one drained ticket on a tracker
+  # of forty ([58], [61]). What turns that into one listing is the prime below, and
+  # what makes a reading safe to hold across a fork is this file.
+  #
+  # A drain that cannot make it drains anyway and pays what it paid before: a
+  # human sitting in front of a sink is not somebody to refuse over a temporary
+  # directory. A backend that keeps no such state refuses too, and says nothing.
+  if HUMAN_LOOP__STATE="$(mktemp -d "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")"; then
+    tracker_cache_open "$HUMAN_LOOP__STATE" || true
+  else
+    HUMAN_LOOP__STATE=''
+  fi
+
   human_loop_log "draining ready-for-human (feature=$FEATURE backend=$TRACKER_BACKEND)"
 
   # What the runs before this one left outside the repository, and then what they
@@ -633,6 +676,15 @@ LEFTOVERS
     printf '%s\n' "$notes" | sed 's/^/ralph: /'
   fi
 
+  # One reading of the tracker, here in this shell, for everything below it
+  # ([75]). `router_sink` walks every ticket asking for its `Status:` and its
+  # `Blocked by:`, in command substitutions forked from here — so the reading
+  # travels into them and the sink costs one request instead of one per ticket.
+  # Never a reason to stop: a backend with nothing to prime and a tracker that
+  # would not answer refuse the same way, and the read below asks again and says
+  # what it could not do.
+  tracker_cache_prime || true
+
   local sink id rc=0 drained=0 left=0 quit=0 changed=0
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "nothing to drain: the human sink was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
@@ -657,6 +709,13 @@ LEFTOVERS
   # session gets the terminal the same way.
   while IFS= read -r id <&3; do
     [ -n "$id" ] || continue
+    # A reading of the tracker for this ticket, taken in this shell and not in one
+    # of the twenty forks below it ([75]). Here rather than once for the whole
+    # drain, because everything between two passes round this loop is a reason for
+    # the last one to be stale: a transition this drain wrote, a session it opened,
+    # a human with a second terminal. A prime always re-reads, so this line is the
+    # freshness of the status check, of the pin and of the dossier at once.
+    tracker_cache_prime || true
     # Re-read rather than trusted: the list was taken before the first decision,
     # and a human with two terminals open is not a race this loop is entitled to
     # lose loudly.

@@ -97,3 +97,8 @@ tracker_gitlab_tickets_dir() { return 1; }
 tracker_gitlab_sidecar_path() { forge_sidecar_path; }
 tracker_gitlab_sidecar_witness() { forge_sidecar_witness "$@"; }
 tracker_gitlab_sidecar_drift() { forge_sidecar_drift "$@"; }
+
+# And the same reading shared between the processes of one run — see
+# `tracker-github.sh` and [75].
+tracker_gitlab_cache_open() { forge_cache_open "$@"; }
+tracker_gitlab_cache_prime() { forge_cache_prime gitlab; }

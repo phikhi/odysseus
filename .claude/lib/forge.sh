@@ -86,9 +86,9 @@
 # frontier scan of forty tickets each naming a blocker is one request and not
 # forty-one, and a `set_fields` reads what it is about to rewrite for free.
 #
-# **What it does not buy, said here because the obvious sentence about it is
-# wrong.** A shell variable dies at the first command substitution, and a command
-# substitution is how every consumer in this pack reads the tracker — `$(tracker_ids)`,
+# **What a memo alone does not buy, and what it cost until [75].** A shell
+# variable dies at the first command substitution, and a command substitution is
+# how every consumer in this pack reads the tracker — `$(tracker_ids)`,
 # `$(tracker_field ...)`, a heredoc fed by one. So a caller that asks for six things
 # about forty tickets pays forty listings and not one, whatever this memo does:
 # `router__tracker_state` does that once per drained ticket ([58]/[61]), and
@@ -97,13 +97,14 @@
 # for a scope overflow into an undeclared path, two hundred and forty for one ticket
 # drained.
 #
-# The parade is a cache with a longer lifetime, and the two lifetimes available are
-# both refused here rather than picked badly. A file in `.scratch/<feature>/` is a
-# file a routed session writes, which is [40]'s rule and [21]'s corollary: a control
-# reading what the thing it controls can write is not a control — and this cache
-# decides what the tracker *says*, which is everything. A file in the run's own
-# witness directory would be right, and `human-loop.sh` does not make one: giving
-# the drain one is a change to the entry point and not to a backend. Owner: **[75]**.
+# **What [75] does about it is one sentence: the reading is taken in the shell the
+# substitutions are forked from.** `forge_cache_prime` puts one listing in the
+# caller's own memo, and every substitution under it inherits that memo by fork —
+# so the two hundred and forty become one, and the value they are served from is
+# in nobody's file. The three bounds that keep it from being a photograph of the
+# tracker are the run's register of its own writes, `FORGE_CACHE_TTL`, and the
+# prime itself, which always re-reads. All three are on `forge_cache_open` and
+# `forge_cache_prime`, with what forging the one file buys.
 #
 # ## Public API
 #
@@ -129,6 +130,11 @@
 #   forge_append_note F ID         a comment from stdin
 #   forge_emit_receipt F ID        the receipt from stdin, into the request
 #   forge_receipt_path F ID        where that request is, if this machine knows
+#   forge_cache_open DIR           where this backend may keep what the run has to
+#                                  share between its own processes
+#   forge_cache_prime F            one reading of the tracker now, into this
+#                                  shell's memo, for the substitutions it is
+#                                  about to fork
 #   forge_sidecar_path             the file in this tree holding the records above
 #   forge_sidecar_witness DIR      the run's own copy of it, before any session
 #   forge_sidecar_drift DIR        what a session wrote into it, as
@@ -137,9 +143,20 @@
 #   forge_json_string              a value on stdin, as a JSON string
 
 # The listing this shell has already paid for, and the key it was taken under. A
-# variable and never a file: see the header.
+# variable and never a file: see the header, and `forge_cache_prime` for what a
+# file was refused for.
+#
+# Two stamps beside it since [75], because a reading that outlives the call that
+# took it has to be able to stop being served: the clock it was taken at, and how
+# many writes this run had made to its tracker by then.
 FORGE__CACHE=''
 FORGE__CACHE_KEY=''
+FORGE__CACHE_AT=0
+FORGE__CACHE_WROTE=''
+# The register of this run's own tracker writes, when an entry point gave this
+# backend one. A path a run hands in and never a name this module composes: see
+# `forge_cache_open`.
+FORGE__WRITES=''
 # The user id a forge that assigns by id needs, looked up once per shell.
 FORGE__USER_ID=''
 FORGE__USER_ID_KEY=''
@@ -520,11 +537,25 @@ forge__page_max() {
 # extend the tracker, it overwrites it ([76]).
 forge__listing() {
   local flavour="$1" repo key page=1 path body all='' count size max offset=0 whole=0
+  local gen now ttl age
   repo="$(forge__repo)" || return 1
   key="$flavour/$repo"
-  if [ "$FORGE__CACHE_KEY" = "$key" ]; then
-    printf '%s\n' "$FORGE__CACHE"
-    return 0
+  # Both stamps are taken **before** the read and never after it, which is [70]'s
+  # rule about a register two files over. A write that lands while this listing is
+  # in flight has to make it invalid — the listing does not contain that write —
+  # and a generation stamped on the way out would count it as one this reading had
+  # already seen. The clock is the same argument: a fetch that took ten seconds
+  # arrives ten seconds old.
+  gen="$(forge__generation)"
+  now="$(forge__now)"
+  ttl="$(forge__cache_ttl)"
+  if [ -n "$FORGE__CACHE_KEY" ] && [ "$FORGE__CACHE_KEY" = "$key" ] &&
+    [ "$FORGE__CACHE_WROTE" = "$gen" ] && [ "$ttl" -gt 0 ]; then
+    age=$((now - FORGE__CACHE_AT))
+    if [ "$age" -ge 0 ] && [ "$age" -lt "$ttl" ]; then
+      printf '%s\n' "$FORGE__CACHE"
+      return 0
+    fi
   fi
   size="$(forge__page_size)"
   max="$(forge__page_max)"
@@ -574,19 +605,179 @@ forge__listing() {
       "$max" "$size" >&2
     return 1
   }
+  # A refusal is never stored, which is what makes it repeat instead of turning
+  # into a short list somebody believes ([76], [82]): every line above that
+  # refuses leaves this shell with whatever it had, and a reading is put here only
+  # once the pagination has been seen to end.
   FORGE__CACHE="$all"
   FORGE__CACHE_KEY="$key"
+  FORGE__CACHE_AT="$now"
+  FORGE__CACHE_WROTE="$gen"
   printf '%s\n' "$all"
   return 0
 }
 
-# Everything this shell believes about the tracker, thrown away. Called by every
-# write, and by nothing else: a cache that outlived a write would answer the next
-# read with the state before it, and the state before a claim is a frontier that
-# still holds the ticket.
+# Everything **this shell** believes about the tracker, thrown away: a reading that
+# outlived a write would answer the next read with the state before it, and the
+# state before a claim is a frontier that still holds the ticket.
+#
+# Two callers with two different meanings, and the split is the whole of what
+# keeps the register below from crying wolf. This one says "do not read your own
+# copy" — `forge_claim` and `forge__open` say it under their guard, before reading
+# what they are about to rewrite, and nothing has changed on the forge when they
+# do. The other one is `forge__changed`.
 forge__forget() {
   FORGE__CACHE=''
   FORGE__CACHE_KEY=''
+  FORGE__CACHE_AT=0
+  FORGE__CACHE_WROTE=''
+  return 0
+}
+
+# The same, and the rest of the run told: what a reading another process of this
+# run is holding is now the state before this write.
+#
+# Called by the two functions that change an issue on the forge — `forge__update`
+# and `forge__create` — and by nothing else. A comment and a pull request are not
+# a ticket of this tracker: neither changes a field any read of this module
+# answers with.
+#
+# **The one thing a variable cannot do** ([75]). A command substitution is a fork:
+# `n="$(tracker_bump_failures ...)"` drops the memo of the subshell and leaves its
+# parent's untouched, so a parent that kept a reading would answer its own next
+# read with the state before its own write — a retry budget that never grows, a
+# ticket claimed twice. Over-invalidating costs a request; under-invalidating
+# costs a ticket somebody works on twice, so this is deliberately coarse: one line
+# per write, and every reading of this run taken before it stops being served.
+#
+# The line carries the pid of whoever wrote it and is read by nobody: what the
+# register answers is its **length**.
+forge__changed() {
+  forge__forget
+  [ -n "$FORGE__WRITES" ] || return 0
+  printf '%s\n' "$$" >>"$FORGE__WRITES" 2>/dev/null || true
+  return 0
+}
+
+# ── the reading a run shares between its own processes ───────────────────────
+#
+# The memo above answers one call. What costs a night is the one thing it cannot
+# do: a command substitution is a fork, a fork inherits its parent's variables and
+# nothing ever travels back — so a caller that reads the tracker forty times
+# through `$(...)` pays forty listings while holding a perfectly good copy of the
+# answer in its own shell, and never finds out.
+#
+# So the reading is taken **in the shell the substitutions will be forked from**,
+# which is all `forge_cache_prime` is: one listing, into the memo of the caller
+# itself. Measured on the fake forge ([18]'s), a tracker of twelve tickets on
+# which one is closed and one left where it was: **two hundred and twenty-four**
+# listings before, **four** after.
+#
+# **In a variable and never in a file**, which is `budget__fetch`'s decision one
+# module over and for its reason: a cache on disk is a file the judged session can
+# write — in `.scratch/<feature>/` outright, and in `$TMPDIR` by the glob the
+# 10/09/2026 pass measured — and a control that reads what the controlled writes
+# is not a control. This reading decides what the tracker *says*: the frontier,
+# the claim, the write-surface the scope-guard judges against. A shell variable of
+# the process that took it is the one store in this pack a judged session provably
+# cannot reach ([81]): `claude` is spawned with an environment, this is never
+# exported, and every process that reads it is a fork of the one that took it.
+#
+# What stays is the bound. A reading older than `FORGE_CACHE_TTL` is not served,
+# because this pack's frontier is a **scan with no memory** ([04]) — which is what
+# makes a killed run, a human's edit between two iterations and a cold start
+# behave alike — and a reading with no bound would turn a night into one
+# photograph taken at its start. A human who opens an issue on the forge at three
+# in the morning is seen that many seconds later. What the bound costs is named
+# here rather than discovered: a single call that takes longer than it reads the
+# tracker twice and sees two states of it.
+
+# Where this backend may keep what the run has to share between its own
+# processes, handed in as a directory the way the sidecar's copy is ([77]) and
+# never a path composed here: which temporary directory belongs to a run is the
+# entry point's question, and a backend that answered it would be a second author
+# for a layout `loop.sh` and `human-loop.sh` own.
+#
+# **One file, and it carries no ticket.** `tracker.writes` is one line per write
+# this run makes to its tracker, and what is read off it is its length — see
+# `forge__changed`. It is the only thing this ticket puts on a disk, and what
+# forging it buys is bounded on purpose: appending to it makes this pack read the
+# tracker *more* often, deleting it makes every reading refetch, and both of those
+# are the safe direction. Truncating it back to exactly the length a live reading
+# holds is the one forgery worth making, and it buys that reading until
+# `FORGE_CACHE_TTL` runs out — a window whose ceiling the project sets.
+#
+# Taken before the run's first session, which is what puts it inside the seal of
+# [81] rather than beside it: on the AFK path the directory is the run's witness
+# directory, so the file is sealed with everything else in there and named
+# `tracker.writes` in `gate_witness_mutable` as a register that may only grow. The
+# drain seals nothing and its file is held by nothing, which is the same sentence
+# [77] wrote about its copy of the sidecar.
+#
+# Refuses rather than half-opening: a run whose register cannot be written is a
+# run whose invalidation does not cross a fork, and what its caller does about
+# that is the caller's to decide — both entry points keep the night and lose the
+# sharing, which is the behaviour this backend had before [75].
+forge_cache_open() {
+  local dir="${1:-}"
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  forge__forget
+  FORGE__WRITES=''
+  : >"$dir/tracker.writes" 2>/dev/null || return 1
+  FORGE__WRITES="$dir/tracker.writes"
+  return 0
+}
+
+# One reading of the tracker now, into this shell's own memo, so that the command
+# substitutions this shell is about to fork are served from it.
+#
+# **Always a fresh listing**, and that is the operation rather than an accident of
+# how it is written: a caller saying "take a reading here" is saying it at one of
+# the two moments where an older one would be wrong — the top of a ticket, and the
+# return of a session that may have written the tracker over the network, which no
+# register of this run, no snapshot and no witness of this pack sees at all ([18]).
+#
+# Silent, and non-zero when the tracker would not answer. A prime decides nothing:
+# the read that follows asks again and says what it could not do, in the sentence
+# that belongs to it. Saying it here as well would put a refusal twice in front of
+# a human who reads it once per ticket ([64]) — and the cost of that choice is
+# stated rather than hidden: on a tracker that refuses, the prime pays for a
+# refusal nobody hears.
+forge_cache_prime() {
+  local flavour="$1"
+  forge__forget
+  forge__listing "$flavour" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# How many writes this run has made to its tracker, or `-` when no entry point
+# gave this backend a register. `-` is a value and not a number on purpose: it
+# never equals a stamp a reading carries, so a register that appears or goes away
+# under a run makes that run re-read rather than believe what it is holding.
+forge__generation() {
+  [ -n "$FORGE__WRITES" ] && [ -f "$FORGE__WRITES" ] || {
+    printf -- '-\n'
+    return 0
+  }
+  LC_ALL=C awk 'END { print NR + 0 }' "$FORGE__WRITES" 2>/dev/null || printf -- '-\n'
+  return 0
+}
+
+forge__now() {
+  date +%s
+}
+
+# How long a reading may be served for. `0` switches the sharing off altogether —
+# every read asks the forge, which is this backend without [75] — and anything
+# that is not a whole number of seconds is read as the **default** and never as
+# zero: a typo that silently turned the bound off would be a night run on one
+# photograph of the tracker, which is exactly what the bound is there to refuse.
+forge__cache_ttl() {
+  local n="${FORGE_CACHE_TTL:-60}"
+  case "$n" in
+    '' | *[!0-9]*) n=60 ;;
+  esac
+  printf '%s\n' "$n"
   return 0
 }
 
@@ -954,7 +1145,7 @@ forge__update() {
   path="$(forge__path "$flavour" issue "$num")" || return 1
   method="$(forge__spec "$flavour" update-method)" || return 1
   forge__api "$flavour" "$method" "$path" "$payload" >/dev/null || return 1
-  forge__forget
+  forge__changed
   return 0
 }
 
@@ -1575,7 +1766,7 @@ forge__create() {
   num="$(printf '%s\n' "$body" | forge_json |
     LC_ALL=C awk -F'\t' -v k="$idkey" '$1 == k { print $2; exit }')" || return 1
   [ -n "$num" ] || return 1
-  forge__forget
+  forge__changed
   printf '%s\n' "$num"
   return 0
 }

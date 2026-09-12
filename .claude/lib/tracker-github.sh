@@ -119,3 +119,10 @@ tracker_github_tickets_dir() { return 1; }
 tracker_github_sidecar_path() { forge_sidecar_path; }
 tracker_github_sidecar_witness() { forge_sidecar_witness "$@"; }
 tracker_github_sidecar_drift() { forge_sidecar_drift "$@"; }
+
+# And the reading this run shares between its own processes ([75]). Every read of
+# this backend is a request, and this pack reads a tracker through command
+# substitutions, which are forks: without a reading taken in the shell they are
+# forked from, one drained ticket costs two hundred and forty listings.
+tracker_github_cache_open() { forge_cache_open "$@"; }
+tracker_github_cache_prime() { forge_cache_prime github; }

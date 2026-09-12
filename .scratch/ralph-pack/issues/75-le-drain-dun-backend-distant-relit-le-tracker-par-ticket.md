@@ -4,14 +4,14 @@
 
 **Blocked by:** 77
 
-**Write-surface:** `.claude/human-loop.sh`, `.claude/lib/forge.sh`, `test/tracker-remote.bats`
+**Write-surface:** `.claude/human-loop.sh`, `.claude/loop.sh`, `.claude/lib/forge.sh`, `.claude/lib/tracker.sh`, `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/gate.sh`, `.claude/ralph.config.sh.example`, `test/tracker-remote.bats`, `test/human-loop.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Un ticket drainé sur un backend distant coûte un ordre de grandeur de requêtes de moins.
-- [ ] Le cache ne vit dans aucun fichier qu'une session routée peut écrire ([40], corollaire de [21]).
-- [ ] Une écriture du tracker l'invalide **pour tous les process du run**, pas seulement pour celui qui a écrit.
-- [ ] Une édition faite par un humain sur la forge pendant un run reste visible : la frontière est un scan sans mémoire, et un cache sans borne en ferait une photo.
+- [x] Un ticket drainé sur un backend distant coûte un ordre de grandeur de requêtes de moins.
+- [x] Le cache ne vit dans aucun fichier qu'une session routée peut écrire ([40], corollaire de [21]).
+- [x] Une écriture du tracker l'invalide **pour tous les process du run**, pas seulement pour celui qui a écrit.
+- [x] Une édition faite par un humain sur la forge pendant un run reste visible : la frontière est un scan sans mémoire, et un cache sans borne en ferait une photo.
 
 ## Comments
 
@@ -196,3 +196,178 @@ qui choisit entre la copie et le réseau doit rendre les trois, pas deux — un
 `2` que le cache aplatit en `1` ferait lire « il n'y a pas de tel ticket » à
 `gate_write_surface`, `lenses_has_tag` et `router_pin`, qui est exactement la
 réponse que [82] leur a retirée.
+
+## Livré le 12/09/2026
+
+### La sortie prise, et pourquoi ce n'est aucune des deux que le ticket pesait
+
+Le ticket posait le choix entre **deux fichiers** — un dans `.scratch/<feature>/`
+(refusé : une session routée l'écrit) et un dans le répertoire témoin du run
+(retenu par [77] et confirmé par la passe du 10/09). La livraison n'en pose
+aucun : **la lecture vit dans une variable du shell qui l'a prise**, et les forks
+sous lui la reçoivent par héritage.
+
+Ce qui a fait basculer, et qui était à deux fichiers de là depuis le début :
+`budget__fetch` (`lib/budget.sh`) a tranché exactement cette question en août, en
+ces termes — *« un cache sur disque serait un fichier que la session jugée écrit ;
+sous `.scratch/` il est écrivable tout court, et dans `$TMPDIR` il est aussi
+atteignable que le témoin d'ignore que [30] doit refuser quand une session le
+détruit »*. Et la mécanique manquante n'était pas le logement mais le **moment** :
+une substitution de commande est un `fork`, un `fork` hérite des variables de son
+parent, et rien ne revient jamais. Donc une lecture prise **dans le shell d'où
+partent les substitutions** sert les 240 lectures sans qu'aucun fichier existe.
+C'est tout ce que `tracker_cache_prime` fait.
+
+**Mesuré, pas estimé** (faux forge de [18], tracker de douze tickets, un ticket
+fermé et un laissé dans le puits) : **4** listings avec la lecture partagée,
+**224** sans — le test fait les deux mesures dans le même scénario, la seconde
+avec `FORGE_CACHE_TTL=0`, donc le chiffre ne peut pas périmer en silence.
+
+### Ce qui est livré, dans l'ordre où un lecteur le rencontre
+
+1. **`lib/tracker.sh`** — deux opérations d'interface, dans le bras des
+   **lectures** du dispatcher (aucune n'écrit un ticket, donc rien pour le
+   registre de [13]) : `tracker_cache_open DIR` et `tracker_cache_prime`. La
+   clause qui compte est celle des refus : **un refus de l'une ou l'autre n'est
+   jamais une raison de s'arrêter**, et les deux refus qu'un appelant ne peut pas
+   distinguer — « ce backend ne garde rien de tel » et « le tracker n'a pas
+   répondu » — donnent la même instruction : continuer, et lire le tracker comme
+   ce pack le lisait avant [75].
+2. **`lib/forge.sh`** — la lecture (`FORGE__CACHE` + deux tampons neufs : l'heure
+   et la longueur du registre au moment où elle a été prise), `forge_cache_open`,
+   `forge_cache_prime`, `forge__changed`, et la coupure de `forge__forget` en
+   deux sens (voir ci-dessous). Les deux tampons sont pris **avant** le fetch et
+   jamais après : c'est la règle du registre de [70], un fichier plus loin — une
+   écriture qui atterrit pendant le listing doit l'invalider, et un tampon posé au
+   retour la compterait comme déjà vue.
+3. **`lib/tracker-github.sh`, `lib/tracker-gitlab.sh`** — les deux enveloppes.
+   **`lib/tracker-local.sh`** — les deux refus **explicites** : son tracker est un
+   répertoire de fichiers de cette machine, un fork lit les mêmes fichiers que son
+   parent, et ne pas implémenter ferait imprimer « does not implement » sur la
+   console de chaque run et de chaque drain ([77]).
+4. **`loop.sh`** — `tracker_cache_open "$RALPH_FRONTIER_COMMON"`, juste après
+   `forensic_witness` et avant le sceau, donc le fichier qu'il pose est **dans**
+   le sceau de [81] et pas à côté.
+5. **`human-loop.sh`** — le répertoire de travail du drain (`HUMAN_LOOP__STATE`,
+   un `mktemp -d` sous `ralph-tracker.*`, pris **après les deux verrous** — règle
+   de [72] — et défait par le trap de sortie, à côté du relâchement des verrous),
+   et **trois** primes : avant la lecture du puits, à chaque ticket, et au retour
+   de chaque session.
+6. **`lib/gate.sh`** — une ligne dans `gate_witness_mutable` : `tracker.writes`
+   en mode `grows`.
+7. **`ralph.config.sh.example`** — `FORGE_CACHE_TTL` (défaut 60 s).
+
+### Les trois bornes, et ce que chacune ferme
+
+- **Le registre**, qui est le seul objet que ce ticket pose sur un disque.
+  `forge__changed` — appelé par `forge__update` et `forge__create`, les deux
+  seules fonctions qui changent une issue sur la forge — ajoute une ligne à
+  `tracker.writes`, et une lecture n'est servie que tant que la **longueur** du
+  fichier est celle qu'elle portait. C'est ce qui fait traverser l'invalidation
+  d'un `fork` : `n="$(tracker_bump_failures …)"` est la forme ordinaire d'une
+  écriture dans ce pack, et le sous-shell qui vide son propre memo laissait son
+  parent sur l'état d'avant.
+- **La borne de fraîcheur** (`FORGE_CACHE_TTL`, 60 s ; `0` éteint le partage) :
+  la frontière de ce pack est un scan **sans mémoire** ([04]), et une lecture sans
+  borne ferait d'une nuit une photo prise à son démarrage. Une valeur qui n'est
+  pas un entier de secondes est lue comme le **défaut** et jamais comme zéro.
+- **Le prime lui-même**, qui relit **toujours**. C'est ce qui rend les trois
+  points d'appel du drain sérieux : au retour d'une session, une lecture prise
+  avant elle ferait dire aux quatre lecteurs de [56]/[58]/[66]/[68] que rien n'a
+  bougé — un faux vert produit par un cache, sur le point d'entrée dont le travail
+  est précisément de dire ce qu'une session non jugée a fait.
+
+### La coupure de `forge__forget`, qui n'était pas dans le ticket
+
+`forge__forget` avait deux appelants de deux natures : les écritures (« le tracker
+a changé ») **et** `forge_claim`/`forge__open`, qui le disent sous leur garde avant
+de lire ce qu'ils vont réécrire (« ne lis pas ta propre copie »). Les faire tous
+passer par l'invalidation globale aurait fait relire le tracker à toutes les sœurs
+d'un run à chaque claim, pour rien. Donc : `forge__forget` reste « ce shell
+oublie », `forge__changed` est « et le reste du run aussi ».
+
+### Un défaut qui existait déjà, et que ce ticket ferme au passage
+
+Le memo d'avant [75] n'avait **aucune** invalidation qui traverse un process : un
+shell qui avait lu un listing par un appel direct (le pilote après
+`tracker_claim`, une itération après un marquage) gardait cette lecture pour
+toujours, et une écriture faite dans une substitution ne l'effaçait pas. Le ticket
+présentait ça comme le piège d'un cache à durée de vie plus longue ; c'était déjà
+vrai, sans borne de temps par-dessus. Le registre le ferme, et la borne le borne.
+
+### Ce que ça n'achète pas, écrit plutôt que découvert
+
+- **Le chemin AFK ne prime nulle part.** `loop.sh` reçoit le registre (donc
+  l'invalidation qui traverse un fork) et pas de `tracker_cache_prime` : l'AC parle
+  d'un ticket *drainé*, et câbler un prime par itération demande de choisir où,
+  dans un shell qui vit une session entière. Écrit dans [73], qui est le premier
+  consommateur à en avoir besoin.
+- **Une lecture vivante survit à un tracker qui commence à refuser.** Si la forge
+  cesse de répondre après un prime réussi, les lectures de la fenêtre sont servies
+  depuis la lecture prise — un état réel et pas un état inventé, mais un refus
+  qu'un lecteur voit jusqu'à `FORGE_CACHE_TTL` secondes plus tard. Le sens inverse
+  est tenu, et c'est celui qui compte : **un refus n'est jamais mémorisé**
+  (`forge__listing` ne pose la lecture qu'après avoir vu la pagination se terminer,
+  la clause que [82] a écrite ici).
+- **Un appel plus long que la borne lit le tracker deux fois** et voit deux états
+  de lui. Le cas existe (`router__tracker_state` sur un très gros tracker) ; ce qui
+  le rend supportable est que le pin refuse en bloc dès qu'une lecture refuse.
+- **Le registre du drain n'est scellé par rien**, parce que le drain ne prend pas
+  de sceau ([81]). Même aveu que [77] pour sa copie du sidecar.
+- **Ce que forger le registre achète** : y ajouter une ligne fait relire le
+  tracker (sens sûr), le supprimer fait tout relire (sens sûr), le tronquer à
+  exactement la longueur qu'une lecture vivante porte prolonge cette lecture
+  jusqu'à la borne. Il est dans `docs/frontiere-de-confiance.md`, avec la phrase
+  qui remet l'échelle : une session qui veut changer ce que ce pack lit d'un
+  tracker distant écrit l'issue **par le réseau** avec la commande de credentials
+  du projet — la ligne de [18] — et ce ticket ajoute un canal plus discret, jamais
+  un pouvoir neuf.
+
+### Pièges payés en livrant
+
+- **Le compteur de requêtes du test** : l'URL de la forge porte `TRACKER_API`
+  (`/api/…`) et le dépôt arrive **percent-encodé** (`acme%2Fwidgets`), donc un
+  `grep '^GET /repos/acme/widgets/issues?'` compte zéro et le test mesure zéro
+  contre zéro sans rougir. Ancré sur `'^GET .*/issues?state='`, qui est ce qui
+  distingue un listing d'un `GET …/issues/<n>`.
+- **Une borne d'une seconde ne se teste pas en une seconde** : la première version
+  primait, éditait la forge et relisait avec `FORGE_CACHE_TTL=1`, en pariant que
+  les deux lectures tomberaient dans la même seconde. L'horloge de `date +%s` est
+  entière et le fetch coûte quelques centaines de millisecondes : instable à ~50 %,
+  rouge du premier coup. Découpé en deux tests — « servie » sous la borne livrée
+  (60 s, aucune dépendance à l'horloge) et « relue » sous une borne de 1 s avec
+  `sleep 2`, où l'âge est ≥ 2 quoi qu'il arrive.
+- **Les quatre entrées de mutation cassées** au premier jet, toutes pour la raison
+  que l'en-tête de `test/mutate.sh` écrit en gras : un `$` non échappé dans la
+  **moitié droite** est interpolé par perl, donc l'édition casse le fichier au lieu
+  d'enlever la garantie. `bash test/mutate.sh -n -f "75 "` les a rendues `BROKEN`
+  en trois secondes.
+- **Une entrée de mutation voisine ré-ancrée** : `10 writing a receipt counts as
+  writing the ticket` ancre la ligne du bras des lectures de `tracker__dispatch`,
+  à laquelle ce ticket ajoute `cache_open | cache_prime`. Elle aurait rendu
+  `DRIFTED`. Re-vérifiée avant de déplacer l'ancre, et le commentaire de l'entrée
+  dit pourquoi les deux nouvelles opérations sont des lectures au sens du critère.
+- **`grep -c` dans un `pack_run`** rend 1 quand il ne compte rien : sous
+  `set -euo pipefail`, seul le fait qu'il soit dans un argument de `printf` empêche
+  le script de mourir. C'est délibéré dans les tests écrits ici, pas un hasard.
+- **Une entrée de mutation est revenue `VACUOUS` au premier passage du gate, et
+  elle disait vrai — sur le défaut même de ce ticket.** « 75 a listing that
+  refused is kept as though it had answered » restait verte parce que le test
+  écrivait `out="$(tracker_cache_prime 2>&1)"` : une substitution de commande est
+  un `fork`, donc la lecture que le prime mutant posait mourait avec lui, et le
+  `tracker_ids` du parent refusait comme il devait — pour la mauvaise raison. Le
+  prime est désormais une **instruction pleine** dans le script, sa sortie d'erreur
+  va dans un fichier. La leçon est celle du ticket, retournée contre son propre
+  test : *tout ce qui doit survivre à l'appel se prend dans le shell, jamais dans
+  une substitution*.
+
+### Ce qui a été écrit ailleurs
+
+- `docs/frontiere-de-confiance.md` : une ligne neuve (après celle de [76]).
+- **[73]** : le budget payé, les quatre choses à reprendre (la variable plutôt
+  qu'un fichier, `forge__changed` si la remise écrit autrement que par les deux
+  écrivains d'issue, le répertoire de travail du drain, et la fraîcheur qui n'est
+  vraie qu'aux points de prime), plus la question héritée du chemin AFK non primé.
+- **[19]** : `FORGE_CACHE_TTL` à installer, **zéro** nom de plus à balayer — le
+  répertoire du drain est déjà couvert par le motif `ralph-tracker.*` de
+  `gate_tmp_names`.
