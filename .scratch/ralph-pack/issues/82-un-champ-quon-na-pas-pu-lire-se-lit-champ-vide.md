@@ -94,7 +94,7 @@
   `set_config FORGE_PAGE 2` + `set_config FORGE_PAGES 1` sur un tracker qui porte
   au moins deux issues fait refuser **tous** les listings d'un run.
 
-## Livré le 11/09/2026
+## Livré le 12/09/2026
 
 - **La sonde du ticket a été rejouée avant d'écrire, et elle dit ce qu'elle
   annonçait.** Sous `FORGE_PAGE 2` + `FORGE_PAGES 1` sur deux issues,

@@ -178,7 +178,7 @@ Et la borne de fraîcheur que ce ticket doit poser ne dispense pas du digest : u
 cache périmé est une décision de ce ticket, un cache **réécrit** est un contrôle
 qui lit ce que la chose contrôlée a écrit.
 
-## Note écrite par [82] (livré le 11/09/2026)
+## Note écrite par [82] (livré le 12/09/2026)
 
 **Un cache ne mémorise jamais un refus.** `forge__listing` ne pose sa variable
 qu'après avoir vérifié que la pagination s'est terminée — un listing refusé ne
