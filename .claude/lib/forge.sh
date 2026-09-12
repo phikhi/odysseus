@@ -66,6 +66,18 @@
 # dispatcher, so refusals here start at `1`. An empty value is a value —
 # `mark_escalated ID ""` writes the sink's ordinary shape, with no `Escalation:`.
 #
+# **The two reads answer three things, and this backend is the one that has all
+# three** ([82], and the clause is written on the interface in `lib/tracker.sh`).
+# `forge_read_ticket` and `forge_field` answer `0` with the value — an absent
+# field included, which reads as the empty value a present one may also hold —
+# `1` when the tracker was listed and holds no such issue, and `2` when the
+# tracker could not be listed at all. The local backend never has the third state
+# — a file is there or it is not — and this one is in it whenever `forge__listing`
+# refuses, which this pack's own page bound alone is enough to cause ([76]). Without the
+# distinction, a tracker that would not answer read exactly like a tracker whose
+# tickets declare nothing: the scope-guard put a ticket outside its own
+# write-surface, and the drain accused a routed session of emptying a field.
+#
 # ## What this costs, measured rather than claimed
 #
 # One listing answers `frontier`, `ids`, `read_ticket` and every `field` of every
@@ -97,8 +109,9 @@
 #
 #   forge_ids F                    every id, min number first, one per line
 #   forge_frontier F               the eligible ones
-#   forge_read_ticket F ID         the issue body
-#   forge_field F ID NAME          one field of it
+#   forge_read_ticket F ID         the issue body; `1` no such issue, `2` the
+#                                  tracker could not be listed
+#   forge_field F ID NAME          one field of it, same three answers
 #   forge_claim F ID [OWNER]       assign, stamp, and record it locally
 #   forge_unclaim F ID             give it back
 #   forge_mark_resolved F ID       wait for CI if asked, then close
@@ -684,13 +697,20 @@ forge__record_id() {
 
 # The record of one id, by its number half. An id is `<number>` or
 # `<number>-<slug>`, and the number is what the forge knows.
+#
+# **Three answers and not two** ([82]): `1` says the tracker was read and holds no
+# such issue — an id whose number half is not a number names none either — and `2`
+# says the tracker could not be read at all. Every read of this backend goes
+# through here, so this is the one line that has to tell them apart; the callers
+# below pass the code up rather than flattening it, and a caller of the interface
+# gets the same two meanings a local file gives it for free.
 forge__record() {
   local flavour="$1" id="$2" num rec
   num="${id%%-*}"
   case "$num" in
     '' | *[!0-9]*) return 1 ;;
   esac
-  rec="$(forge__records "$flavour")" || return 1
+  rec="$(forge__records "$flavour")" || return 2
   printf '%s' "$rec" | LC_ALL=C awk -F'\t' -v n="$num" '$1 == n { print; found = 1; exit }
     END { if (!found) exit 1 }'
 }
@@ -766,7 +786,7 @@ RECORDS
 
 forge_read_ticket() {
   local flavour="$1" id="$2" rec body
-  rec="$(forge__record "$flavour" "$id")" || return 1
+  rec="$(forge__record "$flavour" "$id")" || return $?
   body="$(printf '%s' "$rec" | cut -f5-)"
   forge__unescape "$body"
   printf '\n'
@@ -794,7 +814,7 @@ forge_field() {
     forge__claimed "$flavour" "$id"
     return $?
   fi
-  rec="$(forge__record "$flavour" "$id")" || return 1
+  rec="$(forge__record "$flavour" "$id")" || return $?
   body="$(forge__unescape "$(printf '%s' "$rec" | cut -f5-)")"
   forge__field_of "$body" "$name"
   return 0
@@ -1196,7 +1216,7 @@ forge__claimed() {
     printf '%s\n' "$record"
     return 0
   fi
-  rec="$(forge__record "$flavour" "$id")" || return 1
+  rec="$(forge__record "$flavour" "$id")" || return $?
   who="$(printf '%s' "$rec" | cut -f3)"
   [ -n "$who" ] || return 0
   now="$(ralph_now)"

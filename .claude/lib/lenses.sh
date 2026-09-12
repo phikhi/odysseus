@@ -186,10 +186,21 @@ lenses_sensitive_surface() {
 # glob against the working tree, so a surface of `src/*` arrived as whatever
 # happened to exist under `src` on the day the lens was chosen.
 lenses__triggered_by() {
-  local ticket="$1" tag="$2" paths="$3" entry
-  lenses_has_tag "$ticket" "$tag" && return 0
+  local ticket="$1" tag="$2" paths="$3" entry surface rc=0
+  # Three answers and not two ([82]): the tag is there, it is not, or the tracker
+  # would not say. The last one is the case this loop already has a rule for two
+  # comments down — approximating towards running the lens is the only safe
+  # direction — and it is the direction the empty answer took away. Measured
+  # under a tracker this pack refuses to list (Q1c of the 10/09 pass): a lens
+  # gated on `Tags: security` did not run on a ticket carrying `Tags: security`,
+  # and nothing said why.
+  lenses_has_tag "$ticket" "$tag" || rc=$?
+  [ "$rc" = 1 ] || return 0
   [ -n "$paths" ] || return 1
   paths="$(gate_authored_list "$paths")"
+  # Same three answers on the other half of the question ([82]): a write-surface
+  # nobody could read is not a ticket that touches nothing.
+  surface="$(gate_write_surface "$ticket")" || return 0
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     # Both directions, because both sides are globs and neither is a path on
@@ -199,18 +210,29 @@ lenses__triggered_by() {
     gate_in_surface "$entry" "$paths" && return 0
     gate_in_surface "$paths" "$entry" && return 0
   done <<SURFACE
-$(gate_write_surface "$ticket")
+$surface
 SURFACE
   return 1
 }
 
 # The ticket's `Tags:` field, compared case-insensitively. Same shape as a
 # write-surface: backticks and commas are how a ticket writes a list for a human.
+#
+#   0  it carries the tag
+#   1  it does not — a ticket with no `Tags:` line, and an id this tracker does
+#      not hold, are both that answer
+#   2  the tracker would not say, which is neither ([82]). The field is taken
+#      into a variable rather than piped into `tr`, for the reason
+#      `gate_write_surface` is: a pipeline's status is its last command's.
 lenses_has_tag() {
-  local ticket="$1" want="$2" tag
+  local ticket="$1" want="$2" tag tags rc=0
   want="$(printf '%s' "$want" | tr 'A-Z' 'a-z')"
-  for tag in $(tracker_field "$ticket" 'Tags' 2>/dev/null | tr -d '`,' |
-    tr 'A-Z' 'a-z'); do
+  tags="$(tracker_field "$ticket" 'Tags' 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0 | 1) ;;
+    *) return 2 ;;
+  esac
+  for tag in $(printf '%s' "$tags" | tr -d '`,' | tr 'A-Z' 'a-z'); do
     [ "$tag" = "$want" ] && return 0
   done
   return 1

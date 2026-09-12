@@ -214,6 +214,17 @@ claim_is_held() {
 # and out of the frontier for good (probed, s2d). The exemption fence had the
 # mirror defect: an id in flight called `99-my ticket` exempted `99-my`, so a
 # genuinely stale claim was left standing while a sibling ran.
+#
+# **A field this pack could not read is not a field that says nothing, and this is
+# the one sweep where that has always been true** ([82]). Both reads below skip
+# the ticket rather than fill in the empty string, and the direction is the whole
+# point: what this function decides is whether to take somebody else's claim away.
+# An empty `Status:` is not `claimed` and an empty `Claimed:` is a claim nobody
+# holds, so a tracker that would not answer — a remote one over its page bound is
+# enough ([76]) — would hand every claimed ticket back to the frontier while the
+# iterations holding them are still running. Skipping costs one sweep: a claim
+# nothing could read is looked at again on the next pass, and the TTL backstop is
+# still behind it.
 claim_reclaim_stale() {
   local held="${1:-}" id status record disposition
 
@@ -222,7 +233,7 @@ claim_reclaim_stale() {
     status="$(tracker_field "$id" Status)" || continue
     [ "$status" = claimed ] || continue
     claim__among "$id" "$held" && continue
-    record="$(tracker_field "$id" Claimed)" || record=""
+    record="$(tracker_field "$id" Claimed)" || continue
     claim_is_held "$record" && continue
 
     disposition="$(failures_after_dead_owner \

@@ -11,7 +11,8 @@
 #   tracker_frontier                  eligible ticket ids, min-NN first, one per line
 #   tracker_ids                       every ticket id, whatever its state, min-NN
 #                                     first, one per line
-#   tracker_read_ticket ID            the ticket on stdout
+#   tracker_read_ticket ID            the ticket on stdout; `1` when there is
+#                                     none, `2` when it could not be read
 #   tracker_claim ID [OWNER]          take the ticket; non-zero if it was lost
 #   tracker_unclaim ID                give it back to the frontier
 #   tracker_mark_resolved ID          the gate came back green; clears the claim
@@ -85,6 +86,54 @@
 #                                 `capability_propose` writes and what the drain
 #                                 has to be able to put back. A missing argument
 #                                 is the caller bug; an empty one is a state.
+#   a read has three answers      and not two, and the third is what a refusal of
+#                                 `read_ticket` or `field` *is*. See below.
+#
+# **What a refusal of a *read* means, because one code for two facts sends a
+# reader to two different places** ([82]). The clause above says *how* an
+# operation refuses; this one says what the refusal of `read_ticket` and `field`
+# means, and it belongs here rather than to whichever adapter was read last:
+#
+#   0 and the value   read. An empty value is a value here too, and it is how a
+#                     ticket that carries no such field answers: a
+#                     `Write-surface:` line that is not there, or is there with
+#                     nothing after it, is a ticket that declared nothing, which
+#                     is a fact — the fail-safe built on that fact is the
+#                     caller's ([14], `router_may_reinject`).
+#   1                 **an answer**: there is no such ticket. The id names
+#                     nothing this tracker holds, which is also what an id no
+#                     backend can address comes back as ([48]).
+#   2                 **a refusal**: the backend could not tell. It reached no
+#                     tracker, or the tracker would not answer.
+#
+# Every other non-zero code is read as `2` by this pack, `3` included — that one
+# is the dispatcher's, for an operation a backend does not implement, and a
+# caller that got it could not tell either.
+#
+# **What the missing third answer cost, measured rather than argued** (the pass of
+# 10/09/2026, Q1a–Q1d). Under a tracker this pack refuses to list — a remote one
+# that does not end within `FORGE_PAGES` — `tracker_field 1-alpha Status` on a
+# ticket that exists and `tracker_field 999-nothing Status` on one that does not
+# both answered `1` with an empty value. Twenty-eight sites read a field in this
+# pack and all but one collapsed the two into the empty string (`|| status=''`,
+# `2>/dev/null || true`, `[ "$(...)" = x ]`); three of them decide something on
+# it, and all three decided it the wrong way round. The scope-guard judged a
+# session against an empty write-surface, so the one path its ticket declares was
+# outside its own surface. A lens gated on `Tags:` did not see a ticket carrying
+# the tag. And the drain pinned an empty `Escalation:`, then accused the routed
+# session of having written what the tracker simply ended up answering. The
+# precedent was two lines away the whole time: `gate__surface_owner` has read the
+# refusal of `ids` since [18] and answers `2`, which its caller escalates instead
+# of retrying.
+#
+# **And this is also what a backend must not be made to invent.** The local
+# backend has two refusals and both are *answers*: the file is not there, and the
+# id is ambiguous (`tracker_local__path`, [27], [48]). It answers `1` for both, it
+# is right to — an ambiguous id resolves to no ticket, which is the answer and not
+# an uncertainty about the tracker — and asking it for a third state would be
+# asking it to report one it has no way to be in. The obligation runs the other
+# way — a backend that **cannot** tell says so, and a backend that knows there is
+# nothing there answers.
 #
 # This is written here rather than left to each adapter because the price is paid
 # one entry point over. The drain is the caller that costs the most: it has no
@@ -256,6 +305,12 @@ tracker_writes_since() {
 
 tracker_frontier() { tracker__dispatch frontier "$@"; }
 tracker_ids() { tracker__dispatch ids "$@"; }
+# The ticket on stdout. One of the two reads whose refusal has two meanings and
+# three codes — see "what a refusal of a *read* means" at the top of this file
+# ([82]). A body read as empty is a ticket with nothing in it, and a caller that
+# takes one on a refusal digests the empty string: `router__ticket_digest` did,
+# and a digest of nothing is a body that changed under whoever was last in the
+# tree.
 tracker_read_ticket() { tracker__dispatch read_ticket "$@"; }
 tracker_claim() { tracker__dispatch claim "$@"; }
 tracker_unclaim() { tracker__dispatch unclaim "$@"; }
@@ -386,6 +441,15 @@ tracker_sidecar_drift() { tracker__dispatch sidecar_drift "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.
+#
+# The other read whose refusal has two meanings and three codes: `0` and the
+# value — a field the ticket does not carry included — `1` for "there is no such
+# ticket", `2` for "I could not tell" —
+# see "what a refusal of a *read* means" at the top of this file ([82]). The
+# distinction is not decoration on three of this pack's callers: a
+# `Write-surface:` nobody could read is not an empty perimeter, a `Tags:` nobody
+# could read is not a ticket without the tag, and an `Escalation:` nobody could
+# read is not a field a session emptied.
 #
 # Two fields carry an obligation the dispatcher cannot enforce, so they are written
 # down here rather than left to whichever backend was read last.

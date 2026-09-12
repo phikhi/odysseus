@@ -1467,7 +1467,7 @@ mutation "06 a gated lens fires on every ticket" "$LENSES_LIB" \
   test/lenses.bats "only looks like a sensitive one"
 
 mutation "06 a tag on the ticket triggers nothing" "$LENSES_LIB" \
-  's/  lenses_has_tag "\$ticket" "\$tag" \&\& return 0\n//' \
+  's/  lenses_has_tag "\$ticket" "\$tag" \|\| rc=\$\?\n  \[ "\$rc" = 1 \] \|\| return 0\n//' \
   test/lenses.bats "tagged ticket, and a sensitive surface"
 
 mutation "06 a configured path triggers nothing, only the tag does" "$LENSES_LIB" \
@@ -2175,7 +2175,7 @@ mutation "13 two tickets never clash" "$CONCURRENCY" \
   test/concurrency.bats "sequenced, whatever MAX_PARALLEL"
 
 mutation "13 a ticket with no write-surface runs beside anything" "$CONCURRENCY" \
-  's/  mine="\$\(gate_write_surface "\$ticket"\)"\n  \[ -n "\$mine" \] \|\| return 0/  mine="\$(gate_write_surface "\$ticket")"/' \
+  's/  mine="\$\(gate_write_surface "\$ticket"\)" \|\| return 0\n  \[ -n "\$mine" \] \|\| return 0/  mine="\$(gate_write_surface "\$ticket")" || return 0/' \
   test/concurrency.bats "in both directions"
 
 mutation "13 the surfaces are matched one way round only" "$CONCURRENCY" \
@@ -4167,11 +4167,11 @@ mutation "55 a refused re-injection does not say the ticket moved under it" "$RO
 # about a session writing itself a field — stay green straight through it. These
 # two entries are the only ones that name a witness as the test that must fail.
 mutation "55 the pin records no escalation, so no sign-off ever passes" "$ROUTER" \
-  's/  ROUTER__PINNED_ESCALATION="\$\(tracker_field "\$id" Escalation 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_ESCALATION=\x27\x27\n/  ROUTER__PINNED_ESCALATION=\x27\x27\n/' \
+  's/  ROUTER__PINNED_ESCALATION="\$\(router__now "\$id" Escalation\)" \|\| return 0\n/  ROUTER__PINNED_ESCALATION=\x27\x27\n/' \
   test/human-loop.bats "sign-off the drain found"
 
 mutation "55 the pin records no write-surface, so no re-injection ever passes" "$ROUTER" \
-  's/  ROUTER__PINNED_SURFACE="\$\(tracker_field "\$id" \x27Write-surface\x27 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_SURFACE=\x27\x27\n/  ROUTER__PINNED_SURFACE=\x27\x27\n/' \
+  's/  ROUTER__PINNED_SURFACE="\$\(router__now "\$id" \x27Write-surface\x27\)" \|\| return 0\n/  ROUTER__PINNED_SURFACE=\x27\x27\n/' \
   test/human-loop.bats "write-surface the drain found"
 
 # ── [56] a fix nobody committed is a fix no gate will read ───────────────────
@@ -4243,7 +4243,7 @@ mutation "56 the re-injection promises the gate without naming what it reads" "$
 # against the test that catches exactly that.
 
 mutation "58 the pin records no tracker, so nothing a session moved is put back" "$ROUTER" \
-  's/  ROUTER__PINNED_TRACKER="\$\(router__tracker_state\)" \|\| ROUTER__PINNED_TRACKER=\x27\x27\n/  ROUTER__PINNED_TRACKER=\x27\x27\n/' \
+  's/  ROUTER__PINNED_TRACKER="\$\(router__tracker_state\)" \|\| return 0\n/  ROUTER__PINNED_TRACKER=\x27\x27\n/' \
   test/human-loop.bats "resolve the ticket this drain has not reached yet"
 
 mutation "58 the drain says nothing about what a session wrote in the tracker" "$HUMAN_LOOP" \
@@ -4497,7 +4497,7 @@ mutation "61 the pin has no answer for the retry count, so every read falls back
   test/human-loop.bats "by writing itself a retry count"
 
 mutation "61 the pin records no retry count, so clearing it re-desks the ticket" "$ROUTER" \
-  's/  ROUTER__PINNED_FAILURES="\$\(tracker_field "\$id" Failures 2>\/dev\/null\)" \|\|\n    ROUTER__PINNED_FAILURES=\x27\x27\n/  ROUTER__PINNED_FAILURES=\x27\x27\n/' \
+  's/  ROUTER__PINNED_FAILURES="\$\(router__now "\$id" Failures\)" \|\| return 0\n/  ROUTER__PINNED_FAILURES=\x27\x27\n/' \
   test/human-loop.bats "by clearing its retry count"
 
 # The snapshot, and the three comparisons made against it. None of the three can
@@ -4505,7 +4505,7 @@ mutation "61 the pin records no retry count, so clearing it re-desks the ticket"
 # quarantine refuses to rewrite — so each entry here removes a *naming*, which is
 # the whole of what this path can offer.
 mutation "61 the snapshot records no body, so every ticket reads as rewritten" "$ROUTER" \
-  's/    digest="\$\(router__ticket_digest "\$id"\)" \|\| digest=\x27\x27\n/    digest=\x27\x27\n/' \
+  's/    digest="\$\(router__ticket_digest "\$id"\)" \|\| return 1\n/    digest=\x27\x27\n/' \
   test/human-loop.bats "left the tracker alone"
 
 mutation "61 a tab a session wrote shifts every column of the snapshot" "$ROUTER" \
@@ -5895,6 +5895,113 @@ mutation "81 the guard of the lesson index is counted by nobody" "$GATE" \
 mutation "81 only one of the two locks of the fold's zone is named" "$CONCURRENCY" \
   's/  printf .%s\\n%s\\n. "\$frontier" "\$integration"/  printf "%s\\n" "\$frontier"/' \
   test/gate.bats "three zones the pack locks in"
+
+# ── [82] a read of the tracker has three answers ─────────────────────────────
+#
+# The clause is on the interface (`lib/tracker.sh`): `0` and the value, `1` for a
+# ticket that is not there, `2` for "I could not tell". Two entries for the
+# backend that is the only one with all three, then one per reader that decides
+# on the third — and one per reader that had to *stop* deciding on it.
+#
+# The staging costs no outage and no stub for the first six: this pack's own page
+# bound refuses every listing of a run ([76], [78]). The rest need a tracker that
+# answers one read and refuses the next, which no configuration of one backend
+# produces; those tests stub one field by name and hand every other read to the
+# backend, so what is mutated is always the reader.
+
+mutation "82 a refused listing and an absent issue are one code" "$FORGE" \
+  's#  rec="\$\(forge__records "\$flavour"\)" \|\| return 2#  rec="\$(forge__records "\$flavour")" || return 1#' \
+  test/tracker-remote.bats "two codes"
+
+mutation "82 the field flattens the code its backend answered" "$FORGE" \
+  's#  rec="\$\(forge__record "\$flavour" "\$id"\)" \|\| return \$\?\n  body="\$\(forge__unescape#  rec="\$(forge__record "\$flavour" "\$id")" || return 1\n  body="\$(forge__unescape#' \
+  test/tracker-remote.bats "two codes"
+
+mutation "82 the body flattens the code its backend answered" "$FORGE" \
+  's#  rec="\$\(forge__record "\$flavour" "\$id"\)" \|\| return \$\?\n  body="\$\(printf#  rec="\$(forge__record "\$flavour" "\$id")" || return 1\n  body="\$(printf#' \
+  test/tracker-remote.bats "two codes"
+
+mutation "82 a write-surface nobody could read is an empty surface again" "$GATE" \
+  's#    0 \| 1\) ;;\n    \*\) return 2 ;;\n  esac\n  gate_authored_list#    0 | 1 | 2) ;;\n  esac\n  gate_authored_list#' \
+  test/tracker-remote.bats "verdict and not an empty perimeter"
+
+mutation "82 the scope-guard judges the tree against a surface nobody read" "$GATE" \
+  's#  if ! surface="\$\(gate_write_surface "\$ticket"\)"; then\n    printf \x27the tracker would not say[^\n]*\n    printf \x27contract\\n\x27 >"\$classfile"\n    return 1\n  fi#  surface="\$(gate_write_surface "\$ticket")" || surface=\x27\x27#' \
+  test/tracker-remote.bats "verdict and not an empty perimeter"
+
+mutation "82 one ticket's unreadable surface reads as not this one" "$GATE" \
+  's#    theirs="\$\(gate_write_surface "\$id"\)" \|\| return 2#    theirs="\$(gate_write_surface "\$id")" || theirs=\x27\x27#' \
+  test/tracker-remote.bats "read the ids and not one ticket"
+
+mutation "82 a tag nobody could read is a ticket without the tag" "$LENSES_LIB" \
+  's#    0 \| 1\) ;;\n    \*\) return 2 ;;\n  esac\n  for tag in#    0 | 1 | 2) ;;\n  esac\n  for tag in#' \
+  test/tracker-remote.bats "not a lens that has nothing to look at"
+
+mutation "82 the lens stops running on a tag question nobody answered" "$LENSES_LIB" \
+  's#  lenses_has_tag "\$ticket" "\$tag" \|\| rc=\$\?\n  \[ "\$rc" = 1 \] \|\| return 0#  lenses_has_tag "\$ticket" "\$tag" \&\& return 0#' \
+  test/tracker-remote.bats "not a lens that has nothing to look at"
+
+mutation "82 the lens stops running on a surface nobody could read" "$LENSES_LIB" \
+  's#  surface="\$\(gate_write_surface "\$ticket"\)" \|\| return 0#  surface="\$(gate_write_surface "\$ticket")" || surface=\x27\x27#' \
+  test/tracker-remote.bats "carries no tag and whose surface could not be read"
+
+mutation "82 the reader of the drain flattens the refusal again" "$ROUTER" \
+  's#    0 \| 1\) ;;\n    \*\) return 1 ;;\n  esac\n  printf \x27%s\\n\x27 "\$value"#    0 | 1 | 2) ;;\n  esac\n  printf \x27%s\\n\x27 "\$value"#' \
+  test/tracker-remote.bats "any one read of the pin"
+
+# Aimed at `Write-surface` and not at `Escalation`, and the choice is what makes
+# the entry isolable at all: `router__tracker_state` reads `Status`, `Escalation`,
+# `Failures` and `Blocked by` of every ticket, so a refusal on any of those three
+# is caught twice and neutering the pin's own line leaves the ticket unpinned all
+# the same — VACUOUS, measured. `Write-surface` is read by the pin and by nothing
+# else in this file.
+mutation "82 the drain pins a field nobody read" "$ROUTER" \
+  's#  ROUTER__PINNED_SURFACE="\$\(router__now "\$id" \x27Write-surface\x27\)" \|\| return 0#  ROUTER__PINNED_SURFACE="\$(router__now "\$id" \x27Write-surface\x27)" || ROUTER__PINNED_SURFACE=\x27\x27#' \
+  test/tracker-remote.bats "any one read of the pin"
+
+mutation "82 the drain accuses the session of what the tracker would not say" "$ROUTER" \
+  's#  now="\$\(router__now "\$id" "\$name"\)" \|\| return 0#  now="\$(router__now "\$id" "\$name")" || now=\x27\x27#' \
+  test/tracker-remote.bats "pins nothing on a tracker that would not answer"
+
+mutation "82 the baseline of the drain is filled in where it could not be read" "$ROUTER" \
+  's#    status="\$\(router__now "\$id" Status\)" \|\| return 1#    status="\$(router__now "\$id" Status)" || status=\x27\x27#' \
+  test/tracker-remote.bats "any one read of the pin"
+
+mutation "82 the baseline is taken on a list nobody read" "$ROUTER" \
+  's#  ids="\$\(tracker_ids\)" \|\| return 1\n#  ids="\$(tracker_ids 2>\/dev\/null)" || ids=\x27\x27\n#' \
+  test/tracker-remote.bats "any one read of the pin"
+
+mutation "82 a ticket whose body could not be read is a body that changed" "$ROUTER" \
+  's#    0 \| 1\) ;;\n    \*\) return 1 ;;\n  esac\n  printf \x27%s\\n\x27 "\$body" \| cksum#    0 | 1 | 2) ;;\n  esac\n  printf \x27%s\\n\x27 "\$body" | cksum#' \
+  test/tracker-remote.bats "any one read of the pin"
+
+mutation "82 a tracker that would not list after a session is one a session emptied" "$ROUTER" \
+  's#  if ! now_ids="\$\(tracker_ids\)"; then\n    printf \x27ralph: %s: the tracker would not list[^\n]*\n      "\$id" >&2\n    return 1\n  fi#  now_ids="\$(tracker_ids 2>\/dev\/null)" || now_ids=\x27\x27#' \
+  test/tracker-remote.bats "not a tracker a session emptied"
+
+mutation "82 a status nobody read is put back all the same" "$ROUTER" \
+  's#    if ! now_status="\$\(router__now "\$other" Status\)" \|\|\n      ! now_esc="\$\(router__now "\$other" Escalation\)"; then#    if false; then#' \
+  test/tracker-remote.bats "not put back on a state nobody read"
+
+mutation "82 a retry count nobody read is a retry count a session wrote" "$ROUTER" \
+  's#  now_fail="\$\(router__now "\$other" Failures\)" \|\| return 1#  now_fail="\$(router__now "\$other" Failures)" || now_fail=\x27\x27#' \
+  test/tracker-remote.bats "not a retry budget a session rewrote"
+
+mutation "82 a claim record nobody read is a claim nobody holds" "$CLAIM" \
+  's#    record="\$\(tracker_field "\$id" Claimed\)" \|\| continue#    record="\$(tracker_field "\$id" Claimed)" || record=""#' \
+  test/tracker-remote.bats "claim record nobody could read"
+
+# The two libs whose fail-safe on an *empty* surface was already right, so what
+# the refusal buys them is only the other half: read rather than let travel, or
+# `loop.sh` sources a function that now answers `2` under `set -e`. The mutation
+# is the refusal let travel, and the test dies with the shell — no printed line.
+mutation "82 a refused surface travels out of the clash question" "$CONCURRENCY" \
+  's#  mine="\$\(gate_write_surface "\$ticket"\)" \|\| return 0#  mine="\$(gate_write_surface "\$ticket")"#' \
+  test/tracker-remote.bats "holds a ticket back, it does not end the run"
+
+mutation "82 a refused surface travels out of the re-slice" "$FAILURES" \
+  's#  surface="\$\(gate_write_surface "\$ticket"\)" \|\| return 1#  surface="\$(gate_write_surface "\$ticket")"#' \
+  test/tracker-remote.bats "holds a ticket back, it does not end the run"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

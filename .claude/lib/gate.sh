@@ -3010,8 +3010,33 @@ gate__drop_bookkeeping() {
 # and commas are how a ticket writes it for a human; neither means anything here.
 # This is one of the two places an authored whitespace list is converted into the
 # shape every list travels in — see "how a list of paths travels".
+#
+# **Non-zero when the tracker would not say, and an empty surface is never that**
+# ([82]). A ticket that declares no `Write-surface:` and a tracker that could not
+# be read both used to arrive here as the empty string, and every reader of this
+# list reads the empty string as "nothing is in scope" — which is the fail-safe
+# for the first and a fabrication for the second. Measured under a remote tracker
+# this pack refuses to list (Q1b of the 10/09 pass): `src/alpha.txt`, the one path
+# its ticket declares, came back **outside its own write-surface**. The precedent
+# is `gate__surface_owner` twenty lines down, which has answered `2` for the same
+# shape since [18].
+#
+# The field is taken into a variable rather than piped straight into `tr`, which
+# is the whole of why the refusal used to be unreadable: a pipeline's status is
+# its last command's, so `tracker_field ... | tr` is always `tr`'s `0`.
+#
+#   0  the surface, which may legitimately be empty — a ticket that declares
+#      nothing, and an id this tracker does not hold, are both that answer
+#   2  the tracker would not say, and there is no surface to judge anything
+#      against — the callers below escalate rather than measure
 gate_write_surface() {
-  gate_authored_list "$(tracker_field "$1" 'Write-surface' 2>/dev/null | tr -d '`,')"
+  local declared rc=0
+  declared="$(tracker_field "$1" 'Write-surface' 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0 | 1) ;;
+    *) return 2 ;;
+  esac
+  gate_authored_list "$(printf '%s' "$declared" | tr -d '`,')"
 }
 
 # Whether a path is covered by a surface. A pattern also covers what is under
@@ -3058,12 +3083,18 @@ SURFACE
 # tracker nobody could enumerate. Detected rather than suffered: `2` here, and the
 # caller says so and escalates.
 gate__surface_owner() {
-  local file="$1" self="$2" id ids
+  local file="$1" self="$2" id ids theirs
   ids="$(tracker_ids)" || return 2
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     [ "$id" != "$self" ] || continue
-    if gate_in_surface "$file" "$(gate_write_surface "$id")"; then
+    # The same three answers one ticket down ([82]). The list was readable and
+    # this one ticket's surface was not, which is the same "the tracker would not
+    # say" the line above answers `2` for: reading it as "not this one" walks the
+    # rest of the tracker and comes back "nobody owns it", the one answer that
+    # makes a drift against a contract retryable.
+    theirs="$(gate_write_surface "$id")" || return 2
+    if gate_in_surface "$file" "$theirs"; then
       printf '%s\n' "$id"
       return 0
     fi
@@ -3115,7 +3146,20 @@ gate__scope_guard() {
     rc=1
   fi
 
-  surface="$(gate_write_surface "$ticket")"
+  # A refusal is a verdict and not a perimeter ([82]). An empty surface is a
+  # legitimate state — an unknown surface can never be assumed to contain
+  # anything — but a surface that is empty *because nobody could read it* is not
+  # that state: judging the tree against it reports every file this session
+  # touched as outside a write-surface the ticket may well declare, and does it
+  # under the retryable class. `contract` for the reason the `ownerrc` branch
+  # below uses it: a tracker that will not answer is not something a fresh session
+  # fixes, and spending the ticket's retry budget on a misconfigured backend is
+  # exactly what [18] stopped doing one function down.
+  if ! surface="$(gate_write_surface "$ticket")"; then
+    printf 'the tracker would not say what write-surface %s declares, so nothing here can tell a write inside it from a write outside it — and an unreadable surface is not an empty one\n' "$ticket"
+    printf 'contract\n' >"$classfile"
+    return 1
+  fi
 
   while IFS= read -r file; do
     [ -n "$file" ] || continue

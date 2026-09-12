@@ -1327,7 +1327,14 @@ failures_reslice() {
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
-  surface="$(gate_write_surface "$ticket")"
+  # A surface nobody could read is not a ticket that declares nothing ([82]): the
+  # children below inherit this list, so a re-slice taken on a refusal would hand
+  # every one of them an empty write-surface — a contract no gate can measure —
+  # and would do it in the one place where the loop, not a session, is the author.
+  # Non-zero is "it needs a human", which is this function's own vocabulary. It is
+  # also read rather than let travel because `loop.sh` sources this under
+  # `set -e`: a bare assignment from a function that returns `2` ends the run.
+  surface="$(gate_write_surface "$ticket")" || return 1
   plan="$(mktemp "${TMPDIR:-/tmp}/ralph-reslice.XXXXXX")" || return 1
   out="$plan.stream"
   : >"$plan"

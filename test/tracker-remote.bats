@@ -1766,3 +1766,432 @@ T
   refute_output_contains "is not read over the network"
   refute_output_contains ".forge-claims"
 }
+
+# ── [82] a read has three answers, and four readers that decide on the third ──
+#
+# `lib/tracker.sh` fixes what a refusal of `read_ticket` or `field` *means*: `0`
+# and the value, `1` for a ticket that is not there, `2` for "I could not tell".
+# The scenarios live in this file and not in `gate.bats`, `lenses.bats` or
+# `human-loop.bats` for the reason the section above gives: the local backend has
+# no third state to be in — a file is there or it is not — so the only tracker
+# that can stage one is this one, and staging it takes no outage. `FORGE_PAGE 2`
+# with `FORGE_PAGES 1` on a tracker of two issues puts this pack's own page bound
+# below the tracker, and `forge__listing` refuses every listing of the run ([76],
+# [78]) — which is every read.
+#
+# Measured before the repair (the 10/09 pass, Q1a–Q1d): the two codes were one,
+# and the three readers below each took the empty value for an answer.
+
+# Two issues, one of them declaring a surface and a lens tag.
+remote__tagged() {
+  forge_seed 1 alpha Alpha <<'T'
+# 1 — Alpha
+
+**What to build:** the alpha marker.
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+
+**Tags:** `security`
+T
+  forge_seed 2 beta Beta <<'T'
+# 2 — Beta
+
+**What to build:** the beta marker.
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/beta.txt`
+T
+}
+
+# The ceiling that refuses every listing of the run.
+remote__ceiling_refuses() {
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 1
+}
+
+@test "a field the tracker would not answer and a ticket that is not there are two codes" {
+  use_forge github
+  remote__tagged
+  remote__ceiling_refuses
+
+  pack_run 'set +e
+    v="$(tracker_field 1-alpha Status)"; printf "refused=%s value=[%s]\n" "$?" "$v"
+    b="$(tracker_read_ticket 1-alpha)"; printf "body=%s\n" "$?"'
+  # `2` and not `1`: this ticket exists, is `ready-for-agent`, and nothing here
+  # could see it. A caller told `1` would be told "there is no such ticket".
+  assert_output_contains "refused=2 value=[]"
+  assert_output_contains "body=2"
+}
+
+@test "the same tracker under a ceiling that fits answers, and says 1 for a ticket it does not hold" {
+  # The paired witness of the three tests above and below, and the one that keeps
+  # `2` from being a function that refuses whatever it is given. One number
+  # changed.
+  use_forge github
+  remote__tagged
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 4
+
+  pack_run 'set +e
+    v="$(tracker_field 1-alpha Status)"; printf "read=%s value=[%s]\n" "$?" "$v"
+    tracker_field 999-nothing Status >/dev/null; printf "absent=%s\n" "$?"
+    tracker_read_ticket 999-nothing >/dev/null; printf "absent-body=%s\n" "$?"
+    v="$(tracker_field 2-beta Tags)"; printf "no-field=%s value=[%s]\n" "$?" "$v"'
+  assert_output_contains "read=0 value=[ready-for-agent]"
+  assert_output_contains "absent=1"
+  assert_output_contains "absent-body=1"
+  # A ticket that is there and carries no such field is the *value* answer, not
+  # either refusal: an empty value is a value, as it is everywhere on this
+  # interface.
+  assert_output_contains "no-field=0 value=[]"
+}
+
+@test "a write-surface nobody could read is a verdict and not an empty perimeter" {
+  # Q1b. `src/alpha.txt` is the one path 1-alpha declares, and it came back
+  # **outside its own write-surface** — under `internal`, which is the retryable
+  # class, so the ticket spent its whole budget on a tracker nobody could read.
+  use_forge github
+  remote__tagged
+  remote__ceiling_refuses
+  local class="$RALPH_TEST_DIR/class"
+
+  pack_run 'set +e
+    gate_write_surface 1-alpha; printf "surface=%s\n" "$?"'
+  assert_output_contains "surface=2"
+  refute_output_contains "src/alpha.txt"
+
+  pack_run 'mkdir -p src
+    base="$(gate_tree_snapshot)"
+    printf "alpha\n" >src/alpha.txt
+    now="$(gate_tree_snapshot)"
+    set +e
+    gate__scope_guard 1-alpha "$base" "$now" '"'$class'"'
+    printf "rc=%s\n" "$?"'
+  assert_output_contains "rc=1"
+  assert_output_contains "the tracker would not say what write-surface 1-alpha declares"
+  assert_output_contains "an unreadable surface is not an empty one"
+  # And never the sentence that names a file the ticket does declare.
+  refute_output_contains "outside the declared write-surface"
+  # `contract`, for the reason `gate__surface_owner` has used it since [18]: a
+  # tracker that will not answer is not something a fresh session fixes.
+  assert_equal "$(cat "$class")" "contract"
+}
+
+@test "the same surface under a ceiling that fits is read, and the session stays inside it" {
+  use_forge github
+  remote__tagged
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 4
+  local class="$RALPH_TEST_DIR/class"
+
+  pack_run 'gate_write_surface 1-alpha'
+  assert_success
+  assert_equal "$output" "src/alpha.txt"
+
+  pack_run 'mkdir -p src
+    base="$(gate_tree_snapshot)"
+    printf "alpha\n" >src/alpha.txt
+    now="$(gate_tree_snapshot)"
+    set +e
+    gate__scope_guard 1-alpha "$base" "$now" '"'$class'"'
+    printf "rc=%s\n" "$?"'
+  assert_output_contains "rc=0"
+  refute_output_contains "would not say what write-surface"
+  refute_file_exists "$class"
+}
+
+@test "a lens gated on a tag the tracker would not answer is not a lens that has nothing to look at" {
+  # Q1c. `lenses__triggered_by` already carried the rule — "approximating towards
+  # running the lens is the only safe direction for it to be wrong in" — and the
+  # empty answer took it away in the one case it was written for.
+  use_forge github
+  remote__tagged
+  remote__ceiling_refuses
+
+  pack_run 'set +e
+    lenses_has_tag 1-alpha security; printf "tag=%s\n" "$?"
+    lenses__triggered_by 1-alpha security ""; printf "triggered=%s\n" "$?"'
+  assert_output_contains "tag=2"
+  assert_output_contains "triggered=0"
+}
+
+@test "the same lens under a ceiling that fits sees the tag it is gated on, and only that one" {
+  use_forge github
+  remote__tagged
+  set_config FORGE_PAGE 2
+  set_config FORGE_PAGES 4
+
+  pack_run 'set +e
+    lenses_has_tag 1-alpha security; printf "tag=%s\n" "$?"
+    lenses_has_tag 1-alpha perf; printf "other=%s\n" "$?"
+    lenses_has_tag 2-beta security; printf "untagged=%s\n" "$?"
+    lenses__triggered_by 2-beta security ""; printf "triggered=%s\n" "$?"'
+  assert_output_contains "tag=0"
+  assert_output_contains "other=1"
+  assert_output_contains "untagged=1"
+  assert_output_contains "triggered=1"
+}
+
+@test "a drain pins nothing on a tracker that would not answer, and accuses nobody" {
+  # Q1d's third reader. `router_pin` sets its id last "so that a read that failed
+  # halfway leaves the ticket unpinned" — which nothing ever did, because every
+  # field was read through `|| VALUE=''`. Two arms: the pin refuses, and a pin
+  # taken on a tracker that answers is not turned into an accusation when the
+  # tracker stops answering afterwards.
+  use_forge github
+  remote__tagged
+  remote__ceiling_refuses
+
+  pack_run 'set +e
+    router_pin 1-alpha
+    printf "pinned=[%s]\n" "${ROUTER__PINNED_ID:-}"
+    router_protect_tracker 1-alpha 2>&1
+    printf "protect=%s\n" "$?"'
+  assert_output_contains "pinned=[]"
+  # Unpinned is what every transition of this module already refuses, loudly.
+  assert_output_contains "nothing pinned what this tracker said"
+  assert_output_contains "protect=1"
+
+  # The second arm: pinned while the tracker answered, refused afterwards. The
+  # ceiling is raised in the shell rather than stubbed, so what refuses the reads
+  # is the pack's own bound and not a fake.
+  pack_run 'set +e
+    FORGE_PAGES=4
+    router_pin 1-alpha
+    printf "pinned=[%s]\n" "${ROUTER__PINNED_ID:-}"
+    FORGE_PAGES=1
+    router__say_drift 1-alpha "Write-surface"
+    printf "said=%s\n" "$?"'
+  assert_output_contains "pinned=[1-alpha]"
+  assert_output_contains "said=0"
+  refute_output_contains "Something wrote it in between"
+  # `Write-surface` and not `Escalation`, and that is the difference between a
+  # test and a test that cannot fail: 1-alpha carries no `Escalation:`, so the pin
+  # is the empty string and a refusal read as the empty string *matches* it. The
+  # sentence only exists on a pin that holds something.
+}
+
+@test "the local backend keeps its two answers and gains no third state" {
+  # AC 5, and it is the half that says what the clause must *not* ask for. This
+  # backend is never in the third state: a file is there or it is not, and an
+  # ambiguous id resolves to no ticket, which is an answer about the tracker and
+  # not an uncertainty about reaching it. Both are `1`, both were `1` before [82],
+  # and a clause that made this backend invent a `2` would have it report a state
+  # it has no way to be in.
+  use_tickets 01-alpha 08-no-write-surface
+  cp "$RALPH_FIXTURES/tickets/01-alpha.md" "$TRACKER_DIR/01-ambiguous.md"
+
+  pack_run 'set +e
+    v="$(tracker_field 08-no-write-surface Status)"; printf "read=%s value=[%s]\n" "$?" "$v"
+    v="$(tracker_field 08-no-write-surface "Write-surface")"; printf "no-field=%s value=[%s]\n" "$?" "$v"
+    tracker_field 99-nothing Status >/dev/null; printf "absent=%s\n" "$?"
+    tracker_read_ticket 99-nothing >/dev/null; printf "absent-body=%s\n" "$?"
+    tracker_field 01 Status 2>/dev/null >/dev/null; printf "ambiguous=%s\n" "$?"'
+  assert_output_contains "read=0 value=[ready-for-agent]"
+  assert_output_contains "no-field=0 value=[]"
+  assert_output_contains "absent=1"
+  assert_output_contains "absent-body=1"
+  assert_output_contains "ambiguous=1"
+
+  # And a ticket that declares nothing still reads as an empty surface rather
+  # than as a refusal: the fail-safe of [14] is built on that answer, and [82]
+  # must not take it away.
+  pack_run 'set +e; gate_write_surface 08-no-write-surface; printf "surface=%s\n" "$?"'
+  assert_output_contains "surface=0"
+}
+
+# ── [82] a tracker that answers one read and refuses the next ────────────────
+#
+# The four readers above are staged on the cheapest real refusal this pack has:
+# its own page bound, which refuses **every** listing of the run. That is the
+# honest common case and it is also why the arms below are stubbed rather than
+# seeded — each one needs a tracker that answers one read and refuses another,
+# which no configuration of one backend produces and which is exactly what a
+# flaky API, a rate limit, or a session that opened a ticket and pushed the
+# tracker over the bound produces on a real night. The stub refuses one field by
+# name and hands every other read to the backend, so what is under test is the
+# reader's handling of a refusal and never the refusal itself.
+#
+# On the local backend deliberately: these are readers of `lib/tracker.sh`, not
+# of a forge, and a local fixture makes the paired witness a one-line change.
+
+@test "a surface_owner that read the ids and not one ticket's surface escalates too" {
+  # `gate_write_surface` is called once per ticket *inside* the walk, so the list
+  # can be whole and one answer missing. Read as "not this one", the walk ends on
+  # "nobody owns it" — the one answer that makes a drift against a contract
+  # retryable, which is what [18] escalated for and what [82] left one line above.
+  use_tickets 01-alpha 07-overlaps-alpha
+
+  pack_run 'set +e
+    gate__surface_owner "src/alpha.txt" 07-overlaps-alpha
+    printf "answered=%s\n" "$?"
+    tracker_field() { case "$2" in "Write-surface") return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    gate__surface_owner "src/alpha.txt" 07-overlaps-alpha
+    printf "refused=%s\n" "$?"'
+  assert_output_contains "01-alpha"
+  assert_output_contains "answered=0"
+  assert_output_contains "refused=2"
+}
+
+@test "a lens whose ticket carries no tag and whose surface could not be read still runs" {
+  # The other half of the lens question ([06]'s predicate is a tag *or* a path
+  # overlap), and the same safe direction: a surface nobody could read is not a
+  # ticket that touches nothing.
+  use_tickets 01-alpha
+
+  pack_run 'set +e
+    lenses__triggered_by 01-alpha security "docs/*"; printf "answered=%s\n" "$?"
+    tracker_field() { case "$2" in "Write-surface") return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    lenses__triggered_by 01-alpha security "docs/*"; printf "refused=%s\n" "$?"'
+  # `src/alpha.txt` against `docs/*` overlaps nothing, so the answer is a real
+  # "this lens has nothing to look at here" — and it stops being one the moment
+  # the surface cannot be read.
+  assert_output_contains "answered=1"
+  assert_output_contains "refused=0"
+}
+
+@test "a drain pins nothing when any one read of the pin could not be answered" {
+  # The pin is five reads deep — three fields, then `router__tracker_state`, which
+  # walks the whole tracker for four fields and a digest of each ticket — and a
+  # baseline is whole or it is not a baseline. Four arms, one per read, and each
+  # one refuses a read the *other* three do not make: that is what keeps them from
+  # covering for each other. `Write-surface` is the pin's own and nothing else
+  # reads it; `Status` is the baseline's own and the pin does not read it;
+  # `read_ticket` is the digest's; `ids` is the list the baseline walks.
+  use_tickets 09-escalated 01-alpha
+
+  pack_run 'router_pin 09-escalated; printf "pinned=[%s]\n" "${ROUTER__PINNED_ID:-}"'
+  assert_output_contains "pinned=[09-escalated]"
+
+  pack_run 'tracker_field() { case "$2" in "Write-surface") return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    router_pin 09-escalated
+    printf "surface=[%s]\n" "${ROUTER__PINNED_ID:-}"'
+  assert_output_contains "surface=[]"
+
+  pack_run 'tracker_field() { case "$2" in Status) return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    router_pin 09-escalated
+    printf "status=[%s]\n" "${ROUTER__PINNED_ID:-}"'
+  assert_output_contains "status=[]"
+
+  pack_run 'tracker_read_ticket() { return 2; }
+    router_pin 09-escalated
+    printf "body=[%s]\n" "${ROUTER__PINNED_ID:-}"'
+  assert_output_contains "body=[]"
+
+  pack_run 'tracker_ids() { return 1; }
+    router_pin 09-escalated
+    printf "ids=[%s]\n" "${ROUTER__PINNED_ID:-}"'
+  assert_output_contains "ids=[]"
+}
+
+@test "a tracker that would not list its tickets after a session is not a tracker a session emptied" {
+  # [59]'s rule on the drain's own second read. Empty, every pinned ticket reads
+  # as one the routed session deleted — one sentence and one `tracker-drift gone`
+  # per ticket, in `run.log`, about a session that did nothing.
+  use_tickets 09-escalated 01-alpha
+
+  pack_run 'set +e
+    router_pin 09-escalated
+    tracker_ids() { return 1; }
+    router_protect_tracker 09-escalated 2>&1
+    printf "rc=%s\n" "$?"'
+  assert_output_contains "the tracker would not list its tickets after that session"
+  assert_output_contains "rc=1"
+  refute_output_contains "did not exist when this drain took"
+  refute_output_contains "is gone from the tracker"
+}
+
+@test "a ticket whose status could not be read after a session is not put back on a state nobody read" {
+  # The one place in this file where a value nobody read becomes a **write** on
+  # somebody else's ticket: read as the empty string, `Status:` does not match
+  # what was pinned, and the drain calls `tracker_mark_escalated` on a ticket it
+  # has no evidence moved.
+  use_tickets 09-escalated 01-alpha
+
+  pack_run 'set +e
+    router_pin 09-escalated
+    tracker_field() { case "$2" in Status) return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    router_protect_tracker 09-escalated 2>&1
+    printf "rc=%s\n" "$?"'
+  assert_output_contains "cannot be read from the tracker after that session"
+  assert_output_contains "nothing is put back on a state nobody read"
+  # And the ticket the drain is not on is where it was: no transition was made on
+  # a comparison against the empty string.
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_ticket_status 09-escalated ready-for-human
+}
+
+@test "a retry budget that could not be read is not a retry budget a session rewrote" {
+  # The three things no verb writes back are named rather than restored ([61]),
+  # and naming them on a refusal is an accusation: `Failures:` read as nothing
+  # against a pin of `2` prints "a retry budget has no verb that writes it" about
+  # a number nobody touched, and journals `tracker-drift failures` for it.
+  use_tickets 09-escalated
+
+  pack_run 'set +e
+    router_pin 09-escalated
+    tracker_field() { case "$2" in Failures) return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    router_protect_tracker 09-escalated 2>&1
+    printf "rc=%s\n" "$?"'
+  # Silent and non-zero, which is this function's own word for "nothing moved
+  # that this looks at".
+  assert_output_contains "rc=1"
+  refute_output_contains "a retry budget has no verb"
+  refute_output_contains "tracker-drift"
+}
+
+@test "a claim record nobody could read is not a claim nobody holds" {
+  # `claim_reclaim_stale` decides whether to take somebody else's claim away, and
+  # an empty `Claimed:` is a claim nobody holds. A tracker that would not answer
+  # therefore handed every claimed ticket back to the frontier while the
+  # iterations holding them were still running.
+  use_tickets 04-claimed
+
+  pack_run 'tracker_field() { case "$2" in Claimed) return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    claim_reclaim_stale ""'
+  assert_success
+  assert_equal "$output" ""
+  assert_ticket_status 04-claimed claimed
+
+  # The paired witness: the same sweep, the same ticket, a record it can read and
+  # an owner that is gone.
+  stamp_claim 04-claimed "pid:999999" "2026-07-25T08:00:00Z"
+  pack_run 'claim_reclaim_stale ""'
+  assert_success
+  assert_output_contains "04-claimed retry"
+}
+
+@test "a lib that meets a refused surface holds a ticket back, it does not end the run" {
+  # The two readers of `gate_write_surface` that are not the scope-guard. Both
+  # already fail safe on an *empty* surface, so what the refusal buys them is the
+  # other half: `loop.sh` sources them under `set -euo pipefail`, and a bare
+  # assignment from a function that now answers `2` takes the whole run down —
+  # [79]'s family, one lib over. The assertion is the printed line: a shell that
+  # died at the assignment prints nothing at all.
+  use_tickets 01-alpha 07-overlaps-alpha
+
+  pack_run 'tracker_field() { case "$2" in "Write-surface") return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    concurrency_clashes 01-alpha "07-overlaps-alpha"
+    printf "clash=%s\n" "$?"'
+  # A surface this pack cannot read is a clash, not a pass: the ticket runs alone.
+  assert_output_contains "clash=0"
+
+  pack_run 'tracker_field() { case "$2" in "Write-surface") return 2 ;; *) tracker_local_field "$@" ;; esac; }
+    set +e
+    failures_reslice 01-alpha
+    printf "reslice=%s\n" "$?"'
+  # And a re-slice refuses **before** it opens a planning session, because the
+  # children inherit this list: a contract no gate can measure, written by the
+  # loop rather than by a session. The session count is the assertion and the
+  # status is not: a re-slice that runs on an empty surface also comes back
+  # non-zero, having spent a session first.
+  assert_output_contains "reslice=1"
+  assert_equal "$(claude_call_count)" "0"
+}
