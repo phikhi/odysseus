@@ -218,3 +218,52 @@ Ce qui est disponible, et ce qu'il reste à faire ici :
    lectures que la remise fera. Les trois résidus nommés par [82]
    (`router__field`, `router_unblocks`, `router_sink`) sont de la présentation et
    du tri, pas de l'écriture.
+
+## Ce que [75] laisse (livré le 12/09/2026)
+
+**Le budget est payé, et il est payé dans un shell précis.** `tracker_cache_prime`
+prend **une** lecture du tracker dans le shell de l'appelant, et toutes les
+substitutions de commande forkées sous lui sont servies depuis elle. Mesuré sur le
+faux forge : un ticket drainé sur un tracker de douze tickets coûte **3** listings
+au lieu de **132**. La remise de ce ticket-ci lit cinq champs plus le corps par
+ticket et par fenêtre : elle est dans le budget **à condition d'être lancée sous
+un shell qui a primé**, pas à condition d'exister.
+
+Quatre choses à reprendre telles quelles :
+
+1. **La lecture vit dans une variable, jamais dans un fichier** — c'est la
+   décision de `budget__fetch` un module plus loin, et le magasin que [81] a
+   mesuré comme hors de portée d'une session. Si ce ticket veut garder un
+   **snapshot** du tracker distant (ce que `failures_protect_tracker` fait avec un
+   tree object sur `local`), la question à poser en premier est *où il vit* : un
+   fichier de `$TMPDIR` est énumérable par la session jugée (passe du 10/09), et
+   un snapshot est exactement l'objet dont le contenu décide d'une **écriture**.
+   Le précédent qui marche est la variable + `fork`, pas le fichier.
+2. **L'invalidation traverse les process par un registre de longueur.**
+   `forge__changed` (appelé par `forge__update` et `forge__create`, les deux seuls
+   écrivains d'issue) ajoute une ligne à `tracker.writes`, et une lecture n'est
+   servie que tant que la longueur est celle qu'elle portait. Une remise qui
+   réécrit des tickets passe donc par là sans rien faire — mais si elle écrit
+   **autrement** que par ces deux fonctions, elle doit appeler `forge__changed`
+   elle-même, sinon le shell d'à côté lit l'état d'avant sa propre remise.
+3. **Le drain a maintenant un répertoire de travail** : `HUMAN_LOOP__STATE`, un
+   `mktemp -d` sous `ralph-tracker.*`, pris après les deux verrous et défait par le
+   trap de sortie. C'est le logement disponible pour ce que ce ticket voudra garder
+   côté drain — et c'est aussi la réponse à la phrase de [77] (« le drain ne prend
+   pas de copie ») : il en a un maintenant, mais **rien ne le scelle**, parce que
+   le drain ne prend pas de sceau ([81]). Sur le chemin AFK, le même objet vit dans
+   le répertoire témoin du run et **est** scellé (`tracker.writes`, mode `grows`).
+4. **Une lecture n'est fraîche que par les points de prime.** Le drain prime au
+   début, à chaque ticket et **au retour de chaque session** — ce dernier n'est pas
+   une optimisation : une session routée peut écrire le tracker par le réseau, ce
+   que ni le registre, ni un snapshot, ni un témoin de ce pack ne voit ([18]), et
+   c'est exactement la fenêtre que ce ticket doit remettre. Si la remise est
+   appelée ailleurs qu'au retour de session, elle prime elle-même ou elle mesure
+   contre une lecture qui a jusqu'à `FORGE_CACHE_TTL` secondes de retard.
+
+Et une question que ce ticket hérite sans qu'elle soit à lui : **le chemin AFK ne
+prime nulle part**. [75] y pose le registre (donc l'invalidation qui traverse un
+fork, qui était fausse avant lui) mais aucun `tracker_cache_prime`, parce que son
+AC parle d'un ticket *drainé*. Une remise appelée par `loop.sh` par itération paye
+donc encore une lecture par question — le prime est disponible, il n'est pas
+câblé.

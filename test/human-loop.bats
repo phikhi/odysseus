@@ -2290,6 +2290,27 @@ drain_own_tmp() {
   run env TMPDIR="$RALPH_TEST_DIR/tmp" bash "$PACK_DIR/human-loop.sh"
 }
 
+@test "a drain takes a workspace of its own and leaves none of it behind" {
+  # [75] gives this entry point a directory in `$TMPDIR` — the reading a remote
+  # backend shares between the processes of this drain lives in a file of it — and
+  # what a drain leaves in `$TMPDIR` is what the **next** one counts as the debris
+  # of a killed run, three tests below. So the unwinding is in the exit handler,
+  # beside the release of the locks, rather than at the end of the last function:
+  # this file has six exits and a signal can arrive at any of them.
+  mk_ticket 20-one Status ready-for-human Escalation decision \
+    'Write-surface' '`src/one.txt`' 'Blocked by' None
+
+  drain_own_tmp <<ANSWERS
+n
+ANSWERS
+  assert_failure 3
+  assert_output_contains "left in the sink"
+
+  local left
+  left="$(find "$RALPH_TEST_DIR/tmp" -maxdepth 1 -name 'ralph-*' 2>/dev/null | wc -l | tr -d ' ')"
+  assert_equal "$left" "0"
+}
+
 @test "a drain names what earlier runs left outside this repository" {
   mk_ticket 20-one Status ready-for-human Escalation decision \
     'Write-surface' '`src/one.txt`' 'Blocked by' None

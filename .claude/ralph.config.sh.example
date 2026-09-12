@@ -371,6 +371,24 @@ FORGE_PAGE="${FORGE_PAGE:-100}"
 # FORGE_PAGE × FORGE_PAGES issues, which is what the refusal says.
 FORGE_PAGES="${FORGE_PAGES:-20}"
 
+# How long one reading of the tracker may be served for, in seconds ([75]).
+#
+# Every read of a remote backend is a request, and this pack reads a tracker
+# through command substitutions, which are forks: without this, one ticket drained
+# on a tracker of forty costs two hundred and forty listings. A run takes one
+# reading in the shell those forks come from and holds it for this long — in
+# memory, never in a file anything else can write.
+#
+# What the bound is for: this pack's frontier is a scan with **no memory**, which
+# is what makes a killed run, an edit a human makes between two iterations and a
+# cold start behave alike. A reading with no bound would turn a night into one
+# photograph of the tracker taken at its start, and an issue opened on the forge at
+# three in the morning would not be seen. Lower it for a tracker several people
+# write during a run; `0` switches the sharing off and asks the forge for every
+# read. Anything that is not a whole number of seconds is read as the default and
+# never as zero.
+FORGE_CACHE_TTL="${FORGE_CACHE_TTL:-60}"
+
 # Where the branch an iteration leaves is pushed, and what the pull (or merge)
 # request is opened against. The receipt of a remote backend **is** that request,
 # and pushing the branch is what makes the git objects the receipt names resolve

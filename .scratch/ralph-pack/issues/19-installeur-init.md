@@ -400,3 +400,33 @@ Et un fait que la passe a mesuré et qui touche l'installeur : la session jugée
 énumère `$TMPDIR` (`ls "$TMPDIR"/ralph-*` rend huit entrées) et lit `gate_tmp_names`
 dans la source du pack. Un balayeur qui *déplacerait* ces objets ailleurs
 n'achèterait rien — c'est la conclusion de [80] et [81], pas de celui-ci.
+
+## Contrainte écrite par [75] (livré le 12/09/2026)
+
+**Une clé de configuration de plus, et aucun nom de plus à balayer.**
+
+- **`FORGE_CACHE_TTL`** (défaut 60 s) — combien de temps une lecture du tracker
+  d'un backend distant peut être servie. Déclarée dans
+  `.claude/ralph.config.sh.example` comme les deux clés de [76], donc tenue en
+  égalité dans les deux sens par `test/smoke.bats`. `0` éteint le partage (chaque
+  lecture redemande à la forge) ; une valeur qui n'est pas un entier de secondes
+  est lue comme le **défaut** et jamais comme zéro, parce qu'une faute de frappe
+  qui éteint silencieusement une **borne** ferait tourner une nuit sur une photo
+  du tracker prise à son démarrage. Comme les autres `FORGE_*`, un projet sur
+  `local` n'en a rien à faire.
+
+- **Rien à ajouter à `gate_tmp_names`.** Le drain fabrique maintenant un
+  répertoire de travail (`mktemp -d "$TMPDIR/ralph-tracker.XXXXXX"`) : le motif
+  `ralph-tracker.*` est déjà dans la liste — il couvrait deux `mktemp` de
+  `failures.sh` et de `tracker.sh` — donc le balayeur de ce ticket le couvre sans
+  une ligne de plus. Le run AFK, lui, n'ajoute aucun fichier hors du répertoire
+  témoin qu'il avait déjà. **Ce qu'il faut savoir quand même** : ce répertoire est
+  défait par le trap de sortie de `human-loop.sh`, donc il n'entre dans le compte
+  des résidus que si le drain a été tué — ce qui est exactement le critère du
+  balayage.
+
+- Et rien de neuf dans le projet cible : la lecture partagée vit dans la mémoire
+  du process qui l'a prise, pas dans un fichier de l'arbre. Le seul fichier que
+  [75] pose est dans `$TMPDIR` (chemin AFK : dans le répertoire témoin du run ;
+  drain : dans le répertoire ci-dessus), jamais dans `.scratch/<feature>/` — donc
+  il n'y a pas de second nom à ignorer à côté de `.forge-claims`.

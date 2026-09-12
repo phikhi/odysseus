@@ -2728,8 +2728,12 @@ mutation "10 the attempt is always the first one" "$LOOP" \
 # them writes a ticket, and `sidecar_witness` writes only into the run's own
 # directory in `$TMPDIR`. The guarantee under test is unchanged and was re-checked
 # before the anchor moved.
+# And again by [75], which added `cache_open` and `cache_prime` — two more reads
+# by the same criterion: one is handed a directory of the run in `$TMPDIR` and the
+# other takes a listing into the calling shell, and neither writes a ticket any
+# guard over `issues/` will compare. Re-checked before the anchor moved.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | sidecar_path | sidecar_witness | sidecar_drift)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift \| cache_open \| cache_prime\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -6002,6 +6006,63 @@ mutation "82 a refused surface travels out of the clash question" "$CONCURRENCY"
 mutation "82 a refused surface travels out of the re-slice" "$FAILURES" \
   's#  surface="\$\(gate_write_surface "\$ticket"\)" \|\| return 1#  surface="\$(gate_write_surface "\$ticket")"#' \
   test/tracker-remote.bats "holds a ticket back, it does not end the run"
+
+# ── [75] one reading of the tracker, shared by the forks under it ────────────
+#
+# The guarantee is a cost — a drained ticket is one listing and not two hundred
+# and forty — so the test it hangs off measures the same drain twice, once with
+# the reading switched off. Three entries take the three things that make the
+# measurement true: the reading being served at all, and the two places the drain
+# takes one. The fourth is the one that is not about cost at all: a reading taken
+# before a session and served after it makes the four readers of an unjudged
+# session report that nothing moved.
+#
+# `FORGE_CACHE_TTL=0` is what the test switches the sharing off with, so none of
+# these may be written as "make the bound zero": that is the configured off
+# switch, and mutating it would only turn the control arm into the experiment.
+
+mutation "75 a reading taken is never served to the forks under it" "$FORGE" \
+  's#  FORGE__CACHE="\$all"\n  FORGE__CACHE_KEY="\$key"#  FORGE__CACHE="\$all"\n  FORGE__CACHE_KEY=\x27\x27#' \
+  test/tracker-remote.bats "not one per question"
+
+mutation "75 the drain reads its sink without a reading of its own" "$HUMAN_LOOP" \
+  's#  tracker_cache_prime \|\| true\n\n  local sink id rc=0#  local sink id rc=0#' \
+  test/tracker-remote.bats "not one per question"
+
+mutation "75 the drain carries one reading across every decision it takes" "$HUMAN_LOOP" \
+  's#    tracker_cache_prime \|\| true\n    # Re-read rather than trusted#    # Re-read rather than trusted#' \
+  test/tracker-remote.bats "not one per question"
+
+mutation "75 a session's write on the forge is measured against a reading older than it" "$HUMAN_LOOP" \
+  's#  tracker_cache_prime \|\| true\n\n  # What that conversation left#  # What that conversation left#' \
+  test/tracker-remote.bats "routed session wrote on the forge"
+
+# And the three bounds. Each one is a different way for a reading to outlive what
+# it says: a write nobody else hears about, a clock nobody reads, and a listing
+# that refused being kept as though it had answered.
+
+mutation "75 a write made in a fork tells only the fork that made it" "$FORGE" \
+  's#  \[ -n "\$FORGE__WRITES" \] \|\| return 0\n  printf \x27%s\\n\x27 "\$\$" >>"\$FORGE__WRITES" 2>\/dev\/null \|\| true#  [ -n "\$FORGE__WRITES" ] || return 0#' \
+  test/tracker-remote.bats "a write made in a fork"
+
+mutation "75 a reading is served whatever its age" "$FORGE" \
+  's#    age=\$\(\(now - FORGE__CACHE_AT\)\)\n    if \[ "\$age" -ge 0 \] && \[ "\$age" -lt "\$ttl" \]; then#    age=\$((now - FORGE__CACHE_AT))\n    if [ "\$age" -ge 0 ]; then#' \
+  test/tracker-remote.bats "once that bound has run out"
+
+mutation "75 a listing that refused is kept as though it had answered" "$FORGE" \
+  's#  \[ "\$whole" = 1 \] \|\| \{#  FORGE__CACHE="\$all"\n  FORGE__CACHE_KEY="\$key"\n  FORGE__CACHE_AT="\$now"\n  FORGE__CACHE_WROTE="\$gen"\n  [ "\$whole" = 1 ] || {#' \
+  test/tracker-remote.bats "would not answer is not a reading"
+
+# And the two objects this ticket leaves outside the pack's own memory: the
+# register in the run's witness directory, and the drain's workspace.
+
+mutation "75 the register of this run's writes is not one that may grow" "$GATE" \
+  's#    sidecar grows \\\n    tracker.writes grows \\#    sidecar grows \\#' \
+  test/tracker-remote.bats "may only grow"
+
+mutation "75 the drain leaves its workspace where the next one counts it" "$HUMAN_LOOP" \
+  's#  \[ -z "\$HUMAN_LOOP__STATE" \] \|\| rm -rf "\$HUMAN_LOOP__STATE"\n##' \
+  test/human-loop.bats "workspace of its own"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

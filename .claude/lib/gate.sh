@@ -1441,12 +1441,15 @@ gate_witness_seal() {
 # Two modes and two different admissions:
 #
 #   grows      a register this run appends to — `ledger` ([41]), the pack's own
-#              register of what it is about to write ([70]) and a remote
-#              backend's copy of its sidecar ([77]). Held to its **length**: it
-#              may only ever get longer. A forged *line* in one of them is out of
-#              reach, for the reason [80] wrote down about the loop's own
+#              register of what it is about to write ([70]), a remote backend's
+#              copy of its sidecar ([77]) and that backend's register of the
+#              writes this run made to its tracker ([75]). Held to its **length**:
+#              it may only ever get longer. A forged *line* in one of them is out
+#              of reach, for the reason [80] wrote down about the loop's own
 #              register — an appended line is indistinguishable from a legitimate
-#              one, so neither a census nor a digest reaches it.
+#              one, so neither a census nor a digest reaches it. On the last of
+#              the four that costs the least there is: a line appended to it makes
+#              this pack read its tracker again.
 #   rewritten  the lesson index, which an iteration republishes on purpose
 #              ([14]). Held to its **existence** here; its content is held by the
 #              copy the iteration takes in its own memory before its session
@@ -1463,6 +1466,7 @@ gate_witness_mutable() {
     ledger grows \
     forensic.written grows \
     sidecar grows \
+    tracker.writes grows \
     index rewritten
   return 0
 }

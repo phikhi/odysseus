@@ -765,6 +765,16 @@ tracker_local_sidecar_path() { return 1; }
 tracker_local_sidecar_witness() { return 1; }
 tracker_local_sidecar_drift() { return 1; }
 
+# And nothing to share between the processes of a run either ([75]). This
+# backend's tracker is a directory of files on this machine: a read costs a
+# `grep`, a fork reads the same files as its parent, and a copy kept in a shell
+# would be a second answer about a file every process can already open. Both
+# refusals are **explicit**, for the reason the three above are: an operation a
+# backend does not implement gets `3` and a sentence on the console of every run
+# and every drain ([77]).
+tracker_local_cache_open() { return 1; }
+tracker_local_cache_prime() { return 1; }
+
 # Where the last one can be read — the same name `emit_receipt` publishes, and
 # derived from it rather than restated, so the two cannot drift.
 #
