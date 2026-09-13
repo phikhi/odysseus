@@ -84,7 +84,8 @@
 
 ## Place dans la file
 
-Ouvert par la passe du 13/09/2026. **Ordre proposé, à valider par Philippe :**
+Ouvert par la passe du 13/09/2026. **Ordre validé par Philippe le 13/09/2026,
+après la passe transversale du même jour :**
 **[83] → [84] → [85] → [73] → [19]**. Derrière [83] parce que les deux posent la
 même question — comment un fork et le pilote se passent quelque chose que la
 session ne doit pas atteindre — et que [83] la pose sur un objet plus petit.

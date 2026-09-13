@@ -165,7 +165,8 @@
 
 ## Place dans la file
 
-Ouvert par la passe du 13/09/2026. **Ordre proposé, à valider par Philippe :**
+Ouvert par la passe du 13/09/2026. **Ordre validé par Philippe le 13/09/2026,
+après la passe transversale du même jour :**
 **[83] → [84] → [85] → [73] → [19]**. Critère du dépôt — minimiser la reprise,
 jamais l'urgence.
 

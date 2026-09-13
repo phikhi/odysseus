@@ -291,5 +291,4 @@ Deux conséquences pour ce ticket-ci :
   plus au chemin AFK sans compter ce qu'elle coûte : une restauration qui relit
   le tracker ticket par ticket est le geste que [75] a retiré du drain.
 
-**File proposée par la passe, à valider par Philippe : [83] → [84] → [85] → [73]
-→ [19].**
+**File validée par Philippe le 13/09/2026 : [83] → [84] → [85] → [73] → [19].**
