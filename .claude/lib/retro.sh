@@ -93,6 +93,8 @@
 #   retro_guards                 where this module puts an exclusion guard ([81])
 #   retro_hold_index             the iteration's own copy of the index, in memory
 #   retro_index_note             what a session did to it, put back and named
+#   retro_hold_state             the census of what the run's seal cannot cover ([83])
+#   retro_state_note             what a session did to it, removed and named
 
 # Where this run's retro state lives, or empty. A shell variable of the *pilot*,
 # inherited by every iteration and never exported. See the header for why the name
@@ -115,6 +117,13 @@ RALPH_RETRO_QUOTA=''
 # back exactly as it was.
 RETRO__INDEX_HELD=''
 RETRO__INDEX_HELD_SET=0
+
+# And the same question for everything else this run puts in that directory, which
+# the pilot's seal cannot reach at all — see the block above `retro_hold_state`.
+# A census and not a copy: `path<TAB>digest`, in the **iteration's** memory, of
+# the files the run's own seal does not already cover.
+RETRO__STATE_HELD=''
+RETRO__STATE_HELD_SET=0
 
 # The line a retro session answers on. Same shape as the lens verdict token and for
 # the same reason: read as a tagged single line, so a model that quotes the
@@ -265,6 +274,167 @@ retro_index_note() {
   fi
   printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed — put back. It is inlined in the prompt of every fresh session, so what was in it is what the next session of this night would have been told ([81], [14])\n'
   return 0
+}
+
+# ── what this run makes after the seal was taken ([83]) ──────────────────────
+#
+# The seal of [81] is a walk of what the pack had written **at the instant the
+# pilot took it**, and it is held in a variable of the pilot — the one store a
+# judged session provably cannot reach. Both halves of that sentence are load
+# bearing, and the second one is what leaves this hole: an iteration is
+# `loop__iterate … &`, a fork, so it inherits the seal and can put nothing back
+# into it. Every object the pack creates from then on is created inside such a
+# fork, and is therefore covered by nothing at all.
+#
+# Measured on 13/09/2026, on a real run, by a session that received no name and
+# globbed `"$TMPDIR"/ralph-retro.*`: there are two of them, and they are the two
+# objects in this pack that exist in order not to believe a session.
+#
+#   `brief.<id>`       what the gate said about the previous attempt, inlined
+#                      verbatim into the next attempt's prompt ([14]). A session
+#                      wrote the brief of a ticket **it was not working on**;
+#                      the next iteration's prompt carried its text under "What
+#                      the gate said about the previous attempt at this ticket",
+#                      run `rc=0`, both tickets `resolved`, not one word said. It
+#                      is the exact twin of the lesson index, with the same
+#                      mitigation sentence in the prompt, which is exactly what
+#                      [81] sealed the index *because* it is not a guarantee.
+#   `capability.seen`  the counter [15] keeps so that "is this recurrent?" is
+#                      never a question put to a model. A session appended one
+#                      line and the `recurrent` arm opened a proposal on the
+#                      human sink; the paired witness, with nothing else changed,
+#                      said "counted, not proposed: 1/2 sighting(s)".
+#
+# **What holds them is the window and not a name**, because a name is not a guard
+# ([80], and the 10/09 pass in full). Nothing in this pack writes a file at the
+# top of this directory between a session's first token and its last — the prompt
+# is rendered before the spawn, the brief is kept and the counter is appended
+# after the gate — so a file that appears there, or changes there, while a session
+# runs was written by that session. The iteration takes the census of that
+# directory before its session exists, in its own memory, and asks the question
+# afterwards.
+#
+# **It is derived rather than listed**, which is the half [81] got right one
+# directory up and the half this ticket had to repeat: what the iteration answers
+# for is *everything the run's own seal does not already cover*, so a third object
+# put here by a later ticket is held by the line that creates it and by nothing
+# else. The objects the seal does cover are left alone on purpose and their
+# keepers are one line apart, not implied: `gate_witness_note` names any of them
+# that moved, and `retro_index_note` just above puts the lesson index back,
+# because that one this run republishes on purpose.
+#
+# **Removed rather than put back**, and that is a decision with an argument
+# rather than a shortcut. Putting back needs a copy of the content, in memory, of
+# an open-ended set of files this module does not own — and it would buy exactly
+# one thing over removal: stopping a session from *silencing* one of these
+# objects. A session can `rm` either of them outright and could before this
+# ticket, so silencing is a cost that was already there; making one of them *say
+# something* is the cost this closes. What removal costs when it fires is a brief
+# the next attempt does not get — one session rediscovering what its lens said —
+# and a count that starts again, which defers a proposal to a later night.
+#
+# **Is a counter a witness?** — the question [81] left open, answered here rather
+# than assumed. No, and the `grows` mode is the reason and not an accident: a
+# register held to its *length* admits precisely the write this closes, an
+# appended line that no census and no digest can tell from a legitimate one
+# ([80]). What holds a counter is the window it was appended in; its shape holds
+# nothing.
+#
+# **And never above `MAX_PARALLEL=1`**, the same admission [81] wrote for the
+# index and [80] one glob over: with two iterations in flight a sibling writes in
+# this directory legally while this session runs, and removing its brief or its
+# sighting would answer a question nobody asked. Named, never touched, and the
+# row in `docs/frontiere-de-confiance.md` says which of the two a run gets.
+
+# The census this iteration answers for: every regular file at the top of the
+# holder that the run's seal does not already cover, as `path<TAB>digest`.
+# Non-zero when there is no run seal — with no census there is nothing to take a
+# difference against, and this control is off for the same reason and at the same
+# moment as the seal itself, which `loop.sh` says out loud when it cannot take it.
+retro__state_census() {
+  local sealed path digest
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
+  sealed="$(gate_witness_paths)" || return 1
+  while IFS="$(printf '\t')" read -r path digest; do
+    [ -n "$path" ] || continue
+    if printf '%s\n' "$sealed" | grep -Fxq -- "$path"; then continue; fi
+    printf '%s\t%s\n' "$path" "$digest"
+  done <<CENSUS
+$(gate_witness_seal "$RALPH_RETRO_STATE")
+CENSUS
+  return 0
+}
+
+# What a census said about one path, or nothing when it did not carry it. The
+# difference between "not what it was" and "was not there at all" is the whole of
+# what the two arms below say to a morning reader.
+retro__state_digest() {
+  local list="$1" want="$2" path digest
+  while IFS="$(printf '\t')" read -r path digest; do
+    [ "$path" = "$want" ] || continue
+    printf '%s\n' "$digest"
+    return 0
+  done <<LIST
+$list
+LIST
+  return 0
+}
+
+# The census, taken in the iteration's own memory before its session exists.
+# Non-zero when this run has no lesson workspace or took no seal, which a caller
+# reads as "there is nothing here to answer for" and not as a failure.
+retro_hold_state() {
+  RETRO__STATE_HELD=''
+  RETRO__STATE_HELD_SET=0
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
+  RETRO__STATE_HELD="$(retro__state_census)" || return 1
+  RETRO__STATE_HELD_SET=1
+  return 0
+}
+
+# What the session did to it, one line per object. Non-zero when it did nothing,
+# which is every ordinary iteration.
+retro_state_note() {
+  local held now path digest was overlap=0 said=1
+  [ "$RETRO__STATE_HELD_SET" = 1 ] || return 1
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
+  now="$(retro__state_census)" || return 1
+  held="$RETRO__STATE_HELD"
+  if concurrency_may_overlap; then overlap=1; fi
+
+  while IFS="$(printf '\t')" read -r path digest; do
+    [ -n "$path" ] || continue
+    was="$(retro__state_digest "$held" "$path")"
+    [ "$was" != "$digest" ] || continue
+    said=0
+    if [ "$overlap" = 1 ]; then
+      if [ -z "$was" ]; then
+        printf 'a file appeared in the lesson workspace of this run while the session of this iteration was running (%s), and this run has more than one iteration in flight: it is left as it stands, because a sibling iteration writes in that directory legally ([83])\n' "$path"
+      else
+        printf 'a file this run keeps in its lesson workspace is not the one this iteration was handed (%s), and this run has more than one iteration in flight: it is left as it stands, because a sibling iteration writes in that directory legally ([83])\n' "$path"
+      fi
+      continue
+    fi
+    rm -f "$path" 2>/dev/null || true
+    if [ -z "$was" ]; then
+      printf 'a file appeared in the lesson workspace of this run while the session of this iteration was running (%s), and nothing in this pack writes there while a session runs: it is removed, because what the next prompt of this night is served from and what this run counts come out of that directory ([83])\n' "$path"
+    else
+      printf 'a file this run keeps in its lesson workspace is not the one this iteration was handed (%s), and nothing in this pack rewrites one there while a session runs: it is removed rather than put back, because this run kept no copy of it and a line appended to it is indistinguishable from one this run wrote ([80], [83])\n' "$path"
+    fi
+  done <<NOW
+$now
+NOW
+
+  while IFS="$(printf '\t')" read -r path digest; do
+    [ -n "$path" ] || continue
+    [ -z "$(retro__state_digest "$now" "$path")" ] || continue
+    said=0
+    printf 'a file this run keeps in its lesson workspace is gone (%s), and nothing in this run removed it: this run kept no copy of it, so whatever reads it next is served nothing ([83])\n' "$path"
+  done <<HELD
+$held
+HELD
+
+  return "$said"
 }
 
 retro_close() {

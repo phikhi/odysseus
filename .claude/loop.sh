@@ -689,6 +689,13 @@ loop__iterate() {
   # run's republication from a session's rewrite. Never fatal — a run with no
   # lesson workspace has nothing to hold, and that is already said above.
   retro_hold_index || true
+  # And the census of everything else that directory carries, which the run's own
+  # seal cannot reach: it was taken by the pilot before this fork existed, and a
+  # fork can put nothing back into it, so the two objects this run creates *after*
+  # it — the brief of a retried ticket and the count of what a retro asked for —
+  # were held by nothing at all until [83]. Derived, never listed: what this
+  # iteration answers for is whatever the seal does not already cover.
+  retro_hold_state || true
   rc=0
   loop_spawn_session "$ticket" "$outfile" || rc=$?
 
@@ -743,6 +750,13 @@ loop__iterate() {
   # The lesson index is asked separately and answers differently, and its own
   # comment says why: it is put back rather than refused, because this run
   # republishes it on purpose.
+  #
+  # And the third voice is the one the seal cannot carry ([83]): what the *run*
+  # created in those holders after the pilot sealed them, which is the brief of a
+  # retried ticket and the count of what a retro asked for. It is asked here, at
+  # the same instant and for the same reason as the two above — before anything
+  # below reads one of them, and well before the gate, the retro and the
+  # capability bar do.
   while IFS= read -r witness_note; do
     [ -n "$witness_note" ] || continue
     loop_log "$ticket: $witness_note"
@@ -750,6 +764,7 @@ loop__iterate() {
   done <<WITNESSES
 $(gate_witness_note || true)
 $(retro_index_note || true)
+$(retro_state_note || true)
 WITNESSES
 
   # Before the gate reads a single field out of the tracker: the write-surface
@@ -1809,7 +1824,7 @@ UNCOVERED
   RALPH_WITNESS_SEAL="$(gate_witness_seal "${RALPH_FRONTIER_COMMON:-}" \
     "${RALPH_PLAYTHROUGH_SPEC:-}" "${RALPH_RETRO_STATE:-}")" || RALPH_WITNESS_SEAL=''
   if [ -z "${RALPH_WITNESS_SEAL:-}" ]; then
-    loop_log "no seal of this run's own witnesses — the pinned rules, the PATH baseline, the guard census, the forensic witness, the flow the value gate replays and the lesson index are held by their names alone from here, and a session that reaches one of them costs nothing ([81])"
+    loop_log "no seal of this run's own witnesses — the pinned rules, the PATH baseline, the guard census, the forensic witness, the flow the value gate replays and the lesson index are held by their names alone from here, and a session that reaches one of them costs nothing ([81]) — and what this run writes into those holders afterwards is held by nothing either, since the iteration takes its own census against this one ([83])"
   fi
 
   local iteration=0 sterile=0 ticket frontier_refused=0 reclaimed rid rdisposition

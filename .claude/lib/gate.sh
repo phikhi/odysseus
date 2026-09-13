@@ -1432,6 +1432,27 @@ gate_witness_seal() {
   return 0
 }
 
+# The paths this run's seal covers, one per line. Non-zero when there is no seal
+# at all, and that is the whole of its interface: "this object is not in the
+# census" and "there is no census" are two different answers, and a reader that
+# could not tell them apart would hold a whole directory against a list that was
+# never taken.
+#
+# It exists because the seal is a **snapshot**. What the pack writes into one of
+# these holders *after* the pilot takes it is covered by nothing here, and it
+# cannot be covered from here: those objects are created inside a
+# `loop__iterate … &`, a fork of the pilot, and a fork can put nothing back into
+# the shell variable that carries the seal — the very property that puts the seal
+# out of a session's reach is the one that stops it covering what an iteration
+# makes ([83]). So the iteration answers for them itself, in its own memory, and
+# this is how it tells its own business from the pilot's.
+gate_witness_paths() {
+  local seal="${RALPH_WITNESS_SEAL:-}"
+  [ -n "$seal" ] || return 1
+  printf '%s\n' "$seal" | cut -f1
+  return 0
+}
+
 # The witnesses whose content this run changes while it is up, `name<TAB>mode`,
 # and the only ones the check below does not hold to their digest. Matched on the
 # file name and never on a pattern: `sidecar` moves under this run and

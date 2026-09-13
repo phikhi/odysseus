@@ -307,6 +307,132 @@ opened_ticket() {
   assert_file_contains "$(receipt_path 01-alpha)" "counted, not proposed"
 }
 
+# A session that does its work honestly and, while it is at it, appends one
+# sighting to the counter this loop keeps. It receives no name: it globs
+# `"$TMPDIR"/ralph-retro.*`, which is what any session in any worktree can do
+# ([40], [80]).
+#
+# `script_claude` replaces the fake **entirely**, the retro included, so the
+# script has to answer for the retro tier itself — a test that scripted the
+# delivery session and expected `retro_answer` to still be honoured would measure
+# a silent retro, and `capability_review` would return before it ever reached the
+# bar.
+capability__forge_seen_fake() {
+  local forge="${1:-1}"
+  {
+    printf '#!/usr/bin/env bash\nprompt="$(cat)"\n'
+    cat <<'HEAD'
+if printf '%s' "$prompt" | grep -q 'RALPH-RETRO-NOTHING'; then
+  a="$(awk '{ printf "%s\\n", $0 }' "$RALPH_SHIM_STATE/retro.answer" 2>/dev/null)"
+  [ -n "$a" ] || a='RALPH-RETRO-NOTHING'
+  printf '{"type":"assistant","message":{"model":"m","id":"m1","type":"message","role":"assistant","content":[{"type":"text","text":"%s"}],"usage":{"input_tokens":10,"output_tokens":2}},"session_id":"s"}\n' "$a"
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","num_turns":1,"total_cost_usd":0.02}\n' "$a"
+  exit 0
+fi
+HEAD
+    if [ "$forge" = 1 ]; then
+      cat <<'FORGE'
+for d in "${TMPDIR:-/tmp}"/ralph-retro.*; do
+  [ -d "$d" ] || continue
+  printf 'skill/migrations\n' >>"$d/capability.seen"
+done
+FORGE
+    fi
+    cat <<'TAIL'
+surface="$(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' ')"
+for t in $surface; do mkdir -p "$(dirname "$t")"; printf 'written\n' >"$t"; done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+TAIL
+  } | script_claude
+}
+
+@test "a sighting a session wrote does not cross the bar" {
+  # The sentence this module opens with — "both arms are computed from the
+  # inventory and from a counter this loop keeps, never from the model's own claim
+  # to have seen something before" — measured on 13/09/2026 and false: the counter
+  # is a file in a directory a session globs, created by the first review, so
+  # created *after* the pilot sealed its witnesses ([81], [83]).
+  #
+  # One line appended by the session took the `recurrent` arm and opened a
+  # proposal on the human sink, where the paired witness said "counted, not
+  # proposed: 1/2 sighting(s)" and opened nothing. The run had counted one
+  # sighting; the session wrote the second.
+  #
+  # The `recurrent` arm needs the project to *cover* the name already —
+  # `capability_bar` answers `uncovered` before it ever looks at the counter — so
+  # the skill below is what makes this the arm under test.
+  use_tickets 01-alpha
+  retro_on
+  set_config MAX_PARALLEL 1
+  set_config CAPABILITY_RECUR_AT 2
+  mkdir -p "$PROJECT_DIR/.claude/skills/migrations"
+  retro_answer \
+    "RALPH-RETRO-CAPABILITY: skill migrations" \
+    "RALPH-RETRO-CAPABILITY-WHY: nothing here read the migrations this ticket wrote"
+  capability__forge_seen_fake
+
+  run_loop_own_tmp
+  local said="$output"
+
+  assert_equal "$(opened_ticket 'capability-skill-migrations')" ""
+  assert_file_contains "$(receipt_path 01-alpha)" "counted, not proposed"
+
+  case "$said" in
+    *"a file appeared in the lesson workspace of this run"*) ;;
+    *) fail "the run does not say a session wrote in its lesson workspace: $said" ;;
+  esac
+}
+
+@test "the same run without the gesture counts the run's own sighting" {
+  # The paired witness, and it is the one that says the removal above is not the
+  # counter being switched off: the run still counts what *it* saw, and still says
+  # so on the document that answers for the iteration.
+  use_tickets 01-alpha
+  retro_on
+  set_config MAX_PARALLEL 1
+  set_config CAPABILITY_RECUR_AT 2
+  mkdir -p "$PROJECT_DIR/.claude/skills/migrations"
+  retro_answer \
+    "RALPH-RETRO-CAPABILITY: skill migrations" \
+    "RALPH-RETRO-CAPABILITY-WHY: nothing here read the migrations this ticket wrote"
+  capability__forge_seen_fake 0
+
+  run_loop_own_tmp
+
+  assert_equal "$(opened_ticket 'capability-skill-migrations')" ""
+  assert_file_contains "$(receipt_path 01-alpha)" "1/2 sighting(s)"
+  case "$output" in
+    *"lesson workspace of this run"*)
+      fail "a workspace nobody touched is reported written: $output"
+      ;;
+  esac
+}
+
+@test "a proposal crossed on recurrence does not say the project has nothing for it" {
+  # The rédaction defect [83] found in passing, and it is one ticket contradicting
+  # itself rather than two documents disagreeing: the head of the proposal said
+  # "a skill called `migrations` that this project does not have" while "Reuse
+  # what exists: this project already has a skill called `migrations`" stood three
+  # paragraphs below it. The phrase was written for the `uncovered` arm and used
+  # on both.
+  set_config LENSES "standards spec"
+  set_config CAPABILITY_RECUR_AT 1
+  use_tickets 01-alpha
+  retro_on
+  retro_answer "RALPH-RETRO-CAPABILITY: lens standards"
+
+  run_loop
+  assert_success
+
+  opened="$(opened_ticket 'capability-lens-standards')"
+  [ -n "$opened" ] || fail "no ticket was opened"
+  assert_file_contains "$TRACKER_DIR/$opened" "already has something for"
+  run cat "$TRACKER_DIR/$opened"
+  refute_output_contains "that this project does not have"
+  assert_file_contains "$(receipt_path 01-alpha)" "already has something for"
+}
+
 @test "an answer this pack cannot read opens nothing and says which it was" {
   use_tickets 01-alpha
   retro_on

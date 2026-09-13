@@ -2556,6 +2556,39 @@ ASK
   esac
 }
 
+@test "the seal says what it covers, and says when it covers nothing" {
+  # What an iteration has to ask before it holds anything of its own ([83]). The
+  # seal is a **snapshot** taken by the pilot, and everything the pack writes into
+  # one of these holders afterwards is created inside a `loop__iterate … &` — a
+  # fork, which can put nothing back into the variable that carries it. So the
+  # iteration answers for those itself, and this is the line that tells its
+  # business from the pilot's.
+  #
+  # Two answers and not one: "this path is not in the census" and "there is no
+  # census" send a reader to two different places, and one that could not tell
+  # them apart would hold a whole directory against a list nobody took.
+  local script="$RALPH_TEST_DIR/witness-paths.sh"
+  cat >"$script" <<'ASK'
+d="$(mktemp -d)"
+printf 'one\n' >"$d/ledger"
+printf 'two\n' >"$d/manifest"
+RALPH_WITNESS_SEAL="$(gate_witness_seal "$d")"
+printf 'covers:  %s\n' "$(gate_witness_paths | sed "s#^$d/##" | LC_ALL=C sort | tr '\n' ' ')"
+printf 'after:   '
+printf 'three\n' >"$d/brief.01-alpha"
+gate_witness_paths | grep -c 'brief' || true
+printf 'no seal: '
+RALPH_WITNESS_SEAL='' gate_witness_paths || printf '(refused)\n'
+rm -rf "$d"
+ASK
+  pack_run ". '$script'"
+  assert_success
+
+  assert_output_contains "covers:  ledger manifest"
+  assert_output_contains "after:   0"
+  assert_output_contains "no seal: (refused)"
+}
+
 @test "the census of guards names all three zones the pack locks in" {
   # The list read as a list, beside the two run-real tests that read it as a
   # sweep: a zone dropped from it is a guard nothing can ever name, and neither
