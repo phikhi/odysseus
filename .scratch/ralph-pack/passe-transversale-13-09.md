@@ -257,7 +257,7 @@ la dérivation ne pourrait pas voir. C'est la forme exacte à reprendre. Repris 
 | **[84]** | Le point d'entrée AFK ouvre la lecture du tracker et n'en prend aucune | §2 — la clause de [75] sautée par `loop.sh`, 93 listings contre 2 |
 | **[85]** | Le recensement des gardes n'est dérivé par aucun test | §3 — la seconde moitié de la question de [77] |
 
-**Ordre proposé, à valider par Philippe** : [83] → [84] → [85], puis [73] → [19].
+**Ordre validé par Philippe le 13/09/2026** : [83] → [84] → [85], puis [73] → [19].
 
 [83] d'abord parce qu'il est le seul des trois à être une faille de frontière de
 confiance mesurée sur un run réel, et parce que la réponse qu'il donne

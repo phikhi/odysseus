@@ -76,7 +76,8 @@
 
 ## Place dans la file
 
-Ouvert par la passe du 13/09/2026. **Ordre proposé, à valider par Philippe :**
+Ouvert par la passe du 13/09/2026. **Ordre validé par Philippe le 13/09/2026,
+après la passe transversale du même jour :**
 **[83] → [84] → [85] → [73] → [19]**. Dernier des trois : il ne ferme aucune
 faille atteignable aujourd'hui, il empêche celle de demain — et il est plus court
 écrit après [83], qui ouvre `test/gate.bats` de toute façon.

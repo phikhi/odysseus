@@ -442,5 +442,4 @@ deux noms à vérifier contre `gate_tmp_names` si le balayage de ce ticket-ci
 apprend un motif de plus. Il n'y en a pas de nouveau aujourd'hui : les deux
 vivent dans `ralph-retro.*`, déjà compté.
 
-**File proposée par la passe, à valider par Philippe : [83] → [84] → [85] → [73]
-→ [19].**
+**File validée par Philippe le 13/09/2026 : [83] → [84] → [85] → [73] → [19].**
