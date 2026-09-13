@@ -430,3 +430,17 @@ n'achèterait rien — c'est la conclusion de [80] et [81], pas de celui-ci.
   [75] pose est dans `$TMPDIR` (chemin AFK : dans le répertoire témoin du run ;
   drain : dans le répertoire ci-dessus), jamais dans `.scratch/<feature>/` — donc
   il n'y a pas de second nom à ignorer à côté de `.forge-claims`.
+
+## Note de la passe transversale du 13/09/2026
+
+Rien de neuf à provisionner : les trois tickets ouverts par cette passe ([83],
+[84], [85]) ne touchent ni `.gitignore`, ni `GUARDED_PATHS`, ni le balayage de
+`$TMPDIR` dont ce ticket est propriétaire. Un seul point à relire en livrant :
+[83] peut ajouter une ligne au tableau de `docs/frontiere-de-confiance.md` pour
+le compteur de [15] et le brief de [14] — ce sont deux objets de `$TMPDIR`, donc
+deux noms à vérifier contre `gate_tmp_names` si le balayage de ce ticket-ci
+apprend un motif de plus. Il n'y en a pas de nouveau aujourd'hui : les deux
+vivent dans `ralph-retro.*`, déjà compté.
+
+**File proposée par la passe, à valider par Philippe : [83] → [84] → [85] → [73]
+→ [19].**
