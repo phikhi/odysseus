@@ -371,3 +371,26 @@ vrai, sans borne de temps par-dessus. Le registre le ferme, et la borne le borne
 - **[19]** : `FORGE_CACHE_TTL` à installer, **zéro** nom de plus à balayer — le
   répertoire du drain est déjà couvert par le motif `ralph-tracker.*` de
   `gate_tmp_names`.
+
+## Note écrite par la passe transversale du 13/09/2026
+
+La borne que ce ticket laissait au chemin AFK — *« aucun `tracker_cache_prime`
+dans `loop.sh` »* — a été mesurée et est devenue **[84]**. Compté sur la source
+livrée : `human-loop.sh` appelle `cache_open` une fois et `cache_prime` **trois**
+fois ; `loop.sh` appelle `cache_open` une fois et `cache_prime` **zéro** fois.
+Donc le run AFK paie le registre d'invalidation `tracker.writes` — l'alimenter à
+chaque écriture de ticket — sans avoir jamais pris la lecture que ce registre
+sert à invalider.
+
+Chiffré sur le même tracker de douze issues
+(`../sondes/passe-13-09/q4-*.bats`) : **93** listings pour trois itérations
+AFK contre **96** avec `FORGE_CACHE_TTL=0` — la lecture achète **3 %** — là où le
+drain passe de **15** à **2**, soit **87 %**.
+
+La clause que ce ticket a écrite dans `tracker.sh` (« *neither call is one an
+entry point may skip on a hunch* ») est donc, aujourd'hui, tenue par un
+commentaire et sautée par le point d'entrée qui tourne toute la nuit. [84] doit
+nommer les deux moments du run AFK, qui ne sont pas ceux du drain : le run
+choisit dans une frontière, il repart de `loop__reap`, et il peut avoir plusieurs
+itérations en vol — donc la lecture donnée au pilote serait héritée par des forks
+que l'écriture d'un **frère** n'invalide pas.

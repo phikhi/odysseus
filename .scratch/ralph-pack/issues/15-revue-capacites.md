@@ -134,3 +134,26 @@ recomparée par itération, `receipt_gap` **et** ligne de `run.log` (la moitié 
 tout seul (`npm i -g`, `brew upgrade`), donc la barre doit être **calculée** comme
 la vôtre l'est, et le témoin est **par run**, donc un binaire posé entre deux runs
 est la ligne de base du suivant — la même asymétrie que `LEARNINGS.md`.
+
+## Note de la passe transversale du 13/09/2026
+
+Le compteur d'observations de ce ticket — `ralph-retro.*/capability.seen`, ce qui
+fait que « est-ce récurrent ? » n'est pas une question posée au modèle — est créé
+par `capability__seen` **à la première revue de capacités**, donc après la prise
+du sceau des témoins du run ([81]). Il n'est tenu par rien.
+
+Mesuré le 13/09 (`../sondes/passe-13-09/q3-*.bats`), un run, un ticket, un rétro
+qui nomme une capacité que le projet a déjà, `CAPABILITY_RECUR_AT` à 2 : une
+session qui appende une ligne au fichier globé fait ouvrir le ticket de
+proposition sur le puits humain (« *it came back **2** time(s) in this run* »), là
+où le témoin appairé rend « *counted, not proposed: the bar … is **1/2**
+sighting(s)* » et aucun ticket. Le run a compté une observation, la session a
+écrit la seconde. Repris par **[83]**, qui doit trancher la question que [81]
+avait refusé de trancher : **un compteur est-il un témoin ?**
+
+Trouvé au passage, dans le même fichier et repris par le même ticket : dans le
+bras `recurrent`, `capability_review` écrit au reçu et en tête du ticket « *a
+skill called `x` **that this project does not have*** » pendant que le corps du
+même ticket dit « *Something already answers for `x`* » et « *Reuse what exists:
+this project already has a skill called `x`* ». La phrase est en dur, écrite pour
+le bras `uncovered`.

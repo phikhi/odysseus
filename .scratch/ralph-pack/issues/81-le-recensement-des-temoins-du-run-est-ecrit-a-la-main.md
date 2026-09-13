@@ -363,3 +363,23 @@ Quatre chemins hors de la surface déclarée, tous nécessaires :
 - **[77]** — sa question transversale de fin de ticket est répondue dans le code
   (`gate_guards`) et ici : trois zones, six `state_guard_take`, aucun chemin
   composé hors de son module.
+
+## Ce que la passe transversale du 13/09/2026 en a fait
+
+La trouvaille que ce ticket avait nommée pour la passe suivante — *« le sceau est
+un instantané : ce que le pack crée dans un porteur **après** l'avoir scellé n'est
+tenu par rien, et le compteur de vues de [15] est le cas réel aujourd'hui »* — a
+été mesurée, et **il y en a deux** : `ralph-retro.*/capability.seen` ([15]) et
+`ralph-retro.*/brief.<id>` ([14]). Les deux sont atteignables par un glob, les
+deux changent ce qu'une session suivante est *dite* ou ce qu'un humain est
+*demandé*, et le run ne dit rien dans les deux cas. Repris par **[83]**, avec la
+contrainte structurelle que ce ticket-ci avait posée sans la nommer : le sceau
+vit dans une variable du **pilote** et les deux objets sont créés dans un
+`loop__iterate … &`, donc dans un fork qui ne peut rien y remettre.
+
+L'autre moitié du ticket — `gate_guards`, porté de trois `state_guard_take`
+recensés sur six à six sur six — est complète et **dérivée par aucun test**. C'est
+la seconde moitié de la question de [77], reprise par **[85]**.
+
+Sondes : `../sondes/passe-13-09/q1-*.bats`, `q2-*.bats`, `q3-*.bats`,
+`q5-*.bats`.

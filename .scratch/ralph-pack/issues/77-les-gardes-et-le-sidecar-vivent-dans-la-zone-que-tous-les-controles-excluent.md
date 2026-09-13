@@ -373,3 +373,17 @@ quatre fichiers sur neuf sont vérifiés. Une session qui les efface ou les ré�
 éteint la remise, sans un mot.
 
 Les deux moitiés sont reprises par **[81]**.
+
+## Seconde moitié de la question, par la passe du 13/09/2026
+
+La question de ce ticket avait deux moitiés. La première — *« combien des
+`state_guard_take` du pack sont recensés ? »* — a été mesurée par la passe du
+10/09 (trois sur six) et fermée par [81] (six sur six). La seconde est encore
+ouverte, et c'est celle que ce ticket écrivait en toutes lettres : *« son critère
+est écrit dans son commentaire, pas vérifié par un test qui lirait les
+`state_guard_take` du pack comme `test/gate.bats` lit ses `mktemp` »*.
+
+Mesuré le 13/09 (`../sondes/passe-13-09/q5-*.bats`) : six fichiers de `test/`
+nomment `state_guard_take`, cinq en commentaire et un le met en scène
+(`gate.bats:1404`) — **aucun ne le lit comme une source**. La liste est juste
+aujourd'hui et rien ne la tient demain. Repris par **[85]**.

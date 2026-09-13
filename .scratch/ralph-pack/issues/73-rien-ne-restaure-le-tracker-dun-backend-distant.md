@@ -267,3 +267,29 @@ fork, qui était fausse avant lui) mais aucun `tracker_cache_prime`, parce que s
 AC parle d'un ticket *drainé*. Une remise appelée par `loop.sh` par itération paye
 donc encore une lecture par question — le prime est disponible, il n'est pas
 câblé.
+
+## Contrainte écrite par la passe transversale du 13/09/2026
+
+La note que [75] avait laissée ici — *« le chemin AFK garde le registre
+d'invalidation et AUCUN `tracker_cache_prime` : un run AFK sur backend distant
+paie encore une lecture par question »* — a été **mesurée** et est devenue un
+ticket à elle seule : **[84]**. Les chiffres, sur le même tracker de douze issues
+(`../sondes/passe-13-09/q4-*.bats`) : `loop.sh` demande **93** listings là où le
+drain en demande **2**, et couper `FORGE_CACHE_TTL` ne change le premier que de
+93 à 96 — la lecture partagée achète **3 %** sur le chemin AFK contre **87 %**
+sur le drain.
+
+Deux conséquences pour ce ticket-ci :
+
+- **Si [84] est livré devant**, ce ticket hérite d'une lecture partagée sur le
+  chemin AFK, et une restauration du tracker **est une écriture du tracker** :
+  elle doit invalider la lecture par le registre de [75], comme n'importe quelle
+  autre écriture. Le dire ici est plus sûr que de le déduire au moment de
+  l'écrire — c'est exactement la classe de défaut que la question 4 de la
+  definition of done cherche.
+- **Si [84] est livré derrière**, ce ticket ne doit pas ajouter une lecture de
+  plus au chemin AFK sans compter ce qu'elle coûte : une restauration qui relit
+  le tracker ticket par ticket est le geste que [75] a retiré du drain.
+
+**File proposée par la passe, à valider par Philippe : [83] → [84] → [85] → [73]
+→ [19].**
