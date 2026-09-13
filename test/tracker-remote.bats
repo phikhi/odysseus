@@ -2498,3 +2498,179 @@ ASK
   assert_output_contains "left=[]"
   refute_output_contains "does not implement"
 }
+
+# ── [84] the same reading, on the entry point that runs all night ────────────
+#
+# `loop.sh` took `cache_open` — the register, and the work of appending to it at
+# every write this run makes — and took no reading at all until [84]: ninety-three
+# listings against ninety-six, three percent, where the drain buys eighty-seven.
+# The two moments are not the drain's, and that is the whole of the ticket: a run
+# has iterations in flight, so the pilot's reading is a reading of a **pass**, and
+# the one taken after a session belongs to the **iteration** that spawned it —
+# because a fork hands nothing back to the shell that forked it ([83]).
+
+# A session that writes the files its ticket declares, and nothing else. The
+# content is this process's own pid rather than a fixed word, and that is what
+# makes the same scenario runnable twice against one tree: a second session
+# writing the same bytes changes nothing, and an iteration that changed nothing is
+# not an iteration that ground a ticket ([35]).
+remote__working_session() {
+  {
+    printf '#!/usr/bin/env bash\nprompt="$(cat)"\n'
+    cat <<'TAIL'
+surface="$(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' ')"
+for t in $surface; do mkdir -p "$(dirname "$t")"; printf 'written by %s\n' "$$" >"$t"; done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+TAIL
+  } | script_claude
+}
+
+@test "an AFK night is one reading of the tracker per pass and not one per question" {
+  # AC 3, measured the way [75] measured the drain: the same scenario twice, the
+  # second with the sharing switched off, so the number cannot go stale in
+  # silence. Twelve tickets and `ITER_CAP 3`, which is three iterations and the
+  # passes around them — the shape a night is made of, and the tracker size the
+  # 13/09/2026 pass measured the three percent on.
+  use_forge github
+  remote__working_session
+  forge_seed_many 1 12 bulk
+  set_config ITER_CAP 3
+  remote__forget_calls
+  run_loop
+  # The run really ground, asserted before a count is taken: a scenario that
+  # refused early would ask for almost nothing and pass this test by doing none of
+  # the work. `rc=4` is the iteration cap and not a refusal.
+  assert_equal "$status" 4
+  assert_output_contains "iteration cap reached (3)"
+  assert_output_contains "-> resolved"
+  local shared
+  shared="$(remote__listings)"
+
+  # The same night with the reading switched off, on a tracker put back where it
+  # was: a second run over a smaller frontier would be a different amount of work,
+  # and the comparison would be between two scenarios rather than two readings.
+  use_forge github
+  remote__working_session
+  forge_seed_many 1 12 bulk
+  set_config ITER_CAP 3
+  set_config FORGE_CACHE_TTL 0
+  remote__forget_calls
+  run_loop
+  assert_equal "$status" 4
+  assert_output_contains "-> resolved"
+  local apiece
+  apiece="$(remote__listings)"
+
+  [ "$shared" -gt 0 ] && [ "$apiece" -gt 0 ] ||
+    fail "no listing was asked for at all, so this measures nothing: shared=$shared apiece=$apiece"
+  [ "$((shared * 3))" -le "$apiece" ] ||
+    fail "a night did not cost a third of the listings it costs without the reading: $shared with it, $apiece without it"
+}
+
+@test "what a session wrote on the forge is read by the iteration that spawned it" {
+  # The AFK half of the probe [75] wrote for the drain, and what makes the reading
+  # below a session a **placement** and not a line: a session on a remote backend
+  # writes this tracker over the network, which is the one write no register of
+  # this run, no snapshot and no tree object of this pack sees at all ([18], and
+  # [73] for the restore that does not reach it). The reader that has to notice is
+  # the quarantine of [42] — a ticket the session gave itself never reaches the
+  # frontier — and it reads the tracker after the session and nowhere else.
+  use_forge github
+  forge_seed_many 1 1 bulk
+  set_config ITER_CAP 1
+  {
+    printf '#!/usr/bin/env bash\nprompt="$(cat)"\n'
+    cat <<'TAIL'
+surface="$(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' |
+  head -1 | tr -d '`\r' | tr ',' ' ')"
+for t in $surface; do mkdir -p "$(dirname "$t")"; printf 'written by %s\n' "$$" >"$t"; done
+d="$RALPH_SHIM_STATE/forge"
+printf 'a ticket this session gave itself' >"$d/issue.9.title"
+printf '**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** `src/nine.txt`\n\n**Slug:** stray\n' >"$d/issue.9.body"
+printf 'open\n' >"$d/issue.9.state"
+: >"$d/issue.9.assignee"
+printf '9\n' >>"$d/order"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+TAIL
+  } | script_claude
+
+  run_loop
+  assert_output_contains "the session wrote the tracker itself — quarantined"
+  # On the forge, which is where this is true or not: a reading taken before that
+  # session and served after it leaves the ticket sitting on the frontier.
+  assert_equal "$(forge_field 9 Status)" "ready-for-human"
+}
+
+@test "a reading the pilot hands to an iteration is one no sibling can refresh" {
+  # AC 4, and the constraint [83] wrote into this ticket: the reading lives in a
+  # variable of the shell that took it, so `MAX_PARALLEL > 1` hands every
+  # iteration a **copy** and nothing an iteration takes travels back to the pilot
+  # or across to a sibling. What does travel is the register — a file, one line per
+  # write — and it travels one way only: a sibling's write stops a reading being
+  # served, it never renews one. Staged as exactly that, two forks of one shell
+  # that primed.
+  use_forge github
+  remote__two
+
+  local script="$RALPH_TEST_DIR/siblings.sh"
+  cat >"$script" <<'ASK'
+state="$(mktemp -d)"
+tracker_cache_open "$state"
+tracker_cache_prime
+# One iteration holds the pilot's reading and reads once its sibling has written.
+# The other writes, and hands nothing back to anybody. The bound is there so that
+# a sibling that died is a failed assertion and never a suite that hangs.
+(
+  n=0
+  until [ -f "$state/sibling-wrote" ] || [ "$n" -ge 400 ]; do
+    sleep 0.05
+    n=$((n + 1))
+  done
+  printf 'the other iteration reads: [%s]\n' "$(tracker_field 1-alpha Failures)"
+) &
+one=$!
+(
+  tracker_bump_failures 1-alpha >/dev/null 2>&1
+  : >"$state/sibling-wrote"
+) &
+two=$!
+wait "$one" || true
+wait "$two" || true
+# And the pilot, which took the reading and would still be holding it if the
+# register were a variable instead of a file.
+printf 'the pilot reads: [%s]\n' "$(tracker_field 1-alpha Failures)"
+rm -rf "$state"
+ASK
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "the other iteration reads: [1]"
+  assert_output_contains "the pilot reads: [1]"
+}
+
+@test "an entry point that opens this reading and never takes one is refused" {
+  # AC 2: the clause `lib/tracker.sh` states — neither call is one an entry point
+  # may skip on a hunch — held by something other than the paragraph stating it.
+  #
+  # Derived from the pack and never from a list written here: the entry points are
+  # `"$PACK_DIR"/*.sh`, the same glob `test/layering.bats` derives them with and
+  # for the same reason — a third entry point is a file, and one outside the glob
+  # is one nothing holds. Comments are stripped first, the way that file strips
+  # them: a paragraph naming the call is documentation and not a call.
+  local f name opens primes found=0 offenders=''
+  for f in "$PACK_DIR"/*.sh; do
+    [ -e "$f" ] || continue
+    name="$(basename "$f")"
+    opens="$(grep -v '^[[:space:]]*#' "$f" | grep -c 'tracker_cache_open' || true)"
+    primes="$(grep -v '^[[:space:]]*#' "$f" | grep -c 'tracker_cache_prime' || true)"
+    if [ "$opens" -eq 0 ]; then continue; fi
+    found=$((found + 1))
+    if [ "$primes" -gt 0 ]; then continue; fi
+    offenders="$offenders$name opens the reading and never takes one; "
+  done
+  # The census is derived, so an empty one is a census of nothing and not a pass.
+  [ "$found" -gt 0 ] ||
+    fail "no entry point of this pack opens the reading at all, so this censuses nothing"
+  [ -z "$offenders" ] ||
+    fail "an entry point pays this run's register of its own writes and buys no reading with it: $offenders"
+}

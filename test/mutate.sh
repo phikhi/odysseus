@@ -6142,6 +6142,44 @@ mutation "83 a refinement is proposed as a hole" "$CAPABILITY" \
   's/      printf \x27a %s called `%s` that this project already has something for and that this run asked for again\x27 \\\n        "\$kind" "\$name"/      printf \x27a %s called `%s` that this project does not have\x27 "\$kind" "\$name"/' \
   test/capability.bats "does not say the project has nothing"
 
+# ── [84] the entry point that ran all night and took no reading ──────────────
+#
+# [75] gave `tracker.sh` two operations and one clause — neither is one an entry
+# point may skip on a hunch — and the clause was a paragraph. `loop.sh` took
+# `cache_open`, so the register and the cost of appending to it at every write,
+# and never took a reading: ninety-three listings against ninety-six. The three
+# entries below take the three things that make the AFK measurement true, and the
+# fourth takes the shape rather than the cost — an entry point that opens without
+# ever priming, which is the state this ticket found and which no test would have
+# noticed.
+#
+# `FORGE_CACHE_TTL=0` is the configured off switch the measurement's control arm
+# uses, so none of these may be written as "make the bound zero": that would turn
+# the control arm into the experiment.
+
+mutation "84 the pilot pays the register and takes no reading of its own" "$LOOP" \
+  's#    tracker_cache_prime \|\| true\n\n    # Whatever finished since the last pass#    # Whatever finished since the last pass#' \
+  test/tracker-remote.bats "one reading of the tracker per pass"
+
+mutation "84 the iteration reads the tracker without a reading of its own" "$LOOP" \
+  's#  tracker_cache_prime \|\| true\n\n  # Before the gate reads a single field#  # Before the gate reads a single field#' \
+  test/tracker-remote.bats "one reading of the tracker per pass"
+
+# The placement and not the line. A reading taken before the session is a reading
+# of the tracker as it stood before the one write nothing of this pack can see,
+# and every reader below the session is then served from it — starting with the
+# quarantine, which exists to notice exactly that write.
+mutation "84 the iteration takes its reading before its session, not after" "$LOOP" \
+  's#  tracker_cache_prime \|\| true\n\n  # Before the gate reads a single field#  # Before the gate reads a single field#; s#  rc=0\n  loop_spawn_session#  tracker_cache_prime || true\n  rc=0\n  loop_spawn_session#' \
+  test/tracker-remote.bats "read by the iteration that spawned it"
+
+# And the census, which is what stops the clause being a paragraph again: the
+# entry points are derived from the pack, so a third one added tomorrow is held by
+# the same line.
+mutation "84 an entry point opens this reading and takes none" "$LOOP" \
+  's#\n *tracker_cache_prime \|\| true\n#\n#g' \
+  test/tracker-remote.bats "never takes one is refused"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

@@ -673,6 +673,13 @@ forge__changed() {
 # which one is closed and one left where it was: **two hundred and twenty-four**
 # listings before, **four** after.
 #
+# And on the other entry point, which took the register for a month and never took
+# a reading with it ([84]): a three-iteration night over the same twelve tickets
+# asks for **a hundred and three** listings without this and **twenty-three** with
+# it. The two numbers are not the drain's because the moments are not the drain's
+# — a pass of the pilot, and the return of a session inside the iteration that
+# spawned it, which is the one place a fork can take a reading for itself.
+#
 # **In a variable and never in a file**, which is `budget__fetch`'s decision one
 # module over and for its reason: a cache on disk is a file the judged session can
 # write — in `.scratch/<feature>/` outright, and in `$TMPDIR` by the glob the
@@ -733,9 +740,15 @@ forge_cache_open() {
 #
 # **Always a fresh listing**, and that is the operation rather than an accident of
 # how it is written: a caller saying "take a reading here" is saying it at one of
-# the two moments where an older one would be wrong — the top of a ticket, and the
-# return of a session that may have written the tracker over the network, which no
-# register of this run, no snapshot and no witness of this pack sees at all ([18]).
+# the two moments where an older one would be wrong. Which two is the entry
+# point's to say and not this module's ([84]): for the drain they are the top of a
+# ticket and the return of the session it opened, and for a run they are the top
+# of a pass and the return of a session inside the iteration that spawned it. What
+# they have in common is the second one — a session that may have written the
+# tracker over the network, which no register of this run, no snapshot and no
+# witness of this pack sees at all ([18]) — and the shell it has to be taken in:
+# the one the reads below it will be forked from, which for an iteration is the
+# iteration and never the pilot ([83]).
 #
 # Silent, and non-zero when the tracker would not answer. A prime decides nothing:
 # the read that follows asks again and says what it could not do, in the sentence
