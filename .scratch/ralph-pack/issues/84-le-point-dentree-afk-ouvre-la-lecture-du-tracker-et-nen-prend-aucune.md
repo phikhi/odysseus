@@ -82,6 +82,21 @@
   issues avec `ITER_CAP 3` rend `rc=4` — c'est le plafond d'itérations, pas un
   refus — et le drain quitté par `q` rend `rc=5`.
 
+- **Contrainte écrite par [83], livré le 13/09/2026, et c'est la réponse que ce
+  ticket attendait.** « Comment un fork rend-il quelque chose au pilote ? » a une
+  réponse et c'est **non** : le pilote distribue (une variable non exportée est
+  héritée par chaque fork) et rien ne remonte. [83] en a tiré la forme à
+  reprendre ici — le pilote prend ce qu'il peut prendre avant le premier fork, et
+  **chaque fork répond de sa propre fenêtre**, dans sa propre mémoire. Ce que ça
+  vaut pour la lecture partagée de [75], qui vit elle aussi dans une variable du
+  pilote : une lecture prise par `loop.sh` est héritée par chaque itération et
+  **aucune itération ne peut la rafraîchir pour les autres** — donc la dernière AC
+  de ce ticket (« ce que la lecture devient dans un fork concurrent ») n'est pas
+  un cas limite à documenter en passant, c'est la contrainte qui décide *où*
+  `cache_prime` peut être appelé. Voir `lib/retro.sh`, bloc « what this run makes
+  after the seal was taken », et la ligne « pour s'en servir de témoin » du
+  tableau.
+
 ## Place dans la file
 
 Ouvert par la passe du 13/09/2026. **Ordre validé par Philippe le 13/09/2026,

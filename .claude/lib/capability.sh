@@ -460,6 +460,26 @@ capability__because() {
   esac
 }
 
+# How the ticket and the receipt name what was asked for. Two arms, two sentences,
+# and it was one until [83]: a proposal that crossed on `recurrent` is a
+# refinement of something this project **has**, and the ticket opened for it said
+# "a skill called `migrations` that this project does not have" at its head while
+# saying "Reuse what exists: this project already has a skill called
+# `migrations`" three paragraphs below. A human emptying the sink read the
+# contradiction inside one ticket, which is worse than either sentence alone.
+capability__lack() {
+  local bar="$1" kind="$2" name="$3"
+  case "$bar" in
+    uncovered)
+      printf 'a %s called `%s` that this project does not have' "$kind" "$name"
+      ;;
+    *)
+      printf 'a %s called `%s` that this project already has something for and that this run asked for again' \
+        "$kind" "$name"
+      ;;
+  esac
+}
+
 # The cheapest true answer, named in the ticket so that a human reads it before
 # the expensive one.
 capability__cheapest() {
@@ -528,7 +548,7 @@ capability_review() {
   slug="capability-$kind-$name"
   body="$(
     cat <<BODY
-**Proposal:** the retro subagent of an autonomous run named a capability this project does not have. Detecting one is not creating one, so nothing was built.
+**Proposal:** the retro subagent of an autonomous run named $(capability__lack "$bar" "$kind" "$name"). Detecting one is not creating one, so nothing was built.
 
 **What was asked**
 
@@ -569,10 +589,10 @@ BODY
   # `|| id=''`: the assignment already leaves `id` empty on a refusal, and the
   # status is the only thing that crosses the substitution.
   prc=0
-  id="$(printf '%s\n' "$body" | capability_propose "$slug" "a $kind called \`$name\` — a capability this run needed and does not have")" || prc=$?
+  id="$(printf '%s\n' "$body" | capability_propose "$slug" "$(capability__lack "$bar" "$kind" "$name") — a capability this run needed and this loop must not build")" || prc=$?
   if [ -n "$id" ]; then
     capability__log "$ticket: the retro named a capability this loop must not build — opened $id"
-    receipt_note "the retro named a $kind called \`$name\` that this project does not have, and this loop does not build capabilities: $id is on the human sink, with \"$decision\" as the cheapest answer"
+    receipt_note "the retro named $(capability__lack "$bar" "$kind" "$name"), and this loop does not build capabilities: $id is on the human sink, with \"$decision\" as the cheapest answer"
   elif [ "$prc" != 0 ]; then
     capability__log "$ticket: the retro named a capability this loop must not build and the tracker refused to open a ticket for it"
     receipt_note "the retro named a $kind called \`$name\` and the tracker refused to open a ticket for it — nothing is waiting for a human, so this is on nobody's list but this receipt"

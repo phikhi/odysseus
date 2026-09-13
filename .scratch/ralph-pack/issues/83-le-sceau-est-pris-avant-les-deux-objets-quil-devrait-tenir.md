@@ -6,13 +6,13 @@
 
 **Write-surface:** `.claude/lib/gate.sh`, `.claude/lib/retro.sh`, `.claude/lib/capability.sh`, `.claude/loop.sh`, `test/gate.bats`, `test/retro.bats`, `test/capability.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `ralph-retro.*/capability.seen` — le compteur d'observations de [15] — n'est plus une chose qu'une session peut écrire sans que rien ne le remarque. Le bras `recurrent` de `capability_bar` est franchi par ce que **le run** a compté, jamais par ce qu'une session a appendé.
-- [ ] `ralph-retro.*/brief.<id>` — ce que le gate a dit, recopié dans le prompt de la tentative suivante ([14]) — est tenu comme `ralph-retro.*/index` l'est depuis [81] : une session qui l'écrit est vue, ou son contenu vient d'ailleurs que d'un fichier qu'elle atteint.
-- [ ] Le mécanisme choisi dit **pourquoi le sceau de [81] ne pouvait pas les couvrir** : le sceau vit dans une variable du pilote et ces deux objets sont créés dans un `loop__iterate … &`, c'est-à-dire dans un fork qui ne peut rien remettre au pilote. Ce n'est pas un oubli, c'est la contrainte à traiter.
-- [ ] Ce que le mécanisme **n'achète pas** est écrit dans `docs/frontiere-de-confiance.md`, sur les lignes du compteur et du brief, avec ce qui les tient réellement ou l'aveu que rien ne les tient.
-- [ ] La phrase que `capability_review` met au reçu et en tête du ticket de proposition cesse de dire « *that this project does not have* » quand le bras franchi est `recurrent` — le même ticket dit aujourd'hui l'inverse trois paragraphes plus bas.
+- [x] `ralph-retro.*/capability.seen` — le compteur d'observations de [15] — n'est plus une chose qu'une session peut écrire sans que rien ne le remarque. Le bras `recurrent` de `capability_bar` est franchi par ce que **le run** a compté, jamais par ce qu'une session a appendé.
+- [x] `ralph-retro.*/brief.<id>` — ce que le gate a dit, recopié dans le prompt de la tentative suivante ([14]) — est tenu comme `ralph-retro.*/index` l'est depuis [81] : une session qui l'écrit est vue, ou son contenu vient d'ailleurs que d'un fichier qu'elle atteint.
+- [x] Le mécanisme choisi dit **pourquoi le sceau de [81] ne pouvait pas les couvrir** : le sceau vit dans une variable du pilote et ces deux objets sont créés dans un `loop__iterate … &`, c'est-à-dire dans un fork qui ne peut rien remettre au pilote. Ce n'est pas un oubli, c'est la contrainte à traiter.
+- [x] Ce que le mécanisme **n'achète pas** est écrit dans `docs/frontiere-de-confiance.md`, sur les lignes du compteur et du brief, avec ce qui les tient réellement ou l'aveu que rien ne les tient.
+- [x] La phrase que `capability_review` met au reçu et en tête du ticket de proposition cesse de dire « *that this project does not have* » quand le bras franchi est `recurrent` — le même ticket dit aujourd'hui l'inverse trois paragraphes plus bas.
 
 ## Comments
 
@@ -180,3 +180,141 @@ jamais l'urgence.
    il est plus court écrit après [83], qui touche `test/gate.bats` de toute façon.
 
 Arêtes réelles de ce ticket : [15], [14], [81], [40], [30], [13].
+
+## Livré le 13/09/2026
+
+- **La sortie choisie est la deuxième, généralisée — et les deux autres sont
+  refusées avec leur raison, pas écartées.**
+
+  *Le pilote rescelle* (sortie 1) : la fenêtre dans laquelle le geste a lieu
+  n'est pas celle que `loop__reap` voit. La session de l'itération N écrit
+  *pendant* N ; un sceau refait à la reprise de N scellerait ce qu'elle vient
+  d'écrire, c'est-à-dire le même défaut un tour plus tard, et avec l'air d'un
+  contrôle.
+
+  *Le lecteur refuse* (sortie 3) : il n'y a pas de canal pour porter le refus.
+  La détection a lieu dans le fork N et le lecteur du brief est le fork N+1 —
+  entre les deux il n'y a que le disque, qu'une session atteint, et le pilote,
+  qu'un fork n'atteint pas. **Le retrait *est* ce refus-là**, et c'est le seul
+  qui traverse un fork : un objet qui n'est plus là n'est lu par personne.
+
+  *Chacun son hold* (sortie 2), donc, mais pris une fois pour le porteur entier
+  au lieu d'une fois par objet : `retro_hold_state` prend, dans la mémoire du
+  fork et avant que sa session existe, `chemin<TAB>digest` de tout ce que le
+  porteur du rétro contient **et que le sceau du run ne couvre pas déjà**.
+
+- **Ce qui rend la question décidable est une propriété du pack, et elle est
+  écrite là où elle peut être relue** : rien dans ce pack n'écrit au premier
+  niveau de ce répertoire entre le premier et le dernier jeton d'une session —
+  le prompt est rendu avant le spawn (`retro_index` y crée et y détruit un
+  sous-répertoire, que le recensement ne voit pas : il ne compte que les
+  fichiers réguliers du premier niveau), le brief est gardé et le compteur
+  appendé après le gate. Donc un fichier qui apparaît, change ou disparaît là
+  pendant qu'une session tourne a été écrit par elle. C'est la **fenêtre** qui
+  tient, jamais le nom — la leçon de [80] et de la passe du 10/09.
+
+- **La dérivation est le critère et pas une liste**, et c'est ce que [81] avait
+  réussi un répertoire plus haut : ce dont l'itération répond est *tout ce que le
+  sceau du run ne couvre pas*. `gate_witness_paths` est neuf et public pour ça —
+  il rend les chemins du sceau, et **non zéro quand il n'y a pas de sceau**,
+  parce que « pas dans le recensement » et « pas de recensement » sont deux
+  réponses et qu'un lecteur qui les confondrait tiendrait l'index des leçons
+  contre une liste que personne n'a prise. Un troisième objet rangé dans ce
+  porteur demain est tenu par la ligne qui le crée et par rien d'autre.
+
+- **La zone exclue a un gardien nommé, à une ligne de là** (corollaire de la
+  règle 5) : ce que le sceau couvre est l'affaire de `gate_witness_note`, et
+  l'index des leçons est **remis** par `retro_index_note`, parce que ce run le
+  republie exprès. Un recensement qui en aurait répondu aussi l'aurait remis deux
+  fois et l'aurait dit deux fois, et la phrase sur la leçon d'un frère serait
+  sortie d'une fonction qui ne sait rien des leçons. Le test
+  « *answers for what the run's seal cannot cover, and for nothing else* » met
+  les deux gardiens dans le même script.
+
+- **Retiré et pas remis, et l'argument est le prix comparé.** Remettre demande de
+  garder en mémoire le contenu d'un ensemble **ouvert** de fichiers que ce module
+  ne possède pas, et n'achète qu'une chose de plus : empêcher une session de
+  *faire taire* l'un des deux objets — ce qu'un `rm` lui permettait déjà avant ce
+  ticket. Ce que le retrait coûte quand il tire est écrit : un brief que la
+  tentative suivante n'a pas (une session qui redécouvre ce que sa lentille a
+  dit) et un compte qui repart (une proposition remise à plus tard). Ce qu'il
+  refuse est ce que le ticket demandait : qu'un de ces objets **dise quelque
+  chose** que le run n'a pas écrit.
+
+- **La question que [81] avait refusé de trancher est tranchée : un compteur
+  n'est pas un témoin de plus.** Le mode `grows` du sceau tient un registre à sa
+  *longueur*, donc il admettrait exactement l'écriture à refuser — une ligne
+  appendue, indiscernable d'une ligne légitime ([80]). Ce qui tient un compteur
+  est la fenêtre dans laquelle il a été appendu ; sa forme ne tient rien. C'est
+  écrit dans `lib/retro.sh` et sur la ligne du compteur du tableau.
+
+- **Au-dessus de `MAX_PARALLEL=1`, rien n'est retiré** — un frère écrit là
+  légalement pendant cette session — la ligne est dite et le fichier reste. Même
+  aveu que `retro_index_note` et que [80] un glob plus loin, et le test le mesure
+  dans les deux sens (`on disk: []` séquencé, contenu intact en parallèle).
+
+- **Un run qui n'a pas pu prendre son sceau ne prend pas de recensement non
+  plus**, et `loop.sh` le dit sur la ligne qui échoue à le prendre (une clause
+  ajoutée à la phrase de [81]). Le test « *a run that took no seal takes no
+  census either* » existe pour la raison inverse de ce qu'on croit : un
+  recensement pris sans sceau tiendrait l'index, donc remettrait deux fois.
+
+- **Le défaut de rédaction, corrigé en une fonction plutôt qu'en trois chaînes**
+  (`capability__lack`) : le reçu, le titre et la tête du corps passent par elle,
+  donc le bras `recurrent` ne peut plus dire « *that this project does not
+  have* » trois paragraphes au-dessus de « *this project already has a skill
+  called `migrations`* ». Le test lit le ticket ouvert **et** le reçu.
+
+## Ce que le code ne dit pas
+
+- **Ce qui tourne hors de la fenêtre est nommé et pas tu** : les lentilles du
+  gate et la session du rétro sont des `claude` qui démarrent *après* la question
+  posée ici. Ce qui les empêche d'écrire dans ce porteur est `lenses_posture`,
+  c'est-à-dire le `--tools` vérifié contre le vrai binaire ([20]) — rien de ce
+  répertoire-ci, et pas le snapshot d'arbre du gate, qui ne voit pas `$TMPDIR`.
+  Écrit sur la ligne « pour s'en servir de témoin » du tableau.
+
+- **Contrainte écrite dans [84]** (règle 8) : la question « comment un fork
+  rend-il quelque chose au pilote ? » a une réponse et c'est **non** — le pilote
+  distribue, le fork répond de sa propre fenêtre. [84] hérite ça pour la lecture
+  partagée de [75], qui vit elle aussi dans une variable du pilote.
+
+- **Les quatre pièges de harnais**, dont trois étaient déjà dans le README des
+  sondes et le quatrième est neuf :
+  1. `script_claude` remplace le faux **entier**, rétro compris (le shim fait
+     `exec` avant les branches du rétro), donc le test du compteur rend lui-même
+     la réponse du rétro, exactement comme la sonde Q3.
+  2. Le bras `recurrent` demande que le projet **couvre** déjà le nom
+     (`capability_bar` sort sur `uncovered` avant de toucher au compteur) : le
+     test crée `.claude/skills/migrations` dans le projet, non commité, ce qui
+     suffit puisque `capability__roots` lit l'arbre principal.
+  3. Le reçu du bras `below-bar` ne porte pas le mot « capability » : les deux
+     motifs assertés sont « *counted, not proposed* » et « *1/2 sighting(s)* ».
+  4. **Neuf** : `grep -c` imprime `0` **et** sort en `1`, donc un
+     `grep -c … || printf '0\n'` dans un test imprime deux zéros. Le test de
+     `gate_witness_paths` dit `|| true`.
+
+- **Aucune entrée de `test/mutate.sh` n'a dérivé** : l'insertion de
+  `retro_hold_state` juste après `retro_hold_index` laisse intacte l'ancre de
+  « 81 the iteration holds no copy of the index it was handed », et les quatre
+  lignes retirées de `.claude/` sont les quatre chaînes réécrites à la main
+  (trois de `capability.sh`, une de `loop.sh`).
+
+## Les deux gates
+
+- `bash test/run.sh` : **904 tests, 6 skips opt-in** (895 + 9 neufs : cinq dans
+  `test/retro.bats`, trois dans `test/capability.bats`, un dans `test/gate.bats`),
+  **un rouge** — `a lens the gate's own deadline killed is not read as a refusal`
+  (`test/budget.bats`), membre nommé de la famille instable de [38].
+  **Disculpé par la voie structurelle de [57]** plutôt que par l'alternance :
+  `git diff main -- .claude/lib/monitor.sh .claude/lib/lenses.sh
+  .claude/lib/session.sh` rend **zéro** ligne non-commentaire — ce sont les trois
+  libs qui décident « *timed out after 1s* » contre « *exit 1* » ; la seule
+  addition de `gate.sh` est `gate_witness_paths`, dont l'unique appelant est
+  `retro.sh` ; les deux lignes ajoutées à `loop.sh` sont hors de la phase de gate
+  et la troisième est une chaîne de journal dans la branche « pas de sceau » ; et
+  `test/budget.bats` ne nomme ni le rétro ni les capacités (un seul `grep` touche,
+  dans un commentaire). Revérifié ensuite : **5 fois sur 5 vert en isolé**, et
+  `test/budget.bats` entier **32 tests, 0 failures**.
+- `bash test/mutate.sh` : **934 mutations, 0 not ok** (924 + 10 neuves), aucune
+  DRIFTED.

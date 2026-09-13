@@ -6064,6 +6064,84 @@ mutation "75 the drain leaves its workspace where the next one counts it" "$HUMA
   's#  \[ -z "\$HUMAN_LOOP__STATE" \] \|\| rm -rf "\$HUMAN_LOOP__STATE"\n##' \
   test/human-loop.bats "workspace of its own"
 
+# ── [83] the seal is taken before the two objects it should hold ─────────────
+#
+# [81] sealed twelve objects and its own comment said what it could not: "a
+# thirteenth object put in one of these directories tomorrow is sealed by the line
+# that creates it and by nothing else". Two of them were already there — the brief
+# of a retried ticket ([14]) and the count of what a retro asked for ([15]) — both
+# created inside a `loop__iterate … &`, so after the pilot took its seal and inside
+# a fork that can put nothing back into it. Measured on a real run: a forged brief
+# reached the next prompt verbatim and a forged sighting opened a proposal on the
+# human sink, both at `rc=0` and in silence.
+#
+# What holds them is the **window** and not a name ([80]): nothing in this pack
+# writes at the top of that directory while a session runs. Every entry below
+# either takes the census away, or takes away what it is derived from, or takes
+# away the disposition — and the last one matters on its own, because a night that
+# names a forgery and serves it anyway is the half-truth this repository keeps
+# paying for.
+
+# The census itself, at both ends: the iteration that takes it and the run that
+# asks for it. Without either, the brief a session forged is the brief the next
+# prompt carries.
+mutation "83 the iteration takes no census of what the seal cannot cover" "$LOOP" \
+  's/  retro_hold_state \|\| true\n//' \
+  test/retro.bats "forged for another ticket"
+
+mutation "83 the run never asks what its own iteration made" "$LOOP" \
+  's/^\$\(retro_state_note \|\| true\)\n//m' \
+  test/capability.bats "does not cross the bar"
+
+mutation "83 what a session wrote in the lesson workspace is never named" "$RETRO" \
+  's/^retro_state_note\(\) \{/retro_state_note() { return 1;/m' \
+  test/retro.bats "forged for another ticket"
+
+# The disposition. Naming is not enough here and that is the difference between
+# this and the capability witness: what reads these two objects next is a prompt
+# and a bar, neither of which has a fallback to fall back to.
+mutation "83 a file a session put there is named and left where it is" "$RETRO" \
+  's/    rm -f "\$path" 2>\/dev\/null \|\| true\n//' \
+  test/capability.bats "does not cross the bar"
+
+# And the one place it must not happen: above MAX_PARALLEL=1 a sibling writes in
+# that directory legally, and removing its brief would answer a question nobody
+# asked ([80], [81]).
+mutation "83 a sibling's write is removed as a forgery" "$RETRO" \
+  's/  if concurrency_may_overlap; then overlap=1; fi/  overlap=0/' \
+  test/retro.bats "named above MAX_PARALLEL=1"
+
+# The arm that carries both of the objects this ticket is about: they are
+# *created* under the session, so a census that only compared what it already held
+# would be blind to exactly the two cases measured.
+mutation "83 a file that was not there before the session is not a file" "$RETRO" \
+  's/    was="\$\(retro__state_digest "\$held" "\$path"\)"\n/    was="\$(retro__state_digest "\$held" "\$path")"\n    [ -n "\$was" ] || continue\n/' \
+  test/capability.bats "does not cross the bar"
+
+# The derivation. What the iteration answers for is everything the run's seal does
+# not already cover — so a third object put there by a later ticket is held by the
+# line that creates it, and the lesson index, which the seal does cover, is left to
+# the keeper one line above.
+mutation "83 the iteration answers for what the seal already covers too" "$RETRO" \
+  's/    if printf .%s\\n. "\$sealed" \| grep -Fxq -- "\$path"; then continue; fi\n//' \
+  test/retro.bats "seal cannot cover, and for nothing else"
+
+mutation "83 a census is taken where no seal was taken" "$RETRO" \
+  's/  sealed="\$\(gate_witness_paths\)" \|\| return 1/  sealed="\$(gate_witness_paths)" || sealed=\x27\x27/' \
+  test/retro.bats "took no seal takes no census"
+
+# And the two answers the seal owes a reader: "not in the census" and "there is no
+# census" send a reader to two different places.
+mutation "83 a run with no seal has a seal that covers nothing" "$GATE" \
+  's/  local seal="\$\{RALPH_WITNESS_SEAL:-\}"\n  \[ -n "\$seal" \] \|\| return 1\n  printf .%s\\n. "\$seal" \| cut -f1/  local seal="\$\{RALPH_WITNESS_SEAL:-\}"\n  printf \x27%s\\n\x27 "\$seal" | cut -f1/' \
+  test/gate.bats "seal says what it covers"
+
+# The rédaction defect found in passing, and it is one ticket contradicting itself
+# rather than two documents disagreeing.
+mutation "83 a refinement is proposed as a hole" "$CAPABILITY" \
+  's/      printf \x27a %s called `%s` that this project already has something for and that this run asked for again\x27 \\\n        "\$kind" "\$name"/      printf \x27a %s called `%s` that this project does not have\x27 "\$kind" "\$name"/' \
+  test/capability.bats "does not say the project has nothing"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
