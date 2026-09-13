@@ -479,10 +479,22 @@ tracker_sidecar_drift() { tracker__dispatch sidecar_drift "$@"; }
 # and says what it could not do, in the sentence that belongs to it ([64] — a
 # refusal said twice is a refusal a human learns to skip).
 #
-# **And neither call is one an entry point may skip on a hunch**: the two moments
-# `cache_prime` is called are the two where a reading taken earlier would be wrong
-# — the top of a ticket, and the return of a session that may have written the
-# tracker where nothing of this pack can see it.
+# **And neither call is one an entry point may skip on a hunch.** Every entry
+# point that opens one of these has two moments where a reading taken earlier
+# would be wrong, and it has to name **its own**: the drain is sequential and a
+# run has iterations in flight, so the two are not the same two. The drain's are
+# the top of a ticket and the return of the session it just opened. The run's are
+# the top of a *pass* — its frontier is a scan with no memory ([04]), and its
+# pilot collects, sweeps, scans and claims out of forks of one shell — and the
+# return of a session, which happens in the **iteration** and never in the pilot,
+# because a fork hands nothing back to the shell that forked it ([83], [84]).
+#
+# **And the clause is no longer this paragraph**, which is what [84] found out
+# about it: `loop.sh` took the register — so the cost of feeding it at every write
+# this run makes — and took no reading at all for a month, and an AFK night paid
+# that invalidation for three percent of what it buys. `test/tracker-remote.bats`
+# derives the entry points from the pack itself and fails on one that opens
+# without ever priming.
 tracker_cache_open() { tracker__dispatch cache_open "$@"; }
 tracker_cache_prime() { tracker__dispatch cache_prime "$@"; }
 

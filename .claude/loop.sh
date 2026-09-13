@@ -767,6 +767,27 @@ $(retro_index_note || true)
 $(retro_state_note || true)
 WITNESSES
 
+  # And a reading of the tracker taken **after** that session, in this
+  # iteration's own memory ([75], [84]). The second of the two moments this entry
+  # point has, and the reason it is here rather than in the pilot is [83]'s answer
+  # to "how does a fork hand something back to the shell that forked it": it does
+  # not. The session that may have written this tracker over the network — the one
+  # write no register of this run, no snapshot and no witness of this pack sees at
+  # all ([18]) — is *this* shell's session; it returned long after the pilot
+  # forked, and nothing taken here reaches the pilot or a sibling. Each iteration
+  # answers for its own window.
+  #
+  # What it buys is most of what an AFK night pays: everything below reads the
+  # tracker out of substitutions forked from here — the restore, the `Failures:`
+  # this attempt is counted on, the quarantine of what the session wrote into the
+  # tracker itself, and the scope-guard's walk of every id for the write-surface
+  # it is judged against.
+  #
+  # After the orphan guard above, so that an iteration whose run is gone pays for
+  # no request, and before the first of those reads rather than among them: a
+  # reading taken further down is one the lines above it already went without.
+  tracker_cache_prime || true
+
   # Before the gate reads a single field out of the tracker: the write-surface
   # it is about to judge against is a line in a file the session could just have
   # rewritten to `*`. Putting the tickets back first is what makes the guard
@@ -1834,6 +1855,37 @@ UNCOVERED
   LOOP_SLOTS=''
 
   while :; do
+    # One reading of the tracker for this pass, taken here in the pilot's own
+    # shell ([75], [84]). The first of the two moments this entry point has, and
+    # they are **not** the drain's: "the top of a ticket" is not a moment a run
+    # has at all. The pass is the unit — this pack's frontier is a scan with no
+    # memory ([04]), re-derived every time round — and everything below reads the
+    # tracker out of a command substitution forked from here: the ids in flight,
+    # the liveness sweep over every claim, the frontier itself, and the
+    # write-surface each candidate is compared on.
+    #
+    # Ahead of `loop__reap`, and that is the placement rather than the order it
+    # happened to be written in: `loop__finish` runs in *this* shell — it writes
+    # the run's own counters, which is why it may never be a subshell — and it
+    # reads the status of a ticket whose session has just returned. A reading
+    # taken after the reap would leave the pass's first reader served from the
+    # pass before it.
+    #
+    # What an iteration in flight does to this reading is the other half, and the
+    # answer is [83]'s: a fork hands nothing back, so nothing below refreshes this
+    # one for the pilot, and nothing this shell takes reaches an iteration that
+    # already exists. What does cross is the register — a file, one line per write
+    # this run makes to its tracker — and it travels one way only: it can stop a
+    # reading being served, never renew one. So a sibling's write is seen here as
+    # "read the tracker again", which is the safe direction, and what neither the
+    # register nor this line covers is bounded by `FORGE_CACHE_TTL`.
+    #
+    # Never a reason to stop, which is the one clause an entry point calling this
+    # has to know: a backend that keeps no such reading and a tracker that would
+    # not answer refuse the same way, and the read that follows asks again and
+    # says what it could not do ([64]).
+    tracker_cache_prime || true
+
     # Whatever finished since the last pass, read back into this run's counters
     # before a single decision is taken on them. Non-blocking: the pilot has
     # scheduling to do, and blocking is what it does when it cannot.

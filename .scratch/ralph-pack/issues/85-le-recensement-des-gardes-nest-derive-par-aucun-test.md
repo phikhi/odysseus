@@ -15,6 +15,18 @@
 
 ## Comments
 
+- **Précédent écrit par [84], livré le 13/09/2026.** La même forme de recensement
+  existe maintenant dans `test/tracker-remote.bats` — « *an entry point that opens
+  this reading and never takes one is refused* » — et ses trois traits sont ceux
+  que ce ticket-ci demande : la liste est **dérivée** du pack
+  (`"$PACK_DIR"/*.sh`, le même glob que `test/layering.bats`), les commentaires
+  sont retirés d'abord (un paragraphe qui nomme l'appel n'est pas un appel), et un
+  recensement **vide** est un échec et non un vert. Ce qu'il ne fait pas et que
+  [85] doit faire en plus : il ne demande rien au pack lui-même — il compte des
+  appels, là où la couverture d'un garde doit être **résolue par**
+  `gate__guard_paths`.
+
+
 - **Trouvé à la passe transversale du 13/09/2026**
   (`../passe-transversale-13-09.md`, §3). Sonde :
   `../sondes/passe-13-09/q5-le-recensement-des-gardes-nest-derive-par-aucun-test.bats`.

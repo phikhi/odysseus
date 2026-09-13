@@ -254,7 +254,7 @@ la dérivation ne pourrait pas voir. C'est la forme exacte à reprendre. Repris 
 | | Titre | Ce qu'il ferme |
 |---|---|---|
 | **[83]** | Le sceau est pris avant les deux objets qu'il devrait tenir | §1 — `capability.seen` et `brief.<id>`, plus la phrase contradictoire de `capability_review` |
-| **[84]** | Le point d'entrée AFK ouvre la lecture du tracker et n'en prend aucune | §2 — la clause de [75] sautée par `loop.sh`, 93 listings contre 2 |
+| **[84]** ✅ livré | Le point d'entrée AFK ouvre la lecture du tracker et n'en prend aucune | §2 — la clause de [75] sautée par `loop.sh`, 93 listings contre 2. **Livré le 13/09/2026** : deux moments (une passe du pilote, le retour de session dans l'itération), **23** listings contre **103** — 78 % au lieu de 3 % — et la clause tenue par un recensement dérivé et non plus par un paragraphe |
 | **[85]** | Le recensement des gardes n'est dérivé par aucun test | §3 — la seconde moitié de la question de [77] |
 
 **Ordre validé par Philippe le 13/09/2026** : [83] → [84] → [85], puis [73] → [19].

@@ -292,3 +292,26 @@ Deux conséquences pour ce ticket-ci :
   le tracker ticket par ticket est le geste que [75] a retiré du drain.
 
 **File validée par Philippe le 13/09/2026 : [83] → [84] → [85] → [73] → [19].**
+
+### [84] est livré (13/09/2026) — c'est donc la première branche qui s'applique
+
+Le chemin AFK prend maintenant **deux** lectures : une par passe du pilote (en
+tête du `while` de `loop_main`, devant `loop__reap`) et une dans **l'itération**
+au retour de sa session (`loop__iterate`, avant `failures_protect_tracker`). La
+mesure est passée de 93/96 à **23/103** — 78 % au lieu de 3 %.
+
+Ce que ce ticket-ci doit tenir, en clair :
+
+- **Une restauration du tracker est une écriture du tracker.** Si elle passe par
+  `forge__update` / `forge__create`, `forge__changed` appende au registre toute
+  seule et il n'y a rien à faire. Si elle écrit par un autre chemin, elle doit
+  appeler ce qui appende — sinon la lecture que l'itération vient de prendre
+  survit à ce que la restauration a remis, pendant ce qu'il reste de
+  `FORGE_CACHE_TTL`, et le scope-guard juge contre la write-surface d'avant.
+- **Et la restauration tourne au même endroit que le prime n° 2** — juste après la
+  session, dans le shell de l'itération. Un `forge__forget` y suffit pour ce
+  shell ; ce qui traverse jusqu'aux frères est l'appende au registre, et rien
+  d'autre. Un fork ne rend rien au pilote ([83]).
+- Le recensement de `test/tracker-remote.bats` (« *an entry point that opens this
+  reading and never takes one is refused* ») est dérivé de `"$PACK_DIR"/*.sh` : un
+  troisième point d'entrée ajouté par ce ticket doit primer, ou rougir.
