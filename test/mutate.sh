@@ -693,11 +693,15 @@ mutation "21 nothing guards the tracker from a session" "$FAILURES" \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 the tracker is only watched through its ids" "$LOOP" \
-  's/  failures_protect_tracker "\$ticket" "\$issues" "\$mark" \|\| tracker_written=1\n//' \
+  's/  failures_protect_tracker "\$ticket" "\$tracker_pin" "\$mark" \|\| tracker_written=1\n//' \
   test/failures.bats "not given"
 
-mutation "21 an edit to a ticket is not put back" "$FAILURES" \
-  's/        GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$path" 2>\/dev\/null \|\|\n          failures__gap "\$ticket: could not restore \$path"/        :/' \
+# Re-anchored by [73], which moved the transport of this guard into the adapter
+# that owns the storage: the `checkout-index` is `tracker-local.sh`'s now, and the
+# guarantee — what a session edited is put back — is unchanged and still carried by
+# the same canary.
+mutation "21 an edit to a ticket is not put back" "$TRACKER" \
+  's/  GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$dir\/\$id.md" 2>\/dev\/null \|\| rc=1/  :/' \
   test/canary.bats "widen its own write-surface"
 # Re-anchored by [81], which put `retro_hold_index` between the snapshot and the
 # spawn: the edit is the same move — read the tracker *after* the session — split
@@ -705,7 +709,7 @@ mutation "21 an edit to a ticket is not put back" "$FAILURES" \
 # it drift again.
 
 mutation "21 the write-surface is read after the session, not at spawn" "$LOOP" \
-  's/  issues="\$\(failures_tracker_tree\)" \|\| issues=""\n//; s/  loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?\n/  loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n  issues="\$(failures_tracker_tree)" || issues=""\n/' \
+  's/  tracker_pin="\$\(tracker_snapshot\)" \|\| tracker_pin=""\n//; s/  loop_spawn_session "\$ticket" "\$outfile" \|\| rc=\$\?\n/  loop_spawn_session "\$ticket" "\$outfile" || rc=\$?\n  tracker_pin="\$(tracker_snapshot)" || tracker_pin=""\n/' \
   test/canary.bats "widen its own write-surface"
 
 mutation "21 an edited tracker still buys a green iteration" "$LOOP" \
@@ -716,12 +720,15 @@ mutation "21 an edited tracker is journalled as a plain red gate" "$LOOP" \
   's/      \[ "\$tracker_written" = 0 \] \|\| outcome=tracker-write\n//' \
   test/failures.bats "pays for the edit"
 
-mutation "21 a ticket the session created is restored away, not quarantined" "$FAILURES" \
-  's/      A\)\n        # Left where it is/      A-never)\n        # Left where it is/' \
+# The two below moved with the transport too ([73]): what an addition is worth is
+# still the guard's decision, but which git status *is* one is the local adapter's,
+# and that is the line these take out.
+mutation "21 a ticket the session created is restored away, not quarantined" "$TRACKER" \
+  's/^      A\) printf/      A-never) printf/m' \
   test/failures.bats "quietly restored away"
 
-mutation "21 a ticket the session deleted counts as one it created" "$FAILURES" \
-  's/      A\)\n        # Left where it is/      A | D)\n        # Left where it is/' \
+mutation "21 a ticket the session deleted counts as one it created" "$TRACKER" \
+  's/^      A\) printf/      A | D) printf/m' \
   test/failures.bats "deletes the whole tracker"
 
 # Re-aimed by [34], which turned the single `git add` of this branch into a loop
@@ -739,17 +746,76 @@ mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
   's/    failures__gap "\$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"\n    return 1/    return 0/' \
   test/failures.bats "vouch for"
 
-mutation "21 the tracker the session staged stays staged" "$FAILURES" \
+mutation "21 the tracker the session staged stays staged" "$TRACKER" \
   's/  git -C "\$root" reset -q -- "\$dir" 2>\/dev\/null \|\| true\n//' \
   test/failures.bats "stay staged"
 
 mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" \
-  's/  if ! failures_protect_tracker "\$ticket" "\$issues" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  's/  if ! failures_protect_tracker "\$ticket" "\$tracker_pin" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
   test/failures.bats "edits the tracker has its whole plan"
 
 mutation "21 a session's own commit survives its green gate" "$FAILURES" \
   's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "\$ticket: the session committed/' \
   test/failures.bats "green gate either"
+
+# ── [73] what a session writes in the tracker of a remote backend ────────────
+
+# The whole of the restore, on a backend whose tickets are issues. Without it the
+# session's edit stands and the scope-guard reads the surface it granted itself.
+mutation "73 nothing puts back what a session wrote on a forge" "$FORGE" \
+  's/^forge_snapshot_restore\(\) \{/forge_snapshot_restore() { return 0;/m' \
+  test/tracker-remote.bats "edits its own issue over the network is put back"
+
+# The comparison itself: a backend answering "nothing moved" about a tracker it
+# has just read is the silence [18] measured, reached one layer lower.
+mutation "73 nothing on a forge ever reads as moved" "$FORGE" \
+  's/^forge_snapshot_moved\(\) \{/forge_snapshot_moved() { return 0;/m' \
+  test/tracker-remote.bats "edits its own issue over the network is put back"
+
+# A listing that refuses, read as a tracker holding nothing: every ticket then
+# reads as one the session deleted, and the guard rewrites the lot.
+mutation "73 a refused listing is an empty tracker" "$FORGE" \
+  's/  now="\$\(forge__records "\$flavour"\)" \|\| return 2/  now="\$(forge__records "\$flavour")" || now=\x27\x27/' \
+  test/tracker-remote.bats "would not answer after a session rewrites nothing"
+
+# The reads the restore makes, and the clause of [82] on them: a refusal read as a
+# value is a ticket rewritten with what nobody read — and the writer here is a
+# control, on somebody else's ticket.
+mutation "73 the restore writes on a reading it never took" "$FORGE" \
+  's/  rec_n="\$\(forge__record "\$flavour" "\$id"\)" \|\| return 1/  rec_n="\$(forge__record "\$flavour" "\$id")" || rec_n=\x27\x27/' \
+  test/tracker-remote.bats "would not answer after a session rewrites nothing"
+
+# One issue reading as two tickets. An id here is `<number>-<slug>` and the slug
+# comes out of the body, so a session rewriting its own `Slug:` line changes its id
+# without changing its ticket.
+mutation "73 the comparison is keyed on the id and not the number" "$FORGE" \
+  's/      if \(\$1 != ""\) \{ was\[\$1\] = \$0; slug\[\$1\] = \$2; had\[\$1\] = 1 \}/      if (\$1 != "") { was[\$1 \$2] = \$0; slug[\$1 \$2] = \$2; had[\$1 \$2] = 1 }/; s/      if \(!\(\$1 in had\)\) \{ print "added", \$1, \$2; next \}\n      if \(\$0 != was\[\$1\]\) print "edited", \$1, slug\[\$1\]/      if (!((\$1 \$2) in had)) { print "added", \$1, \$2; next }\n      if (\$0 != was[\$1 \$2]) print "edited", \$1, slug[\$1 \$2]/' \
+  test/tracker-remote.bats "slug the session rewrote is one ticket"
+
+# An assignee this pack never stamped, written back by a restore that has no verb
+# for it: a claim nobody measured, on somebody else's ticket.
+mutation "73 the restore invents an assignee it never read" "$FORGE" \
+  's/    \[ -z "\$was_who" \] \|\| return 1\n//' \
+  test/tracker-remote.bats "assignee a session added is taken off"
+
+# The state half of the same record. It changes nothing this pack reads and
+# everything a human reads: the project's tracker says the ticket is done.
+mutation "73 an issue a session closed stays closed" "$FORGE" \
+  's/  if \[ "\$was_state" != "\$now_state" \]; then\n    case "\$was_state" in\n      closed\) forge__close "\$flavour" "\$id" \|\| return 1 ;;\n      \*\) forge__reopen "\$flavour" "\$id" \|\| return 1 ;;\n    esac\n  fi\n//' \
+  test/tracker-remote.bats "issue a session closed is opened again"
+
+# A restore is a write of the tracker: noted in the register of [13] so a sibling's
+# guard does not undo it, and appended to the register of [75] so the reading this
+# iteration took stops being served over what was just put back.
+mutation "73 a restore is not a write of the tracker" "$TRACKER_IFACE" \
+  's/ \| cache_open \| cache_prime \| snapshot \| snapshot_moved\)/ | cache_open | cache_prime | snapshot | snapshot_moved | snapshot_restore)/' \
+  test/tracker-remote.bats "restore is a write of the tracker"
+
+# The local backend keeps its own refusal: a tracker it could not compare is not a
+# tracker nothing moved in.
+mutation "73 a comparison nobody could make is nothing having moved" "$TRACKER" \
+  's/  after="\$\(tracker_local_snapshot\)" \|\| return 2/  after="\$(tracker_local_snapshot)" || return 0/' \
+  test/failures.bats "one unreadable ticket file does not make every ticket look deleted"
 
 # ── [12] claim liveness ──────────────────────────────────────────────────────
 
@@ -2230,7 +2296,7 @@ mutation "13 the sweep is not told what is in flight" "$LOOP" \
 # assignment now appears in both guards, and an anchor matching both would edit
 # the first and report VACUOUS about a healthy test.
 mutation "13 the tracker guard does not know what the loop wrote" "$FAILURES" \
-  's/  ours="\$\(failures__register_since "\$mark"\)"\n  idx=/  ours=" "\n  idx=/' \
+  's/  ours="\$\(failures__register_since "\$mark"\)"\n\n  while/  ours=" "\n\n  while/' \
   test/failures.bats "the loop wrote itself is left alone"
 
 # Both entries name the lib-level test and not the parallel run, and that is a
@@ -2328,7 +2394,7 @@ mutation "40 the register is handed to the session in its environment" "$LOOP" \
 # and then put back `claimed` under a pid nobody will release — while the line
 # saying the tracker was edited is a symptom the fix could route around.
 mutation "42 the re-slice hands its guard the register" "$FAILURES" \
-  's/  if ! failures_protect_tracker "\$ticket" "\$issues" "\$mark"; then/  if ! failures_protect_tracker "\$ticket" "\$issues"; then/' \
+  's/  if ! failures_protect_tracker "\$ticket" "\$tracker_pin" "\$mark"; then/  if ! failures_protect_tracker "\$ticket" "\$tracker_pin"; then/' \
   test/concurrency.bats "a re-slice beside a marking"
 
 # Anchored on the line *after* it: the same assignment appears in
@@ -2733,7 +2799,7 @@ mutation "10 the attempt is always the first one" "$LOOP" \
 # other takes a listing into the calling shell, and neither writes a ticket any
 # guard over `issues/` will compare. Re-checked before the anchor moved.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift \| cache_open \| cache_prime\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift \| cache_open \| cache_prime \| snapshot \| snapshot_moved\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime | snapshot | snapshot_moved)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -3365,16 +3431,16 @@ mutation "39 the language gate judges a name it cannot read" "$LANGLIB" \
 # separate entries: everything this pack leaves in there fails the suffix, and only
 # a session can produce a `.md` one level down.
 
-mutation "49 anything beside a ticket is a ticket" "$FAILURES" \
+mutation "49 anything beside a ticket is a ticket" "$TRACKER" \
   's/    "\$dir"\/\*\.md\) ;;/    "\$dir"\/*) ;;/' \
   test/failures.bats "atomic write's temp file that vanished"
 
-mutation "49 a .md below the tracker is a ticket" "$FAILURES" \
+mutation "49 a .md below the tracker is a ticket" "$TRACKER" \
   's/  rest="\$\{path#"\$dir"\/\}"\n  case "\$rest" in\n    \*\/\*\) return 1 ;;\n  esac\n//' \
   test/failures.bats "is not a ticket is named"
 
-mutation "49 the guard restores whatever moved in there" "$FAILURES" \
-  's/    if ! failures__is_ticket_path "\$path" "\$dir"; then\n      others="\$\(failures__append_line "\$path" "\$others"\)"\n      others_n=\$\(\(others_n \+ 1\)\)\n      continue\n    fi\n//' \
+mutation "49 the guard restores whatever moved in there" "$TRACKER" \
+  's/    if ! tracker_local__is_ticket_path "\$path" "\$dir"; then\n      printf [^\n]*\n      continue\n    fi\n//' \
   test/failures.bats "claim guard a sibling dropped"
 
 # And the other half of the same decision: what it stops restoring, it names. A
@@ -3388,8 +3454,8 @@ mutation "49 what it leaves alone is left alone in silence" "$FAILURES" \
 # what it is looking at is a ticket: without it a quoted name falls through the
 # filter into the zone line, as though a ticket the session removed were a temp
 # file this pack had left lying about.
-mutation "49 a ticket it cannot address is passed over as bookkeeping" "$FAILURES" \
-  's/    if gate_unaddressable "\$path"; then\n      failures__gap [^\n]*\n      unvouched=1\n      continue\n    fi\n//' \
+mutation "49 a ticket it cannot address is passed over as bookkeeping" "$TRACKER" \
+  's/    if gate_unaddressable "\$path"; then\n      printf [^\n]*\n      continue\n    fi\n//' \
   test/failures.bats "cannot address is not vouched"
 
 # What a human sorting the human sink in the morning can tell apart without opening
@@ -5556,31 +5622,36 @@ mutation "18 re-injecting keeps the escalation reason" "$FORGE" \
 
 # ── [18] the tracker nothing restores, and the guard that says so ────────────
 
-# The branch that makes a backend keeping no tickets in this tree an **answer**
+# The branch that makes a backend taking no snapshot of its tracker an **answer**
 # rather than a silence. Without it the guard refuses on every window, and every
-# iteration of a remote backend is red.
-mutation "18 the tracker guard has no branch for a remote backend" "$FAILURES" \
-  's#  if ! failures__issues_path >/dev/null 2>&1; then\n    return 0\n  fi#  if false; then\n    return 0\n  fi#' \
-  test/tracker-remote.bats "keeps no tickets in this tree is named once"
+# iteration of such a backend is red — a false green traded for no green at all.
+#
+# Re-aimed by [73]: the question used to be "does this backend keep its tickets in
+# a directory of this tree", which stopped being the same fact the day a forge
+# gained a snapshot of its own.
+mutation "18 the tracker guard has no branch for a backend without a snapshot" "$FAILURES" \
+  's/  \[ "\$rc" != 1 \] \|\| return 0/  [ "\$rc" != 99 ] || return 0/' \
+  test/tracker-remote.bats "takes no snapshot of its tracker is named once"
 
 # And the same branch taken on **every** backend, which is a guard that stopped
 # guarding while every assertion about it went on passing.
-mutation "18 the tracker guard takes the remote branch everywhere" "$FAILURES" \
-  's#  if ! failures__issues_path >/dev/null 2>&1; then\n    return 0\n  fi#  if true; then\n    return 0\n  fi#' \
-  test/tracker-remote.bats "local backend still restores what a session wrote"
+mutation "18 the tracker guard takes that branch everywhere" "$FAILURES" \
+  's/  \[ "\$rc" != 1 \] \|\| return 0/  [ "\$rc" != 0 ] || return 0/' \
+  test/failures.bats "put back, and the iteration pays for the edit"
 
-# The path asked of the adapter rather than composed here: a second author for a
-# layout only the backend knows, wrong the first time a backend keeps its tickets
-# anywhere else — and wrong in the way nothing notices.
-mutation "18 the tickets path is composed by the guard again" "$FAILURES" \
-  's#  dir="\$\(tracker_tickets_dir 2>/dev/null\)" \|\| return 1#  dir="\$(ralph_project_root)/.scratch/\$\{FEATURE:-x\}/issues"#' \
-  test/tracker-remote.bats "keeps no tickets in this tree is named once"
+# The transport asked of the adapter rather than written into the guard. [18] read
+# this as a *path* and mutated the line that composed one; since [73] the guard
+# composes nothing at all, so what carries the guarantee is the operation itself —
+# a backend that is never asked for a snapshot is a tracker nothing compares.
+mutation "18 the guard asks no backend for a snapshot of its tracker" "$TRACKER_IFACE" \
+  's/^tracker_snapshot\(\) \{ tracker__dispatch snapshot "\$@"; \}/tracker_snapshot() { return 1; }/m' \
+  test/tracker-remote.bats "edits its own issue over the network is put back"
 
 # The sentence the run says once about it. A control that excludes a zone has to
 # name who guards it, and here nobody does.
 mutation "18 nothing says the tracker is witnessed by nothing" "$FORENSIC" \
-  's#  if ! forensic__tickets_dir >/dev/null 2>&1; then#  if false; then#' \
-  test/tracker-remote.bats "keeps no tickets in this tree is named once"
+  's#  if ! forensic__tracker_pin >/dev/null 2>&1; then#  if false; then#' \
+  test/tracker-remote.bats "takes no snapshot of its tracker is named once"
 
 # ── [18] a classification the scope-guard cannot make ────────────────────────
 

@@ -1199,8 +1199,9 @@ forge__sidecar() {
 #
 # The sidecar is a file of `.scratch/<feature>/`, which is the zone every control
 # of this pack steps over: `gate_is_bookkeeping` takes it out of the scope-guard,
-# `failures_protect_tracker` only ever looked at `issues/` (and on this backend at
-# nothing at all), and the witness of [70] knows refs, receipt **files** and the
+# `failures_protect_tracker` looks at tickets and at nothing else — this file is
+# not one, on either backend ([73] guards the issues of this one and still not
+# this) — and the witness of [70] knows refs, receipt **files** and the
 # playthrough. Append-only with the last line winning means one line from a
 # session is the whole of what it takes to change a record. Measured on
 # 08/09/2026 (`sondes/passe-08-09/q2-*.bats`): one line with a live pid silences
@@ -1408,6 +1409,162 @@ forge_sidecar_drift() {
   done <<MOVED
 $(forge__sidecar_moved "$dir" || true)
 MOVED
+  return 0
+}
+
+# ── what a session wrote in this tracker, put back ([73] on [21], [18]) ──────
+#
+# The half [18] named and did not take. A session of a remote backend writes this
+# tracker **over the network**: no tree object of this repository sees it, no
+# scope-guard, no rollback, no witness — and the ticket it is most likely to write
+# is its own, whose `Write-surface:` is the contract the gate is about to judge it
+# against. Until this existed the guard had no transport here at all and said so
+# once a run; what it says now is what it put back.
+#
+# **A snapshot is the listing, which is what makes it affordable** — one request
+# renders every body, so the whole tracker is one photograph and not one request
+# per ticket. It lives in a variable of the shell that took it and never in a file
+# ([75], [81]): a snapshot is exactly the object whose content decides a **write**,
+# and a file under `$TMPDIR` is one the judged session enumerates (the pass of
+# 10/09/2026).
+#
+# **Keyed on the number and never on the id**, and that is not a detail of the
+# implementation — it is the one thing this backend can do that the local one
+# cannot. An id here is `<number>-<slug>` and the slug is read out of the **body**,
+# so a session that rewrites the `Slug:` line of its own ticket changes its id
+# without changing the ticket: keyed on ids, the same issue reads as one that
+# vanished and one that appeared, and the quarantine escalates the ticket the loop
+# was working on. The number is what the forge allocated and what nothing in a
+# body can move.
+#
+# What the record carries is compared whole — body, state and assignee — because
+# each of the three decides something: the body is every field this pack reads,
+# the state is what a human sees as open or closed, and the assignee is the
+# published half of a claim, which `forge__claimed` falls back to when this
+# machine holds no local record and which reads as `foreign` — never pinged, never
+# reclaimed on sight, out of the frontier for as long as `CLAIM_TTL` allows.
+
+# The whole tracker as it stands, one escaped record per line. Non-zero when the
+# listing refuses, which is [59]'s rule in the place it costs the most: a snapshot
+# read as empty is a tracker in which every later ticket is a creation.
+forge_snapshot() {
+  local flavour="$1"
+  forge__records "$flavour" || return 1
+  return 0
+}
+
+# What moved since that snapshot, in the vocabulary `lib/tracker.sh` fixes:
+# `edited <id>` and `added <id>`, one per line. This backend has no `other` and no
+# `blind` — an issue is not a file, its number is an integer the forge allocated,
+# and there is nothing beside a ticket in this storage to move.
+#
+# `2` and never a short answer when the tracker could not be listed: a comparison
+# against nothing is "nothing moved", which is what makes an iteration green.
+#
+# The comparison is one pass of `awk` over the two listings rather than a lookup
+# per ticket, and the ids are composed afterwards for the records it emitted —
+# which is none on an ordinary night. `forge__record_id` is asked rather than
+# rebuilt here: how an id is made of a number and a slug is one line of this file
+# and must stay one.
+#
+# The two are handed to it as one stream with a line between them, and that line
+# can never be one of theirs: a record starts with the number the forge allocated
+# and carries four separators, so no line of either listing is a lone `\001`. A
+# body that holds that byte travels inside field five and is compared there, which
+# is what it is for.
+forge_snapshot_moved() {
+  local flavour="$1" before="$2" now moved sep outcome num slug id
+  [ -n "$before" ] || return 2
+  now="$(forge__records "$flavour")" || return 2
+  sep="$(printf '\001')"
+  moved="$(LC_ALL=C awk -F'\t' -v OFS='\t' -v sep="$sep" '
+    $0 == sep { half = 1; next }
+    half == 0 {
+      if ($1 != "") { was[$1] = $0; slug[$1] = $2; had[$1] = 1 }
+      next
+    }
+    {
+      if ($1 == "") next
+      here[$1] = 1
+      if (!($1 in had)) { print "added", $1, $2; next }
+      if ($0 != was[$1]) print "edited", $1, slug[$1]
+    }
+    # A number the snapshot held and the listing no longer does. `edited` and not
+    # a word of its own: the caller asks for it back, this backend cannot recreate
+    # an issue somebody deleted, and what a human then reads is the sentence for a
+    # ticket that could not be put back — which is exactly what happened.
+    END { for (k in had) if (!(k in here)) print "edited", k, slug[k] }
+  ' <<STREAM | LC_ALL=C sort -t"$(printf '\t')" -k2,2n
+$before
+$sep
+$now
+STREAM
+  )" || return 2
+
+  while IFS="$(printf '\t')" read -r outcome num slug; do
+    [ -n "$num" ] || continue
+    id="$(forge__record_id "$num" "$slug")" || continue
+    printf '%s\t%s\n' "$outcome" "$id"
+  done <<MOVED
+$moved
+MOVED
+  return 0
+}
+
+# One ticket back to what that snapshot holds, and non-zero when any part of it
+# could not be.
+#
+# Three writes at most and none of them unconditional: a restore that rewrote a
+# body nobody touched would move the ticket by this guard's own hand, and would
+# cost a request per window on the ordinary path.
+#
+# **The assignee is put back only towards nobody**, and the asymmetry is the
+# router's argument one module over: `forge__assign` writes `TRACKER_USER` and
+# nothing else, so handing an issue back to a login this pack never stamped means
+# writing a claim nobody measured — a restore that invents is worse than the
+# silence it replaces. The direction that matters is covered: an assignee a
+# session **added** takes a ticket out of the frontier, and that one is removed.
+# The other direction refuses, which the caller says out loud and pays for with
+# the iteration.
+forge_snapshot_restore() {
+  local flavour="$1" id="$2" before="$3"
+  local num rec_b rec_n was_body now_body was_state now_state was_who now_who
+  local body bodykey payload
+  [ -n "$before" ] || return 1
+  num="$(forge__number "$id")" || return 1
+  rec_b="$(printf '%s\n' "$before" |
+    LC_ALL=C awk -F'\t' -v n="$num" '$1 == n { print; found = 1; exit }
+      END { if (!found) exit 1 }')" || return 1
+  # Read before anything is written, and refused rather than filled in ([82]):
+  # `forge__record` answers `1` for an issue that is not there and `2` for a
+  # tracker it could not read, and a restore that took either as "it says nothing"
+  # would rewrite a ticket with what it never read.
+  rec_n="$(forge__record "$flavour" "$id")" || return 1
+
+  was_body="$(printf '%s' "$rec_b" | cut -f5-)"
+  now_body="$(printf '%s' "$rec_n" | cut -f5-)"
+  if [ "$was_body" != "$now_body" ]; then
+    body="$(forge__unescape "$was_body")"
+    bodykey="$(forge__spec "$flavour" body-key)" || return 1
+    payload="{\"$bodykey\":$(printf '%s' "$body" | forge_json_string)}"
+    forge__update "$flavour" "$num" "$payload" || return 1
+  fi
+
+  was_state="$(printf '%s' "$rec_b" | cut -f4)"
+  now_state="$(printf '%s' "$rec_n" | cut -f4)"
+  if [ "$was_state" != "$now_state" ]; then
+    case "$was_state" in
+      closed) forge__close "$flavour" "$id" || return 1 ;;
+      *) forge__reopen "$flavour" "$id" || return 1 ;;
+    esac
+  fi
+
+  was_who="$(printf '%s' "$rec_b" | cut -f3)"
+  now_who="$(printf '%s' "$rec_n" | cut -f3)"
+  if [ "$was_who" != "$now_who" ]; then
+    [ -z "$was_who" ] || return 1
+    forge__unassign "$flavour" "$num" || return 1
+  fi
   return 0
 }
 

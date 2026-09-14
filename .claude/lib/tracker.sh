@@ -44,6 +44,11 @@
 #                                     into this shell; non-zero when there is
 #                                     none to take, which is never a reason to
 #                                     stop
+#   tracker_snapshot                  the whole tracker as it stands, opaque;
+#                                     non-zero when this backend takes none
+#   tracker_snapshot_moved SNAP       what moved since that snapshot, one
+#                                     `outcome<TAB>name` per line
+#   tracker_snapshot_restore ID SNAP  that ticket back to what the snapshot holds
 #
 # Marking is the loop's job, after the gate — never the session's.
 #
@@ -182,7 +187,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime)
+    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime | snapshot | snapshot_moved)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -390,23 +395,22 @@ tracker_receipt_dir() { tracker__dispatch receipt_dir "$@"; }
 # not keep them in one — the issues of a remote backend live on a service and are
 # a path in no tree at all. A read, and therefore not noted in the register.
 #
-# It is here for the reason `receipt_dir` is, one zone over ([18] on [21]).
-# `failures_protect_tracker` snapshots a git tree of the tickets around every
-# session and restores what moved: that is what makes the write-surface the
-# scope-guard judges against the contract as it stood at spawn time. The path it
-# snapshots was composed by `failures.sh` itself, which made it a second author for
-# a layout only the adapter knows — and on a backend that keeps no tickets in this
-# tree the pathspec matched nothing, both snapshots were the empty tree, and the
-# guard **returned zero without a word** about a tracker nobody had looked at. A
-# silent vouch is the shape of false green this pack exists to refuse.
+# It is here for the reason `receipt_dir` is, one zone over ([18] on [21]): the
+# guard over the tracker used to compose this path itself, which made `failures.sh`
+# a second author for a layout only the adapter knows — and on a backend that keeps
+# no tickets in this tree the pathspec matched nothing, both snapshots were the
+# empty tree, and the guard **returned zero without a word** about a tracker nobody
+# had looked at. A silent vouch is the shape of false green this pack exists to
+# refuse.
 #
-# So the question is asked of the backend, and a refusal here is an answer: the
-# guard takes its "there is nothing in this tree to compare" branch knowingly, and
-# the run says once at startup that nothing witnesses the tracker of this backend
-# (`forensic_uncovered`). What that leaves open — a session editing its own ticket
-# over the network, which no snapshot, no rollback and no witness of this pack sees
-# — is [18]'s answer, and it is in `docs/frontiere-de-confiance.md` rather than
-# implied by a return code.
+# **And the guard no longer asks this at all** ([73]): a snapshot is an operation
+# of its own, opaque to every caller, so a backend whose tickets are issues is
+# guarded without ever answering here. What is left asking is the question this
+# really is — *which directory of this repository holds tickets* — and its one
+# reader is a zone of the tree rather than a guard over the tracker:
+# `gate__guard_paths`, which walks it for the exclusion guards a run leaves
+# behind. A refusal is still an answer, and it no longer means the tracker is
+# unguarded.
 tracker_tickets_dir() { tracker__dispatch tickets_dir "$@"; }
 
 # ── the local facts a backend keeps about tickets, in this tree ──────────────
@@ -497,6 +501,81 @@ tracker_sidecar_drift() { tracker__dispatch sidecar_drift "$@"; }
 # without ever priming.
 tracker_cache_open() { tracker__dispatch cache_open "$@"; }
 tracker_cache_prime() { tracker__dispatch cache_prime "$@"; }
+
+# ── what a session wrote in the tracker, put back ────────────────────────────
+#
+# The fifth zone of the same family, and the one that is a **control** rather than
+# a witness ([73] on [21], [18]). `failures_protect_tracker` takes the tracker as
+# it stands before a session, compares it when that session returns and puts back
+# what moved — which is what makes the write-surface the scope-guard judges
+# against the contract as it stood at spawn time, and not one the session has
+# just written for itself. It used to be written against two git tree objects of a directory,
+# so on a backend whose tickets are not files in this tree the pathspec matched
+# nothing, both trees were the empty tree, and the guard **vouched for a tracker
+# nobody had looked at**. [18] turned that silence into a sentence; what is here
+# is the other half — the transport is asked of the backend, the way the path
+# already was.
+#
+# Three operations. The first two are reads as far as the register of [13] is
+# concerned; the third writes a ticket and is noted like every other write:
+#
+#   snapshot            the whole tracker as this backend can take it **now**, on
+#                       stdout and opaque to every caller — a git tree object on
+#                       one backend, a listing on another. Non-zero means this
+#                       backend takes none, which is a backend whose tracker
+#                       nothing here guards: `forensic_uncovered` says so once a
+#                       run and the guard passes rather than refusing (see below).
+#   snapshot_moved SNAP what moved since SNAP, one `outcome<TAB>name` per line and
+#                       nothing at all when nothing did. Three answers, the ones
+#                       this interface already gives a read ([82]):
+#                         0  and the records
+#                         1  this backend takes no snapshot — there is nothing to
+#                            compare, and that is an answer rather than a failure
+#                         2  it does, and it could not tell what moved
+#   snapshot_restore ID SNAP   that ticket back to what SNAP holds. Non-zero when
+#                       it could not, and the caller says so and refuses the
+#                       green: a guard that cannot see does not pass.
+#
+# **The four outcomes, because they are the vocabulary and not one backend's
+# statuses.** A backend answers in these words whatever its storage is, and a
+# caller acts on each of them differently — the local backend's `A`/`D`/`M` and
+# its non-ticket transients are mapped onto them rather than leaking through:
+#
+#   edited <id>     a ticket that changed and that this backend can be asked to
+#                   put back. The only one that leads to a write.
+#   added <id>      a ticket that was not in the snapshot. Left exactly where it
+#                   is: it belongs to the quarantine, which hands it to a human,
+#                   and deleting it here would destroy the only copy of what it
+#                   asked for ([21], [27]).
+#   other <name>    something moved in this backend's storage that is not a
+#                   ticket ([49]). Left, named, and not fatal on its own — the
+#                   pack's own transients live beside the tickets of the local
+#                   backend, and a lock put back is a ticket no iteration can
+#                   claim again.
+#   blind <name>    something moved under a name this backend cannot address
+#                   ([39], [48]). Nothing can be put back for it, and the
+#                   iteration cannot be green: a guard that cannot see does not
+#                   pass.
+#
+# **Why a refusal of `snapshot` is zero and not red**, written here because the
+# ticket that opened it left both doors open. Refusing on every window would make
+# every iteration of such a backend red, which trades a false green for no green
+# at all — the backend would be unusable rather than honest. So the posture is
+# [70]'s for the zones nothing in this pack guards: it does not prevent, it does
+# not restore, and the run says so **once**, at startup, in `forensic_uncovered`.
+# What that leaves is a row of `docs/frontiere-de-confiance.md` and not a silence.
+#
+# **And the register is the caller's business and never the backend's.** Which
+# ids the loop itself wrote inside the window ([13], [42]) is a fact about the
+# loop, not about a transport: `snapshot_moved` names everything that moved, and
+# `failures_protect_tracker` is the one place that decides what not to touch.
+tracker_snapshot() { tracker__dispatch snapshot "$@"; }
+tracker_snapshot_moved() { tracker__dispatch snapshot_moved "$@"; }
+# The id first and the snapshot second, and the order is load-bearing rather than
+# a style: `tracker__dispatch` notes `$1` in the register of [13], so a snapshot
+# passed first would write a whole listing into it as though it were an id, and
+# the entry naming the ticket this put back would never be written at all.
+tracker_snapshot_restore() { tracker__dispatch snapshot_restore "$@"; }
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

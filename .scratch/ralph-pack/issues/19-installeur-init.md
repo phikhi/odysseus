@@ -443,3 +443,25 @@ apprend un motif de plus. Il n'y en a pas de nouveau aujourd'hui : les deux
 vivent dans `ralph-retro.*`, déjà compté.
 
 **File validée par Philippe le 13/09/2026 : [83] → [84] → [85] → [73] → [19].**
+
+## Contrainte écrite par [73] (livré le 14/09/2026)
+
+**Rien à provisionner, et c'est mesuré plutôt que supposé.**
+
+- **Aucune clé de configuration de plus.** La remise du tracker distant n'a pas
+  de réglage : elle est prise sur les opérations d'adaptateur `snapshot` /
+  `snapshot_moved` / `snapshot_restore`, et ce qui la borne est déjà déclaré —
+  `FORGE_PAGE` / `FORGE_PAGES` ([76]) pour le listing dont l'instantané est fait,
+  `FORGE_CACHE_TTL` ([75]) pour la lecture qui le sert. L'égalité des deux sens
+  tenue par `test/smoke.bats` n'a donc pas bougé.
+
+- **Aucun nom de plus à balayer dans `$TMPDIR`.** Le `mktemp` de l'index git de
+  la remise a changé de fichier — il était dans `failures.sh`, il est dans
+  `tracker-local.sh` — et pas de motif : c'est toujours `ralph-tracker.XXXXXX`,
+  déjà dans la liste. Le backend distant n'écrit **aucun** fichier pour ça :
+  l'instantané est une variable du shell de l'itération et jamais un fichier
+  ([75], [81], et la passe du 10/09 pour la raison).
+
+- **Rien de neuf dans le projet cible.** Pas de chemin à ignorer, pas de zone à
+  garder : le seul objet durable que ce ticket ajoute côté distant est une
+  requête `PATCH` de plus vers la forge quand une session a écrit le tracker.

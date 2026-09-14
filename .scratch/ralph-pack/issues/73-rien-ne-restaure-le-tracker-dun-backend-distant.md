@@ -4,14 +4,14 @@
 
 **Blocked by:** 74, 75, 77
 
-**Write-surface:** `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/forge.sh`, `test/failures.bats`, `test/tracker-remote.bats`
+**Write-surface:** `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `.claude/lib/forge.sh`, `.claude/lib/forensic.sh`, `.claude/loop.sh`, `test/failures.bats`, `test/tracker-remote.bats`, `test/mutate.sh`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Ce qu'une session écrit dans un tracker distant est **remis** ou **refusé**, jamais avalé — et la ligne du tableau de confiance dit laquelle des deux.
-- [ ] `failures_protect_tracker` cesse d'être écrit contre un tree object de git : le transport est demandé à l'adaptateur, comme le chemin l'est déjà (`tracker_tickets_dir`).
-- [ ] Le backend `local` garde **exactement** ses garanties actuelles — les trois statuts `A`/`D`/`M`, l'exemption par le registre de [13]/[42], `failures__is_ticket_path`, le refus de vouloir garder un arbre qu'il n'a pas pu lire ([59]).
-- [ ] Un backend distant qui refuse le snapshot n'est pas rouge à chaque itération.
+- [x] Ce qu'une session écrit dans un tracker distant est **remis** ou **refusé**, jamais avalé — et la ligne du tableau de confiance dit laquelle des deux.
+- [x] `failures_protect_tracker` cesse d'être écrit contre un tree object de git : le transport est demandé à l'adaptateur, comme le chemin l'est déjà (`tracker_tickets_dir`).
+- [x] Le backend `local` garde **exactement** ses garanties actuelles — les trois statuts `A`/`D`/`M`, l'exemption par le registre de [13]/[42], `failures__is_ticket_path`, le refus de vouloir garder un arbre qu'il n'a pas pu lire ([59]).
+- [x] Un backend distant qui refuse le snapshot n'est pas rouge à chaque itération.
 
 ## Comments
 
@@ -341,3 +341,124 @@ de plus** — celui des gardes d'exclusion, dans `test/gate.bats` :
 Et le rappel qui vient de [85] mais vaut pour toute écriture de ce ticket : un
 chemin de garde n'est **pas** lisible sur la ligne d'appel, donc la couverture est
 résolue **par exécution** — inutile d'essayer de la faire lire à un `grep`.
+
+## Ce qui est livré (14/09/2026)
+
+**La forme retenue : le transport est trois opérations d'adaptateur, la politique
+reste entière dans `failures_protect_tracker`.** C'est la sortie n° 2 que [18]
+avait nommée (« une opération d'adaptateur snapshot/restore »), découpée de façon
+que le backend `local` ne perde rien.
+
+1. **L'interface gagne une cinquième zone** (`lib/tracker.sh`), à côté de
+   `receipt_*`, `tickets_dir`, `sidecar_*` et `cache_*` :
+
+   - `snapshot` — le tracker tel qu'il est **maintenant**, sur stdout et **opaque
+     à l'appelant** : un tree object ici, un listing là. Non nul = ce backend n'en
+     prend aucun.
+   - `snapshot_moved SNAP` — ce qui a bougé depuis, un `outcome<TAB>nom` par
+     ligne, **trois réponses** (`0` + les enregistrements, `1` « je n'en prends
+     pas », `2` « je n'ai pas pu savoir ») — la clause de [82] réutilisée telle
+     quelle plutôt qu'un troisième vocabulaire.
+   - `snapshot_restore ID SNAP` — un ticket remis à ce que l'instantané porte.
+     **L'id en premier** et pas l'instantané : `tracker__dispatch` note `$1` dans
+     le registre de [13], donc un instantané passé en premier y aurait écrit un
+     listing entier à la place d'un id.
+
+   Les deux premières sont des **lectures** au sens du registre, la troisième est
+   une écriture et est notée comme telle.
+
+2. **Quatre mots et pas les statuts d'un backend** : `edited`, `added`, `other`,
+   `blind`. Les `A`/`D`/`M` de git, `tracker_local__is_ticket_path` et
+   `gate_unaddressable` sont mappés dessus par l'adaptateur local ; ils ne
+   traversent plus l'interface. Le distant n'en utilise que deux — une issue n'est
+   pas un fichier, il n'y a rien à côté d'un ticket dans ce stockage.
+
+3. **`failures_protect_tracker` ne porte plus une ligne de git.** Elle porte les
+   décisions, et elles sont toutes restées : l'exemption par le registre de
+   [13]/[42] (avec la clause de [80] — jamais le ticket de l'itération), un ajout
+   qui appartient à la quarantaine et pas à la remise, un nom que personne ne peut
+   adresser qui coûte le vert, ce qui n'est pas un ticket qui est nommé et laissé,
+   le refus de vouloir garder un tracker qu'on n'a pas pu lire ([59]).
+
+4. **Le backend `local` a gardé exactement ses garanties** — et c'est vérifié par
+   les 87 tests de `test/failures.bats`, verts sans un seul changement d'assertion
+   sauf un : la phrase du garde dit maintenant `restored N ticket(s)` et non
+   `N ticket file(s)`, parce qu'une issue n'est pas un fichier.
+
+### Ce que le backend distant fait exactement
+
+- **L'instantané est le listing** (`forge__records`) : une requête rend tous les
+  corps, donc le tracker entier est **une** photo. Il vit dans une variable du
+  shell de l'itération, jamais dans un fichier — décision de [75]/[81], raison
+  de la passe du 10/09 (un fichier de `$TMPDIR` est énumérable par la session
+  jugée, et un instantané est exactement l'objet dont le contenu décide d'une
+  **écriture**).
+- **La comparaison est clé sur le NUMÉRO que la forge a alloué, jamais sur l'id.**
+  C'est la réponse à la question transversale que ce ticket portait : un id
+  distant est `<numéro>-<slug>` et le slug vient du **corps**, donc une session
+  qui réécrit sa propre ligne `Slug:` change d'id sans changer de ticket. Clé sur
+  l'id, la même issue se lit comme une disparue **plus** une apparue.
+- **L'enregistrement est comparé entier** — corps, état, assigné — parce que les
+  trois décident quelque chose. L'assigné est le plus vicieux : `forge__claimed`
+  s'y rabat quand cette machine ne tient pas d'enregistrement local, et ce qu'il
+  en rend est `foreign` — jamais pingé, jamais repris à vue, hors frontière tant
+  que `CLAIM_TTL` le permet.
+- **La remise écrit le corps, l'état, et l'assigné dans la seule direction où un
+  verbe existe** : un assigné qu'une session a **ajouté** est retiré
+  (`forge__unassign`) ; un assigné rendu à un login que ce pack n'a jamais
+  tamponné est **refusé** — `forge__assign` n'écrit que `TRACKER_USER`, et une
+  remise qui invente est pire que le silence qu'elle remplace (l'argument de
+  `router__put_back`, repris et pas réinventé). Un refus est dit
+  (`could not restore <id>`) et l'itération n'est pas verte.
+- **Aucune écriture inconditionnelle** : une remise qui réécrirait un corps que
+  personne n'a touché déplacerait le ticket de sa propre main et coûterait une
+  requête par fenêtre sur le chemin ordinaire.
+
+### AC 4, et pourquoi la posture de [18] survit
+
+Un backend qui ne prend **aucun** instantané rend zéro et n'est pas rouge à chaque
+fenêtre — refuser à chaque itération échangerait un faux vert contre pas de vert
+du tout. Ce qui a changé, c'est **la question** : `forensic_uncovered` demandait
+`tracker_tickets_dir` (« ce backend garde-t-il ses tickets dans un répertoire de
+ce dépôt ») et dit maintenant la phrase sur `tracker_snapshot` (« ce backend
+sait-il photographier son tracker »). Les deux faits étaient le même tant que le
+seul transport était git ; ils se sont séparés le jour où une forge a gagné un
+instantané. Coût : une photo par run au démarrage — un `git write-tree` en local,
+un listing en distant que la lecture de [75] sert pour rien une fois le pilote
+amorcé.
+
+### Écarts de write-surface
+
+Le ticket déclarait `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`,
+`.claude/lib/tracker-local.sh`, `.claude/lib/forge.sh`, `test/failures.bats`,
+`test/tracker-remote.bats`. Quatre fichiers de plus ont été touchés, et chacun
+pour une raison qui n'était pas devinable en écrivant la write-surface :
+
+- **`.claude/lib/tracker-github.sh` et `.claude/lib/tracker-gitlab.sh`** — trois
+  lignes chacun. Non négociable : le premier test de `test/tracker-remote.bats`
+  **dérive** les opérations du dispatcher et exige que les trois backends les
+  implémentent, précisément pour que `does not implement` n'atterrisse pas sur la
+  console de chaque drain ([77]).
+- **`.claude/lib/forensic.sh`** — la question ci-dessus. Laisser la phrase sur
+  `tracker_tickets_dir` aurait fait dire au run, une fois par nuit, que rien ne
+  restaure un tracker qui est maintenant gardé : un faux témoin.
+- **`.claude/loop.sh`** — deux lignes : la prise de l'instantané
+  (`tracker_pin="$(tracker_snapshot)"`, ex-`failures_tracker_tree`) et son
+  passage au garde. `failures_tracker_tree` a disparu ; garder un alias aurait
+  laissé `failures.sh` propriétaire d'un nom de transport qu'elle ne porte plus.
+
+### Ce qui reste ouvert, et qui n'est pas à ce ticket
+
+1. **La fenêtre est celle d'une session.** Ce qu'une session écrit puis remet
+   elle-même avant de rendre la main n'est vu par personne — vrai des deux
+   backends depuis [21], inchangé.
+2. **L'exemption du registre de [13] est indexée par id, et l'id distant porte le
+   slug.** Un frère qui écrit un ticket dont la session a changé le slug **dans la
+   même fenêtre** n'est pas exempté : sa marque est remise en arrière. Atteignable
+   seulement au-dessus de `MAX_PARALLEL=1` et seulement si les deux arrivent dans
+   la même fenêtre. La remise nomme l'id **épinglé** (celui que la boucle
+   connaissait), ce qui est le bon côté du compromis ; l'autre côté est écrit ici
+   et dans le tableau de confiance plutôt que découvert.
+3. **Une issue supprimée sur la forge** est rendue comme `edited` et la remise
+   refuse : ce backend ne recrée pas une issue que quelqu'un a détruite. Le
+   humain lit « could not restore », ce qui est exactement ce qui s'est passé.

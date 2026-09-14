@@ -466,8 +466,10 @@ failures_after_dead_owner() {
 #                      line to `*` and every write passes. Restored from the
 #                      pre-session snapshot, before the gate reads anything.
 #
-# So: two snapshots around the spawn, a set of ids for the first and a tree
-# object of the tickets for the second. The window is clean either way — between
+# So: two snapshots around the spawn, a set of ids for the first and, for the
+# second, whatever the backend photographs its tracker with ([73] — a git tree
+# object of the tickets on one, a listing of issues on another, and opaque to
+# everything here). The window is clean either way — between
 # the snapshots and the session returning, the loop writes nothing under
 # `issues/`: the liveness sweep and the claim came before, and the marking, the
 # retry counter and the journal all come after.
@@ -655,108 +657,12 @@ $1
 LIST
 }
 
-# Where the tickets live, relative to the repository root, and **non-zero when
-# this backend keeps none in it**.
-#
-# Same assumption gate_is_bookkeeping makes: the project root is the repository
-# root, and a pack installed below it is out of scope for now.
-#
-# Asked of the adapter since [18], and that is the correction rather than a
-# refactor. This line used to compose `.scratch/$FEATURE/issues` itself, which
-# made this file a second author for a layout only the backend knows — wrong the
-# first time a backend keeps its tickets anywhere else, and wrong in the one way
-# nothing notices: the pathspec matched nothing, both snapshots below were the
-# empty tree, `[ "$after" != "$before" ]` was false, and the guard **vouched for a
-# tracker nobody had looked at**. A refusal here is now an answer with a branch of
-# its own, and the run says once at startup that nothing witnesses that tracker.
-#
-# A directory outside the repository is refused too, and it is the same fact said
-# once more: a tree of this repository cannot hold it, so a pathspec built from it
-# would either match nothing or — worse — reach for a path git resolves somewhere
-# else entirely.
-failures__issues_path() {
-  local dir root
-  dir="$(tracker_tickets_dir 2>/dev/null)" || return 1
-  [ -n "$dir" ] || return 1
-  root="$(ralph_project_root)"
-  case "$dir" in
-    "$root"/*) printf '%s\n' "${dir#"$root"/}" ;;
-    *) return 1 ;;
-  esac
-  return 0
-}
-
-# Whether a path that moved inside the tracker directory is a **ticket file**,
-# which is the only thing the guard below restores.
-#
-# The definition is the tracker's own scan — `"$dir"/*.md`, that directory and no
-# deeper — and writing it down is [49]. `issues/` holds more than tickets, and the
-# rest of it is the *pack's own*: the guard directory a claim takes beside the
-# ticket it is about to stamp (`<id>.md.guard/pid`), the temp file every atomic
-# write leaves next to its target (`<id>.md.tmp.XXXXXX`), the working copy
-# `set_fields` publishes from (`<id>.md.work.XXXXXX`, plus its own `.p`). Each of
-# them exists for a few milliseconds inside a window this guard is 35 ms wide, so
-# a sibling that writes the tracker while this session is judged leaves one in the
-# *before* snapshot and not in the *after* one — a `D` this guard used to hand to
-# `checkout-index`, putting a lock back and calling a session that wrote nothing
-# an editor of the tracker.
-#
-# The register of [13]/[42] cannot help and it must not be asked to: it is indexed
-# by **id**, and none of those names is one — `basename .../02-beta.md.guard/pid
-# .md` is `pid`, `basename 02-beta.md.work.IDdYXp .md` is the whole name.
-#
-# Filtering here rather than moving the transients out of `issues/` is the
-# decision, and it is not free: what a session drops in there under a name that is
-# not `<id>.md` is now restored by nothing, and it was never quarantined either
-# (`tracker_ids` globs `*.md`). That zone is named out loud on every window it
-# moves in, below, rather than left to a document. The other exit — publishing
-# every transient somewhere else — was refused because it is not available to the
-# one that matters: `state_atomic_write` has to write beside its target for the
-# rename to be atomic, and its targets are not all in `issues/`.
-#
-# There is a second way to be neither restored nor quarantined and it never
-# reaches this predicate: a name shaped `<id>.md` that carries a newline ([48]).
-# The tracker's own scans refuse it, so the quarantine does not see it — and the
-# reason that is not a hole is the branch above this one, which fires first: git
-# quotes such a name, `gate_unaddressable` catches it, and the iteration is denied
-# green because nothing here can vouch for the tracker. The file stays where the
-# session put it, on no frontier and in no scan, which is the decision [48] wrote
-# down rather than the omission it looks like.
-failures__is_ticket_path() {
-  local path="$1" dir="$2" rest
-  case "$path" in
-    "$dir"/*.md) ;;
-    *) return 1 ;;
-  esac
-  rest="${path#"$dir"/}"
-  case "$rest" in
-    */*) return 1 ;;
-  esac
-  return 0
-}
-
-# The tickets as a git tree object. Taken twice, around the spawn: two identical
-# hashes is the whole of the normal case, and it costs one plumbing call.
-#
-# Read from the project root explicitly, because since [13] an iteration runs with
-# its working directory inside a throwaway worktree and `gate_tree_snapshot` is
-# relative to wherever it is called from. The tracker is the one piece of state
-# every iteration shares — it is the authority they coordinate through — so it has
-# to be the tree the run was started in and never the copy a worktree happens to
-# carry. Getting this wrong is silent: the guard would snapshot a stale copy, find
-# it unchanged, and vouch for a tracker nobody looked at.
-failures_tracker_tree() {
-  local path
-  path="$(failures__issues_path)" || return 1
-  (cd "$(ralph_project_root)" && gate_tree_snapshot "$path")
-}
-
 # Undo what the session wrote inside the tracker, and say that it did.
 #
 # Called before the gate, and that ordering is the guarantee: the write-surface
-# the scope-guard is about to judge against is a field in a file the session
+# the scope-guard is about to judge against is a field in a ticket the session
 # could have just rewritten, so restoring first is what makes the guard measure
-# the contract as it stood at spawn time. Restoring the whole directory rather
+# the contract as it stood at spawn time. Restoring the whole tracker rather
 # than the one ticket also covers the variant where a session marks somebody
 # *else*'s ticket resolved, which would take it out of the frontier for good.
 #
@@ -765,94 +671,73 @@ failures_tracker_tree() {
 # costs the attempt, because a session left free to try again would be starting
 # from a contract it partly authored. A guard that cannot see does not pass.
 #
-# **Ticket files, and nothing else** ([49]). What moved under a name that is not
-# `<id>.md` is left where it is and named out loud: `issues/` is also where this
-# pack puts its own short-lived objects, and a `D` for one of those is a sibling's
-# lock, not an edit — restoring it accused a session that had written nothing,
-# refused a green to an innocent iteration and, when the `D` was a claim's guard,
-# put the lock back stamped with the pilot's own live pid, which nothing releases
-# and which takes that ticket out of the frontier for the rest of the run.
-#
-# Every git call here names the project root, for the reason failures_tracker_tree
-# does: the caller's working directory is a throwaway worktree since [13], and the
-# tracker lives in the tree the run was started in. A `checkout-index` run from the
-# worktree would restore the tickets into the copy that is about to be thrown away
-# and report that it had put them back.
+# **Policy, and no transport** ([73]). This used to be written around
+# `git read-tree`, `git diff-tree` and `checkout-index`, which made it a second
+# author for a storage only the backend knows — and the way that was wrong is the
+# way nothing notices: on a backend whose tickets are not files in this tree the
+# pathspec matched nothing, both trees were the empty tree, and this function
+# returned zero about a tracker nobody had looked at ([18] on [21]). The
+# photograph, the comparison and the putting back are three operations of the
+# adapter now (`lib/tracker.sh`); what is here is every decision they hang off —
+# which ids the loop itself wrote inside the window ([13], [42]), that an addition
+# belongs to the quarantine and not to a restore ([21], [27]), that a name nobody
+# can address costs the iteration its green ([39], [48]), and that what is not a
+# ticket is named rather than put back ([49]).
 failures_protect_tracker() {
   local ticket="$1" before="$2" mark="${3:-}"
-  local dir after idx status path restored=0 root ours id
+  local moved outcome name id ours restored=0 rc=0
   local others='' others_n=0 unvouched=''
 
-  # **A backend whose tickets are not files in this tree, said rather than
-  # vouched for** ([18]). Everything below compares two git trees of a directory,
-  # so on such a backend the pathspec matched nothing, both trees were the empty
-  # tree, and this function returned zero — the exact shape of the false green
-  # [21] closed, reached by a route [21] could not see because the only backend
-  # that existed kept its tickets here.
-  #
-  # Zero and not a refusal, and the choice is written down because the ticket that
-  # opened it left both doors open. A refusal on every window would make every
-  # iteration of a remote backend red, which trades a false green for no green at
-  # all — the backend would be unusable rather than honest. So this takes the
-  # posture [70] settled for the zones nothing in this pack guards: it does not
-  # prevent, it does not restore, and the run **says so once**, at startup, on its
-  # own output (`forensic_uncovered`). What that leaves —
-  # a session editing its own ticket over the network, which no snapshot, no
-  # rollback and no scope-guard of this pack sees — is a row of
-  # `docs/frontiere-de-confiance.md` and not a silence.
-  if ! failures__issues_path >/dev/null 2>&1; then
-    return 0
-  fi
+  moved="$(tracker_snapshot_moved "$before")" || rc=$?
+
+  # **A backend that takes no snapshot of its tracker, said rather than vouched
+  # for** ([18], [73]). Zero and not a refusal, and the choice is written down
+  # because the ticket that opened it left both doors open: refusing on every
+  # window would make every iteration of such a backend red, which trades a false
+  # green for no green at all — the backend would be unusable rather than honest.
+  # So this takes the posture [70] settled for the zones nothing in this pack
+  # guards: it does not prevent, it does not restore, and the run **says so once**,
+  # at startup, on its own output (`forensic_uncovered`). What that leaves is a row
+  # of `docs/frontiere-de-confiance.md` and not a silence.
+  [ "$rc" != 1 ] || return 0
 
   if [ -z "$before" ]; then
     failures__gap "$ticket: no pre-session tracker snapshot — the tracker cannot be vouched for"
     return 1
   fi
-  after="$(failures_tracker_tree)" || after=""
-  if [ -z "$after" ]; then
+  if [ "$rc" != 0 ]; then
     failures__gap "$ticket: cannot read the tracker — refusing to pass it"
     return 1
   fi
-  [ "$after" != "$before" ] || return 0
+  [ -n "$moved" ] || return 0
 
-  root="$(ralph_project_root)"
-  dir="$(failures__issues_path)" || return 1
   # What the *loop* wrote in here while this session was running, which is not the
   # session's doing and must not be undone ([13] on [21]) — the same definition the
   # quarantine reads, from the same place ([42]).
   ours="$(failures__register_since "$mark")"
-  idx="$(mktemp "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")" || return 1
-  rm -f "$idx"
-  if ! GIT_INDEX_FILE="$idx" git -C "$root" read-tree "$before" 2>/dev/null; then
-    rm -f "$idx"
-    failures__gap "$ticket: cannot read the pre-session tracker — nothing was restored"
-    return 1
-  fi
 
-  # The pathspec is redundant with a snapshot already scoped to the tickets, and
-  # it stays: this loop overwrites files, so it may never be one bad snapshot
-  # away from restoring something outside the tracker.
-  while IFS="$(printf '\t')" read -r status path; do
-    [ -n "$path" ] || continue
-    # A name git prints quoted whatever `core.quotePath` says — a tab, a newline,
-    # a quote — is a name nothing here can hand to `checkout-index` ([39]). Named
-    # and counted as a hole rather than restored, and it keeps the iteration from
-    # being green: a guard that cannot see does not pass.
-    if gate_unaddressable "$path"; then
-      failures__gap "$ticket: $path moved in the tracker under a name this guard cannot address — nothing was put back for it"
-      unvouched=1
-      continue
-    fi
-    # Not everything under `issues/` is a ticket, and this guard restores tickets.
-    # The pack's own transients live there too, and a sibling's lock put back by a
-    # `checkout-index` is a ticket no iteration of this run can claim again.
-    if ! failures__is_ticket_path "$path" "$dir"; then
-      others="$(failures__append_line "$path" "$others")"
-      others_n=$((others_n + 1))
-      continue
-    fi
+  while IFS="$(printf '\t')" read -r outcome name; do
+    [ -n "$name" ] || continue
+    case "$outcome" in
+      blind)
+        # A name the backend cannot address ([39], [48]). Named and counted as a
+        # hole rather than restored, and it keeps the iteration from being green:
+        # a guard that cannot see does not pass.
+        failures__gap "$ticket: $name moved in the tracker under a name this guard cannot address — nothing was put back for it"
+        unvouched=1
+        continue
+        ;;
+      other)
+        # Not everything a backend keeps beside its tickets is a ticket, and this
+        # guard restores tickets ([49]). Left where it is and named below.
+        others="$(failures__append_line "$name" "$others")"
+        others_n=$((others_n + 1))
+        continue
+        ;;
+    esac
+    id="$name"
     # A ticket this run wrote itself inside the window: a sibling's claim, its
-    # retry counter, its marking. Skipped before the status is even looked at,
+    # retry counter, its marking. Skipped before the outcome is even looked at,
     # because restoring it is how two iterations in flight destroy each other.
     #
     # **Never the ticket this iteration was handed** ([80]), and that clause is
@@ -866,29 +751,22 @@ failures_protect_tracker() {
     # existed: one `printf` of its own id, `Write-surface:` rewritten to `*`, and
     # the scope-guard then read the contract the session had just given itself —
     # green, committed, folded onto the branch, ticket `resolved`, not a word.
-    id="$(basename "$path" .md)"
     [ "$id" = "$ticket" ] || ! failures__in_list "$id" "$ours" || continue
-    case "$status" in
-      A)
+    case "$outcome" in
+      added)
         # Left where it is: a created ticket belongs to the quarantine, which
         # hands it to a human. Deleting it here would destroy the only copy of
         # what it asked for.
         ;;
       *)
-        GIT_INDEX_FILE="$idx" git -C "$root" checkout-index -f -- "$path" 2>/dev/null ||
-          failures__gap "$ticket: could not restore $path"
+        tracker_snapshot_restore "$id" "$before" ||
+          failures__gap "$ticket: could not restore $id"
         restored=$((restored + 1))
         ;;
     esac
-  done <<TRACKER
-$(git -C "$root" -c core.quotePath=false diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)
-TRACKER
-
-  rm -f "$idx"
-  # Staged is not work in progress either, and the tracker has no business in the
-  # target project's index. Scoped to the tickets, so nothing staged elsewhere
-  # moves; a human who had staged a tracker edit before the run loses that much.
-  git -C "$root" reset -q -- "$dir" 2>/dev/null || true
+  done <<MOVED
+$moved
+MOVED
 
   # What restoring tickets and only tickets leaves behind, said on the window it
   # is paid in rather than once in a document ([24]'s rule for a zone nobody
@@ -903,9 +781,9 @@ TRACKER
 
   # Additions only: that is the quarantine's business and not a failure of its own.
   if [ "$restored" -gt 0 ]; then
-    printf 'The %s session edited the tracker itself (%s ticket file(s)). The edits were restored from the snapshot taken when the session started, and the iteration was not allowed to be green: the write-surface a session grants itself is exactly what the scope-guard would otherwise read back from it.\n' \
+    printf 'The %s session edited the tracker itself (%s ticket(s)). The edits were restored from the snapshot taken when the session started, and the iteration was not allowed to be green: the write-surface a session grants itself is exactly what the scope-guard would otherwise read back from it.\n' \
       "$ticket" "$restored" | tracker_append_note "$ticket" || true
-    failures__log "$ticket: the session edited the tracker — restored $restored ticket file(s), the iteration cannot be green"
+    failures__log "$ticket: the session edited the tracker — restored $restored ticket(s), the iteration cannot be green"
     return 1
   fi
   [ -z "$unvouched" ] || return 1
@@ -1323,7 +1201,7 @@ CHANGED
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head seen issues mark prev_soft prev_timeout moved rc=0
+  local plan out base head seen tracker_pin mark prev_soft prev_timeout moved rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -1351,7 +1229,7 @@ failures_reslice() {
   # outside it.
   mark="$(tracker_write_mark)"
   seen="$(failures_tracker_snapshot)"
-  issues="$(failures_tracker_tree)" || issues=""
+  tracker_pin="$(tracker_snapshot)" || tracker_pin=""
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
   prev_timeout="${RALPH_SESSION_TIMEOUT:-}"
 
@@ -1401,7 +1279,7 @@ failures_reslice() {
   # one. A session that writes the tracker has stepped past the only check that
   # cannot be redone afterwards, so the rest of what it produced is not worth
   # reading — whether it edited a ticket or created one.
-  if ! failures_protect_tracker "$ticket" "$issues" "$mark"; then
+  if ! failures_protect_tracker "$ticket" "$tracker_pin" "$mark"; then
     rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
     return 1
   fi

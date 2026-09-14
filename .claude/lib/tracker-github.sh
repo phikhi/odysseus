@@ -101,13 +101,12 @@ tracker_github_receipt_path() { forge_receipt_path github "$@"; }
 # which prints the reserve written for a receipt that is not in this tree.
 tracker_github_receipt_dir() { return 1; }
 
-# **The same shape one zone over, and it costs more** ([18] on [21]). The tickets
-# of this backend are issues, not files, so `failures_protect_tracker` has no tree
-# to snapshot around a session and nothing here restores what a session writes in
-# the tracker. The scope-guard therefore judges a session against a write-surface
-# that session could have edited — over the network, which no scope-guard, no
-# rollback and no witness of this pack sees. Said once per run through
-# `forensic_uncovered`, with its row in `docs/frontiere-de-confiance.md`.
+# **The same shape one zone over, and it no longer costs the guard** ([18] on
+# [21], closed by [73]). The tickets of this backend are issues and not files, so
+# there is no directory of this repository to name — but the guard over the tracker
+# stopped being written around a git tree: it asks for a snapshot, and this backend
+# takes one out of its own listing. What a session writes here over the network is
+# put back or refused, and the three operations are below.
 tracker_github_tickets_dir() { return 1; }
 
 # **And the zone that is not a refusal** ([77]). This backend does keep local
@@ -126,3 +125,12 @@ tracker_github_sidecar_drift() { forge_sidecar_drift "$@"; }
 # forked from, one drained ticket costs two hundred and forty listings.
 tracker_github_cache_open() { forge_cache_open "$@"; }
 tracker_github_cache_prime() { forge_cache_prime github; }
+
+# And what a session wrote in it, put back ([73]). Until this existed the guard
+# over the tracker had no transport on this backend at all: it compared two git
+# trees of a directory that does not exist here, found them both empty and
+# vouched. The snapshot is the listing, the comparison is on the issue number the
+# forge allocated, and the restore is a request per ticket that moved.
+tracker_github_snapshot() { forge_snapshot github; }
+tracker_github_snapshot_moved() { forge_snapshot_moved github "$@"; }
+tracker_github_snapshot_restore() { forge_snapshot_restore github "$1" "$2"; }

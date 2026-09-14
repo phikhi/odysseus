@@ -1858,7 +1858,7 @@ gate_frontier() {
 # Public because it has a second caller, and the second caller is the point
 # ([46]). The three sites [32] wired are all *after* the tracker guard, and the
 # tracker guard reads and writes files through whatever git has been configured to
-# do to them: `failures_tracker_tree` stages `issues/` — so a `clean` filter
+# do to them: `tracker_local_snapshot` stages `issues/` — so a `clean` filter
 # rewrites every ticket on the way into the tree it compares — and its
 # `checkout-index` writes them back out through the matching `smudge`. A session
 # that installed a filter and left could have the guard rewrite the whole tracker
@@ -2764,7 +2764,7 @@ gate_tree_snapshot() {
     # simply not there.** The comment that stood here until [59] said the opposite
     # — that a pathspec matching nothing means the caller cannot be given what it
     # asked to watch — and that reading is wrong on the one caller this branch has.
-    # `failures_tracker_tree` takes this snapshot twice around a session, and a
+    # `tracker_local_snapshot` takes this snapshot twice around a session, and a
     # session that `rm -rf`s the tracker leaves the second one with nothing to
     # match: the empty tree is then the **true** answer, the `before` tree is not
     # empty, and the difference is what makes `failures_protect_tracker` rebuild

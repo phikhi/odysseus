@@ -438,7 +438,7 @@ tracker_local_bump_failures() {
 #
 # The guard sits in the feature directory and **not** in `issues/`, where the
 # claim's guard sits, and the difference is not tidiness: `issues/` is what
-# `failures_protect_tracker` snapshots as a git tree around every session, so a
+# `tracker_local_snapshot` photographs as a git tree around every session, so a
 # guard taken there while a sibling compares two snapshots arrives as a path that
 # restore would try to check out. The number space belongs to the tracker as a
 # whole rather than to any one ticket, so its guard belongs beside the run lock —
@@ -737,15 +737,206 @@ tracker_local_receipt_dir() {
 }
 
 # Where this backend keeps its tickets, which is the directory every scan above
-# walks. Named through the adapter rather than composed by the guard that
-# snapshots it ([18] on [21]): a second author for this layout is wrong the first
-# time a backend keeps its tickets anywhere else, and the way it is wrong is a
-# pathspec that matches nothing and a guard that vouches in silence.
+# walks. Named through the adapter rather than composed by whoever needs it ([18]
+# on [21]): a second author for this layout is wrong the first time a backend keeps
+# its tickets anywhere else, and the way it is wrong is a pathspec that matches
+# nothing and a guard that vouches in silence.
 #
-# Absolute, like `receipt_dir`, and the one caller that needs it relative to the
-# project root says so itself.
+# **Not the guard's question any more** ([73]): the snapshot below is this
+# backend's own and never composes a path outside this file. What still asks is a
+# reader of the tree — `gate__guard_paths`, walking it for exclusion guards a run
+# left behind.
+#
+# Absolute, like `receipt_dir`, and the caller that needs it relative to the
+# project root is one function down.
 tracker_local_tickets_dir() {
   tracker_local__issues_dir
+}
+
+# ── the tracker as it stood when a session was spawned ([21], [73]) ──────────
+#
+# The transport half of `failures_protect_tracker`, and it lives here rather than
+# in the guard for the reason the path does one function up ([18]): a snapshot of
+# *this* backend is a git tree object of a directory, which is a fact about how
+# this backend stores tickets and about nothing else. Written in the guard, it
+# made the guard a second author for that storage — and the way it was wrong is
+# the one nothing notices: on a backend keeping no such directory the pathspec
+# matched nothing, both trees were the empty tree, and the guard returned zero.
+#
+# What the guard keeps is every decision: which ids the loop itself wrote inside
+# the window ([13], [42]), what an addition is worth, what a name nobody can
+# address costs the iteration. What is here is how to take the photograph, how to
+# read it against the one taken before, and how to put one ticket back.
+
+# Where the tickets are, relative to the repository root, and **non-zero when
+# this directory is not in that repository**: a tree of this repository cannot
+# hold it, so a pathspec built from it would either match nothing or — worse —
+# reach for a path git resolves somewhere else entirely. Same assumption
+# `gate_is_bookkeeping` makes: the project root is the repository root.
+tracker_local__issues_relpath() {
+  local dir root
+  dir="$(tracker_local__issues_dir)"
+  root="$(ralph_project_root)"
+  case "$dir" in
+    "$root"/*) printf '%s\n' "${dir#"$root"/}" ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# Whether a path that moved inside the tracker directory is a **ticket file**,
+# which is the only thing this backend puts back.
+#
+# The definition is this backend's own scan — `"$dir"/*.md`, that directory and
+# no deeper — and writing it down is [49]. `issues/` holds more than tickets, and
+# the rest of it is the *pack's own*: the guard directory a claim takes beside the
+# ticket it is about to stamp (`<id>.md.guard/pid`), the temp file every atomic
+# write leaves next to its target (`<id>.md.tmp.XXXXXX`), the working copy
+# `set_fields` publishes from (`<id>.md.work.XXXXXX`, plus its own `.p`). Each of
+# them exists for a few milliseconds inside a window this guard is 35 ms wide, so
+# a sibling that writes the tracker while this session is judged leaves one in the
+# *before* snapshot and not in the *after* one — a `D` this guard used to hand to
+# `checkout-index`, putting a lock back and calling a session that wrote nothing
+# an editor of the tracker.
+#
+# The register of [13]/[42] cannot help and it must not be asked to: it is indexed
+# by **id**, and none of those names is one — `basename .../02-beta.md.guard/pid
+# .md` is `pid`, `basename 02-beta.md.work.IDdYXp .md` is the whole name.
+#
+# Filtering here rather than moving the transients out of `issues/` is the
+# decision, and it is not free: what a session drops in there under a name that is
+# not `<id>.md` is now restored by nothing, and it was never quarantined either
+# (`tracker_ids` globs `*.md`). That zone is named out loud on every window it
+# moves in — the `other` outcome of this interface — rather than left to a
+# document. The other exit, publishing every transient somewhere else, was refused
+# because it is not available to the one that matters: `state_atomic_write` has to
+# write beside its target for the rename to be atomic, and its targets are not all
+# in `issues/`.
+#
+# There is a second way to be neither restored nor quarantined and it never
+# reaches this predicate: a name shaped `<id>.md` that carries a newline ([48]).
+# This backend's own scans refuse it, so the quarantine does not see it — and the
+# reason that is not a hole is the branch above it, which fires first: git quotes
+# such a name, `gate_unaddressable` catches it, and the iteration is denied green
+# because nothing here can vouch for the tracker. The file stays where the session
+# put it, on no frontier and in no scan, which is the decision [48] wrote down
+# rather than the omission it looks like.
+tracker_local__is_ticket_path() {
+  local path="$1" dir="$2" rest
+  case "$path" in
+    "$dir"/*.md) ;;
+    *) return 1 ;;
+  esac
+  rest="${path#"$dir"/}"
+  case "$rest" in
+    */*) return 1 ;;
+  esac
+  return 0
+}
+
+# The tickets as a git tree object. Taken twice around a spawn by the guard: two
+# identical hashes is the whole of the normal case, and it costs one plumbing
+# call.
+#
+# Read from the project root explicitly, because since [13] an iteration runs with
+# its working directory inside a throwaway worktree and `gate_tree_snapshot` is
+# relative to wherever it is called from. The tracker is the one piece of state
+# every iteration shares — it is the authority they coordinate through — so it has
+# to be the tree the run was started in and never the copy a worktree happens to
+# carry. Getting this wrong is silent: the guard would snapshot a stale copy, find
+# it unchanged, and vouch for a tracker nobody looked at.
+tracker_local_snapshot() {
+  local path root tree
+  path="$(tracker_local__issues_relpath)" || return 1
+  root="$(ralph_project_root)"
+  tree="$(cd "$root" && gate_tree_snapshot "$path")" || return 1
+  [ -n "$tree" ] || return 1
+  printf '%s\n' "$tree"
+  return 0
+}
+
+# What moved between that tree and the tickets as they stand now.
+#
+# `2` for everything this could not measure, which is [59]'s rule in the place it
+# costs the most: a `before` git cannot read, an `after` it cannot build, a diff
+# it refuses. Every one of them used to arrive as "nothing moved" — the diff was
+# taken inside a heredoc substitution, whose status no reader ever sees — and
+# "nothing moved" is what makes the iteration green.
+#
+# The pathspec is redundant with a snapshot already scoped to the tickets, and it
+# stays: the caller overwrites files with what this names, so it may never be one
+# bad snapshot away from naming something outside the tracker.
+tracker_local_snapshot_moved() {
+  local before="$1" after root dir diff status path id
+  # Asked first, and it is the one answer that is not a refusal: a tracker
+  # directory outside this repository is a layout no tree of it can hold, so this
+  # backend takes no snapshot of *that* tracker and says so — `1`, which the guard
+  # reads as "there is nothing here to compare" and the run names once. It used to
+  # arrive at the same place by a different road, `failures__issues_path` refusing
+  # inside the guard, and in silence.
+  dir="$(tracker_local__issues_relpath)" || return 1
+  [ -n "$before" ] || return 2
+  after="$(tracker_local_snapshot)" || return 2
+  [ "$after" != "$before" ] || return 0
+  root="$(ralph_project_root)"
+  diff="$(git -C "$root" -c core.quotePath=false diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)" || return 2
+
+  # Staged is not work in progress either, and the tracker has no business in the
+  # target project's index. Here rather than in the guard because an index is this
+  # backend's storage and no other's, and in this window rather than in every
+  # snapshot because this is the one where a session has just been able to stage:
+  # a human who had staged a tracker edit before the run loses that much. Scoped
+  # to the tickets, so nothing staged elsewhere moves.
+  git -C "$root" reset -q -- "$dir" 2>/dev/null || true
+
+  while IFS="$(printf '\t')" read -r status path; do
+    [ -n "$path" ] || continue
+    # A name git prints quoted whatever `core.quotePath` says — a tab, a newline,
+    # a quote — is a name nothing here can hand to `checkout-index` ([39]).
+    if gate_unaddressable "$path"; then
+      printf 'blind\t%s\n' "$path"
+      continue
+    fi
+    # Not everything under `issues/` is a ticket, and this backend puts back
+    # tickets. The pack's own transients live there too, and a sibling's lock put
+    # back by a `checkout-index` is a ticket no iteration of this run can claim
+    # again.
+    if ! tracker_local__is_ticket_path "$path" "$dir"; then
+      printf 'other\t%s\n' "$path"
+      continue
+    fi
+    id="$(basename "$path" .md)"
+    case "$status" in
+      A) printf 'added\t%s\n' "$id" ;;
+      *) printf 'edited\t%s\n' "$id" ;;
+    esac
+  done <<TRACKER
+$diff
+TRACKER
+  return 0
+}
+
+# One ticket back to what that tree holds.
+#
+# Every git call names the project root, for the reason the snapshot does: the
+# caller's working directory is a throwaway worktree since [13], and the tracker
+# lives in the tree the run was started in. A `checkout-index` run from the
+# worktree would restore the tickets into the copy that is about to be thrown away
+# and report that it had put them back.
+tracker_local_snapshot_restore() {
+  local id="$1" before="$2" root dir idx rc=0
+  [ -n "$id" ] && [ -n "$before" ] || return 1
+  dir="$(tracker_local__issues_relpath)" || return 1
+  root="$(ralph_project_root)"
+  idx="$(mktemp "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")" || return 1
+  rm -f "$idx"
+  if ! GIT_INDEX_FILE="$idx" git -C "$root" read-tree "$before" 2>/dev/null; then
+    rm -f "$idx"
+    return 1
+  fi
+  GIT_INDEX_FILE="$idx" git -C "$root" checkout-index -f -- "$dir/$id.md" 2>/dev/null || rc=1
+  rm -f "$idx"
+  return "$rc"
 }
 
 # **Three refusals, and they are one answer** ([77]). This backend keeps no local
