@@ -124,3 +124,25 @@
 - **Ce que [35] a changé pour le parent d'un re-slice, livré le 04/08/2026.** Le commentaire de `failures_reslice` dit « le parent revient à la frontière et gagne son propre gate vert ». Depuis [35], une itération dont le gate ne voit changer aucun fichier est rouge (`delivery=red`) — et le parent d'un split est **exactement** ce cas par construction : le prompt de re-slice exige que chaque critère d'acceptation soit porté par un enfant, donc une fois les enfants résolus, une session sur le parent n'a plus rien à écrire. Le parent est donc retryé `RETRY_N` fois puis escaladé `nothing-delivered`, et le test `a slice too big for one session is cut up` l'asserte désormais ainsi.
 
   **Décision, et pourquoi ce n'est pas une régression.** Le vert que le parent obtenait avant était un tampon : ses trois branches objectives étaient vertes parce que les *enfants* avaient livré, pas lui. La phrase « il gagne son propre gate vert » décrivait un gate qui n'avait rien à juger. Et rien dans le pack ne vérifie que le split couvre le parent — `failures__plan_is_sound` contrôle la write-surface et la présence de critères, pas leur conservation ; c'est une règle du prompt, donc une ligne du tableau de la frontière de confiance. « Est-ce que ces deux morceaux valent le ticket d'origine » est donc une question d'humain, et l'escalade est le bon guichet : la note posée par [35] demande littéralement « pourquoi ce ticket ne fait-il rien faire à une session », dont la deuxième réponse est « le travail est déjà fait ». Le prix, écrit : `RETRY_N + 1` sessions dépensées avant l'escalade, sur un chemin déjà rare. Marquer le parent `resolved` à la place aurait été le faux livré que [35] existe pour refuser, obtenu par la porte d'à côté.
+
+## Ce que [19] ajoute (livré le 14/09/2026)
+
+**Les deux décisions que ce ticket avait laissées ouvertes sont prises.** Le
+constat était : « `cp -R .claude` dépose 22 liens symboliques cassés », et deux
+questions en dépendaient.
+
+1. **Ce qui constitue le pack déposé.** La définition de fait était
+   `harness__install_pack` — `loop.sh`, `human-loop.sh`, `settings.json`,
+   `ralph.config.sh.example`, `lib/*.sh`. `init_payload` la reprend et y ajoute
+   `.claude/skills/`, `skills-lock.json` (déposé en `.claude/skills-lock.json`) et
+   `docs/agents/`. `settings.local.json` est dehors à dessein.
+2. **Les skills sont déposés, et avec `cp -RL`** — les cibles, jamais les liens.
+   Un lien qui ne résout pas à la source est **refusé** avec son nom plutôt que
+   déposé, parce que le déposer reproduirait mot pour mot le défaut mesuré ici.
+   `test/install.bats` compte les liens symboliques sous le `.claude/` du projet
+   installé et exige zéro.
+
+Les trois entrées `.gitignore` que ce ticket réclamait (`run.log`, `.run.lock/`,
+les flux de session) sont dans le bloc que l'installeur écrit, avec quatre autres
+et la raison de chacune — voir la ligne « Ce que l'installeur soustrait à
+l'historique du projet » de `docs/frontiere-de-confiance.md`.

@@ -465,3 +465,181 @@ vivent dans `ralph-retro.*`, déjà compté.
 - **Rien de neuf dans le projet cible.** Pas de chemin à ignorer, pas de zone à
   garder : le seul objet durable que ce ticket ajoute côté distant est une
   requête `PATCH` de plus vers la forge quand une session a écrit le tracker.
+
+## Livré le 14/09/2026 — décisions, pièges, et ce que le code ne dit pas
+
+**40 tests (`test/install.bats`), 22 mutations, toutes `ok`.** Baseline après
+livraison : `test/run.sh` **960**, `test/mutate.sh` **975**.
+
+### Les sept décisions que ce ticket devait prendre, et ce qu'elles sont
+
+1. **Ce qui constitue le pack déposé** (question ouverte par [07]). La définition
+   de fait était `harness__install_pack` : `loop.sh`, `human-loop.sh`,
+   `settings.json`, `ralph.config.sh.example`, `lib/*.sh`. Le dépôt ajoute
+   **`.claude/skills/` en entier, déréférencé** (`cp -RL`), **`skills-lock.json`
+   déposé en `.claude/skills-lock.json`**, et **`docs/agents/`**.
+   `settings.local.json` est dehors à dessein : c'est la moitié machine de la
+   posture, et déposer les permissions d'un développeur dans chaque projet est
+   l'héritage silencieux que le scellement existe pour refuser.
+   *Le tout et pas les onze que la spec nomme* : un sous-ensemble choisi à la main
+   serait une douzième liste à tenir en phase avec un paragraphe de prose, alors
+   que le critère lisible sur le disque — *les skills que ce pack porte* — est le
+   répertoire lui-même. Un lien qui ne résout pas à la source est **refusé** avec
+   les noms, parce que le déposer reproduirait exactement le défaut mesuré de
+   [07]. `init_payload` imprime la liste (`--print-payload`) et `package.json`
+   est tenu de la couvrir par un test.
+2. **Le `.gitignore` du projet cible.** Sept lignes : les six de la zone comptable
+   (`run.log`, `.run.lock/`, `.session.*.jsonl`, `successor.log`,
+   `.forge-claims`, `.forge.guard/`) et **`receipts/`**. Les cinq premières sont
+   déjà exclues du rapport d'écritures par `gate_is_bookkeeping`, donc l'ignore
+   ne retire rien à un contrôle. `receipts/` est la décision : un reçu n'a aucun
+   gardien où qu'il soit, et l'ignorer lui retire la seule façon d'entrer dans
+   l'arbre jugé, où une write-surface réécrirait le document d'audit d'un ticket
+   précédent. **`LEARNINGS.md`, `learning-records/`, `docs/playthroughs/` et
+   `docs/adr/` ne sont PAS ignorés**, et c'est la même décision dans l'autre
+   sens : les deux premiers sont **scellés** ([14], [31]), donc les commiter est
+   ce qui les met sous garde ; un playthrough est la preuve de clôture d'une
+   feature. Les deux listes sont vérifiées en demandant le verdict à
+   `git check-ignore` sur un vrai dépôt, jamais en relisant le bloc.
+3. **`RECEIPTS_RETENTION_DAYS`** ([45] : documenté comme un élagage actif alors
+   que rien n'élaguait). Sortie retenue : **l'élagage est implémenté**, dans
+   `init.sh sweep`, qui vit hors d'une itération comme le reste du balayage. La
+   limite est dite plutôt qu'impliquée ([16]) : un reçu nomme des **objets** git
+   qu'un `gc` peut collecter bien avant la rétention, donc élaguer sur l'âge du
+   fichier n'aligne pas les deux durées et ne prétend pas le faire. Ça n'a pas
+   demandé de toucher `ralph.config.sh.example`, qui est hors write-surface.
+4. **`init.sh` est-il lancé par un humain ou par la boucle** ([31] laissait la
+   question tranchée par la taille de la liste scellée). Par un humain, une fois,
+   avant qu'il y ait un run — et le fichier le dit en tête. Ce qui s'ajoute ici et
+   n'était pas écrit : **`init.sh`, `bin/**` et `package.json` sont eux-mêmes hors
+   du scellement** (hors `.claude/**`), donc une write-surface *peut* les couvrir
+   dans ce dépôt-ci. Nouvelle ligne au tableau de `docs/frontiere-de-confiance.md`.
+5. **Le balayage** ([13], [36], [41], [45], [62], [69]). Il retire ce que
+   `gate_tmp_names` nomme et **rien d'autre** — la fonction est appelée, jamais
+   recopiée —, avec `-mtime +7` et jamais moins, plus `git worktree prune`, plus
+   un marqueur de successeur dont l'instant est passé, plus l'élagage des reçus.
+   Il **ne touche pas aux gardes** : une garde qu'un run tué a laissée est reprise
+   par l'allocation suivante ([47], [49]), et en déplacer une que tient un process
+   vivant casserait l'exclusion pour laquelle elle existe. Il les compte, en
+   appelant `gate_leftovers`, dans les mots exacts des deux autres points d'entrée.
+   `ralph-*` reste refusé, et le message le dit : sur la machine d'un développeur
+   du pack ce motif détruirait `ralph-harness.*`, le cache de templates gardé sept
+   jours **à dessein** — et c'est aussi pourquoi le balayage rend des dizaines de
+   Mo et pas le giga par ticket que le nettoyage manuel rendait.
+6. **Ce qu'un projet garde quand il réinstalle.** Tout le reste du dépôt est *le
+   pack*, sous les noms du pack, et l'écraser **est** le chemin de mise à jour :
+   un projet qui installe un checkout plus récent demande précisément un
+   `loop.sh` plus récent. `.claude/settings.json` est la seule exception, et pas
+   parce que c'est prudent : **le nom appartient à Claude Code et pas à ce
+   pack**, donc un projet qui utilise déjà Claude Code y garde ses permissions,
+   ses hooks et ses serveurs MCP — un dépôt qui remplacerait le fichier les lui
+   prendrait toutes pour ajouter deux clés. Il n'existe pas de fusion JSON écrite
+   en bash à qui on confie ça. Le fichier est donc **laissé tel quel**, et la
+   posture headless qui lui manque est *dite* (`autoCompactEnabled: false`,
+   `DISABLE_AUTO_COMPACT`) plutôt qu'imposée — même arrangement que `CLAUDE.md`
+   et `ralph.config.sh`, et le seul cohérent avec [31] qui scelle les trois.
+   *Trouvé en se posant la question du run réel après avoir écrit le fichier* :
+   `settings.json` était dans le payload comme les autres, donc écrasé en
+   silence. C'est le seul défaut que ce ticket a livré puis repris.
+7. **L'auto-suppression.** `init.sh` se supprime **quand il se tient à l'intérieur
+   du projet qu'il vient d'installer**, et seulement là — c'est la copie de
+   bootstrap, celle qu'un `npx` ou un `cp -R` laisse dans le projet. Lancé depuis
+   un checkout avec `--target ailleurs`, il ne supprime rien : effacer le
+   `init.sh` de la source (ou la copie dans un cache npm) serait un bootstrap qui
+   casse le suivant.
+
+### Ce que le code ne dit pas
+
+- **Deux flux, une seule règle de dépôt.** Quand la source **est** la cible (la
+  copie de bootstrap), rien n'est copié du tout et le seul juge est la
+  vérification d'après-coup : *chaque destination existe-t-elle ?* C'est la
+  différence entre « 8 copies faites » et « le projet a le pack », et la première
+  vaut zéro dans ce flux-là par construction.
+- **L'ordre `init_tree_preflight` → verrou → reste est un diagnostic, pas du
+  rangement.** Le verrou d'arbre vit dans le répertoire git, donc sur une cible
+  qui n'est pas un dépôt `tree_lock_acquire` échoue faute de répertoire git et
+  l'opérateur s'entendait dire « un run tient cet arbre de travail » à propos d'un
+  répertoire où aucun run n'a jamais démarré. Vu en écrivant les tests, corrigé,
+  et une entrée de mutation le tient.
+- **L'installeur prend le verrou d'arbre, comme les deux autres points d'entrée.**
+  Il écrit la config qu'un run source, les settings qu'un `claude` frais lit et
+  les règles d'ignore à travers lesquelles tout est jugé : le faire pendant qu'un
+  run tourne est le défaut de [46] avec un autre auteur. Il ne prend **pas** le
+  verrou de run, qui est par feature là où lui est par arbre.
+- **Le format de substitution de la config.** Une réponse est écrite *dans* le
+  `${KEY:-…}` de l'exemple (`KEY=${KEY:-'valeur'}`, guillemets extérieurs retirés,
+  `'` épelé `'\''`), et pas en assignation plate ajoutée à la fin. C'est le
+  contrat de l'exemple : une valeur exportée gagne sur le fichier, ce qui rend un
+  run scriptable (un CI, un test, le successeur one-shot de [09]). L'opérateur
+  (`:-` ou `-`) est repris de la ligne de l'exemple : trois clés sont écrites
+  `${KEY-…}` parce que le vide y est une déclaration.
+- **Les confirmations forcées hors terminal.** `--yes` ne saute rien : les dix
+  clés doivent être **présentes dans l'environnement**, et une absente est un
+  `exit 3` qui les nomme toutes d'un coup. Le piège qui a failli passer : les libs
+  sont sourcées après le snapshot de l'environnement, et l'exemple **assigne
+  toutes les clés** — un test de présence fait après le source aurait été vrai
+  pour une clé que personne n'a jamais épelée, c'est-à-dire une confirmation
+  forcée qui ne confirme rien, dans le seul fichier dont c'est le métier.
+- **Le refus d'un `TEST_CMD` no-op attrape l'orthographe, pas la propriété**, et
+  le message le dit : un `make test` derrière une cible vide passe ici et ne
+  prouve rien. La confirmation est le contrôle ; ce refus est une politesse.
+- **`init_config_check` n'est atteignable que par le chemin interactif** —
+  `init__snapshot_env` n'enregistre que des clés que l'exemple déclare, donc
+  aucune entrée non interactive ne le fait rougir. Il reste parce que le jour où
+  une question est posée sous un nom que l'exemple n'a pas, c'est la seule chose
+  entre ça et un fichier qui se lit comme un contrat. **Aucune mutation ne le
+  vise, et c'est écrit ici plutôt que laissé à découvrir.**
+- **Aucun `mktemp` au premier niveau de `$TMPDIR`.** C'est le piège que [62]
+  adressait à ce ticket seul : la dérivation qui tient `gate_tmp_names` honnête
+  ne scanne que `.claude/**`, donc un temporaire posé ici ne serait ni compté ni
+  signalé. Les temporaires de l'installeur vivent à côté de leur destination, et
+  un test le vérifie sur la source.
+- **Rien n'est commité.** L'installeur décide ce qu'un projet *a*, jamais ce qui
+  entre dans son historique ; le rapport final le dit, avec le fait que git ne
+  suit pas un répertoire vide (donc `docs/adr` et `docs/playthroughs`
+  n'apparaissent que le jour où un run y écrit).
+- **La validation finale est dérivée de `loop.sh`**, pas retapée : tout
+  `<nom>_preflight` appelé en commande nu dont l'échec arrête le run. Une seule
+  exception nommée, `loop_preflight` lui-même, qui est la fonction dont le corps
+  est dérivé et qui vit dans un point d'entrée que rien ne peut sourcer
+  (`loop.sh` finit sur `loop_main "$@"`). `tracker_preflight` est hors du jeu par
+  construction et non par chance : il est appelé en substitution de commande
+  parce qu'il *rapporte des constats*, et un run démarre avec.
+
+### Le piège d'ancrage que ce ticket a payé une fois
+
+L'entrée `19 a checkout deletes its own init.sh on the way out` ancrait sur
+`    *) return 0 ;;\n  esac`, unique au moment où elle a été écrite. Le correctif
+`settings.json` a ajouté, **plus haut dans le fichier**, un `case` qui finit
+exactement par ces deux lignes : la mutation s'est mise à éditer `init_settings`
+au lieu de `init__self_delete`, sans rien casser — donc `VACUOUS` sur un test
+parfaitement sain, exactement le symptôme que l'en-tête de `test/mutate.sh`
+décrit et qui se « répare » en réécrivant un test qui allait bien. Ré-ancrée sur
+la ligne précédente (`"$INIT_TARGET"/*) ;;`), qui nomme une ligne et pas un
+motif. À relire avant d'ajouter un `case` à ce fichier.
+
+### La mutation qu'il faut connaître avant d'y toucher
+
+`19 a checkout deletes its own init.sh on the way out` retire le garde de
+`init__self_delete`, ce qui fait **supprimer** le `init.sh` de l'arbre depuis
+lequel l'installeur a été lancé. Le test est écrit pour que cet arbre soit une
+*copie* du pack (`fake_pack_source` + `cp "$INIT_SH"`) et jamais ce dépôt-ci :
+sans ça, la restauration de `test/mutate.sh` remettrait les octets et pas le bit
+d'exécution, et le dépôt finirait avec un changement de mode que personne n'a
+fait.
+
+### Écarts de write-surface
+
+Trois, tous consignés dans le champ en tête :
+
+- **`test/mutate.sh`** — les dix-neuf entrées de mutation. Écart habituel de ce
+  dépôt, jamais couvrable par une write-surface écrite avant d'avoir livré.
+- **`docs/frontiere-de-confiance.md`** — deux lignes neuves, exigées par la
+  contrainte que [24] a posée à ce ticket (« toute entrée `.gitignore` ajoutée par
+  ce ticket est une ligne à ajouter au tableau ») et par la question 5 de la
+  definition of done pour la seconde.
+- **`README.md`** — la section « Essayer » disait « il n'y a pas encore
+  d'installeur (c'est le ticket 19) » et donnait la recette `cp -R` qui dépose 22
+  liens cassés. La laisser aurait été livrer l'installeur et publier la marche à
+  suivre qu'il remplace. La ligne « Ça manque » y est corrigée du même coup : elle
+  nommait quatre choses livrées depuis ([16], [10], [09], et celui-ci).

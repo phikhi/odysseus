@@ -174,3 +174,25 @@
   niveau d'un backend distant doit avoir sa ligne, et les deux formes qui
   échappent encore), [36] (la phrase a changé de texte), [16] (`human-loop.sh` ne
   dit rien des résidus).
+
+## Ce que [19] ajoute (livré le 14/09/2026)
+
+**`gate_tmp_names` a un troisième lecteur, et c'est le premier qui *agit*.**
+Jusqu'ici la liste décidait de ce qui est **compté** par deux points d'entrée
+([69]). L'installeur l'appelle maintenant pour décider de ce qui est **retiré**
+du disque (`init.sh sweep`, `find -mtime +7 -exec rm -rf`). Trois conséquences
+pour qui touche à cette liste :
+
+- **Un nom retiré de la liste cesse d'être balayé, en silence.** Avant, une ligne
+  en moins voulait dire un résidu non compté ; maintenant elle veut dire un
+  résidu qui reste sur le disque pour toujours. Le test de dérivation de ce
+  ticket est ce qui l'attrape — il rougit dans les deux sens — et
+  `test/install.bats` en dérive la même liste une seconde fois pour mettre
+  *chaque* nom au balayage.
+- **L'installeur appelle, il ne recopie pas.** L'entrée de mutation
+  `19 the sweep invents its own list of names` remplace l'appel par un motif
+  maison et vérifie que le test rougit.
+- **`init.sh` ne pose aucun `mktemp`**, ce qui referme le piège que ce ticket
+  avait adressé à [19] : la dérivation ne scanne que `.claude/**`, donc un
+  temporaire de l'installeur n'aurait été ni compté ni signalé. Un test lit la
+  source de `init.sh` et refuse un `mktemp`.

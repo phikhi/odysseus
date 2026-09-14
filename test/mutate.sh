@@ -254,6 +254,7 @@ LAYERING="test/layering.bats"
 SHIM="test/helpers/shims/claude"
 CONTRACT="test/helpers/claude-contract.bash"
 EXAMPLE=".claude/ralph.config.sh.example"
+INIT="init.sh"
 
 # ── [01] foundation & harness ────────────────────────────────────────────────
 
@@ -6305,6 +6306,127 @@ mutation "85 a guard name is composed outside any state_guard_take" "$STATE" \
 mutation "85 a module with nothing to say still names a zone" "$RETRO" \
   's/^retro_guards\(\) \{\n  \[ -n "\$\{RALPH_RETRO_STATE:-\}" \] \|\| return 1\n/retro_guards() {\n/m' \
   test/gate.bats "zone with nothing in it"
+
+# ── [19] the installer ───────────────────────────────────────────────────────
+#
+# The installer is the one component that lives outside a run, so nothing else in
+# this pack judges what it writes: no scope-guard, no rollback, no gate. Its only
+# control is `test/install.bats`, which drives it as a process against a project
+# that has nothing — which makes these mutations the whole of the evidence that
+# the control is real.
+#
+# One direction is deliberately not mutated and is named here rather than left to
+# be noticed: `init_config_check` refuses a key the installer answers that the
+# shipped example does not declare, and no non-interactive input reaches it — the
+# environment snapshot only records keys the example declares, so the guard can
+# only fire on the path where a human is asked a question by a misspelt name. It
+# stays because that is the path a later ticket will add a question on.
+
+mutation "19 the substrate is deposited dereferenced" "$INIT" \
+  's#cp -RL "\$from"/\. "\$to"/#cp -R "\$from"/. "\$to"/#' \
+  test/install.bats "lands as files"
+
+mutation "19 a substrate link that resolves to nothing is deposited all the same" "$INIT" \
+  's!      \[ -L "\$from" \] \|\| continue!      continue!' \
+  test/install.bats "resolves to nothing is refused"
+
+mutation "19 a project's own CLAUDE.md is overwritten instead of merged" "$INIT" \
+  's!        cat "\$file"\n        printf!        printf!' \
+  test/install.bats "merged and never overwritten"
+
+# The one file whose name belongs to Claude Code and not to this pack. Replacing
+# it takes a project's permissions, hooks and MCP servers away in order to add
+# two keys, so it is kept — and the posture it then lacks has to be said, because
+# a delivery session that auto-compacts mid-ticket loses the ticket ([04]).
+mutation "19 a project's own settings.json is replaced by the pack's" "$INIT" \
+  's!  printf \x27%s\\n\x27 \x27\.claude/settings\.json\x27!  return 1!' \
+  test/install.bats "own settings.json is kept whole"
+
+mutation "19 a settings.json without the headless posture is kept quietly" "$INIT" \
+  's!  init__note "this project\x27s \.claude/settings\.json was kept exactly[^\n]*!  :!' \
+  test/install.bats "own settings.json is kept whole"
+
+# [33] applied to this file's own paths. One representative site rather than a
+# claim about every quote in the file: a project directory may hold a space, and
+# an unquoted expansion turns one path into several.
+mutation "19 a project path is word-split into several" "$INIT" \
+  's!  mkdir -p "\$INIT_TARGET/\.scratch/\$feature/issues" \|\|!  mkdir -p \$INIT_TARGET/.scratch/\$feature/issues \|\|!' \
+  test/install.bats "path holds a space"
+
+mutation "19 the block is appended again instead of replaced" "$INIT" \
+  's!start="\$\(grep -nxF -- "\$open" "\$file"!start="\$(grep -nxF -- "a marker no file carries" "\$file"!' \
+  test/install.bats "installing twice"
+
+mutation "19 the receipts of an earlier ticket may enter the history" "$INIT" \
+  's!^receipts/\n!!m' \
+  test/install.bats "ignore block covers exactly the bookkeeping"
+
+mutation "19 a remote backend's sidecar may enter the history" "$INIT" \
+  's!^\.scratch/\*/\.forge-claims\n!!m' \
+  test/install.bats "ignore block covers exactly the bookkeeping"
+
+mutation "19 the config a project already had is overwritten" "$INIT" \
+  's!if \[ -f "\$dest" \]; then\n    init__say "kept!if [ -z "\$dest" ]; then\n    init__say "kept!' \
+  test/install.bats "installing twice"
+
+# The example's contract, and the reason the substitution is written *into*
+# `${KEY:-…}` rather than appended as a plain assignment: an exported value has to
+# win over the file, or a run stops being scriptable from its environment — a CI,
+# a test, the one-shot successor of [09].
+mutation "19 the written config takes the environment's place" "$INIT" \
+  's!printf \x27%s=\$\{%s%s%s\}\\n\x27!printf \x27%s=%s%s%s\\n\x27!' \
+  test/install.bats "exported value still wins"
+
+mutation "19 a forced confirmation missing off a terminal is not noticed" "$INIT" \
+  's!      init__env_has "\$key" \|\| missing="\$missing \$key"!      :!' \
+  test/install.bats "forced confirmation that was not given"
+
+mutation "19 a TEST_CMD that is a no-op is installed without a word" "$INIT" \
+  's!    true \| : \| \x27exit 0\x27 \| /bin/true \| /usr/bin/true\)!    __a_command_nobody_spells__)!' \
+  test/install.bats "TEST_CMD that is a no-op"
+
+mutation "19 the installer writes while a run is going" "$INIT" \
+  's#  if ! tree_lock_acquire; then#  if false; then#' \
+  test/install.bats "refuses while a run holds this working tree, and writes nothing"
+
+# [62]'s list, consumed rather than copied. A sweeper with a pattern of its own
+# takes the suite's template cache — kept seven days on purpose — and reports
+# names the two entry points do not.
+mutation "19 the sweep invents its own list of names" "$INIT" \
+  's!\$\(gate_tmp_names\)!\$(printf \x27ralph-*\\n\x27)!' \
+  test/install.bats "leaves the harness's own namespace alone"
+
+mutation "19 the sweep takes what a live run may still own" "$INIT" \
+  's!-name "\$name" -mtime \+7!-name "\$name"!g' \
+  test/install.bats "leaves the harness's own namespace alone"
+
+mutation "19 the refusals are no longer read out of loop.sh" "$INIT" \
+  's!"\$pack/loop.sh"!/dev/null!' \
+  test/install.bats "derived from loop.sh and not retyped"
+
+mutation "19 the aggregator is counted as one of the refusals it aggregates" "$INIT" \
+  "s!grep -v .\\^loop_preflight\\\$. \\| LC_ALL=C sort -u!LC_ALL=C sort -u!" \
+  test/install.bats "derived from loop.sh and not retyped"
+
+mutation "19 whether this is a tree at all is asked after the lock" "$INIT" \
+  's!init_tree_preflight\(\) \{\n  git -C!init_tree_preflight() {\n  return 0\n  git -C!' \
+  test/install.bats "not told a run holds it"
+
+mutation "19 the deposit is judged on the copy and not on what landed" "$INIT" \
+  's!    \[ -e "\$INIT_TARGET/\$dst" \] \|\|!    true \|\|!' \
+  test/install.bats "bootstrap payload missing a piece"
+
+mutation "19 the bootstrap copy stays in the project" "$INIT" \
+  's!  rm -f "\$INIT_SELF" \|\| return 0!  return 0!' \
+  test/install.bats "bootstrap copy removes itself"
+
+# The other direction, and it is safe only because the test runs the checkout
+# half through a copy of the pack: without the guard this deletes the `init.sh`
+# of whatever tree it was started from, and a restore would put the bytes back
+# without the exec bit.
+mutation "19 a checkout deletes its own init.sh on the way out" "$INIT" \
+  's!    "\$INIT_TARGET"/\*\) ;;\n    \*\) return 0 ;;!    "\$INIT_TARGET"/*) ;;\n    *) ;;!' \
+  test/install.bats "bootstrap copy removes itself"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
