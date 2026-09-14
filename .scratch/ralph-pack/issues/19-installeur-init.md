@@ -4,15 +4,15 @@
 
 **Blocked by:** 01, 18, 62, 69, 73, 74, 75, 76, 77
 
-**Write-surface:** `init.sh`, `package.json`, `bin/**`, `test/install.bats`
+**Write-surface:** `init.sh`, `package.json`, `bin/**`, `test/install.bats` — **plus, en livrant : `test/mutate.sh`, `docs/frontiere-de-confiance.md`, `README.md`** (écarts consignés en fin de ticket)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `init.sh` (déclenché par un wizard `npx`) est **idempotent** et fonctionne dans un repo vierge comme existant ; il s'auto-supprime après bootstrap.
-- [ ] Il pose l'arborescence du pack, provisionne `.scratch/` et les dossiers durables (`docs/adr`, `docs/playthroughs`, `receipts`), et écrit un `ralph.config.sh` de départ si absent.
-- [ ] Un `CLAUDE.md` existant est **mergé** (append d'un bloc), jamais écrasé ; absent → créé.
-- [ ] Le substrat est **copié** (vendoré, pinné à une version), self-contained pour la sandbox.
-- [ ] La validation des préconditions (projet git, endpoint d'usage, commandes test/typecheck) rapporte clairement si le projet est broyable ; le moteur reste **bash pur** (fallback sans node).
+- [x] `init.sh` (déclenché par un wizard `npx`) est **idempotent** et fonctionne dans un repo vierge comme existant ; il s'auto-supprime après bootstrap.
+- [x] Il pose l'arborescence du pack, provisionne `.scratch/` et les dossiers durables (`docs/adr`, `docs/playthroughs`, `receipts`), et écrit un `ralph.config.sh` de départ si absent.
+- [x] Un `CLAUDE.md` existant est **mergé** (append d'un bloc), jamais écrasé ; absent → créé.
+- [x] Le substrat est **copié** (vendoré, pinné à une version), self-contained pour la sandbox.
+- [x] La validation des préconditions (projet git, endpoint d'usage, commandes test/typecheck) rapporte clairement si le projet est broyable ; le moteur reste **bash pur** (fallback sans node).
 
 ## Comments
 
