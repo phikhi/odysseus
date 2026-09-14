@@ -885,7 +885,7 @@ FAKE
     cd "$(ralph_project_root)"
     RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
     export RALPH_TRACKER_LOG
-    before="$(failures_tracker_tree)"
+    before="$(tracker_snapshot)"
     mark="$(tracker_write_mark)"
     # What the loop legitimately does inside another iteration'"'"'s window: it
     # claims a sibling. And what a session does, which nothing may keep: it edits
@@ -921,7 +921,7 @@ FAKE
     cd "$(ralph_project_root)"
     RALPH_TRACKER_LOG="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.writes.XXXXXX")"
     : >"$RALPH_TRACKER_LOG"
-    before="$(failures_tracker_tree)"
+    before="$(tracker_snapshot)"
     mark="$(tracker_write_mark)"
     # What the loop legitimately does inside another iteration'"'"'s window.
     tracker_claim 02-beta "pid:$$"
@@ -2181,7 +2181,7 @@ FAKE
 
   run_loop
   assert_failure 4
-  assert_output_contains "the session edited the tracker — restored 1 ticket file(s)"
+  assert_output_contains "the session edited the tracker — restored 1 ticket(s)"
 
   # Green branches, and no green iteration.
   assert_output_contains "tests=green typecheck=green scope=green"
@@ -2427,7 +2427,7 @@ FAKE
   assert_success
 
   # The rename cost the iteration, like any other tracker edit.
-  assert_output_contains "the session edited the tracker — restored 1 ticket file(s)"
+  assert_output_contains "the session edited the tracker — restored 1 ticket(s)"
   assert_file_contains "$FEATURE_DIR/run.log" "tracker-write"
 
   # The addition is kept — nothing a session wrote is destroyed — under a number
@@ -2511,7 +2511,7 @@ FAKE
 
   run_loop
   assert_failure 4
-  assert_output_contains "the session edited the tracker — restored 3 ticket file(s)"
+  assert_output_contains "the session edited the tracker — restored 3 ticket(s)"
 
   # Every ticket is back, with the state it had at spawn time — and the run went
   # on to mark and journal against it rather than dying on a missing file.
@@ -2568,7 +2568,7 @@ FAKE
 
 @test "one unreadable ticket file does not make every ticket look deleted" {
   # The tracker guard's half of [59], and it is the outage of [49] reached from
-  # the other end. `failures_tracker_tree` goes through the pathspec branch of
+  # the other end. `tracker_snapshot` goes through the pathspec branch of
   # `gate_tree_snapshot`; a single ticket file git cannot open made that branch
   # answer **the empty tree with `rc=0`**, so `diff-tree before after` marked
   # every ticket `D`, this guard restored them all, refused the green and put a
@@ -2576,7 +2576,7 @@ FAKE
   use_tickets 01-alpha 02-beta
 
   pack_run '
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 chmod 000 "$(tracker_local__path 02-beta)"
 rc=0
 failures_protect_tracker 01-alpha "$before" "" || rc=$?
@@ -2597,7 +2597,7 @@ printf "note=%s\n" "$(tracker_read_ticket 01-alpha | grep -c "edited the tracker
   # The paired witness: the same call with both tickets readable vouches for the
   # tracker and says nothing at all.
   pack_run '
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 rc=0
 failures_protect_tracker 01-alpha "$before" "" || rc=$?
 printf "rc=%s\n" "$rc"'
@@ -2622,7 +2622,7 @@ guard="$(tracker_local__path 02-beta).guard"
 mkdir -p "$guard"
 printf "%s\n" "$$" >"$guard/pid"
 ralph_now >"$guard/since"
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 rm -rf "$guard"
 
 rc=0
@@ -2662,7 +2662,7 @@ printf "claim=%s\n" "$(tracker_claim 02-beta "pid:$$" && printf taken || printf 
 dir="$(tracker_local__issues_dir)"
 tmp="$(mktemp "$dir/02-beta.md.tmp.XXXXXX")"
 printf "half a ticket\n" >"$tmp"
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 rm -f "$tmp"
 
 rc=0
@@ -2703,7 +2703,7 @@ printf "frontier=%s\n" "$(tracker_frontier | tr "\n" " ")"
 dir="$(tracker_local__issues_dir)"
 mkdir -p "$dir/drafts"
 cp "$dir/02-beta.md" "$dir/drafts/09-ghost.md"
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 rm -rf "$dir/drafts"
 printf "what the session thought\n" >"$dir/session-notes.txt"
 
@@ -2740,7 +2740,7 @@ printf "ids=%s\n" "$(tracker_ids | tr "\n" " ")"
 dir="$(tracker_local__issues_dir)"
 weird="$dir/$(printf "09-a\tb").md"
 cp "$dir/02-beta.md" "$weird"
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 rm -f "$weird"
 
 rc=0
@@ -2755,7 +2755,7 @@ if [ -e "$weird" ]; then printf "verdict=restored\n"; else printf "verdict=gone\
   assert_output_contains "verdict=gone"
   # And not counted as a ticket it restored: the note on the ticket says how many
   # ticket files were put back, and this one was not.
-  refute_output_contains "restored 1 ticket file(s)"
+  refute_output_contains "restored 1 ticket(s)"
 }
 
 @test "a ticket written under a name nothing can address makes no ghost and no false quarantine" {
@@ -2770,7 +2770,7 @@ if [ -e "$weird" ]; then printf "verdict=restored\n"; else printf "verdict=gone\
 
   pack_run '
 dir="$(tracker_local__issues_dir)"
-before="$(failures_tracker_tree)"
+before="$(tracker_snapshot)"
 seen="$(failures_tracker_snapshot)"
 cp "$dir/01-alpha.md" "$dir/$(printf "99-a\nb").md"
 printf "ids[%s]\n" "$(tracker_ids 2>/dev/null | tr "\n" "|")"

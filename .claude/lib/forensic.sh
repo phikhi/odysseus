@@ -141,11 +141,22 @@ forensic__receipt_dir() {
 # tickets. Asked here because `forensic_uncovered` is the one place a run says out
 # loud what nothing in it covers, and because the answer decides a sentence a human
 # reads rather than anything this module compares.
-forensic__tickets_dir() {
-  local dir
-  dir="$(tracker_tickets_dir 2>/dev/null)" || return 1
-  [ -n "$dir" ] || return 1
-  printf '%s\n' "$dir"
+#
+# **The question is the snapshot and no longer the directory** ([73]). Until the
+# guard over the tracker had a transport of its own, "this backend keeps no
+# tickets in a directory of this repository" and "nothing here restores what a
+# session writes in the tracker" were the same fact, so `tracker_tickets_dir` was
+# asked for both. They came apart the day a backend whose tickets are issues
+# gained a snapshot: the directory is still refused and the tracker is guarded all
+# the same. So what is asked is the thing the sentence is about — can this backend
+# photograph its tracker at all — and the one backend that answers no is one whose
+# tickets live where no snapshot of this pack reaches.
+#
+# It costs one photograph per run, at startup: a `git write-tree` of the tickets
+# on the local backend, and on a remote one a listing that the reading of [75]
+# serves for nothing once the pilot has primed.
+forensic__tracker_pin() {
+  tracker_snapshot >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -312,15 +323,16 @@ forensic_uncovered() {
   fi
   # The tickets, and it is a different guarantee under the same sentence ([18]).
   # `failures_protect_tracker` restores what a session wrote in the tracker by
-  # comparing two git trees of the directory the tickets live in, and that is what
-  # makes the write-surface the scope-guard judges against the contract as it stood
-  # at spawn time. A backend that keeps its tickets elsewhere has no such directory:
-  # the guard takes its "nothing here to compare" branch, nothing is restored, and
-  # this line is the whole of what the run says about it. Said here rather than by
-  # the guard because the guard runs once per iteration and this is a property of
-  # the night — [64]'s lesson about eight identical lines on a console.
-  if ! forensic__tickets_dir >/dev/null 2>&1; then
-    printf 'this backend does not keep its tickets in a directory of this repository, so nothing here restores what a session writes in the tracker: the write-surface the scope-guard judges against is read from a ticket the session it judges can reach, and the two tree snapshots taken around every session compare nothing ([18] on [21])\n'
+  # comparing the snapshot the backend took before that session with the one it
+  # takes when it returns, and that is what makes the write-surface the scope-guard
+  # judges against the contract as it stood at spawn time. A backend that can take
+  # no such snapshot leaves the guard with nothing to compare: it takes its
+  # "nothing here to compare" branch, nothing is restored, and this line is the
+  # whole of what the run says about it. Said here rather than by the guard because
+  # the guard runs once per iteration and this is a property of the night —
+  # [64]'s lesson about eight identical lines on a console.
+  if ! forensic__tracker_pin >/dev/null 2>&1; then
+    printf 'this backend takes no snapshot of its tracker, so nothing here restores what a session writes in it: the write-surface the scope-guard judges against is read from a ticket the session it judges can reach, and the guard taken around every session has nothing to compare ([18] on [21], and [73] for the transport it would need)\n'
     said=0
   fi
   [ "$said" = 0 ] || return 1

@@ -606,37 +606,316 @@ T
   refute_output_contains "(nothing to say)"
 }
 
-# ── the tracker nothing restores ([21] on a remote backend) ──────────────────
+# ── the tracker a session writes over the network ([21], [18], [73]) ─────────
+#
+# The hole [18] measured and left open. A session of a remote backend writes this
+# tracker over the network: no tree object of this repository sees it, no
+# scope-guard, no rollback and no witness of this pack does either. Until [73] the
+# guard had no transport here at all — it compared two git trees of a directory
+# that does not exist on a forge, found them both empty, and vouched.
 
-@test "a backend that keeps no tickets in this tree is named once, and vouches for nothing" {
-  # The silence [21] could not see, because the only backend that existed kept its
-  # tickets here: two git trees of a directory that does not exist are both the
-  # empty tree, so the guard compared nothing and **returned zero**. It still
-  # returns zero — refusing on every window would make every iteration of a remote
-  # backend red, which is no backend at all — and the run now says so once.
+# One issue, and the shape every scenario below starts from.
+remote__alpha() {
+  forge_seed 1 alpha Alpha <<'T'
+# 1 — Alpha
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/a.txt`
+T
+}
+
+# A session that does what its ticket asks and writes the tracker over the
+# network, which on this backend is a file of the fake forge and not of the tree.
+# What it does is read from this function's own stdin, so a scenario says it where
+# it is asserted.
+remote__editing_session() {
+  {
+    printf '#!/usr/bin/env bash\nprompt="$(cat)"\n'
+    printf 'd="$RALPH_SHIM_STATE/forge"\n'
+    cat
+    printf '%s\n' 'echo '"'"'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'"'"''
+  } | script_claude
+}
+
+@test "a session that edits its own issue over the network is put back, and the iteration pays" {
+  # The remote twin of `an edited ticket is put back, and the iteration pays for
+  # the edit`, and it is the 08/09/2026 measurement turned round: the session
+  # writes nothing but the file its ticket declared, so every gate branch is green
+  # and the edited tracker is the only thing wrong with the iteration.
+  use_forge github
+  remote__alpha
+  set_config ITER_CAP 1
+  remote__editing_session <<'DO'
+mkdir -p src
+printf 'written by %s\n' "$$" >src/a.txt
+printf '\n- [ ] and one criterion the discovery never wrote\n' >>"$d/issue.1.body"
+DO
+
+  run_loop
+  assert_equal "$status" 4
+  assert_output_contains "the session edited the tracker — restored 1 ticket(s)"
+  assert_output_contains "scope=green"
+
+  # On the forge, which is where this is true or not.
+  refute_file_contains "$SHIM_STATE/forge/issue.1.body" "the discovery never wrote"
+  assert_equal "$(forge_field 1 Write-surface)" '`src/a.txt`'
+  assert_equal "$(forge_field 1 Status)" "ready-for-agent"
+  assert_equal "$(forge_field 1 Failures)" "1"
+
+  # Reported as itself rather than folded into a red gate, exactly as the local
+  # backend reports it: a receipt saying `gate-red` would send a human to the
+  # tests.
+  assert_file_contains "$FEATURE_DIR/run.log" "tracker-write"
+  run bash -c "grep -c resolved '$FEATURE_DIR/run.log' || true"
+  assert_equal "$output" "0"
+}
+
+@test "the write-surface the scope-guard reads is the one the issue carried at spawn" {
+  # What the restore is *for*, and the reason it runs before the gate reads a
+  # single field. Measured on 08/09/2026 without it: a session that widened its
+  # own `Write-surface:` to `*` over the network was judged against the surface it
+  # had just granted itself — green, committed, `resolved`, not a word.
+  use_forge github
+  remote__alpha
+  set_config ITER_CAP 1
+  remote__editing_session <<'DO'
+mkdir -p src lib
+printf 'written by %s\n' "$$" >src/a.txt
+printf 'nobody declared this\n' >lib/rogue.txt
+perl -pi -e 's/^\*\*Write-surface:\*\* .*/**Write-surface:** `*`/' "$d/issue.1.body"
+DO
+
+  run_loop
+  assert_equal "$status" 4
+  assert_output_contains "the session edited the tracker — restored 1 ticket(s)"
+  assert_output_contains "scope=red"
+  assert_equal "$(forge_field 1 Write-surface)" '`src/a.txt`'
+  refute_file_exists "$PROJECT_DIR/lib/rogue.txt"
+}
+
+@test "a ticket the session took out of the human sink is put back" {
+  # The other half of what this guard covers, and the one the 08/09/2026 pass
+  # measured on a real run: a session that marks somebody *else*'s ticket
+  # `resolved` takes it out of the frontier — or out of the human sink — for good.
+  # What was measured then: rc=0, iteration green, the ticket `resolved`, and the
+  # run saying nothing but its generic startup line.
+  use_forge github
+  remote__alpha
+  forge_seed 2 beta Beta <<'T'
+# 2 — Beta
+
+**Status:** ready-for-human
+
+**Escalation:** a human has to decide
+
+**Blocked by:** None
+T
+  set_config ITER_CAP 1
+  remote__editing_session <<'DO'
+mkdir -p src
+printf 'written by %s\n' "$$" >src/a.txt
+perl -pi -e 's/^\*\*Status:\*\* .*/**Status:** resolved/' "$d/issue.2.body"
+DO
+
+  run_loop
+  assert_equal "$status" 4
+  assert_output_contains "the session edited the tracker — restored 1 ticket(s)"
+  assert_equal "$(forge_field 2 Status)" "ready-for-human"
+  assert_equal "$(forge_field 2 Escalation)" "a human has to decide"
+}
+
+@test "a slug the session rewrote is one ticket put back, not a ticket gone and a ticket arrived" {
+  # Why the comparison is keyed on the **number** the forge allocated and never on
+  # the id. An id here is `<number>-<slug>` and the slug is read out of the body,
+  # so a session that rewrites its own `Slug:` line changes its id without
+  # changing the ticket: keyed on ids, one issue reads as one that vanished and
+  # one that appeared. The register of [13] is indexed by id too — this is the
+  # question [73] was asked to answer while delivering it.
+  use_forge github
+  remote__alpha
+  set_config ITER_CAP 1
+
+  pack_run 'before="$(tracker_snapshot)"
+    perl -pi -e "s/^\*\*Slug:\*\* .*/**Slug:** something-else/" "$RALPH_SHIM_STATE/forge/issue.1.body"
+    tracker_snapshot_moved "$before" | tr "\t" "="'
+  assert_success
+  assert_equal "$output" "edited=1-alpha"
+
+  # And end to end, where what it buys is visible: the body is put back, so the id
+  # the pack knows resolves again and nothing is quarantined for a ticket that
+  # never moved.
+  use_forge github
+  remote__alpha
+  set_config ITER_CAP 1
+  remote__editing_session <<'DO'
+mkdir -p src
+printf 'written by %s\n' "$$" >src/a.txt
+perl -pi -e 's/^\*\*Slug:\*\* .*/**Slug:** something-else/' "$d/issue.1.body"
+DO
+  run_loop
+  assert_output_contains "the session edited the tracker — restored 1 ticket(s)"
+  assert_equal "$(forge_field 1 Slug)" "alpha"
+  refute_output_contains "quarantined"
+}
+
+@test "an assignee a session added is taken off, and one it moved is refused out loud" {
+  # The assignee is the published half of a claim whose deciding half is the
+  # sidecar ([77]): `forge__claimed` falls back to it when this machine holds no
+  # local record, and what it renders is `foreign` — never pinged, never reclaimed
+  # on sight, out of the frontier for as long as `CLAIM_TTL` allows. So a session
+  # assigning a neighbour takes that ticket away from every run there is.
+  #
+  # Put back towards nobody, which is the one direction a verb exists for; refused
+  # in the other, because `forge__assign` writes `TRACKER_USER` and nothing else
+  # and a restore that invents is worse than the silence it replaces.
   use_forge github
   remote__two
 
-  pack_run 'set +e; tracker_tickets_dir; printf "rc=%s\n" "$?"'
-  assert_output_contains "rc=1"
+  pack_run 'set +e
+    before="$(tracker_snapshot)"
+    printf "somebody-else\n" >"$RALPH_SHIM_STATE/forge/issue.2.assignee"
+    tracker_snapshot_moved "$before" | tr "\t" "="
+    tracker_snapshot_restore 2-beta "$before"
+    printf "restore=%s\n" "$?"'
+  assert_output_contains "edited=2-beta"
+  assert_output_contains "restore=0"
+  assert_equal "$(forge_assignee 2)" ""
 
-  pack_run 'forensic_uncovered || printf "(nothing to say)\n"'
+  pack_run 'set +e
+    printf "someone\n" >"$RALPH_SHIM_STATE/forge/issue.2.assignee"
+    before="$(tracker_snapshot)"
+    printf "somebody-else\n" >"$RALPH_SHIM_STATE/forge/issue.2.assignee"
+    tracker_snapshot_restore 2-beta "$before"
+    printf "restore=%s\n" "$?"'
+  assert_output_contains "restore=1"
+  # Refused, and nothing invented: the assignee is left where the session put it,
+  # and the caller says so and refuses the green.
+  assert_equal "$(forge_assignee 2)" "somebody-else"
+}
+
+@test "an issue a session closed is opened again" {
+  # The third field of the record. Closing an issue changes nothing this pack
+  # reads — `Status:` lives in the body — and everything a human reads: the
+  # tracker of the project says the ticket is done.
+  use_forge github
+  remote__two
+
+  pack_run 'set +e
+    before="$(tracker_snapshot)"
+    printf "closed\n" >"$RALPH_SHIM_STATE/forge/issue.2.state"
+    tracker_snapshot_restore 2-beta "$before"
+    printf "restore=%s\n" "$?"'
+  assert_output_contains "restore=0"
+  assert_equal "$(forge_state 2)" "open"
+}
+
+@test "a tracker that would not answer after a session rewrites nothing" {
+  # The clause of [82] on the reads this restore makes. A refusal read as an empty
+  # value is a ticket rewritten with what nobody read — and here the writer is a
+  # control, on somebody else's ticket.
+  use_forge github
+  remote__two
+  pack_run 'set +e
+    before="$(tracker_snapshot)"
+    FORGE_PAGE=2
+    FORGE_PAGES=1
+    tracker_snapshot_moved "$before" >/dev/null 2>&1
+    printf "moved=%s\n" "$?"
+    tracker_snapshot_restore 1-alpha "$before" >/dev/null 2>&1
+    printf "restore=%s\n" "$?"
+    failures__gap() { printf "GAP %s\n" "$*"; }
+    failures_protect_tracker 1-alpha "$before" ""
+    printf "guard=%s\n" "$?"'
+  assert_output_contains "moved=2"
+  assert_output_contains "restore=1"
+  assert_output_contains "guard=1"
+  assert_output_contains "cannot read the tracker"
+  # And the tickets are exactly where they were: a guard that could not tell puts
+  # nothing back, and the run's only write to the forge was the read it refused.
+  assert_equal "$(forge_field 1 Status)" "ready-for-agent"
+  assert_equal "$(forge_field 2 Status)" "ready-for-agent"
+}
+
+@test "a restore is a write of the tracker, and both registers say so" {
+  # The constraint [84] wrote into this ticket. A restore that did not append to
+  # the register of [75] would leave the reading this iteration took alive over
+  # what it has just put back, for as long as `FORGE_CACHE_TTL`, and the
+  # scope-guard would judge against the write-surface of before. The other
+  # register is [13]'s: an id the **loop** wrote inside a sibling's window is one
+  # that sibling's guard must not undo.
+  use_forge github
+  remote__two
+  pack_run 'state="$(mktemp -d)"
+    RALPH_TRACKER_LOG="$state/writes"
+    : >"$RALPH_TRACKER_LOG"
+    tracker_cache_open "$state"
+    tracker_cache_prime
+    before="$(tracker_snapshot)"
+    perl -pi -e "s/^\*\*Status:\*\* .*/**Status:** resolved/" "$RALPH_SHIM_STATE/forge/issue.2.body"
+    # Where the iteration takes its second reading ([84]): after the session,
+    # before the guard. Written here in that order rather than at the top, because
+    # a reading taken before a session is one the restore would measure against
+    # itself — which is what the bound of [75] is for and what this asserts the
+    # other end of.
+    tracker_cache_prime
+    tracker_snapshot_restore 2-beta "$before"
+    printf "shared=%s\n" "$(tr -cd "\n" <"$state/tracker.writes" | wc -c | tr -d " ")"
+    printf "register=[%s]\n" "$(tr "\n" "|" <"$RALPH_TRACKER_LOG")"
+    printf "now=%s\n" "$(tracker_field 2-beta Status)"
+    rm -rf "$state"'
   assert_success
-  assert_output_contains "nothing here restores what a session writes in the tracker"
+  assert_output_contains "register=[2-beta|]"
+  assert_output_contains "shared=1"
+  assert_output_contains "now=ready-for-agent"
+}
 
-  pack_run 'failures__gap() { printf "GAP %s\n" "$*"; }
+@test "a backend that takes no snapshot of its tracker is named once, and vouches for nothing" {
+  # AC 4, and the posture [18] settled and [73] keeps: refusing on every window
+  # would make every iteration of such a backend red, which trades a false green
+  # for no green at all — the backend would be unusable rather than honest.
+  #
+  # Staged as a backend whose two snapshot operations refuse, because neither
+  # backend of this pack is one any more, which is the whole of the ticket. What
+  # holds the clause for a backend a project installs is stated where it belongs,
+  # in `lib/tracker.sh`: nothing on this side.
+  use_forge github
+  remote__two
+
+  pack_run 'tracker_snapshot() { return 1; }
+    tracker_snapshot_moved() { return 1; }
+    failures__gap() { printf "GAP %s\n" "$*"; }
     set +e
     failures_protect_tracker 1-alpha "" ""
-    printf "rc=%s\n" "$?"'
+    printf "rc=%s\n" "$?"
+    forensic_uncovered || printf "(nothing to say)\n"'
   assert_success
   assert_output_contains "rc=0"
   refute_output_contains "GAP"
+  assert_output_contains "takes no snapshot of its tracker"
+  refute_output_contains "(nothing to say)"
+}
+
+@test "and this backend does take one, so the run says nothing of the sort" {
+  # The paired witness. Without it the test above is satisfied by a pack that says
+  # the sentence on every backend, which is what it said before this ticket.
+  use_forge github
+  remote__two
+  pack_run 'set +e; tracker_snapshot >/dev/null; printf "snapshot=%s\n" "$?"
+    forensic_uncovered || printf "(nothing else to say)\n"'
+  assert_output_contains "snapshot=0"
+  refute_output_contains "takes no snapshot of its tracker"
+  # The receipt half of the same sentence is untouched: a request is still not a
+  # directory anybody can walk.
+  assert_output_contains "does not keep audit receipts in a directory"
 }
 
 @test "the local backend still restores what a session wrote, and still refuses to vouch blind" {
-  # The paired witness of the branch above: a guard that took the remote branch on
-  # every backend would be a guard that stopped guarding, and every existing
-  # assertion about it would go on passing.
+  # The paired witness of the branch above on the other backend: a guard that took
+  # the "nothing to compare" branch everywhere would be a guard that stopped
+  # guarding, and every existing assertion about it would go on passing.
   use_tickets 01-alpha
   pack_run 'tracker_tickets_dir'
   assert_success
@@ -1060,8 +1339,11 @@ T
   # structured line per iteration. The drain says the other half of it, per ticket,
   # in the reserve of `router_dossier`.
   assert_output_contains "does not keep audit receipts in a directory"
-  assert_output_contains "nothing here restores what a session writes in the tracker"
   assert_equal "$(printf '%s\n' "$output" | grep -c 'does not keep audit receipts')" "1"
+  # And the half that stopped being said, because it stopped being true ([73]):
+  # this backend photographs its tracker out of its own listing, so the guard has
+  # something to compare and the run has nothing to disclaim.
+  refute_output_contains "takes no snapshot of its tracker"
 }
 
 @test "a run whose session writes outside its surface escalates on a remote backend too" {

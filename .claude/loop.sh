@@ -568,7 +568,7 @@ loop__orphaned() {
 # did not create is one it could not clean up after a child that died hard.
 loop__iterate() {
   local ticket="$1" slot="$2" tree="$3" start="$4" provisioned="${5:-0}"
-  local outfile base pre seen issues rc turns cost tokens outcome tracker_says
+  local outfile base pre seen tracker_pin rc turns cost tokens outcome tracker_says
   local tracker_written changed commit mark emit attempt
   local drift_subject drift_outcome drift_message witness_note
   local RALPH_ROLLBACK_FAILED=0
@@ -678,10 +678,16 @@ loop__iterate() {
   # the rollback can see it — both hold it as the loop's own state — so what a
   # session writes there is the one write nothing else would catch. Two shapes,
   # two snapshots: an id that appears is a ticket the session granted itself,
-  # and a ticket file that moves is a session editing the very contract it is
-  # about to be judged on.
+  # and a ticket that moves is a session editing the very contract it is about
+  # to be judged on.
+  #
+  # The second one is taken by the **backend** since [73], and it is opaque here:
+  # a git tree object of the tickets directory on one, a listing of issues on
+  # another. A refusal is a backend that takes no snapshot of its tracker, which
+  # the guard reads as "there is nothing here to compare" and the run names once
+  # at startup — never as an empty tracker.
   seen="$(failures_tracker_snapshot)"
-  issues="$(failures_tracker_tree)" || issues=""
+  tracker_pin="$(tracker_snapshot)" || tracker_pin=""
   # And this iteration's own copy of the lesson index ([81]). Held here, in the
   # iteration's memory and before the session exists, because it is the one
   # witness of the night this run rewrites legally: the seal can hold it to its
@@ -793,7 +799,7 @@ WITNESSES
   # rewritten to `*`. Putting the tickets back first is what makes the guard
   # measure the contract as it stood when the session was spawned.
   tracker_written=0
-  failures_protect_tracker "$ticket" "$issues" "$mark" || tracker_written=1
+  failures_protect_tracker "$ticket" "$tracker_pin" "$mark" || tracker_written=1
 
   # Which attempt this is, read here and nowhere else ([10] on [26]). `Failures:` is
   # a retry budget and `mark_resolved` clears it, so after the marking below the

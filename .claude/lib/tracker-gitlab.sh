@@ -102,3 +102,9 @@ tracker_gitlab_sidecar_drift() { forge_sidecar_drift "$@"; }
 # `tracker-github.sh` and [75].
 tracker_gitlab_cache_open() { forge_cache_open "$@"; }
 tracker_gitlab_cache_prime() { forge_cache_prime gitlab; }
+
+# And the same guard over what a session writes in the tracker — see
+# `tracker-github.sh` and [73].
+tracker_gitlab_snapshot() { forge_snapshot gitlab; }
+tracker_gitlab_snapshot_moved() { forge_snapshot_moved gitlab "$@"; }
+tracker_gitlab_snapshot_restore() { forge_snapshot_restore gitlab "$1" "$2"; }
