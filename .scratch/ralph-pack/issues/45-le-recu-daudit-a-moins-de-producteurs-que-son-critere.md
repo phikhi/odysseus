@@ -95,3 +95,21 @@
 - Et un `-n` sur les **425** entrées après réancrage : **0 not ok**, donc plus aucune ancre à la dérive dans le fichier.
 
 - **[09], le 29/08/2026 : un cinquième événement qui n'a aucun reçu, et il est hors du critère de ce ticket.** L'armement (ou le refus d'armer) d'un successeur one-shot arrive sur un **mur budget**, c'est-à-dire là où il n'y a pas d'itération à raconter : le run s'arrête *avant* de réclamer un ticket. Ce ticket-ci lit son critère au niveau de l'itération (« celle après laquelle aucune autre ne vient sur ce ticket »), donc rien ne manque ici. Ce que [09] écrit vit dans `run.log` — `successor-armed` contre `weekly-pause`, sujet `-` comme `budget-wall` — et sur stdout. Le jour où un reçu de **run** existerait (et pas seulement d'itération), c'est là que l'armement appartiendrait : c'est la seule décision de fin de nuit qu'un humain doit pouvoir lire sans le stdout d'un process mort.
+
+## Ce que [19] ajoute (livré le 14/09/2026)
+
+**`RECEIPTS_RETENTION_DAYS` a enfin un lecteur.** Ce ticket avait écrit dans [19]
+que la clé était documentée comme un élagage actif alors qu'aucun code du pack ne
+la lisait, et que la troisième voie — une clé dont la valeur ne change rien, dans
+un fichier que ce dépôt lit comme un contrat — ne devait pas rester. [19] a pris
+la première des deux sorties : **l'élagage est implémenté**, dans `init.sh sweep`,
+qui vit hors d'une itération comme le reste du balayage dont ce ticket-là est
+propriétaire. La limite que ce ticket demandait de ne pas cacher est dite par le
+message lui-même : un reçu nomme des **objets** git qu'un `gc` peut collecter
+bien avant la rétention, donc élaguer sur l'âge du fichier n'aligne pas les deux
+durées et ne prétend pas le faire ([16]).
+
+Conséquence pratique : la rétention ne s'applique que quand un humain lance le
+balayage. Un projet qui ne le lance jamais garde ses reçus, ce qui est le
+comportement d'avant et n'est pas une régression — mais la phrase de
+`ralph.config.sh.example` est maintenant vraie de quelque chose.

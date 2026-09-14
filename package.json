@@ -1,0 +1,27 @@
+{
+  "name": "ralph-pack",
+  "version": "0.1.0",
+  "description": "AFK delivery pack: a ralph loop, a quality gate and a human sink, in pure bash. `npx ralph-pack` installs it into a repository.",
+  "bin": {
+    "ralph-pack": "bin/ralph-init.js"
+  },
+  "files": [
+    "init.sh",
+    "bin/",
+    ".claude/loop.sh",
+    ".claude/human-loop.sh",
+    ".claude/settings.json",
+    ".claude/ralph.config.sh.example",
+    ".claude/lib/",
+    ".claude/skills/",
+    ".agents/skills/",
+    "skills-lock.json",
+    "docs/agents/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT",
+  "private": true
+}

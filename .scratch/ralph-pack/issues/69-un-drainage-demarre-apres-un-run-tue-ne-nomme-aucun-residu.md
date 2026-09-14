@@ -93,3 +93,18 @@
 - **Ce qui reste ailleurs.** Contrainte écrite dans [19] (deux lecteurs de
   `gate_leftovers`) et dans [67] (l'ordre du démarrage du drain a changé : les
   résidus passent avant `router_run_notes`). Le constat ouvert de [16] est fermé.
+
+## Ce que [19] ajoute (livré le 14/09/2026)
+
+**`gate_leftovers` a un troisième appelant, et il est le seul qui enlève quelque
+chose.** Ce ticket avait posé la contrainte dans les deux sens : le balayeur de
+[19] doit retirer ce que la liste nomme et rien d'autre, sans quoi un objet
+disparaîtrait des deux phrases d'un coup. C'est ce qui a été livré — le balayage
+appelle `gate_tmp_names` pour les noms et `gate_leftovers` pour la phrase, avant
+et sans la reformuler — avec une exception qui mérite d'être lue : **les gardes
+ne sont pas balayées**. Une garde qu'un run tué a laissée est reprise par
+l'allocation suivante ([47], [49]) et en déplacer une que tient un process vivant
+casserait l'exclusion pour laquelle elle existe ; l'installeur les compte, par
+cette fonction, et ne les touche pas. Le marqueur de successeur, lui, est retiré
+— et seulement quand c'est `gate__stale_successor` qui a dit que son instant
+était passé, jamais sur une lecture propre du fichier.

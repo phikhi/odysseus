@@ -116,3 +116,21 @@ Depuis [50], le commit durable stage à travers la même lentille que le snapsho
   rédigé large rend commitable toute la zone ignorée qu'une write-surface couvre, et un
   `.scratch` gardé *et* ignoré ferait entrer `.scratch/<autre-feature>/` dans
   l'historique — `gate_is_bookkeeping` ne connaît que la feature courante.
+
+## Ce que [19] ajoute (livré le 14/09/2026)
+
+**La contrainte que ce ticket avait posée à [19] est honorée : chaque entrée
+`.gitignore` provisionnée est une ligne du tableau.** Elles sont sept, dans une
+seule ligne neuve de `docs/frontiere-de-confiance.md` (« Ce que l'installeur
+soustrait à l'historique du projet »), avec ce qui garde chaque zone : six sont la
+zone comptable de la feature, que `gate_is_bookkeeping` exclut déjà du rapport
+d'écritures non jugées, donc l'ignore ne retire rien à un contrôle ; la septième
+est `receipts/`, qui n'a **aucun** gardien où qu'elle soit, et que l'ignore prive
+de la seule façon d'entrer dans l'arbre jugé.
+
+Et la clé que ce ticket avait demandé de provisionner avec son commentaire,
+`GUARDED_PATHS`, est écrite depuis l'exemple comme les autres — avec un refus en
+plus : une valeur `.` est refusée à l'installation, parce que depuis [50] un
+chemin gardé que le projet ignore est **commité**, donc un `GUARDED_PATHS` large
+ferait entrer toute la zone ignorée qu'une write-surface couvre dans l'historique
+du projet.

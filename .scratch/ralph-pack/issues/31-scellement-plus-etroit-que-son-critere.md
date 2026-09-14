@@ -127,3 +127,22 @@
 **Ce qui reste ouvert après ce ticket, et n'a pas de propriétaire.** La posture ferme ce qui s'*exécute* ou se lit *au démarrage*. Elle ne ferme rien de ce que la lentille va lire elle-même : les rubriques l'envoient dans `CONTEXT.md`, `docs/adr/` et le code autour du diff avec ses propres `Read`/`Grep`. C'est le canal d'influence que [06] a déclaré sans propriétaire, et il est inchangé.
 
 - **La réserve laissée à [15] est levée, et elle a ouvert plus large que prévu (25/08/2026).** Ce ticket avait noté que `.claude/skills` est ici un jeu de liens symboliques et qu'écrire *à travers* un lien sort du chemin scellé. [15] a repris la question depuis son critère — « qu'est-ce qu'un `claude` frais charge comme capacité, et où ça vit » — et a trouvé deux racines de plus que le scellement ne voit pas du tout, parce qu'elles n'entrent dans aucun arbre que le scope-guard compare : l'**arbre principal** (une itération est jugée dans un worktree depuis [13], et `git worktree list` nomme l'autre) et le **`$HOME` de l'opérateur**, atteignable *par conception* puisque `lenses_posture` passe `--setting-sources user`. Un hook dans `~/.claude/settings.json` est une commande qui tourne dans le process de la session suivante : exactement le mode de panne que ce ticket avait sondé pour la version *dans l'arbre*. Ce que [15] y met est un témoin (`capability_witness` / `capability_drift`, `find -L` pour voir à travers les liens) et pas un contrôle, avec sa ligne dans `docs/frontiere-de-confiance.md`. Rien ici n'a changé : le scellement reste ce qui **tient** l'arbre jugé, et l'entrée de mutation qui retire les quatre répertoires de `gate_sealed_paths` reste la sienne.
+
+## Ce que [19] ajoute (livré le 14/09/2026)
+
+**La conclusion que ce ticket avait rendue inévitable est écrite, et elle a une
+contrepartie que personne n'avait posée.** L'installeur est bien le composant qui
+tourne **hors de la boucle** : il écrit `CLAUDE.md`, `.claude/settings.json` et le
+fichier que le run suivant source, c'est-à-dire trois chemins que le scellement
+de ce ticket met hors de portée de toute write-surface, donc un `init.sh` que la
+boucle aurait tenté de livrer aurait été rouge à chaque tentative.
+
+La contrepartie : **`init.sh`, `bin/**` et `package.json` ne sont pas scellés**.
+Ils vivent à la racine du dépôt du pack, hors de `.claude/**`, donc une
+write-surface *peut* les couvrir et une session de ce dépôt-ci peut les écrire —
+et aucun run ne les relit, puisque l'installeur tourne une fois, avant qu'il y ait
+un run, dans le dépôt de quelqu'un d'autre. Les étendre au scellement les rendrait
+non livrables par la boucle, ce qui est exactement l'arbitrage que ce ticket a
+déjà fait pour les chemins qu'ils *écrivent*. C'est une ligne neuve du tableau de
+`docs/frontiere-de-confiance.md` (« Ce que l'installeur déposera dans le
+**prochain** projet ») et pas un trou découvert plus tard.
