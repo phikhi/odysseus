@@ -315,3 +315,29 @@ Ce que ce ticket-ci doit tenir, en clair :
 - Le recensement de `test/tracker-remote.bats` (« *an entry point that opens this
   reading and never takes one is refused* ») est dérivé de `"$PACK_DIR"/*.sh` : un
   troisième point d'entrée ajouté par ce ticket doit primer, ou rougir.
+
+## Contrainte écrite par [85] (livré le 13/09/2026)
+
+Ce ticket est le suivant de la file, et [85] lui laisse **un recensement dérivé
+de plus** — celui des gardes d'exclusion, dans `test/gate.bats` :
+
+1. **Le plancher est à huit `state_guard_take`.** Si ce ticket ajoute un garde
+   côté distant — sérialiser une remise, un sidecar, un snapshot — il ajoute un
+   neuvième preneur, et le test exige que son chemin soit couvert par une zone de
+   `gate__guard_paths` (ou soit l'un des deux verrous que le point d'entrée tient
+   lui-même). C'est voulu : un garde que rien ne recense est un garde que le
+   journal du matin ne nomme pas, et le prix est chiffré dans [77]/[81].
+2. **La zone des tickets d'un backend distant est vide, et « vide » n'est pas
+   « non couvert ».** `gate__guard_paths` marche `tracker_tickets_dir`, qui ne
+   répond rien sur `github`/`gitlab`. Le test le distingue explicitement (troisième
+   cas, `RALPH_RETRO_STATE` vide). Donc un garde de claim distant ne peut **pas**
+   compter sur la marche de cette zone : s'il vit ailleurs, il doit être **demandé
+   au module qui le possède**, comme `concurrency_guards` et `retro_guards` le
+   font — jamais recomposé dans `gate.sh`.
+3. **Un nom en `.guard`/`.lock` composé hors d'un `state_guard_take` rougit
+   aussi** (second test). Une remise qui poserait un répertoire témoin nommé
+   ainsi sans passer par `state_guard_take` est refusée par le gate.
+
+Et le rappel qui vient de [85] mais vaut pour toute écriture de ce ticket : un
+chemin de garde n'est **pas** lisible sur la ligne d'appel, donc la couverture est
+résolue **par exécution** — inutile d'essayer de la faire lire à un `grep`.
