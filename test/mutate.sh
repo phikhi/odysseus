@@ -6180,6 +6180,61 @@ mutation "84 an entry point opens this reading and takes none" "$LOOP" \
   's#\n *tracker_cache_prime \|\| true\n#\n#g' \
   test/tracker-remote.bats "never takes one is refused"
 
+# ── [85] the census of guards, derived rather than copied ────────────────────
+#
+# `gate__guard_paths` names the zones, and until this ticket its own sentence —
+# "every path this pack may be holding an exclusion guard at" — was the only thing
+# holding it there. The list had already been wrong twice: [77] closed on the
+# question, the pass of 10/09/2026 measured it, [81] wrote the missing zones in by
+# hand. What is covered here is therefore not the list — a second copy of it in a
+# test would be [62]'s defect one directory in — but the *derivation*:
+# `test/gate.bats` reads the shipped pack's own `state_guard_take` calls, has the
+# pack compose the path each one takes, and puts every path to the census.
+#
+# Both directions, because a derivation can fail on either side: a taker added
+# with no zone following it, and a taker removed with the floor left where it was.
+# The two entries aimed at `$STATE` add a function nothing calls — a mutation that
+# only has to exist in the source for the scan to have to see it.
+
+mutation "85 a taker is added and no zone follows it" "$STATE" \
+  's/^state_guard_take\(\) \{/state_probe_guard_take() { state_guard_take "\$\{RALPH_DIR:-\/tmp\}\/ralph-newguard.guard" "new guard"; }\nstate_guard_take() {/m' \
+  test/gate.bats "takes a guard in a zone the census names"
+
+mutation "85 a taker is removed and the floor stays where it was" "$FORGE" \
+  's/    state_guard_take "\$\(forge__guard\)" "forge guard" "\$\{FEATURE:-unknown\}" && return 0\n/    return 0\n/' \
+  test/gate.bats "takes a guard in a zone the census names"
+
+# The zone [77] added, taken back out. It is the one a census cannot list in
+# advance — a claim guard is named after a ticket — so it is the one a derivation
+# has to reach through the pack rather than through a name.
+mutation "85 the zone of a ticket's own claim guard is walked by nobody" "$GATE" \
+  "s#  dir=\"\\\$\\(tracker_tickets_dir 2>/dev/null\\)\" \\|\\| dir=''\n  gate__guards_in \"\\\$dir\"\n##" \
+  test/gate.bats "takes a guard in a zone the census names"
+
+# And the reason two of the eight takers are allowed an answer other than the
+# census: an entry point holds those two itself, at the very instant the census is
+# read, and every reader of `gate_guards` says a live guard there is not this
+# run's. Put one in and the run accuses itself — which is what makes the exception
+# a checked property rather than a hole the test walks around.
+mutation "85 the locks this entry point holds itself are counted as foreign" "$GATE" \
+  's#    gate__guards_in "\$dir"\n  fi#    gate__guards_in "\$dir"\n    ralph_run_lock_path || true\n  fi#' \
+  test/gate.bats "takes a guard in a zone the census names"
+
+# The limit of the derivation, made into a rule of its own: it reads
+# `state_guard_take` calls, so a `.guard` name composed where nothing takes one
+# would put a guard in a place the test above could never ask the census about.
+mutation "85 a guard name is composed outside any state_guard_take" "$STATE" \
+  's/^state_guard_take\(\) \{/state_probe_guard_path() { echo "\$\{RALPH_DIR:-\/tmp\}\/elsewhere.guard"; }\nstate_guard_take() {/m' \
+  test/gate.bats "composes an exclusion guard name"
+
+# And the other half of "a module that answers nothing is not a hole": a drain
+# with no lesson workspace contributes no zone, which `gate_guards` documents as
+# the honest answer. A module that answered all the same would name a directory
+# this run has not got, and the derivation would be reading a path nobody can hold.
+mutation "85 a module with nothing to say still names a zone" "$RETRO" \
+  's/^retro_guards\(\) \{\n  \[ -n "\$\{RALPH_RETRO_STATE:-\}" \] \|\| return 1\n/retro_guards() {\n/m' \
+  test/gate.bats "zone with nothing in it"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

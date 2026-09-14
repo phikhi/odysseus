@@ -303,8 +303,8 @@ NAMES
 # **Three zones and not two, since [81].** [77] closed its ticket on an open
 # question — "nothing enumerates the guards this pack puts *outside* these two
 # directories, and nothing says there are none" — and the answer, measured on
-# 10/09/2026, is that this covered three of the pack's six `state_guard_take`
-# sites. The three it did not are not decorative:
+# 10/09/2026, is that this covered three of the six `state_guard_take` sites a run
+# may meet. The three it did not are not decorative:
 #
 #   `<common git dir>/ralph.integrate.lock`   the fold's guard. Held by a live
 #     owner, `concurrency__wait_for_guard` waits a minute and gives up, and a
@@ -322,6 +322,23 @@ NAMES
 # module that answers nothing — a drain with no lesson workspace, a machine with
 # no common git directory — contributes nothing, which is the honest answer and
 # not a hole.
+#
+# **Six of the pack's eight takers, and the two left out are left out on purpose.**
+# The run lock and the working-tree lock are `state_guard_take` sites like the six
+# above, and an entry point takes them for *itself* before it starts anything —
+# while every reader below says in so many words that a guard in this census is
+# one no iteration of this run is holding. Naming them here would have a run
+# accuse itself of holding its own locks, so they are answered for where they are
+# taken: a stale one is displaced and announced at acquisition, a live one refuses
+# the entry point by name.
+#
+# **And since [85] this list is held to that sentence by something other than the
+# sentence.** `test/gate.bats` reads the shipped pack's own `state_guard_take`
+# calls, has the pack compose the path each one takes, and asks this function
+# about every one of them — the derivation living in the test and never here, for
+# the reason [62] gives one directory out: the pack's source sits in a tree a
+# session writes, so a census the pack derived from itself is one a session can
+# edit into agreement.
 #
 # One line per guard, `<path><TAB><pid><TAB><since>`, with an empty pid for a
 # guard that names none. The path and not the basename: with two directories in
