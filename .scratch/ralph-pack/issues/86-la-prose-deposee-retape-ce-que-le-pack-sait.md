@@ -17,6 +17,12 @@
 
 ## Comments
 
+- **Ordre validé par Philippe le 14/09/2026** : **[87] → [86] → [88] → [89]**.
+  Le critère est celui d'habitude — minimiser la reprise, jamais l'urgence. [87]
+  devant parce qu'il ne touche que `test/` et qu'il pose le filet de source sous
+  le heredoc de prose que [86] va réécrire ; [88] derrière [86] parce qu'il
+  généralise une forme dont [86] livre le précédent ; [89] en dernier, sans arête.
+
 - **Ouvert par la passe transversale du 14/09/2026** (`../passe-transversale-14-09.md`,
   §1 et §2). Sonde : `../sondes/passe-14-09/q1-la-prose-deposee-retape-la-liste-scellee.bats`.
 
