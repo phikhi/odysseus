@@ -4,14 +4,14 @@
 
 **Blocked by:** 74, 75, 77
 
-**Write-surface:** `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/forge.sh`, `test/failures.bats`, `test/tracker-remote.bats`
+**Write-surface:** `.claude/lib/failures.sh`, `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh`, `.claude/lib/forge.sh`, `.claude/lib/forensic.sh`, `.claude/loop.sh`, `test/failures.bats`, `test/tracker-remote.bats`, `test/mutate.sh`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Ce qu'une session écrit dans un tracker distant est **remis** ou **refusé**, jamais avalé — et la ligne du tableau de confiance dit laquelle des deux.
-- [ ] `failures_protect_tracker` cesse d'être écrit contre un tree object de git : le transport est demandé à l'adaptateur, comme le chemin l'est déjà (`tracker_tickets_dir`).
-- [ ] Le backend `local` garde **exactement** ses garanties actuelles — les trois statuts `A`/`D`/`M`, l'exemption par le registre de [13]/[42], `failures__is_ticket_path`, le refus de vouloir garder un arbre qu'il n'a pas pu lire ([59]).
-- [ ] Un backend distant qui refuse le snapshot n'est pas rouge à chaque itération.
+- [x] Ce qu'une session écrit dans un tracker distant est **remis** ou **refusé**, jamais avalé — et la ligne du tableau de confiance dit laquelle des deux.
+- [x] `failures_protect_tracker` cesse d'être écrit contre un tree object de git : le transport est demandé à l'adaptateur, comme le chemin l'est déjà (`tracker_tickets_dir`).
+- [x] Le backend `local` garde **exactement** ses garanties actuelles — les trois statuts `A`/`D`/`M`, l'exemption par le registre de [13]/[42], `failures__is_ticket_path`, le refus de vouloir garder un arbre qu'il n'a pas pu lire ([59]).
+- [x] Un backend distant qui refuse le snapshot n'est pas rouge à chaque itération.
 
 ## Comments
 
