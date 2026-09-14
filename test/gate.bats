@@ -2646,6 +2646,364 @@ ASK
   refute_output_contains "not-integrated"
 }
 
+# ── [85] the census is held to its criterion by the calls that take a guard ──
+#
+# `gate__guard_paths` names three zones, and until this ticket the only thing
+# holding it to its own sentence — "every path this pack may be holding an
+# exclusion guard at" — was that sentence. The list has been wrong twice already:
+# [77] closed on the question, the pass of 10/09/2026 measured three of the
+# pack's `state_guard_take` sites covered, and [81] wrote the missing zones in by
+# hand. A taker added tomorrow is covered by nobody and noticed by nothing.
+#
+# That is [62]'s shape one directory in, and what follows is [62]'s repair: the
+# pack's own `state_guard_take` calls, read from the shipped source, resolved
+# **by the pack**, and put to the census one at a time. The derivation lives here
+# and not in the pack for [62]'s reason — the pack's source sits in a tree a
+# session writes, so a census the pack derived from itself is one a session can
+# edit into agreement.
+
+# Every `state_guard_take` the shipped pack calls, as `file:line<TAB>function`,
+# the function being the one the call sits in. Comments are dropped first: six
+# files here name the call in a paragraph and take nothing, and the definition is
+# not one of its own callers.
+#
+# A call written in a shape this cannot read lands in the second file instead of
+# being silently skipped, and the test fails on it — a scan that quietly
+# understands less of the pack than it did last month is exactly the failure
+# being fixed.
+guard_takers_scan() {
+  local calls="$1" unreadable="$2" f hit line fn
+  : >"$calls"
+  : >"$unreadable"
+  for f in "$PACK_DIR"/lib/*.sh "$PACK_DIR"/*.sh; do
+    [ -e "$f" ] || continue
+    LC_ALL=C grep -n 'state_guard_take' "$f" |
+      LC_ALL=C grep -v ':[[:space:]]*#' |
+      while IFS= read -r hit; do
+        case "$hit" in
+          *'state_guard_take() {'*) continue ;;
+          *'state_guard_take "'*) ;;
+          *)
+            printf '%s:%s\n' "$(basename "$f")" "$hit" >>"$unreadable"
+            continue
+            ;;
+        esac
+        line="${hit%%:*}"
+        fn="$(awk -v L="$line" \
+          'NR <= L && /^[a-z_][a-z0-9_]*\(\)[[:space:]]*\{/ { n = $0; sub(/\(\).*/, "", n); fn = n }
+           NR == L { print fn }' "$f")"
+        if [ -n "$fn" ]; then
+          printf '%s:%s\t%s\n' "$(basename "$f")" "$line" "$fn" >>"$calls"
+        else
+          printf '%s:%s is outside any function, so nothing here can call it\n' \
+            "$(basename "$f")" "$line" >>"$unreadable"
+        fi
+      done
+  done
+  return 0
+}
+
+# Where each call takes its guard, composed **by the pack**: `state_guard_take` is
+# replaced by a recorder and the function holding each call is called, so a path
+# built through three functions of three modules comes out exactly as the pack
+# builds it. Read off the source line it could not be — seven of the eight sites
+# hand `state_guard_take` a local variable.
+#
+# Each function is called twice, with nothing and with the ticket the test staged:
+# one taker guards a ticket and needs its id, and a probe that reached seven sites
+# out of eight would prove nothing about the eighth. A site that records back the
+# argument it was handed composes no path of its own — it guards whatever its
+# caller passes — and the name such a caller composes is held by the second test
+# below, which reads the compositions rather than the calls.
+guard_takers_probe() {
+  local calls="$1" out="$2" retro="$3" script="$RALPH_TEST_DIR/probe-guards.sh"
+  {
+    printf 'set +u\n'
+    printf 'RALPH_RETRO_STATE=%s\n' "$retro"
+    printf 'RALPH_PROBE_REC=%s\n' "$out"
+    cat <<'PROBE'
+state_guard_take() {
+  printf '%s\t%s\n' "$RALPH_PROBE_SITE" "$1" >>"$RALPH_PROBE_REC"
+  return 0
+}
+state_guard_release() { return 0; }
+while IFS=$'\t' read -r site fn; do
+  RALPH_PROBE_SITE="$site"
+  "$fn" >/dev/null 2>&1 || true
+  "$fn" 01-alpha >/dev/null 2>&1 || true
+done
+PROBE
+  } >"$script"
+  : >"$out"
+  pack_run ". '$script' <'$calls'"
+}
+
+# What the pack answers about the zones, with every guard the probe found standing
+# in its place: the census itself, the guards it reports, and the two locks an
+# entry point takes for itself. Asked rather than composed, for the reason
+# `gate__guard_paths` gives about `tracker_tickets_dir` — a test that rebuilt
+# these paths would be the second list this ticket exists to remove.
+guard_census_ask() {
+  local retro="$1" out="$2" script="$RALPH_TEST_DIR/ask-guards.sh"
+  {
+    printf 'RALPH_RETRO_STATE=%s\n' "$retro"
+    cat <<'ASK'
+gate__guard_paths | awk 'NF { print "CENSUS\t" $0 }'
+{ gate_guards || true; } | cut -f1 | awk 'NF { print "HELD\t" $0 }'
+{ ralph_run_lock_path || true; } | awk 'NF { print "OWNLOCK\t" $0 }'
+{ ralph_tree_lock_path 2>/dev/null || true; } | awk 'NF { print "OWNLOCK\t" $0 }'
+ASK
+  } >"$script"
+  pack_run ". '$script' >'$out'"
+}
+
+@test "every state_guard_take of the pack takes a guard in a zone the census names" {
+  use_tickets 01-alpha
+
+  local calls="$RALPH_TEST_DIR/guard-calls"
+  local unreadable="$RALPH_TEST_DIR/guard-unreadable"
+  local took="$RALPH_TEST_DIR/guard-took"
+  local staged="$RALPH_TEST_DIR/guard-staged"
+  local answer="$RALPH_TEST_DIR/guard-answer"
+  local verdict="$RALPH_TEST_DIR/guard-verdict"
+  local retro="$RALPH_TEST_DIR/retro-state"
+  local total site fn path kind value tab
+  tab="$(printf '\t')"
+
+  guard_takers_scan "$calls" "$unreadable"
+  [ ! -s "$unreadable" ] ||
+    fail "a state_guard_take this scan cannot read, so it proves nothing about the census below it:
+$(cat "$unreadable")"
+
+  # The floor, because a scan that found nothing would pass every assertion under
+  # it. Eight is what the pack takes today: the six a run may meet, plus the run
+  # lock and the working-tree lock, which an entry point takes for itself. A
+  # ticket that adds a taker moves this up, and one that removes a taker has to
+  # say so here.
+  total="$(wc -l <"$calls" | tr -d ' ')"
+  [ "$total" -ge 8 ] ||
+    fail "the scan found $total state_guard_take call(s), which is fewer than the pack makes:
+$(cat "$calls")"
+
+  mkdir -p "$retro"
+  guard_takers_probe "$calls" "$took" "$retro"
+  assert_success
+  sort -u "$took" -o "$took"
+
+  # A site the probe never reached says nothing about the census either way, and
+  # a silence here would read as coverage.
+  while IFS="$tab" read -r site fn; do
+    [ -n "$site" ] || continue
+    if cut -f1 "$took" | LC_ALL=C grep -qxF -- "$site"; then continue; fi
+    fail "the probe called $fn and $site took no guard, so nothing below can ask the census about it:
+$(cat "$took")"
+  done <"$calls"
+
+  # Every path the pack composed, one guard directory each, so that the zones the
+  # census *walks* have something to find. The three it names outright do not need
+  # it, and a value that is not a path is a site that guards its caller's.
+  : >"$staged"
+  while IFS="$tab" read -r site path; do
+    case "$path" in
+      /*) ;;
+      *) continue ;;
+    esac
+    mkdir -p "$path"
+    printf '%s\t%s\n' "$site" "$path" >>"$staged"
+  done <"$took"
+  [ -s "$staged" ] ||
+    fail "the probe recorded no path at all, so the census was never asked anything"
+
+  guard_census_ask "$retro" "$answer"
+  assert_success
+
+  # One question per taker, and two answers count: a zone of `gate__guard_paths`
+  # covers it, or it is one of the two locks an entry point holds itself. The
+  # second is not a free pass — the assertion under this one is what keeps it
+  # from becoming one.
+  : >"$verdict"
+  while IFS="$tab" read -r site path; do
+    if LC_ALL=C grep -qxF -- "CENSUS$tab$path" "$answer"; then
+      printf 'census  %s\t%s\n' "$site" "$path" >>"$verdict"
+      continue
+    fi
+    if LC_ALL=C grep -qxF -- "OWNLOCK$tab$path" "$answer"; then
+      printf 'ownlock %s\t%s\n' "$site" "$path" >>"$verdict"
+      continue
+    fi
+    printf 'MISSED  %s\t%s\n' "$site" "$path" >>"$verdict"
+  done <"$staged"
+
+  ! LC_ALL=C grep -q '^MISSED' "$verdict" ||
+    fail "a guard the pack takes that no zone of gate__guard_paths covers:
+$(cat "$verdict")
+what the pack answered:
+$(cat "$answer")"
+
+  # And the reason the second answer is allowed, made into a rule rather than left
+  # in the prose of `gate__stale_guards`: these two are excluded from the census
+  # because the entry point is holding them at the instant the census is read, and
+  # its readers say in so many words that a live guard there is not this run's.
+  # A lock that turned up in `gate_guards` would make the run accuse itself.
+  while IFS="$tab" read -r kind value; do
+    if [ "$kind" != OWNLOCK ]; then continue; fi
+    if LC_ALL=C grep -qxF -- "HELD$tab$value" "$answer"; then
+      fail "gate_guards reports $value, which this entry point holds itself — every reader of that census would call it a guard that is not this run's"
+    fi
+  done <"$answer"
+
+  # The zones read as zones, so that "covered" above cannot be six answers from
+  # one directory: the walk finds what stands in it, and the two modules that own
+  # a zone outside the tree answer for their own.
+  LC_ALL=C grep -q "^CENSUS$tab.*/ralph[.]frontier[.]lock\$" "$answer" ||
+    fail "the common git directory is named by nobody:
+$(cat "$answer")"
+  LC_ALL=C grep -q "^CENSUS$tab.*/index[.]guard\$" "$answer" ||
+    fail "the lesson index's zone is named by nobody:
+$(cat "$answer")"
+  LC_ALL=C grep -q "^CENSUS$tab.*/01-alpha[.]md[.]guard\$" "$answer" ||
+    fail "a ticket's own claim guard is named by nobody:
+$(cat "$answer")"
+}
+
+@test "only a state_guard_take composes an exclusion guard name" {
+  # The limit of the scan above, made into a rule rather than left as a hope: it
+  # reads `state_guard_take` calls, so a name composed somewhere that never takes
+  # one — a `mkdir` of its own, a path handed to a taker in another module — would
+  # put a guard where nothing in this file would ever ask the census about it.
+  # This is also where the one site that guards its caller's path is held: the
+  # integration lock is composed here even though the call that takes it records
+  # nothing of its own.
+  #
+  # Two answers are enough. The name is composed inside a function that takes a
+  # guard, so the test above already put it to the census; or the function is one
+  # the census resolves — its path is a zone of `gate__guard_paths`, or it is one
+  # of the two locks an entry point holds itself.
+  use_tickets 01-alpha
+
+  local calls="$RALPH_TEST_DIR/guard-calls"
+  local unreadable="$RALPH_TEST_DIR/guard-unreadable"
+  local took="$RALPH_TEST_DIR/guard-took"
+  local answer="$RALPH_TEST_DIR/guard-answer"
+  local composers="$RALPH_TEST_DIR/guard-composers"
+  local resolved="$RALPH_TEST_DIR/guard-resolved"
+  local verdict="$RALPH_TEST_DIR/composer-verdict"
+  local retro="$RALPH_TEST_DIR/retro-state"
+  local f hit line fn site path total tab
+  tab="$(printf '\t')"
+
+  # Every line of the shipped pack that composes a `.guard` or a `.lock` name.
+  # Comments dropped, and a glob dropped with them: `"$dir"/*.guard` is the census
+  # reading a zone, not a name being made.
+  : >"$composers"
+  for f in "$PACK_DIR"/lib/*.sh "$PACK_DIR"/*.sh; do
+    [ -e "$f" ] || continue
+    LC_ALL=C grep -n '\.guard\|\.lock' "$f" |
+      LC_ALL=C grep -v ':[[:space:]]*#' |
+      LC_ALL=C grep -v '\*\.guard\|\*\.lock' |
+      while IFS= read -r hit; do
+        line="${hit%%:*}"
+        fn="$(awk -v L="$line" \
+          'NR <= L && /^[a-z_][a-z0-9_]*\(\)[[:space:]]*\{/ { n = $0; sub(/\(\).*/, "", n); fn = n }
+           NR == L { print fn }' "$f")"
+        printf '%s:%s\t%s\n' "$(basename "$f")" "$line" "${fn:-}" >>"$composers"
+      done
+  done
+
+  total="$(wc -l <"$composers" | tr -d ' ')"
+  [ "$total" -ge 8 ] ||
+    fail "the scan found $total composition(s) of a guard name, which is fewer than the pack makes:
+$(cat "$composers")"
+
+  # The takers, and the guards they took, exactly as the test above got them: a
+  # composition inside a function that takes its own guard is already covered.
+  guard_takers_scan "$calls" "$unreadable"
+  [ ! -s "$unreadable" ] ||
+    fail "a state_guard_take this scan cannot read:
+$(cat "$unreadable")"
+  mkdir -p "$retro"
+  guard_takers_probe "$calls" "$took" "$retro"
+  assert_success
+  while IFS="$tab" read -r site path; do
+    case "$path" in
+      /*) mkdir -p "$path" ;;
+    esac
+  done <"$took"
+
+  guard_census_ask "$retro" "$answer"
+  assert_success
+
+  # What each composing function answers when the pack calls it, so that "its path
+  # is a zone" is the pack's answer and not this file's reading of a printf.
+  {
+    printf 'RALPH_RETRO_STATE=%s\n' "$retro"
+    cat <<'RESOLVE'
+while IFS=$'\t' read -r site fn; do
+  [ -n "$fn" ] || continue
+  printf '%s\t%s\n' "$site" "$("$fn" 2>/dev/null || true)"
+done
+RESOLVE
+  } >"$RALPH_TEST_DIR/resolve-composers.sh"
+  pack_run ". '$RALPH_TEST_DIR/resolve-composers.sh' <'$composers' >'$resolved'"
+  assert_success
+
+  : >"$verdict"
+  while IFS="$tab" read -r site fn; do
+    if [ -z "$fn" ]; then
+      printf 'MISSED  %s composes a guard name outside any function\n' "$site" >>"$verdict"
+      continue
+    fi
+    if cut -f2 "$calls" | LC_ALL=C grep -qxF -- "$fn"; then
+      printf 'taker   %s\t%s\n' "$site" "$fn" >>"$verdict"
+      continue
+    fi
+    path="$(LC_ALL=C grep -F -- "$site$tab" "$resolved" | cut -f2)" || path=""
+    if [ -n "$path" ] && LC_ALL=C grep -qxF -- "CENSUS$tab$path" "$answer"; then
+      printf 'census  %s\t%s\n' "$site" "$fn" >>"$verdict"
+      continue
+    fi
+    if [ -n "$path" ] && LC_ALL=C grep -qxF -- "OWNLOCK$tab$path" "$answer"; then
+      printf 'ownlock %s\t%s\n' "$site" "$fn" >>"$verdict"
+      continue
+    fi
+    printf 'MISSED  %s\t%s\t%s\n' "$site" "$fn" "${path:-<no path>}" >>"$verdict"
+  done <"$composers"
+
+  ! LC_ALL=C grep -q '^MISSED' "$verdict" ||
+    fail "a guard name composed where neither a state_guard_take nor the census can see it:
+$(cat "$verdict")
+what the pack answered:
+$(cat "$answer")"
+}
+
+@test "a zone with nothing in it is not a taker the census misses" {
+  # The difference the ticket names, and it is the difference between a hole and
+  # an honest answer: a drain with no lesson workspace and a machine with no
+  # common git directory contribute nothing to `gate__guard_paths`, which
+  # `gate_guards` documents as the right answer. The derivation above must not
+  # read that silence as a taker nobody covers — it asks the census on a run where
+  # every module has something to say, and here is what the same census does when
+  # one of them has not.
+  use_tickets 01-alpha
+
+  local answer="$RALPH_TEST_DIR/empty-answer" tab
+  tab="$(printf '\t')"
+
+  # No lesson workspace, which is the state a drain runs in: `retro_guards`
+  # refuses rather than name a directory this run has not got.
+  guard_census_ask "" "$answer"
+  assert_success
+
+  # The module with no state answers nothing and refuses nothing: the census still
+  # names the zones of the modules that do have something to say.
+  ! LC_ALL=C grep -q "^CENSUS$tab.*/index[.]guard\$" "$answer" ||
+    fail "a lesson index with no workspace still named a zone:
+$(cat "$answer")"
+  LC_ALL=C grep -q "^CENSUS$tab.*/ralph[.]frontier[.]lock\$" "$answer" ||
+    fail "one module answering nothing took the whole census down:
+$(cat "$answer")"
+}
+
 # ── an iteration that delivered nothing ──────────────────────────────────────
 #
 # [35]. Not one of the three objective branches asks whether the session changed
