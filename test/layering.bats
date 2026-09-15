@@ -19,14 +19,19 @@
 # reads the real pack rather than the fixture copy: the rules are about the
 # shipped layout, not about what a test happens to install.
 #
-# **Since [87] the four rules derive the zone they walk instead of being handed
+# **Since [87] these rules derive the zone they walk instead of being handed
 # one.** The glob was widened by hand once already: [16] shipped a second entry
 # point and `"$dir"/loop.sh` became `"$dir"/*.sh`. [19] shipped a third — `init.sh`,
 # at the repository root and outside `.claude/**` — and nothing widened, so for
 # four tickets the pack's most prose-dense file was the one file none of these
 # rules read. `layering_sources` walks the repository and classifies what it
 # finds; a fourth entry point is judged the day it lands, and a file the criterion
-# cannot place is a finding in all four rules rather than a file quietly skipped.
+# cannot place is a finding in every rule rather than a file quietly skipped.
+#
+# [90] added the fifth rule, and it inherits that zone by construction rather than
+# by a second glob: `layering_quoted_prose` reads the same sources and refuses the
+# same backtick in the form the pack actually writes most of its prose in — a
+# double-quoted argument, where the rule of [61] was green.
 
 load helpers/harness
 load helpers/assert
@@ -289,13 +294,22 @@ ZONE
 # on every routed session. Nothing turned red — a substitution that fails inside a
 # heredoc prints to stderr, hands back an empty string, and the prompt goes out.
 #
-# **Backticks and not `$`, and the asymmetry is the reason.** A `$word` written in
-# prose is caught by `set -euo pipefail`, which both entry points carry: an
-# unbound variable kills the run, loudly, at the first session. A backtick is
-# caught by nothing. The residue this leaves is named rather than guarded — a
-# prose heredoc that writes the name of a variable that *is* set (`$HOME`,
-# `$LANG_ARTIFACT`) still substitutes it in silence, and what stands between that
-# and a prompt is a reader. `docs/frontiere-de-confiance.md` carries the line.
+# **Backticks and not `$`, and the asymmetry is the reason — but it is weaker
+# than it reads.** A `$word` written in prose is caught by `set -euo pipefail`: an
+# unbound variable kills the run, loudly, at the first session. That is true of
+# two of the three entry points. `init.sh` carries `set -uo pipefail` **without
+# `-e`**, on purpose and written down at `init.sh:39` — it sources the pack's libs
+# and calls their public censuses, which answer non-zero for "nothing to say", so
+# errexit would end the installer on the tidiest machine at its first honest
+# answer. Measured under `set -u` alone: an undefined `$word` in a `cat <<BLOCK`
+# writes "unbound variable" to stderr, makes the `cat` return 1, and **the script
+# carries on**. What catches it there is the `|| init__die` every mutating step
+# carries, not errexit. A backtick is caught by nothing anywhere.
+#
+# The residue this leaves is named rather than guarded — a prose heredoc that
+# writes the name of a variable that *is* set (`$HOME`, `$LANG_ARTIFACT`) still
+# substitutes it in silence, and what stands between that and a prompt is a
+# reader. `docs/frontiere-de-confiance.md` carries the line.
 #
 # The escape is what the rest of the pack already does — `loop.sh`, `lenses.sh`,
 # `retro.sh`, `capability.sh` and `failures.sh` all write \` in prose — so this is
@@ -355,6 +369,141 @@ layering_heredoc_prose() {
           delim = delim c
         }
         inbody = 1
+      }
+    ' "$f")" || found=''
+    [ -n "$found" ] || continue
+    printf '%s\n' "$found"
+    rc=1
+  done <<ZONE
+$(layering__zone "$root" any)
+ZONE
+  return "$rc"
+}
+
+# Every unescaped backtick the shell would run outside a single-quoted string,
+# one finding per line.
+#
+# [61]'s defect again, in the form the pack actually writes its prose in.
+# `layering_heredoc_prose` above reads the body of an unquoted heredoc, because
+# that is where [61] happened to land; but the pack writes far more prose into
+# double-quoted arguments — 52 sites where the escape `\`` is load-bearing, 30 of
+# them in `init.sh`. Measured on a real run of the installer ([90]): one
+# un-escaped backtick in the `init__note` at `init.sh:375` and the operator reads
+# "·  is not on this PATH. Every session, review lens, retro and value gate is a
+# process…" with the word `claude` gone from both holes, the installer exits **0**,
+# and a single `command not found` is lost in a forty-line report. The rule above
+# is green on that file: the hole is in an argument, not in a body.
+#
+# The mechanism of the silence is [61]'s word for word — a substitution that fails
+# inside an argument writes to stderr, hands back an empty string, and does not
+# change the status of the command.
+#
+# Escaped (`\``) or single-quoted, a backtick is prose the shell never reads, and
+# neither form is reported. That is the same argument the rule above makes for
+# itself: a rule that flagged the two forms that fix the defect would be worked
+# around rather than obeyed. It is also what makes this a rule and not a
+# migration — the hundreds of other backticks in the pack live inside
+# `printf '…'`, which is the pack's de-facto convention, and a scanner run over
+# the delivered pack finds no unescaped backtick in a double-quoted string at all.
+#
+# **The cost here is the scanner, not the rule**, which is why the boundary is a
+# guarantee of its own with witnesses of its own. A heredoc has a delimiter, so
+# knowing whether you are inside one is free. A quote has none: `'`, `"`, `\` and
+# `$( )` have to be followed across lines, and a state machine that loses track is
+# worse than no rule at all. Counted both ways: a line-by-line scanner reports
+# three findings on the delivered pack and all three are false. The shapes it has
+# to get right, each planted below with a real violation on the far side of it so
+# that losing the state is a red test and not a quiet miss:
+#
+#   - a single-quoted string opened on one line and closed on another — the body
+#     of an `awk '…'` at `lang.sh:176`, where the backticks are a markdown fence
+#     the shell never reads;
+#   - a `$( … )` that reopens quoting inside a double-quoted string —
+#     `gate.sh:3081`, where `tr -d '`,'` sits inside two levels of quoting;
+#   - a comment, where a backtick is prose and an apostrophe is not an opening
+#     quote;
+#   - the body of a heredoc, which belongs to the rule above and is skipped here.
+#
+# And a file the machine cannot read back to the top is a finding rather than a
+# clean answer, for the same reason [87] carries an unclassifiable source through
+# as one: a scanner that desynchronised would otherwise read exactly like a pack
+# with nothing in it.
+layering_quoted_prose() {
+  local root="$1" f found rc=0
+  while IFS= read -r f; do
+    case "$f" in
+      '') continue ;;
+      '!'*)
+        printf '%s\n' "${f#"!"}"
+        rc=1
+        continue
+        ;;
+    esac
+    found="$(awk -v name="$(basename "$f")" '
+      BEGIN {
+        SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); BS = sprintf("%c", 92)
+        depth = 1; stack[1] = "U"; head = 1; tail = 0; inbody = 0
+      }
+      function say(where) {
+        if (said) return
+        printf "%s:%d: an unescaped backtick %s, which is a command substitution and not prose\n", name, FNR, where
+        said = 1
+      }
+      {
+        line = $0
+        # A heredoc body belongs to the rule above, and reading it as code here
+        # would desynchronise on the first apostrophe of a prose paragraph.
+        if (inbody) {
+          probe = line
+          if (hd_dash[head]) sub(/^\t+/, "", probe)
+          if (probe == hd_delim[head]) { head++; inbody = (head <= tail) }
+          next
+        }
+        said = 0; n = length(line); i = 1
+        while (i <= n) {
+          c = substr(line, i, 1); top = stack[depth]
+          # Inside a single-quoted string nothing is special but the closing
+          # quote, which is why prose survives there and why this state has to
+          # outlive the line that opened it.
+          if (top == "S") { if (c == SQ) depth--; i++; continue }
+          if (c == BS) { i += 2; continue }
+          if (top == "D") {
+            if (c == DQ) { depth--; i++; continue }
+            if (c == "`") { say("inside a double-quoted string"); i++; continue }
+            if (c == "$" && substr(line, i + 1, 1) == "(") { depth++; stack[depth] = "U"; i += 2; continue }
+            i++; continue
+          }
+          if (c == SQ) { depth++; stack[depth] = "S"; i++; continue }
+          if (c == DQ) { depth++; stack[depth] = "D"; i++; continue }
+          if (c == "`") { say("in an unquoted word"); i++; continue }
+          if (c == "$" && substr(line, i + 1, 1) == "(") { depth++; stack[depth] = "U"; i += 2; continue }
+          if (c == ")") { if (depth > 1) depth--; i++; continue }
+          # A word starting with # is a comment to the end of the line, so its
+          # backticks are prose and its apostrophes open nothing.
+          if (c == "#" && (i == 1 || index(" \t;&|(", substr(line, i - 1, 1)) > 0)) break
+          if (c == "<" && substr(line, i + 1, 1) == "<") {
+            if (substr(line, i + 2, 1) == "<") { i += 3; continue }
+            j = i + 2; dash = 0
+            if (substr(line, j, 1) == "-") { dash = 1; j++ }
+            while (substr(line, j, 1) == " ") j++
+            q = ""
+            if (substr(line, j, 1) == SQ || substr(line, j, 1) == DQ) { q = substr(line, j, 1); j++ }
+            if (substr(line, j, 1) !~ /[A-Za-z_]/) { i = j; continue }
+            d = ""
+            while (j <= n) { ch = substr(line, j, 1); if (ch !~ /[A-Za-z0-9_]/) break; d = d ch; j++ }
+            if (q != "" && substr(line, j, 1) == q) j++
+            tail++; hd_delim[tail] = d; hd_dash[tail] = dash
+            i = j; continue
+          }
+          i++
+        }
+        if (tail >= head) inbody = 1
+      }
+      END {
+        if (depth != 1)
+          printf "%s: a quote opened in this file is never closed, so this rule could not read it to the end\n", name
+        else if (inbody)
+          printf "%s: a heredoc body never meets its delimiter, so this rule could not read it to the end\n", name
       }
     ' "$f")" || found=''
     [ -n "$found" ] || continue
@@ -435,6 +584,63 @@ The drain took every ticket's `Blocked by:` before this session started.
 PROSE
 }
 PLANTED
+  # And [90]'s, in the form the pack writes most of its prose in. The first four
+  # are violations — three in a double-quoted string, one in a bare word — and
+  # the last three are the boundary this rule is mostly made of: a single-quoted
+  # program that outlives the line that opened it, a substitution that reopens
+  # quoting two levels deep, and a comment whose apostrophe opens nothing. Each
+  # boundary carries a real violation on its far side, so a state machine that
+  # lost track there fails this test instead of quietly missing everything after
+  # it.
+  #
+  # The paired witnesses carry the same sentence and the same backticks as the
+  # violation: escaped in a double-quoted string, and whole inside a single-quoted
+  # one. Those are the two forms that fix the defect, and a rule reporting either
+  # would be worked around rather than obeyed.
+  cat >>"$dest/.claude/lib/state.sh" <<'PLANTED'
+probe_quoted_prose() {
+  printf '%s\n' "The drain took every `Status:` field before this session started."
+}
+probe_escaped_quote() {
+  printf '%s\n' "The drain took every \`Status:\` field before this session started."
+}
+probe_single_quote() {
+  printf '%s\n' 'The drain took every `Status:` field before this session started.'
+}
+probe_unquoted_word() {
+  printf '%s\n' The drain took every `Status:` field before this session started.
+}
+probe_multiline_program() {
+  awk '
+    { if (0) print "```" }
+  ' /dev/null
+  printf '%s\n' "The drain took every `Status:` field before this session started."
+}
+probe_reopened_quote() {
+  printf '%s\n' "$(printf '%s' "$1" | tr -d '`,')"
+  printf '%s\n' "The drain took every `Status:` field before this session started."
+}
+probe_prose_comment() {
+  # prose in a comment, apostrophes and all: a `Status:` field that isn't code
+  printf '%s\n' "The drain took every `Status:` field before this session started."
+}
+PLANTED
+  # The same thing in the third entry point, which is where 30 of the pack's 52
+  # load-bearing escapes live and where [90] measured the defect on a real run.
+  cat >>"$dest/init.sh" <<'PLANTED'
+probe_init_quoted_prose() {
+  init__note "the conventions this pack deposits are in `docs/agents/`."
+}
+PLANTED
+  # A file no state machine can read to the end. Without it a scanner that
+  # desynchronised on the first odd quote would answer "nothing found" for
+  # everything after it, and read exactly like a clean pack.
+  cat >"$dest/.claude/lib/unbalanced.sh" <<'PLANTED'
+# shellcheck shell=bash
+probe_unbalanced() {
+  printf '%s\n' 'a quote that opens here and never closes
+}
+PLANTED
   # Two files the criterion cannot place, one of each shape: a first line that is
   # neither marker, and a file whose marker and whose position disagree. Without
   # them a derivation that silently dropped what it could not classify would be
@@ -444,6 +650,22 @@ PLANTED
   printf '#!/usr/bin/env bash\nprobe_misplaced() { :; }\n' \
     >"$dest/.claude/lib/misplaced.sh"
   printf '%s\n' "$dest"
+}
+
+# The first or the last line of a planted probe's body, read out of the planted
+# file rather than counted by hand.
+#
+# [90]'s assertions name a violation and refute a witness by line number, which is
+# the only handle there is: a finding is `file:line:` and a sentence about the
+# shape, never the text of the offending line. A hand-counted offset would drift
+# into a green the first time a probe grows a line, so the number is derived and
+# an empty answer is a failure rather than a silent pass.
+layering__probe_body() {
+  local file="$1" fn="$2" end="$3"
+  awk -v head="$fn() {" -v end="$end" '
+    $0 == head { start = FNR; next }
+    start && $0 == "}" { print (end == "last" ? FNR - 1 : start + 1); exit }
+  ' "$file"
 }
 
 @test "the zone these rules walk is derived from the pack, not written as a glob" {
@@ -489,6 +711,11 @@ PLANTED
 
 @test "no unquoted heredoc carries a backtick the shell will run" {
   run layering_heredoc_prose "$RALPH_PACK_ROOT"
+  assert_success
+}
+
+@test "no double-quoted string carries a backtick the shell will run" {
+  run layering_quoted_prose "$RALPH_PACK_ROOT"
   assert_success
 }
 
@@ -550,4 +777,44 @@ PLANTED
   # be flagging the two forms that fix it, and if the count were not asserted a
   # rule that reported *every* backtick would pass this test.
   assert_equal "$(printf '%s\n' "$output" | grep -c 'unescaped backtick')" "2"
+
+  run layering_quoted_prose "$planted"
+  assert_failure
+  assert_output_contains "an unescaped backtick inside a double-quoted string"
+  assert_output_contains "an unescaped backtick in an unquoted word"
+
+  # The lines this rule reports and the lines it does not, as one set rather than
+  # as a count. A count catches a rule that reports every backtick; only the set
+  # catches a rule that reports the escaped copy *instead of* the bare one, or one
+  # that finds the violation before a boundary and nothing after it.
+  state="$planted/.claude/lib/state.sh"
+  expected="$(printf '%s\n' \
+    "$(layering__probe_body "$state" probe_quoted_prose first)" \
+    "$(layering__probe_body "$state" probe_unquoted_word first)" \
+    "$(layering__probe_body "$state" probe_multiline_program last)" \
+    "$(layering__probe_body "$state" probe_reopened_quote last)" \
+    "$(layering__probe_body "$state" probe_prose_comment last)" | sort -n)"
+  assert_equal "$(printf '%s\n' "$expected" | grep -c .)" "5"
+  assert_equal "$(printf '%s\n' "$output" |
+    sed -n 's/^state\.sh:\([0-9]*\):.*/\1/p' | sort -n)" "$expected"
+
+  # The two forms that fix the defect, named rather than left to the set above:
+  # the same sentence and the same backticks, escaped in a double-quoted string
+  # and whole inside a single-quoted one.
+  escaped="$(layering__probe_body "$state" probe_escaped_quote first)"
+  single="$(layering__probe_body "$state" probe_single_quote first)"
+  [ -n "$escaped" ] && [ -n "$single" ] ||
+    fail "the paired witnesses of [90] are gone, so the refutations below prove nothing"
+  refute_output_contains "state.sh:$escaped:"
+  refute_output_contains "state.sh:$single:"
+
+  # The third entry point, where the defect was measured on a real run.
+  planted_init="$(layering__probe_body "$planted/init.sh" probe_init_quoted_prose first)"
+  [ -n "$planted_init" ] ||
+    fail "the planted violation in init.sh is gone, so the assertion below proves nothing"
+  assert_output_contains "init.sh:$planted_init:"
+
+  # And the file the state machine could not read back to the top, which is a
+  # finding and not a clean answer.
+  assert_output_contains "unbalanced.sh: a quote opened in this file is never closed"
 }
