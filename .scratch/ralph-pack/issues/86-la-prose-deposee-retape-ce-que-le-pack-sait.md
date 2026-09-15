@@ -119,15 +119,32 @@
     est **rouge** : deux instructions, `local paths` puis `paths="$(…)" || …`, comme
     partout ailleurs dans le pack. C'est exactement la forme qu'une dérivation
     appelle, donc elle se rencontre au premier essai.
-- **Et ce que [87] ne couvre pas, alors que ce ticket va y toucher.** La règle
-  s'arrête au **corps d'un heredoc**. L'AC 4 demande que le paragraphe du tracker
-  soit la même phrase que celle que `init_preflight` imprime à la console — or
-  cette phrase-là vit dans un `init__note "…"`, une chaîne entre **guillemets
+- **Et ce que [87] ne couvrait pas, alors que ce ticket va y toucher : c'est
+  [90], livré le 15/09/2026, et l'autre côté est gardé maintenant.** La règle de
+  [87] s'arrête au **corps d'un heredoc**. L'AC 4 demande que le paragraphe du
+  tracker soit la même phrase que celle que `init_preflight` imprime à la console —
+  or cette phrase-là vit dans un `init__note "…"`, une chaîne entre **guillemets
   doubles**, où une backtick non échappée est une substitution de commande que rien
-  ne voit : mesuré sur un vrai run, l'installeur sort en 0 et l'opérateur lit une
-  phrase trouée. Propriétaire : **[90]**. En attendant, une phrase partagée entre
-  le heredoc et la console est gardée d'un côté seulement, et le côté non gardé est
-  celui où le pack a le plus de backticks (30 sites dans `init.sh`).
+  ne voyait : mesuré sur un vrai run, l'installeur sortait en 0 et l'opérateur
+  lisait une phrase trouée. **Ce que [90] change pour ce ticket, et ce sont des
+  rougeurs à `bash test/run.sh`, pas des conseils :**
+  - `layering_quoted_prose` (cinquième règle de `test/layering.bats`, même zone
+    dérivée) refuse une backtick non échappée dans **toute chaîne entre guillemets
+    doubles et tout mot non quoté** de `init.sh`. Les deux moitiés de la phrase
+    partagée de l'AC 4 sont donc gardées : le heredoc par [87], le `init__note`
+    par [90]. Écrire la phrase une fois et la faire passer des deux côtés est
+    maintenant sans piège silencieux.
+  - **Ce qu'il faut écrire, et c'est la seule chose à retenir en rédigeant** :
+    dans la prose d'un `init__note "…"`, une backtick de markdown s'écrit `\``
+    (échappée) — c'est ce que font déjà les 30 sites de `init.sh` —, ou la chaîne
+    entière passe en guillemets **simples**, où la backtick n'est jamais lue. Les
+    deux formes sont plantées comme témoins appairés et ne sont signalées ni l'une
+    ni l'autre.
+  - Ce qui reste **non tenu** et s'applique aux deux côtés à l'identique : un
+    `$mot` de prose qui désigne une variable **définie** est substitué en silence,
+    heredoc comme chaîne double, et `init.sh` n'a pas d'errexit pour rattraper le
+    cas non défini (`set -uo pipefail` sans `-e`, `init.sh:39`). Le seul filet y
+    est le `|| init__die` de chaque étape mutante.
 - **Rien à maintenir dans `test/layering.bats` en réécrivant le bloc.** Les
   violations plantées dans la copie d'`init.sh` sont **ajoutées en fin de fichier**
   et non éditées dans la prose de `init_claude_block`, précisément pour que cette

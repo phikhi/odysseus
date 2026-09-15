@@ -6475,6 +6475,70 @@ mutation "87 the third entry point is planted with nothing to find in it" "$LAYE
   's/probe_init_reaches_in\(\) \{ gate__scope_guard x y z; \}\n//' \
   test/layering.bats "has teeth"
 
+# ── [90] the rule reaches the form the prose is actually written in ──────────
+#
+# Ten entries on a test file, and the shape is [61]'s entry above grown a size:
+# what the guarantee is made of *is* the check, and here the check is a quoting
+# state machine. So the entries split in two. Four remove a piece of the state
+# machine and are witnessed by **the delivered pack itself** — take the escape,
+# the single quote, the comment or the heredoc body away and the pack lights up
+# with hundreds of findings that are all false, which is the failure mode this
+# rule was written to avoid rather than a rule that misses something. The rest
+# remove a piece of the report or of the plant, and are witnessed by the planted
+# pack. An entry set that only ever made the rule blind would be satisfied by a
+# rule that reports nothing; one that only ever made it loud would be satisfied
+# by a rule that reports everything.
+
+mutation "90 a backtick a double-quoted string will run is not looked for" "$LAYERING" \
+  's/            if \(c == "`"\) \{ say\("inside a double-quoted string"\); i\+\+; continue \}\n//' \
+  test/layering.bats "has teeth"
+
+mutation "90 a backtick in a bare word is not looked for" "$LAYERING" \
+  's/          if \(c == "`"\) \{ say\("in an unquoted word"\); i\+\+; continue \}\n//' \
+  test/layering.bats "has teeth"
+
+# The two forms that fix the defect, one entry each: a rule reporting either is a
+# rule that gets worked around. Both are red on the planted pack *and* on the
+# delivered one, which is the measure of how much prose the escape carries — 52
+# sites, 30 of them in the installer.
+mutation "90 the escape that keeps prose out of a double-quoted string is read as the defect" "$LAYERING" \
+  's/          if \(c == BS\) \{ i \+= 2; continue \}\n//' \
+  test/layering.bats "has teeth"
+
+mutation "90 a single-quoted string is read as code" "$LAYERING" \
+  's/          if \(c == SQ\) \{ depth\+\+; stack\[depth\] = "S"; i\+\+; continue \}\n//' \
+  test/layering.bats "has teeth"
+
+# The boundary, four entries, each witnessed by the delivered pack. A quote has no
+# delimiter, so every one of these is a way to lose the state and report the very
+# lines the pack is written the way it is *because of*.
+mutation "90 the quoting state does not survive the line that opened it" "$LAYERING" \
+  's/        said = 0; n = length\(line\); i = 1/        said = 0; depth = 1; n = length(line); i = 1/' \
+  test/layering.bats "double-quoted string"
+
+mutation "90 a substitution does not reopen the quoting inside a double-quoted string" "$LAYERING" \
+  's/            if \(c == "\$" && substr\(line, i \+ 1, 1\) == "\("\) \{ depth\+\+; stack\[depth\] = "U"; i \+= 2; continue \}\n//' \
+  test/layering.bats "double-quoted string"
+
+mutation "90 a comment is read as code" "$LAYERING" \
+  's/if \(c == "#" && .*\) break/if (0) break/' \
+  test/layering.bats "double-quoted string"
+
+mutation "90 a heredoc body is read as code" "$LAYERING" \
+  's/        if \(inbody\) \{\n/        if (0) {\n/' \
+  test/layering.bats "double-quoted string"
+
+# And the two ways the answer stops meaning anything without a single finding
+# changing: a file the machine could not read to the end coming back clean, and a
+# boundary planted with nothing on its far side.
+mutation "90 a file the rule could not read to the end comes back clean" "$LAYERING" \
+  's/        if \(depth != 1\)\n/        if (0)\n/' \
+  test/layering.bats "has teeth"
+
+mutation "90 a boundary is planted with no violation on its far side" "$LAYERING" \
+  's/probe_multiline_program\(\) \{(?:.|\n)*?\n\}\n//' \
+  test/layering.bats "has teeth"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

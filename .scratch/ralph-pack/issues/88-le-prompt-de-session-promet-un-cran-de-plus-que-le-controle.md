@@ -95,3 +95,23 @@
   réécriture ; livré derrière, il constate après coup et peut coûter une seconde
   passe sur `init.sh`. [88] derrière [86] parce qu'il généralise une forme dont
   [86] livre le précédent ; [89] en dernier, sans arête.
+
+- **Ce que [90] laisse sous ce ticket, livré le 15/09/2026.** Ce ticket sort de la
+  prose d'un heredoc pour la faire **produire par un module** — donc elle va
+  arriver sous la forme que [90] vient de garder, et pas sous celle que [61]
+  gardait. `layering_quoted_prose` (cinquième règle de `test/layering.bats`, zone
+  dérivée de [87], les 24 libs et les 3 points d'entrée) refuse toute backtick non
+  échappée dans une **chaîne entre guillemets doubles** et dans un **mot non
+  quoté**. Concrètement, pour une phrase rendue par `tracker_*` ou `gate_*` à la
+  façon de `lang_session_rules` :
+  - `printf '%s\n' "… the \`Status:\` field …"` est la forme correcte — backtick
+    échappée ; `printf '%s\n' '… the `Status:` field …'` l'est aussi, et c'est la
+    convention de fait du pack (des centaines de sites). Les deux sont plantées
+    comme témoins appairés et ne sont signalées ni l'une ni l'autre.
+  - Un heredoc **cité** (`<<'RULES'`) reste la seule forme qu'aucun paragraphe
+    futur ne peut casser, et c'est ce que `router_prompt` fait depuis [61].
+  - Ce qui reste **non tenu** et vaut pour la phrase de ce ticket : un `$mot` de
+    prose qui désigne une variable **définie** est substitué en silence dans les
+    deux formes. Un nom de champ du tracker écrit `$Status` arriverait vide sans
+    un mot sur stderr.
+
