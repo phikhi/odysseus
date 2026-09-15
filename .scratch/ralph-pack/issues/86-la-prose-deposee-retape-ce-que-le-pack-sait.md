@@ -102,3 +102,33 @@
   portée : `.agents/skills/` est maintenant ce qui part dans le prochain projet
   (`cp -RL` au dépôt, `.agents/skills/` dans le `files` de `package.json`). Une
   phrase dans la ligne du tableau, pas un ticket.
+
+- **Ce que [87] laisse sous ce ticket, livré le 15/09/2026.** Le filet existe : les
+  quatre règles de source de `test/layering.bats` lisent `init.sh` comme elles
+  lisent `loop.sh`, sur une zone dérivée et plus sur un glob. Trois conséquences
+  concrètes pour la réécriture, et les trois sont des rougeurs à `bash test/run.sh`
+  et pas des conseils :
+  - `layering_heredoc_prose` couvre maintenant le `cat <<BLOCK` de
+    `init_claude_block`. Une backtick de prose non échappée y est **rouge** — c'est
+    le filet que ce ticket attendait.
+  - `layering_privates` donne à `init.sh` le préfixe `init_`. La dérivation doit
+    donc passer par un nom **public** du pack : `gate_sealed_paths`, jamais
+    `gate__sealed_config`. Ce n'est pas une privation — les douze chemins sortent
+    du public, qui appelle le privé pour le nom réel de `RALPH_CONFIG`.
+  - `layering_masked_status` lit `init.sh` aussi. `local paths="$(gate_sealed_paths)"`
+    est **rouge** : deux instructions, `local paths` puis `paths="$(…)" || …`, comme
+    partout ailleurs dans le pack. C'est exactement la forme qu'une dérivation
+    appelle, donc elle se rencontre au premier essai.
+- **Et ce que [87] ne couvre pas, alors que ce ticket va y toucher.** La règle
+  s'arrête au **corps d'un heredoc**. L'AC 4 demande que le paragraphe du tracker
+  soit la même phrase que celle que `init_preflight` imprime à la console — or
+  cette phrase-là vit dans un `init__note "…"`, une chaîne entre **guillemets
+  doubles**, où une backtick non échappée est une substitution de commande que rien
+  ne voit : mesuré sur un vrai run, l'installeur sort en 0 et l'opérateur lit une
+  phrase trouée. Propriétaire : **[90]**. En attendant, une phrase partagée entre
+  le heredoc et la console est gardée d'un côté seulement, et le côté non gardé est
+  celui où le pack a le plus de backticks (30 sites dans `init.sh`).
+- **Rien à maintenir dans `test/layering.bats` en réécrivant le bloc.** Les
+  violations plantées dans la copie d'`init.sh` sont **ajoutées en fin de fichier**
+  et non éditées dans la prose de `init_claude_block`, précisément pour que cette
+  réécriture-ci ne les fasse pas dériver.
