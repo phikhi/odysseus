@@ -86,3 +86,15 @@
 - **Indépendant des trois autres tickets de la passe.** Il ne touche que `test/`
   si les cinq préservations sont jugées volontaires ; il touche `lib/` sinon, et
   dans ce cas il faut refaire les deux gates.
+
+- **Ordre validé par Philippe le 15/09/2026** : **[90] → [86] → [88] → [89]**.
+  [87] est livré (`726e62c`) et a ouvert [90] en route. La place retenue pour
+  [90] est **devant [86]**, par le critère habituel — minimiser la reprise,
+  jamais l'urgence — et c'est mot pour mot l'argument qui avait mis [87] devant
+  [86] : l'AC 4 de [86] veut que le paragraphe du tracker soit **la même phrase**
+  que celle que `init_preflight` imprime à la console, or cette phrase-là vit dans
+  un `init__note "…"`, une chaîne entre guillemets doubles que [87] ne garde pas
+  et que [90] garde. Livré devant, [90] est le filet sous cette moitié-là de la
+  réécriture ; livré derrière, il constate après coup et peut coûter une seconde
+  passe sur `init.sh`. [88] derrière [86] parce qu'il généralise une forme dont
+  [86] livre le précédent ; [89] en dernier, sans arête.
