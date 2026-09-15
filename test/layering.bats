@@ -18,6 +18,15 @@
 # None of them breaks a test on its own — that is exactly why this file exists. It
 # reads the real pack rather than the fixture copy: the rules are about the
 # shipped layout, not about what a test happens to install.
+#
+# **Since [87] the four rules derive the zone they walk instead of being handed
+# one.** The glob was widened by hand once already: [16] shipped a second entry
+# point and `"$dir"/loop.sh` became `"$dir"/*.sh`. [19] shipped a third — `init.sh`,
+# at the repository root and outside `.claude/**` — and nothing widened, so for
+# four tickets the pack's most prose-dense file was the one file none of these
+# rules read. `layering_sources` walks the repository and classifies what it
+# finds; a fourth entry point is judged the day it lands, and a file the criterion
+# cannot place is a finding in all four rules rather than a file quietly skipped.
 
 load helpers/harness
 load helpers/assert
@@ -30,18 +39,150 @@ teardown() {
   harness_teardown
 }
 
+# ── the zone, derived ────────────────────────────────────────────────────────
+
+# Every shell file in the repository that can be pack source, one path per line.
+#
+# A walk and not a glob, because the glob is what went stale. The four pruned
+# names are the places that are deliberately *not* the pack's stack, and each is
+# pruned for a reason rather than for tidiness:
+#
+#   .git        not source at all.
+#   .scratch    the tracker, the passes and the prototypes — including a whole
+#               second copy of `init.sh` under `dev-framework/`, which is a
+#               snapshot of an old form factor and not a fourth entry point.
+#   test        this harness. The rules are about what the pack ships; a rule
+#               that walked the file defining it would be judging its own tools.
+#   .agents     the skill substrate `.claude/skills` links into. It ships in the
+#               npm payload, but a skill's `*.template.sh` is an asset a skill
+#               hands a human, not a module of this stack. (`find` does not follow
+#               the links in `.claude/skills` either, so this prune is the second
+#               of two locks on the same door.)
+#
+# `node_modules` is pruned wherever it appears: `npx ralph-pack` is a supported
+# entry path, so a checkout can acquire one, and vendored shell would otherwise
+# arrive here as hundreds of unclassifiable findings.
+#
+# `bin/ralph-init.js` is not walked and is not an omission: it is node, these are
+# rules about bash, and [19] keeps it to an exec precisely so that it holds no
+# logic. Shell landing under `bin/` *would* be walked, which is the point.
+layering__shell_files() {
+  local root="$1"
+  find "$root" \
+    \( -path "$root/.git" \
+    -o -path "$root/.scratch" \
+    -o -path "$root/test" \
+    -o -path "$root/.agents" \
+    -o -name node_modules \) -prune -o \
+    -type f -name '*.sh' -print | LC_ALL=C sort
+}
+
+# Each of those files classified, one `<kind><TAB><path>` per line, `kind` being
+# `lib`, `entry`, or `unclassified` followed by a third field saying why.
+#
+# The criterion is the **first line**, and it is not the executable bit the
+# obvious reading suggests: `.claude/human-loop.sh` is mode `100644` in the index
+# and is started as `bash .claude/human-loop.sh`, so an `-x` test would read the
+# pack's second entry point as a lib and hand the four rules a zone that is wrong
+# in the same direction as the glob it replaces. What actually separates the two
+# kinds is what the file is *for*: an entry point is executed, so it carries a
+# `#!` line; a lib is sourced, so it cannot carry one and carries the
+# `# shellcheck shell=bash` directive that says as much to the linter. Twenty-four
+# libs and three entry points, and not one file in the pack is ambiguous.
+#
+# Position is checked against the marker rather than used instead of it. Where a
+# file sits is the hand-written knowledge this ticket removes, so it is not
+# allowed to *decide* anything; but a `lib/` file that carries a shebang, or an
+# entry point that carries the directive, is a pack whose two signals disagree,
+# and the honest answer there is a refusal and not a guess.
+#
+# Nothing here reads a list the pack publishes about itself. [62] and [85] both
+# land on the same line: pack source lives in a tree a judged session writes, so a
+# census of the pack's own entry points, published by the pack, is a census that
+# session can shorten. The derivation lives in the test.
+layering_sources() {
+  local root="$1" f first kind where rc=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    first=''
+    first="$(head -n 1 "$f")" || first=''
+    case "$first" in
+      '#!'*bash*) kind=entry ;;
+      '# shellcheck shell=bash') kind=lib ;;
+      *) kind='' ;;
+    esac
+    case "$f" in
+      "$root"/lib/* | "$root"/*/lib/*) where=lib ;;
+      *) where=entry ;;
+    esac
+    if [ -z "$kind" ]; then
+      printf 'unclassified\t%s\tits first line is neither a bash shebang nor the `# shellcheck shell=bash` of a sourced module\n' "$f"
+      rc=1
+      continue
+    fi
+    if [ "$kind" != "$where" ]; then
+      printf 'unclassified\t%s\tit reads as an entry point or a lib by its first line (%s) and sits where the other one goes (%s)\n' \
+        "$f" "$kind" "$where"
+      rc=1
+      continue
+    fi
+    printf '%s\t%s\n' "$kind" "$f"
+  done <<FILES
+$(layering__shell_files "$root")
+FILES
+  return "$rc"
+}
+
+# The files one rule walks: those of `want` — `lib`, `entry`, or `any` — plus,
+# never dropped, one `!`-prefixed line per source the classification refused.
+#
+# The prefix is how a refusal reaches the rule that asked: a path starts with a
+# slash, so no finding can be mistaken for a file. A rule that filtered the
+# refusals out would be a rule that reads a pack holding an unreadable file
+# exactly like a clean one, which is the failure the teeth test below exists to
+# make impossible.
+layering__zone() {
+  local root="$1" want="$2" kind path note rc=0
+  while IFS="$(printf '\t')" read -r kind path note; do
+    [ -n "$kind" ] || continue
+    case "$kind" in
+      unclassified)
+        printf '!%s is neither a lib nor an entry point: %s\n' "${path#"$root"/}" "$note"
+        rc=1
+        ;;
+      *)
+        [ "$want" = any ] || [ "$kind" = "$want" ] || continue
+        printf '%s\n' "$path"
+        ;;
+    esac
+  done <<SOURCES
+$(layering_sources "$root")
+SOURCES
+  return "$rc"
+}
+
+# ── the rules ────────────────────────────────────────────────────────────────
+
 # Every call into another module's internals, one finding per line. Comments are
 # stripped first: a comment naming a neighbour's internal is documentation, not a
 # dependency. Non-zero when it found something, so `run` reads naturally.
-# `"$dir"/*.sh` and not `"$dir"/loop.sh`: the pack has two entry points since
-# [16], and an entry point outside this glob is one where a lib's `__` internals
-# are reachable with nothing to say so. `human-loop.sh` owns `human_loop_`, which
-# is what `basename … .sh | tr '-' '_'` gives it — the same rule the libs get,
+#
+# Libs and entry points both, because an entry point outside the zone is one where
+# a lib's `__` internals are reachable with nothing to say so. Each file owns the
+# prefix `basename … .sh | tr '-' '_'` gives it — `human_loop` for
+# `human-loop.sh`, `init` for `init.sh` — which is the same rule the libs get,
 # arrived at by the same line.
 layering_privates() {
-  local dir="$1" f own call mod rc=0
-  for f in "$dir"/lib/*.sh "$dir"/*.sh; do
-    [ -e "$f" ] || continue
+  local root="$1" f own call mod rc=0
+  while IFS= read -r f; do
+    case "$f" in
+      '') continue ;;
+      '!'*)
+        printf '%s\n' "${f#"!"}"
+        rc=1
+        continue
+        ;;
+    esac
     own="$(basename "$f" .sh | tr '-' '_')"
     for call in $(grep -v '^[[:space:]]*#' "$f" |
       grep -o '[a-z][a-z0-9_]*__[a-z0-9_]*' | sort -u); do
@@ -50,21 +191,49 @@ layering_privates() {
       printf '%s calls %s, which is private to %s\n' "$(basename "$f")" "$call" "$mod"
       rc=1
     done
-  done
+  done <<ZONE
+$(layering__zone "$root" any)
+ZONE
   return "$rc"
 }
 
 # Every call from a lib up into the loop that drives it.
+#
+# Libs only, and [87] decided that by measuring rather than by inheriting it. The
+# rule's sentence is about the *stack*: a lib sits under the loop, so a lib naming
+# `loop_*` is a lib nothing can reuse without the loop. An entry point sits under
+# nothing, and the three the pack ships each say so differently — `loop.sh` *is*
+# the loop; `human-loop.sh` shares its locks and its sink and is entitled to its
+# public surface; and `init.sh` names `loop_preflight` on purpose, in the
+# `grep -v` of `init_refusals`, because [19] derives the list of things the loop
+# refuses to start on from `loop.sh`'s body instead of retyping it.
+#
+# So extending this rule upward would need two carve-outs on the pack as
+# delivered: one for the loop itself, one to tell a grep pattern from a call. A
+# rule with a carve-out is one that gets worked around rather than obeyed — the
+# same argument `layering_heredoc_prose` makes below for not reporting the two
+# forms that fix it. The teeth test asserts the decision rather than leaving it to
+# this paragraph: the planted pack's `init.sh` really does carry the name, and
+# this rule really does not report it.
 layering_upward() {
-  local dir="$1" f call rc=0
-  for f in "$dir"/lib/*.sh; do
-    [ -e "$f" ] || continue
+  local root="$1" f call rc=0
+  while IFS= read -r f; do
+    case "$f" in
+      '') continue ;;
+      '!'*)
+        printf '%s\n' "${f#"!"}"
+        rc=1
+        continue
+        ;;
+    esac
     for call in $(grep -v '^[[:space:]]*#' "$f" |
       grep -o 'loop_[a-z0-9_]*' | sort -u); do
       printf '%s calls %s: a lib must not depend on the loop\n' "$(basename "$f")" "$call"
       rc=1
     done
-  done
+  done <<ZONE
+$(layering__zone "$root" lib)
+ZONE
   return "$rc"
 }
 
@@ -85,9 +254,16 @@ layering_upward() {
 # whose status was never the substitution's, and flagging it would teach the next
 # reader to distrust the rule.
 layering_masked_status() {
-  local dir="$1" f line rc=0
-  for f in "$dir"/lib/*.sh "$dir"/*.sh; do
-    [ -e "$f" ] || continue
+  local root="$1" f line rc=0
+  while IFS= read -r f; do
+    case "$f" in
+      '') continue ;;
+      '!'*)
+        printf '%s\n' "${f#"!"}"
+        rc=1
+        continue
+        ;;
+    esac
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       printf '%s: %s masks the status of the substitution it assigns\n' \
@@ -96,7 +272,9 @@ layering_masked_status() {
     done <<MASKED
 $(grep -nE '^[[:space:]]*(local|export|declare|readonly|typeset)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*="?\$\(' "$f")
 MASKED
-  done
+  done <<ZONE
+$(layering__zone "$root" any)
+ZONE
   return "$rc"
 }
 
@@ -123,10 +301,24 @@ MASKED
 # `retro.sh`, `capability.sh` and `failures.sh` all write \` in prose — so this is
 # a rule and not a migration. `router_prompt` went further and quotes its
 # heredocs outright, which is the only form no future paragraph can break.
+#
+# The file this rule was least able to reach until [87] is the one it costs the
+# most on: `init.sh` carries nine unquoted heredocs, two of which write into the
+# target project, and one of those writes `CLAUDE.md` — sealed by [31] and read by
+# every fresh `claude` in that project for the life of the repository. [61] paid a
+# ticket for this fault in the prompt of one session; here it reaches every
+# session of a project, and the installer runs once.
 layering_heredoc_prose() {
-  local dir="$1" f found rc=0
-  for f in "$dir"/lib/*.sh "$dir"/*.sh; do
-    [ -e "$f" ] || continue
+  local root="$1" f found rc=0
+  while IFS= read -r f; do
+    case "$f" in
+      '') continue ;;
+      '!'*)
+        printf '%s\n' "${f#"!"}"
+        rc=1
+        continue
+        ;;
+    esac
     found="$(awk -v name="$(basename "$f")" '
       BEGIN { inbody = 0; SQ = sprintf("%c", 39) }
       inbody {
@@ -168,37 +360,65 @@ layering_heredoc_prose() {
     [ -n "$found" ] || continue
     printf '%s\n' "$found"
     rc=1
-  done
+  done <<ZONE
+$(layering__zone "$root" any)
+ZONE
   return "$rc"
 }
+
+# ── the teeth ────────────────────────────────────────────────────────────────
 
 # A copy of the real pack with a violation of each kind planted in it. A copy,
 # not the pack itself: a run interrupted halfway must not leave the repository
 # holding a bogus function.
+#
+# It mirrors the shipped layout rather than flattening it — `.claude/` with the
+# libs and the two loops under it, `init.sh` beside it at the root — because since
+# [87] the zone is derived from that layout, and a planted pack shaped differently
+# from the real one would exercise a walk the real pack never takes.
 layering__planted_pack() {
   local dest="$RALPH_TEST_DIR/planted"
-  mkdir -p "$dest"
-  cp -R "$RALPH_PACK_ROOT/.claude/lib" "$dest/lib"
-  cp "$RALPH_PACK_ROOT/.claude/loop.sh" "$dest/loop.sh"
-  cp "$RALPH_PACK_ROOT/.claude/human-loop.sh" "$dest/human-loop.sh"
-  printf 'probe_reaches_in() { gate__scope_guard x y z; }\n' >>"$dest/lib/state.sh"
-  printf 'probe_reaches_up() { loop_log hi; }\n' >>"$dest/lib/state.sh"
+  mkdir -p "$dest/.claude"
+  cp -R "$RALPH_PACK_ROOT/.claude/lib" "$dest/.claude/lib"
+  cp "$RALPH_PACK_ROOT/.claude/loop.sh" "$dest/.claude/loop.sh"
+  cp "$RALPH_PACK_ROOT/.claude/human-loop.sh" "$dest/.claude/human-loop.sh"
+  cp "$RALPH_PACK_ROOT/init.sh" "$dest/init.sh"
+  printf 'probe_reaches_in() { gate__scope_guard x y z; }\n' >>"$dest/.claude/lib/state.sh"
+  printf 'probe_reaches_up() { loop_log hi; }\n' >>"$dest/.claude/lib/state.sh"
   printf 'probe_masks_status() {\n  local tree="$(gate_tree_snapshot)"\n}\n' \
-    >>"$dest/lib/state.sh"
+    >>"$dest/.claude/lib/state.sh"
   # The shape that must *not* be reported, planted beside it: a rule that flagged
   # this would be worked around rather than obeyed.
   printf 'probe_default_value() {\n  local host="${1:-$(hostname 2>/dev/null || printf x)}"\n}\n' \
-    >>"$dest/lib/state.sh"
+    >>"$dest/.claude/lib/state.sh"
   # And the same violation in the *other* entry point, which is what keeps the
-  # glob honest ([16]). A check that walked `loop.sh` by name would read a pack
-  # with a second entry point exactly like a clean one, and `human-loop.sh`
+  # derived zone honest ([16]). A check that walked `loop.sh` by name would read a
+  # pack with a second entry point exactly like a clean one, and `human-loop.sh`
   # reaching into `loop__arm_successor` — the one call [09] forbids it — is
   # precisely the shape that would go unremarked.
-  printf 'probe_second_entry() { loop__arm_successor; }\n' >>"$dest/human-loop.sh"
+  printf 'probe_second_entry() { loop__arm_successor; }\n' >>"$dest/.claude/human-loop.sh"
+  # And in the *third*, which is [87]'s own ([19] shipped it outside `.claude/**`
+  # and nothing here read it for four tickets). Appended rather than edited into
+  # place: [86] rewrites the prose of `init_claude_block` next, and a plant
+  # anchored on a sentence of that block would drift into a green the day it
+  # lands. The prefix `init_` is what `basename … .sh` gives this file, so
+  # `gate__scope_guard` is a reach into a neighbour here exactly as it is in a lib
+  # — that is asserted below rather than assumed.
+  cat >>"$dest/init.sh" <<'PLANTED'
+probe_init_reaches_in() { gate__scope_guard x y z; }
+probe_init_masks_status() {
+  local tree="$(gate_tree_snapshot)"
+}
+probe_init_prose_heredoc() {
+  cat <<PROSE
+The conventions this pack deposits are in `docs/agents/`.
+PROSE
+}
+PLANTED
   # And [61]'s, with both of its paired witnesses beside it. The escape and the
   # quote are the two forms that keep prose out of the shell, and a rule that
   # reported either would be worked around rather than obeyed.
-  cat >>"$dest/lib/state.sh" <<'PLANTED'
+  cat >>"$dest/.claude/lib/state.sh" <<'PLANTED'
 probe_prose_heredoc() {
   cat <<PROSE
 The drain took every ticket's `Status:` before this session started.
@@ -215,26 +435,60 @@ The drain took every ticket's `Blocked by:` before this session started.
 PROSE
 }
 PLANTED
+  # Two files the criterion cannot place, one of each shape: a first line that is
+  # neither marker, and a file whose marker and whose position disagree. Without
+  # them a derivation that silently dropped what it could not classify would be
+  # indistinguishable from one that classified everything.
+  printf '# a script, of some kind, that says nothing about what it is\nprobe_stray() { :; }\n' \
+    >"$dest/.claude/stray.sh"
+  printf '#!/usr/bin/env bash\nprobe_misplaced() { :; }\n' \
+    >"$dest/.claude/lib/misplaced.sh"
   printf '%s\n' "$dest"
 }
 
+@test "the zone these rules walk is derived from the pack, not written as a glob" {
+  run layering_sources "$RALPH_PACK_ROOT"
+  assert_success
+
+  tab="$(printf '\t')"
+  # The three entry points the pack ships, the third of which is what [87] is
+  # for: `init.sh` sits at the repository root, outside `.claude/**`, where the
+  # hand-written glob had no way to grow to it.
+  assert_output_contains "entry$tab$RALPH_PACK_ROOT/.claude/loop.sh"
+  assert_output_contains "entry$tab$RALPH_PACK_ROOT/.claude/human-loop.sh"
+  assert_output_contains "entry$tab$RALPH_PACK_ROOT/init.sh"
+  assert_output_contains "lib$tab$RALPH_PACK_ROOT/.claude/lib/gate.sh"
+
+  # And every file the walk found came back classified. Both sides derived, and
+  # neither counted by hand: a classification that dropped what it could not
+  # place would read exactly like a pack in which everything is placed.
+  assert_equal "$(printf '%s\n' "$output" | grep -c .)" \
+    "$(layering__shell_files "$RALPH_PACK_ROOT" | grep -c .)"
+
+  # The pruned zones are pruned, and the witness is a real file in each: a walk
+  # that reached into `test/` would judge this harness, and one that reached into
+  # `.scratch/` would judge a prototype's `init.sh` as a fourth entry point.
+  refute_output_contains "$RALPH_PACK_ROOT/test/run.sh"
+  refute_output_contains "$RALPH_PACK_ROOT/.scratch/"
+}
+
 @test "no module reaches into another module's internals" {
-  run layering_privates "$RALPH_PACK_ROOT/.claude"
+  run layering_privates "$RALPH_PACK_ROOT"
   assert_success
 }
 
 @test "no lib depends on the loop that drives it" {
-  run layering_upward "$RALPH_PACK_ROOT/.claude"
+  run layering_upward "$RALPH_PACK_ROOT"
   assert_success
 }
 
 @test "no declaration swallows the status of what it is assigned from" {
-  run layering_masked_status "$RALPH_PACK_ROOT/.claude"
+  run layering_masked_status "$RALPH_PACK_ROOT"
   assert_success
 }
 
 @test "no unquoted heredoc carries a backtick the shell will run" {
-  run layering_heredoc_prose "$RALPH_PACK_ROOT/.claude"
+  run layering_heredoc_prose "$RALPH_PACK_ROOT"
   assert_success
 }
 
@@ -247,13 +501,40 @@ PLANTED
   assert_failure
   assert_output_contains "state.sh calls gate__scope_guard, which is private to gate"
   assert_output_contains "human-loop.sh calls loop__arm_successor, which is private to loop"
+  # The third entry point, judged by the same line as the other two: `init.sh`
+  # owns `init_`, which is what `basename … .sh` hands it, so a neighbour's
+  # internal is a finding here without the rule knowing this file exists.
+  assert_output_contains "init.sh calls gate__scope_guard, which is private to gate"
+  # And the two sources the derivation refused, carried through this rule rather
+  # than filtered out of it.
+  #
+  # Anchored at the start of a line, and the anchor is the whole assertion. With
+  # the `!` prefix gone the refusal reaches the rule as if it were a path, and the
+  # `grep: <the sentence>: No such file or directory` that comes back on stderr
+  # carries every word of the sentence — `run` merges stderr, so a substring
+  # assertion passes on the error message. Measured: it did, and the entry that
+  # takes the prefix away came back VACUOUS against a test that looked right.
+  assert_equal "$(printf '%s\n' "$output" |
+    grep -c '^\.claude/stray\.sh is neither a lib nor an entry point')" "1"
+  assert_equal "$(printf '%s\n' "$output" |
+    grep -c '^\.claude/lib/misplaced\.sh is neither a lib nor an entry point')" "1"
 
   run layering_upward "$planted"
   assert_failure
   assert_output_contains "state.sh calls loop_log"
+  # And the decision this rule documents, asserted instead of described. The
+  # installer is in the derived zone — the run above reports it — and it really
+  # does carry the name, in the `grep -v` of `init_refusals`; this rule is the one
+  # that does not report it, because an entry point sits under no loop.
+  refute_output_contains "init.sh calls loop_"
+  [ -n "$(grep -v '^[[:space:]]*#' "$planted/init.sh" |
+    grep -o 'loop_[a-z0-9_]*')" ] ||
+    fail "init.sh no longer names a loop_ function, so the refutation above proves nothing"
 
   run layering_masked_status "$planted"
   assert_failure
+  assert_output_contains "state.sh: "
+  assert_output_contains "init.sh: "
   assert_output_contains "local tree="
   # And the paired witness of the rule's own boundary: a default value is not a
   # masked status, and the planted one beside it is not reported.
@@ -262,10 +543,11 @@ PLANTED
   run layering_heredoc_prose "$planted"
   assert_failure
   assert_output_contains "state.sh:"
+  assert_output_contains "init.sh:"
   assert_output_contains "an unescaped backtick in the body of an unquoted heredoc"
-  # One finding and not three. The escaped copy and the quoted copy carry the
+  # Two findings and not four. The escaped copy and the quoted copy carry the
   # same sentence and the same backticks: if either were reported the rule would
   # be flagging the two forms that fix it, and if the count were not asserted a
   # rule that reported *every* backtick would pass this test.
-  assert_equal "$(printf '%s\n' "$output" | grep -c 'unescaped backtick')" "1"
+  assert_equal "$(printf '%s\n' "$output" | grep -c 'unescaped backtick')" "2"
 }
