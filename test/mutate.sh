@@ -6428,6 +6428,53 @@ mutation "19 a checkout deletes its own init.sh on the way out" "$INIT" \
   's!    "\$INIT_TARGET"/\*\) ;;\n    \*\) return 0 ;;!    "\$INIT_TARGET"/*) ;;\n    *) ;;!' \
   test/install.bats "bootstrap copy removes itself"
 
+# ── [87] the four source rules see the third entry point ─────────────────────
+#
+# Eight entries on a test file, for the same reason the [59] and [61] entries
+# above are: what these guarantees are made of *is* the check. The zone the four
+# rules walk is derived since [87] instead of written as a glob, and a derivation
+# has two ways to lie — it can miss a file, and it can swallow one it cannot
+# place. So the entries come in pairs pointed in opposite directions: one that
+# narrows the zone back to what the glob covered, one that widens the refusal
+# until it eats the pack; one that drops an unplaceable file, one that stops the
+# refusal from reaching the rule that asked. An entry that only ever narrowed
+# would be satisfied by a derivation that refused everything.
+
+mutation "87 the derived zone stops at .claude, as the glob did" "$LAYERING" \
+  's!  find "\$root" \\\n!  find "\$root/.claude" \\\n!' \
+  test/layering.bats "derived from the pack"
+
+mutation "87 the marker a sourced module carries is not recognised" "$LAYERING" \
+  's/\x27# shellcheck shell=bash\x27\) kind=lib ;;\n/\x27# shellcheck shell=bash\x27) kind=misfiled ;;\n/' \
+  test/layering.bats "derived from the pack"
+
+mutation "87 a source the criterion cannot place is dropped instead of refused" "$LAYERING" \
+  's/      \*\) kind=\x27\x27 ;;\n/      *) kind=entry ;;\n/' \
+  test/layering.bats "has teeth"
+
+mutation "87 a marker and a place that disagree are guessed at" "$LAYERING" \
+  's/    if \[ "\$kind" != "\$where" \]; then\n/    if false; then\n/' \
+  test/layering.bats "has teeth"
+
+mutation "87 a refusal does not reach the rule that asked for the zone" "$LAYERING" \
+  's/printf \x27!%s is neither/printf \x27#%s is neither/' \
+  test/layering.bats "has teeth"
+
+# The decision [87] wrote down rather than inherited, as a line that can be taken
+# away: `layering_upward` is the one rule that stays on the libs, because an entry
+# point sits under no loop and `init.sh` names `loop_preflight` on purpose.
+mutation "87 the rule about the loop is pointed at the entry points too" "$LAYERING" \
+  's/\$\(layering__zone "\$root" lib\)/\$(layering__zone "\$root" any)/' \
+  test/layering.bats "has teeth"
+
+mutation "87 the planted pack no longer carries the third entry point" "$LAYERING" \
+  's/  cp "\$RALPH_PACK_ROOT\/init.sh" "\$dest\/init.sh"\n//' \
+  test/layering.bats "has teeth"
+
+mutation "87 the third entry point is planted with nothing to find in it" "$LAYERING" \
+  's/probe_init_reaches_in\(\) \{ gate__scope_guard x y z; \}\n//' \
+  test/layering.bats "has teeth"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \
