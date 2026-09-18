@@ -115,3 +115,42 @@
     deux formes. Un nom de champ du tracker écrit `$Status` arriverait vide sans
     un mot sur stderr.
 
+- **Ce que [86] laisse sous ce ticket, livré le 18/09/2026, et il y a une
+  contrainte dure dedans.** [86] livre le précédent que ce ticket généralise :
+  deux fonctions publiques de `init.sh` rendent une phrase, et deux lecteurs la
+  prennent au lieu de la retaper — `init_sealed_prose` demande
+  `gate_sealed_paths` et rend « `Sealed paths: …` » pour le bloc `CLAUDE.md` ;
+  `init_tracker_prose <backend> <feature>` rend « où vivent les tickets de ce
+  projet » et est lue **par le `init__note` du rapport et par le heredoc du
+  bloc**, avec un test qui compare la phrase imprimée et le paragraphe déposé
+  octet pour octet, sans en garder de copie dans le test. Trois choses qui
+  s'appliquent directement ici :
+  - **La contrainte dure.** `init_tracker_prose` porte un `case` sur
+    `TRACKER_BACKEND` — exactement la forme que le commentaire « contrainte de
+    couche » ci-dessus prévoit pour `tracker_session_rule` sur le dispatcher. Le
+    jour où ce ticket crée une fonction publique de `tracker.sh` qui dit *où
+    vivent les tickets* par backend, **`init_tracker_prose` doit la consommer**
+    au lieu de garder son `case`, sinon le pack a de nouveau deux rédactions du
+    même fait — la faute que [86] vient de réparer, une couche plus bas.
+    `init.sh` source les libs du pack et appelle déjà leurs recensements publics,
+    donc rien ne s'y oppose ; ce qui s'y opposait est la write-surface de [86],
+    qui ne portait pas `.claude/lib/tracker.sh`. Celle de ce ticket-ci la porte.
+    Attention au sens de la phrase, elles ne disent pas le même fait :
+    `init_tracker_prose` dit *où sont les tickets* (markdown sous
+    `.scratch/<feature>/` ou issues d'une forge), la phrase du prompt dira *ce que
+    la boucle désindexe et restaure*. Une fonction qui rend les deux serait une
+    troisième frontière ; la consommation porte sur la moitié commune.
+  - **Le piège de forme, mesuré en écrivant [86].** La convention de fait du pack
+    — un format `printf '…'` en guillemets **simples**, où la backtick est de la
+    prose que le shell ne lit jamais — a un coût que rien ne documentait : une
+    **apostrophe** dans la phrase ferme la chaîne et casse le fichier au
+    `bash -n`. C'est bruyant, donc sans danger, mais ça interdit « the loop's own
+    state » dans une phrase écrite sous cette forme. Les deux sorties sont
+    d'écrire la phrase sans apostrophe, ou de passer en guillemets doubles avec
+    `\`` échappée. Les deux passent `layering_quoted_prose`.
+  - **Le test qui vaut d'être copié.** Le côté « deux lecteurs d'une phrase » ne
+    se teste pas en relisant la fonction : `test/install.bats` lit le paragraphe
+    **dans le fichier déposé** et le cherche dans la sortie du processus, donc
+    une fonction qui rendrait la phrase et ne serait pas appelée par l'un des
+    deux rougit. C'est le même geste que le piège de test ci-dessus demande pour
+    le périmètre : mesurer sur le produit, jamais sur le code qui l'aurait fait.

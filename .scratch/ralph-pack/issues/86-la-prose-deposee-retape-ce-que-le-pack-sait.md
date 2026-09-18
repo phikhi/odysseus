@@ -5,15 +5,20 @@
 **Blocked by:** 87
 
 **Write-surface:** `init.sh`, `test/install.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
+— **tenue sans écart** : rien de `.claude/**`. L'empreinte du template de la suite est
+`find .claude test/fixtures test/helpers/harness.bash`, donc ce ticket ne la périme pas.
+Une réparation évidente est restée **dehors** faute de surface, et elle est écrite dans
+[88] : `docs/agents/issue-tracker.md` part dans les trois projets et s'ouvre toujours sur
+« Issue tracker: Local Markdown ».
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] La phrase du bloc qui énumère les chemins scellés est **dérivée de `gate_sealed_paths`**, avec le même geste que `playthrough.sh` fait déjà dans son heredoc de prompt. Un chemin ajouté à la liste apparaît dans le bloc sans que personne édite `init.sh`.
-- [ ] Un test compare les deux ensembles sur un install réel et rougit sur un écart, dans les **deux** directions — un scellé absent du bloc, et un chemin du bloc que le pack ne scelle pas. Une seule direction est la faute que `test/smoke.bats` documente sur la surface de configuration.
-- [ ] Le paragraphe « The tracker » dépend du `TRACKER_BACKEND` que l'install vient de retenir : un projet installé sur `github`/`gitlab` ne reçoit pas une description de fichiers markdown sous `.scratch/<feature>/`, et `.scratch/<feature>/issues` n'est pas provisionné pour un backend qui ne l'utilisera jamais.
-- [ ] Ce que le bloc dit du tracker est **la même phrase** que celle que `init_preflight` imprime déjà à la console pour ce backend, ou dérivé du même endroit — deux rédactions du même fait dérivent, et celle que personne ne relit est celle qui ment.
-- [ ] Une entrée de mutation par garantie livrée, avec le témoin appairé.
-- [ ] La ligne du tableau de `docs/frontiere-de-confiance.md` — « Ce que l'installeur déposera dans le **prochain** projet » — dit ce que le bloc affirme, ce qui le tient, et ce qui reste seulement dit.
+- [x] La phrase du bloc qui énumère les chemins scellés est **dérivée de `gate_sealed_paths`**, avec le même geste que `playthrough.sh` fait déjà dans son heredoc de prompt. Un chemin ajouté à la liste apparaît dans le bloc sans que personne édite `init.sh`.
+- [x] Un test compare les deux ensembles sur un install réel et rougit sur un écart, dans les **deux** directions — un scellé absent du bloc, et un chemin du bloc que le pack ne scelle pas. Une seule direction est la faute que `test/smoke.bats` documente sur la surface de configuration.
+- [x] Le paragraphe « The tracker » dépend du `TRACKER_BACKEND` que l'install vient de retenir : un projet installé sur `github`/`gitlab` ne reçoit pas une description de fichiers markdown sous `.scratch/<feature>/`, et `.scratch/<feature>/issues` n'est pas provisionné pour un backend qui ne l'utilisera jamais.
+- [x] Ce que le bloc dit du tracker est **la même phrase** que celle que `init_preflight` imprime déjà à la console pour ce backend, ou dérivé du même endroit — deux rédactions du même fait dérivent, et celle que personne ne relit est celle qui ment.
+- [x] Une entrée de mutation par garantie livrée, avec le témoin appairé.
+- [x] La ligne du tableau de `docs/frontiere-de-confiance.md` — « Ce que l'installeur déposera dans le **prochain** projet » — dit ce que le bloc affirme, ce qui le tient, et ce qui reste seulement dit.
 
 ## Comments
 
@@ -161,3 +166,81 @@
   réécriture ; livré derrière, il constate après coup et peut coûter une seconde
   passe sur `init.sh`. [88] derrière [86] parce qu'il généralise une forme dont
   [86] livre le précédent ; [89] en dernier, sans arête.
+
+- **Livré le 18/09/2026.** Ce que le code ne dit pas.
+
+  **Ce qui est déposé, mesuré sur deux installs réels dans des dépôts neufs.**
+  Local : le bloc porte « `Sealed paths: …` » et les **douze** chemins que
+  `gate_sealed_paths` rend, dans l'ordre du pack. GitHub (avec `TRACKER_REPO` et
+  `TRACKER_TOKEN_CMD`, voir le piège de mise en scène) : le paragraphe du tracker
+  dit « Tickets are issues on the github repository named by `TRACKER_REPO` », le
+  rapport imprime **la même phrase**, `.scratch/demo` existe et
+  `.scratch/demo/issues` n'existe pas.
+
+  **Les deux fonctions livrées, et pourquoi deux.** `init_sealed_prose` demande
+  `gate_sealed_paths` et rend une ligne de prose ; `init_tracker_prose <backend>
+  <feature>` rend le paragraphe du tracker. La première a un lecteur, la seconde
+  en a deux — le `init__note` de `init_confirmations` et le heredoc du bloc — et
+  c'est ce qui satisfait l'AC 4.
+
+  **Correction de fait sur l'énoncé du ticket** : la phrase que l'opérateur lit
+  n'est pas imprimée par `init_preflight` mais par `init_confirmations`, et c'est
+  structurel, pas cosmétique. `init_preflight` tourne **avant** que `FEATURE` ait
+  été demandée : une phrase écrite là nommerait la feature par défaut du
+  `.example` dans une session interactive, et les deux rédactions divergeraient
+  au moment même où le ticket demande qu'elles soient identiques. Le note est
+  donc posé dans `init_confirmations`, juste avant le `case` de [18], où
+  `init__answer_of FEATURE` répond.
+
+  **La forme retenue pour la liste, et l'ambiguïté qui reste.** Une phrase
+  introductive puis une ligne « `Sealed paths: …` » : douze lignes de chemins là
+  où une phrase va est juste et illisible (contrainte de forme du ticket). La
+  jointure est celle de `playthrough__names` — ligne à ligne, jamais
+  `tr '\n' ' '` ([37]). Chaque chemin est entre backticks, ce qui donne au test
+  une frontière non ambiguë (`grep -o` sur les backticks, pas un split sur les
+  virgules) ; **un chemin portant une virgule se lirait quand même comme deux
+  noms pour un humain**, et c'est la seule ambiguïté laissée — elle n'est
+  atteignable que par `RALPH_CONFIG`.
+
+  **Le piège de forme rencontré au premier essai, et il n'était écrit nulle
+  part.** La convention de fait du pack pour la prose est `printf '…'` en
+  guillemets **simples**, où la backtick n'est jamais lue par le shell. Une
+  **apostrophe** dans cette prose ferme la chaîne : « an issue carries the
+  pack's fields » a rendu `init.sh` non parsable (`bash -n` : *unexpected end of
+  file*). C'est bruyant, donc sans danger — mais c'est le prix de la forme que
+  [90] recommande, et il est maintenant écrit dans [88], qui va écrire de la
+  prose sous cette forme dans les libs.
+
+  **Les trois rougeurs que [87] et [90] annonçaient : aucune n'a tiré.** La
+  dérivation est écrite `local paths` puis `paths="$(gate_sealed_paths)" || return 1`
+  (deux instructions, `layering_masked_status`), elle passe par un nom **public**
+  (`layering_privates`), et aucune backtick de prose n'a été ajoutée non échappée
+  ni dans le heredoc ni dans une chaîne double. `test/layering.bats` est vert sur
+  le nouvel `init.sh`, ses sept tests compris.
+
+  **Ce qui reste seulement dit, et c'est la moitié à relire.** Le bloc est de la
+  prose pour un modèle : rien ne relit ce qu'il affirme, et le scellement tient
+  quoi qu'on dise à la session — l'AC portait sur la dérivation, pas sur un
+  contrôle nouveau, et c'est écrit dans la ligne du tableau. Trois autres
+  endroits continuent d'annoncer un tracker markdown sur les trois backends et
+  sont **hors write-surface** : `docs/agents/issue-tracker.md` (déposé tel quel,
+  titre « Local Markdown » — le bloc le dit maintenant en toutes lettres pour un
+  backend distant, ce qui est un aveu et pas une réparation), la question posée
+  par `init__ask FEATURE` (« The tracker this run grinds: `.scratch/<FEATURE>/issues/` »),
+  et le prompt de session, qui est le sujet de [88].
+
+  **Ce que [88] hérite, écrit chez lui avant ce commit** : la contrainte dure est
+  que le jour où `tracker.sh` publie une phrase « où vivent les tickets » par
+  backend, `init_tracker_prose` doit la **consommer** au lieu de garder son
+  `case` — sinon le pack a de nouveau deux rédactions du même fait, une couche
+  plus bas. Avec le piège de l'apostrophe et le geste de test à copier (lire le
+  produit déposé, jamais la fonction).
+
+  **Les six entrées de mutation, et pourquoi six et pas quatre.** Trois paires.
+  La liste peut être **courte** et **longue** : une entrée par direction, toutes
+  deux témoin « the ones the pack seals ». Une liste *juste aujourd'hui* n'est
+  pas une dérivation : la troisième gèle les douze chemins du jour dans
+  `init.sh`, reste **verte** sur l'égalité — c'est voulu — et rouge sur le test
+  qui plante un treizième chemin dans une copie du pack. Puis la moitié tracker :
+  le bloc qui ignore le backend, l'`issues/` provisionné quand même, et le note
+  qui redevient une seconde rédaction. Les six sont `ok`, aucune `VACUOUS`.

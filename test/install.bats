@@ -172,6 +172,109 @@ fake_pack_source() {
   assert_file_contains "$TARGET/CLAUDE.md" "The tracker"
 }
 
+# ── what the block says, asked of the pack ───────────────────────────────────
+#
+# The block is the one thing a delivery session of the installed project ever
+# reads about what no write-surface can cover: `loop_session_prompt` names not a
+# single sealed path. So what is checked here is not that the prose is pretty but
+# that it is *derived* — the sentence the operator was shown and the sentence the
+# project keeps are the same one, and the list of paths is the pack's answer and
+# not a copy of it made on the day the block was written ([86]).
+
+# The list the block deposits, one path per line. Read out of the backticks and
+# not split on the commas: a path is allowed to carry a comma, and this file is
+# the place that has to know it.
+claude_sealed_paths() {
+  sed -n 's/^Sealed paths: //p' "$TARGET/CLAUDE.md" |
+    grep -o '`[^`]*`' | tr -d '`' | LC_ALL=C sort -u
+}
+
+# The tracker paragraph of the deposited block: the first non-empty line under
+# its heading, which is one line by construction. Read out of the file rather
+# than spelt here — a copy of the sentence in this file would be the third
+# rewriting of the fact the ticket exists to stop rewriting.
+claude_tracker_paragraph() {
+  awk '/^## The tracker$/ { grab = 1; next } grab && NF { print; exit }' \
+    "$TARGET/CLAUDE.md"
+}
+
+@test "the sealed paths the block names are the ones the pack seals, and no others" {
+  run_init
+  assert_success
+
+  local named sealed
+  named="$(claude_sealed_paths)"
+  pack_run gate_sealed_paths
+  assert_success
+  sealed="$(printf '%s\n' "$output" | LC_ALL=C sort -u)"
+  [ -n "$sealed" ] || fail "the pack sealed nothing, so this comparison proves nothing"
+
+  # One equality for both directions, and both have been wrong here: the block
+  # named five of the twelve paths as they are spelt, three by a basename the
+  # pack does not seal, and left four out — among them the lesson index and its
+  # records, sealed precisely because they are read into the prompt of every
+  # session after this one.
+  assert_equal "$named" "$sealed"
+}
+
+@test "a path added to the seal reaches the block with nobody editing init.sh" {
+  # A copy of the pack with a thirteenth path in the list, because the property
+  # is the derivation and not today's twelve: a hand-written list that happens to
+  # be right is green on the test above and red here.
+  local src
+  src="$(fake_pack_source)"
+  perl -0pi -e 's{\n  gate__sealed_config\n}{\n  printf "%s\\n" "a-path-only-this-copy-seals"\n  gate__sealed_config\n}' \
+    "$src/.claude/lib/gate.sh"
+  grep -q 'a-path-only-this-copy-seals' "$src/.claude/lib/gate.sh" ||
+    fail "the probe planted nothing: the list this test widens has moved"
+
+  I_FROM="$src" run_init
+  assert_success
+  assert_file_contains "$TARGET/CLAUDE.md" "a-path-only-this-copy-seals"
+}
+
+@test "a project whose tracker is a forge is not told its tickets are markdown files" {
+  # TRACKER_REPO and TRACKER_TOKEN_CMD with the backend, or what is measured is
+  # a report about a configuration nobody finished rather than the block.
+  run env \
+    FEATURE=demo TEST_CMD="stub-cmd tests" TYPECHECK_CMD=none LANG_ARTIFACT=en \
+    LANG_CHECK=on SCHEDULER=none VISUAL_REAL_ASSETS=1 RUN_CMD="stub-cmd run" \
+    VISUAL_CMD="stub-cmd visual" WORKTREE_PROVISION= TRACKER_BACKEND=github \
+    TRACKER_REPO=acme/demo TRACKER_TOKEN_CMD="printf token" \
+    bash "$INIT_SH" --yes --no-sweep --target "$TARGET" --from "$RALPH_PACK_ROOT"
+  assert_success
+  local report="$output"
+
+  assert_file_contains "$TARGET/CLAUDE.md" "Tickets are issues on the github repository"
+  refute_file_contains "$TARGET/CLAUDE.md" "one file per ticket in"
+
+  # The directory that goes with the sentence, in both directions. The feature's
+  # own is the run's bookkeeping and `loop_preflight` refuses to start without
+  # it; `issues/` is the local backend's storage and an empty one on a
+  # forge-backed project is a phantom tracker with nobody to notice.
+  [ -d "$TARGET/.scratch/demo" ] ||
+    fail "the feature directory a run refuses to start without was not provisioned"
+  [ ! -d "$TARGET/.scratch/demo/issues" ] ||
+    fail "an issues/ directory was provisioned for a backend that will never read it"
+
+  printf '%s\n' "$report" | grep -qF "  · $(claude_tracker_paragraph)" ||
+    fail "the report printed something other than the sentence the block deposits"
+}
+
+@test "what the block says about the tracker is the sentence the operator was shown" {
+  run_init
+  assert_success
+  local report paragraph
+  report="$output"
+  paragraph="$(claude_tracker_paragraph)"
+
+  [ -n "$paragraph" ] || fail "the block deposited no tracker paragraph at all"
+  # Byte for byte, and with no copy of the sentence in this file: two wordings of
+  # one fact drift, and the one nobody rereads is the one that lies.
+  printf '%s\n' "$report" | grep -qF "  · $paragraph" ||
+    fail "the report never printed the sentence the block deposits"
+}
+
 # ── what the ignore block decides ────────────────────────────────────────────
 
 @test "the ignore block covers exactly the bookkeeping, and not the artefacts a project keeps" {
