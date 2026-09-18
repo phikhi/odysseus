@@ -6539,6 +6539,43 @@ mutation "90 a boundary is planted with no violation on its far side" "$LAYERING
   's/probe_multiline_program\(\) \{(?:.|\n)*?\n\}\n//' \
   test/layering.bats "has teeth"
 
+# ── [86] the prose the installer deposits is asked of the pack ───────────────
+#
+# Six entries, in three pairs pointed in opposite directions. The list of sealed
+# paths can go wrong by being short and by being long, so there is one of each;
+# and a list that is *right today* is not a derivation, so a third entry freezes
+# it at today's twelve — green on the equality, red on the copy of the pack that
+# seals a thirteenth. The tracker half is the same shape: one entry takes the
+# backend out of the sentence, one provisions the directory the sentence says is
+# not there, one makes the console and the block two rewritings again.
+
+mutation "86 the block drops a path the pack seals" "$INIT" \
+  's/paths="\$\(gate_sealed_paths\)"/paths="\$(gate_sealed_paths | tail -n +2)"/' \
+  test/install.bats "the ones the pack seals"
+
+mutation "86 the block names a path the pack does not seal" "$INIT" \
+  's/paths="\$\(gate_sealed_paths\)"/paths="\$(gate_sealed_paths; printf "%s\\n" docs)"/' \
+  test/install.bats "the ones the pack seals"
+
+# The one that tells a derivation from a list that happens to be right: the
+# twelve paths of the day, spelt out. The equality above stays green on it, which
+# is the point — what goes red is the pack that seals a thirteenth.
+mutation "86 the sealed list is retyped instead of asked of the pack" "$INIT" \
+  's!paths="\$\(gate_sealed_paths\)" \|\| return 1!paths="\$(printf "%s\\n" ".claude/settings.local.json" ".claude/settings.json" "CLAUDE.md" "CLAUDE.local.md" ".mcp.json" "LEARNINGS.md" "learning-records" ".claude/agents" ".claude/commands" ".claude/skills" ".claude/hooks" ".claude/ralph.config.sh")" || return 1!' \
+  test/install.bats "reaches the block with nobody editing"
+
+mutation "86 the paragraph the block deposits ignores the backend" "$INIT" \
+  's/\$\(init_tracker_prose "\$backend" "\$feature"\)/\$(init_tracker_prose local "\$feature")/' \
+  test/install.bats "not told its tickets are markdown files"
+
+mutation "86 the issues directory is provisioned for a forge-backed project" "$INIT" \
+  's!      return 0\n      ;;\n  esac\n  mkdir -p "\$INIT_TARGET/.scratch/\$feature/issues"!      ;;\n  esac\n  mkdir -p "\$INIT_TARGET/.scratch/\$feature/issues"!' \
+  test/install.bats "not told its tickets are markdown files"
+
+mutation "86 the console and the block are two rewritings of one fact" "$INIT" \
+  's!init__note "\$\(init_tracker_prose "\$\(init__effective TRACKER_BACKEND\)" "\$\(init__answer_of FEATURE\)"\)"!init__note "Issues and specs are markdown under .scratch/<feature>/."!' \
+  test/install.bats "the sentence the operator was shown"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

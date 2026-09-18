@@ -544,6 +544,11 @@ init_confirmations() {
       ;;
   esac
 
+  # Where this project's tickets live, said to the operator in the very sentence
+  # the block will deposit rather than in a second rewriting of it ([86]). Here
+  # and not in `init_preflight`, which runs before FEATURE has been answered.
+  init__note "$(init_tracker_prose "$(init__effective TRACKER_BACKEND)" "$(init__answer_of FEATURE)")"
+
   # [18]: a remote backend is not an equivalent option with a different name.
   case "$(init__effective TRACKER_BACKEND)" in
     github | gitlab)
@@ -675,8 +680,9 @@ init_settings() {
 }
 
 init_dirs() {
-  local dir feature
+  local dir feature backend
   feature="$(init__answer_of FEATURE)"
+  backend="$(init__effective TRACKER_BACKEND)"
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
     mkdir -p "$INIT_TARGET/$dir" || init__die "cannot create $dir"
@@ -684,10 +690,26 @@ init_dirs() {
 $(init_durable_dirs)
 DIRS
 
-  # The tracker's own directory, which the loop stopped creating on purpose: a
-  # typo in FEATURE used to make a phantom tracker and a run that exited on
-  # success having ground nothing.
+  # The feature's own directory, whatever the backend: `loop_preflight` refuses
+  # to start on a project that has not got it, and what lives in it — the
+  # journal, the run lock, the session streams, the spec, a remote backend's
+  # sidecar — is the run's bookkeeping and not the tracker's storage.
   [ -n "$feature" ] || return 0
+  mkdir -p "$INIT_TARGET/.scratch/$feature" ||
+    init__die "cannot create .scratch/$feature"
+
+  # The tracker's own directory, and only for the backend that reads it ([86]).
+  # The loop stopped creating it on purpose: a typo in FEATURE used to make a
+  # phantom tracker and a run that exited on success having ground nothing —
+  # and an `issues/` provisioned for a forge-backed project is that same phantom
+  # with nobody to notice, an empty directory where a session goes looking for
+  # tickets that live on the forge.
+  case "$backend" in
+    github | gitlab)
+      init__say "provisioned .scratch/$feature, docs/adr, docs/playthroughs, receipts — and no issues/ directory: on $backend this project's tickets are the repository's issues"
+      return 0
+      ;;
+  esac
   mkdir -p "$INIT_TARGET/.scratch/$feature/issues" ||
     init__die "cannot create .scratch/$feature/issues"
   init__say "provisioned .scratch/$feature/issues, docs/adr, docs/playthroughs, receipts"
@@ -818,44 +840,112 @@ init_gitignore() {
 INIT_CLAUDE_OPEN='<!-- ralph pack: start — managed by init.sh, edit outside this block -->'
 INIT_CLAUDE_CLOSE='<!-- ralph pack: end -->'
 
+# Where this project's tickets live, for the backend this install retained.
+#
+# One writer for a fact with two readers ([86]): the note the report prints to
+# the operator who is watching, and the block every session of this project reads
+# at three in the morning. Before this the installer recognised a remote backend,
+# said the true thing once to a human, and wrote the other version — markdown
+# files under `.scratch/<feature>/` — into the one file nobody rereads. Two
+# rewritings of a fact drift, and the one nobody rereads is the one that lies.
+#
+# Backticks in a format string written in **single** quotes, which is where the
+# pack's prose keeps them: a backtick in a double-quoted argument is a command
+# substitution, and an operator reading a sentence with two holes in it is what
+# [90] measured on this very file.
+#
+# What the block says *around* this sentence is deliberately not backend-
+# dependent: the loop marks tickets and never the session, and a `Status:` a
+# session writes is restored from the snapshot taken before it started. Since
+# [73] the transport of that snapshot is the backend's own — a tree object on
+# `local`, a listing of issues on a forge — so the sentence holds on all three.
+init_tracker_prose() {
+  local backend="$1" feature="$2"
+  case "$backend" in
+    github | gitlab)
+      # `docs/agents/` is deposited whatever the backend and describes the
+      # markdown layout, so a project whose tickets are issues is told what in it
+      # still applies. Saying so here is the honest half and not the repair: that
+      # document still opens on "Issue tracker: Local Markdown", and rewriting it
+      # belongs to whoever touches `docs/agents/` ([86]).
+      printf 'Tickets are issues on the %s repository named by `TRACKER_REPO`, and this project has no `issues/` directory at all — nothing is provisioned under `.scratch/%s/` for a tracker that lives on a forge. The feature spec stays markdown, at `.scratch/%s/spec.md`. The field conventions in `docs/agents/` still hold, because an issue carries every one of those fields in its body; the file layout they describe is not this one.\n' \
+        "$backend" "$feature" "$feature"
+      ;;
+    *)
+      printf 'Issues and specs are markdown under `.scratch/%s/`: one file per ticket in `issues/NN-slug.md`, the feature spec in `spec.md`. The conventions are in `docs/agents/`.\n' \
+        "$feature"
+      ;;
+  esac
+}
+
+# What the pack seals, as one line of prose, asked of the pack ([86]).
+#
+# The block used to retype it: five of the twelve paths spelt out, three named by
+# their basename, four missing — and two of the missing four are sealed by [14]
+# *because* they are inlined into the prompt of every session after this one, so
+# the session asked not to write them was never told they existed. The list has
+# been three entries and is twelve; `loop_session_prompt` names none of them, so
+# this block is all a delivery session ever learns about what no write-surface can
+# cover.
+#
+# Comma-joined on one line, and that is the shape `playthrough__names` already
+# renders a list of ids in: what is deposited here is prose in somebody else's
+# repository, and twelve lines of paths where a sentence belongs is a paragraph
+# nobody reads. Joined line by line and never `tr '\n' ' '` ([37]) — the last
+# entry is a path a run names through `RALPH_CONFIG`, and nothing stops it
+# carrying a space. Each path is wrapped in backticks so that a reader, and
+# `test/install.bats`, can both see where one ends; a path carrying a comma would
+# still read as two names to a human, which is the one ambiguity left here.
+init_sealed_prose() {
+  local paths
+  paths="$(gate_sealed_paths)" || return 1
+  printf 'Sealed paths: '
+  printf '%s\n' "$paths" |
+    awk 'length { if (n++) printf ", "; printf "`%s`", $0 } END { if (n) print "." }'
+}
+
 # `CLAUDE.md` is **sealed** ([31]): a fresh `claude` reads it at startup, so no
 # write-surface can cover it and this installer is its only writer. Merged and
 # never overwritten — a project's own rules are the reason the file exists.
 init_claude_block() {
-  local feature="$1"
+  local feature="$1" backend="$2"
   cat <<BLOCK
 $INIT_CLAUDE_OPEN
 
 ## The tracker
 
-Issues and specs are markdown under \`.scratch/$feature/\`: one file per ticket in
-\`issues/NN-slug.md\`, the feature spec in \`spec.md\`. A ticket is self-contained —
-no context is inherited between sessions, so it has to read alone. The conventions
-are in \`docs/agents/\`.
+$(init_tracker_prose "$backend" "$feature")
 
-A ticket carries \`Status:\`, \`Blocked by:\`, \`Write-surface:\` and its acceptance
-criteria. **The loop marks tickets, never the session**: marking happens after the
-gate, and a \`Status:\` a session writes is restored from the snapshot taken before
-that session started.
+A ticket is self-contained — no context is inherited between sessions, so it has
+to read alone. It carries \`Status:\`, \`Blocked by:\`, \`Write-surface:\` and its
+acceptance criteria. **The loop marks tickets, never the session**: marking
+happens after the gate, and a \`Status:\` a session writes is restored from the
+snapshot taken before that session started.
 
 ## What a delivery session is judged on
 
 Stay inside the ticket's declared write-surface. The scope-guard diffs the tree
 around the session against that surface and the rollback undoes what falls
-outside. The harness the next session runs under is sealed: \`.claude/settings.json\`,
-\`CLAUDE.md\`, \`.mcp.json\`, \`.claude/agents\`, \`commands\`, \`skills\`, \`hooks\` and
-\`.claude/ralph.config.sh\` cannot be covered by any write-surface.
+outside. The harness the next session runs under is **sealed**: no write-surface
+can cover these paths, what a session writes there is undone whatever its ticket
+declared, and two of them — the lesson index and the records it points at — are
+read into the prompt of every session after this one, so a session that wrote
+them would be writing what the next one is told.
+
+$(init_sealed_prose)
 
 $INIT_CLAUDE_CLOSE
 BLOCK
 }
 
 init_claude_md() {
-  local feature had=no body
+  local feature had=no body backend
   feature="$(init__answer_of FEATURE)"
+  backend="$(init__effective TRACKER_BACKEND)"
   body="$INIT_TARGET/.CLAUDE.md.ralph-init-body.$$"
   init__tmp_add "$body"
-  init_claude_block "$feature" >"$body" || init__die "cannot write the CLAUDE.md block"
+  init_claude_block "$feature" "$backend" >"$body" ||
+    init__die "cannot write the CLAUDE.md block"
 
   [ -f "$INIT_TARGET/CLAUDE.md" ] && had=yes
   init__merge_block "$INIT_TARGET/CLAUDE.md" \
