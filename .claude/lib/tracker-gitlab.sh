@@ -108,3 +108,7 @@ tracker_gitlab_cache_prime() { forge_cache_prime gitlab; }
 tracker_gitlab_snapshot() { forge_snapshot gitlab; }
 tracker_gitlab_snapshot_moved() { forge_snapshot_moved gitlab "$@"; }
 tracker_gitlab_snapshot_restore() { forge_snapshot_restore gitlab "$1" "$2"; }
+
+# And the same sentence about a tracker that is not in this repository — see
+# `tracker-github.sh` and [88].
+tracker_gitlab_session_rule() { forge_session_rule gitlab; }

@@ -939,6 +939,42 @@ tracker_local_snapshot_restore() {
   return "$rc"
 }
 
+# ── the rule handed to a session, next to the control that keeps it ──────────
+#
+# [17]'s shape, applied to the one sentence of the prompt that promised a notch
+# more than its control ([88]). The prompt asked a session never to stage or
+# commit `.scratch/`; what holds that is the `git reset` above, scoped to the
+# tickets — so the feature spec, the run log and the session streams were handed
+# a guarantee nothing gave them. The name the sentence gives is now the pathspec
+# itself, and what is left over is a **named** dead zone rather than an implied
+# one ([24]: a zone that cannot be closed is named at every turn).
+#
+# Non-zero when this backend keeps its tickets outside this repository, for
+# `tracker_local__issues_relpath`'s own reason: a sentence naming a path no tree
+# of this repository holds would promise a de-index that cannot happen, and the
+# dispatcher says what is left when that is the answer.
+tracker_local_session_rule() {
+  local dir feature
+  dir="$(tracker_local__issues_relpath)" || return 1
+  # The tickets sit one level under the feature directory by construction — see
+  # `tracker_local__issues_dir`, which is this module's own — so the zone this
+  # sentence has to name is derived here rather than composed from a guess.
+  feature="${dir%/*}"
+  cat <<RULE
+- Never stage or commit the tickets, which are in \`$dir/\`.
+  The loop takes that path out of the index around every session: a commit taken
+  mid-iteration would freeze the tracker in a state that was never true.
+- Do not change the ticket's status, and do not edit any ticket at all.
+  The loop marks them, after the gate. Both are checked, not just asked: the
+  tickets are snapshotted before this session starts, any ticket that moved is
+  put back from that snapshot, and an iteration that edited one cannot be green.
+- Nothing else under \`$feature/\` is covered by either of those two.
+  The feature spec, this run's log and the session streams are the loop's own
+  working area: nothing takes them out of the index, and nothing puts them back.
+  Leave them alone — no control here would notice.
+RULE
+}
+
 # **Three refusals, and they are one answer** ([77]). This backend keeps no local
 # fact about a ticket outside the ticket: the claim is a `Claimed:` field of the
 # file, which `failures_protect_tracker` snapshots as a git tree around every

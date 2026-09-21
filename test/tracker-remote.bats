@@ -68,6 +68,33 @@ T
   [ -z "$missing" ] || fail "an operation the dispatcher routes and a backend does not answer:$missing"
 }
 
+@test "the rule handed to a session names no index to keep out of, and names the file that is here" {
+  # [88] on this transport. The sentence a session is handed comes from the
+  # backend that keeps the promise, and on a forge the local backend's sentence
+  # would be a fiction: there is no directory of this repository holding tickets,
+  # so nothing here can be taken out of an index.
+  #
+  # The one path it names is asked of the backend rather than compared with a
+  # string spelt here — `forge_sidecar_path` is the single author of that layout,
+  # and a sentence retyping it would be the second one.
+  use_forge github
+
+  local sidecar
+  pack_run 'tracker_sidecar_path'
+  assert_success
+  sidecar="${output#"$PROJECT_DIR"/}"
+  [ -n "$sidecar" ] || fail "this backend keeps no sidecar, so this test proves nothing"
+
+  pack_run 'tracker_session_rule'
+  assert_success
+  assert_output_contains "nothing of this tracker in this repository to stage"
+  assert_output_contains "\`$sidecar\`"
+  assert_output_contains "\`github\` repository named by"
+  # The half that belongs to the other backend, and must not travel: a session
+  # here has no issues directory to keep out of, and no index to keep it out of.
+  refute_output_contains "issues/"
+}
+
 @test "the frontier is ready-for-agent and unblocked, lowest number first" {
   use_forge github
   remote__two

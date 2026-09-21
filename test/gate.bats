@@ -514,6 +514,31 @@ FAKE
   assert_equal "$output" "in"
 }
 
+# ── the rule the prompt hands a session about that surface ───────────────────
+
+@test "the field the prompt names is the field the scope-guard reads" {
+  # [88]'s answer for the one rule of the prompt that has no list to derive: the
+  # perimeter is the ticket the prompt already carries, so what the sentence owes
+  # a session is which field of it the guard reads — and that is a fact about
+  # `gate_write_surface`, not a word to retype.
+  #
+  # Measured on what the reader really asked the tracker for, and not on the
+  # constant read twice: the stub below records the field name the guard went
+  # looking for, and the sentence is then searched for that name. A guard that
+  # started reading another field leaves the prompt asking for one nothing reads.
+  pack_run '
+    tracker_field() { printf "%s\n" "$2" >"$(ralph_project_root)/.field-asked"; }
+    gate_write_surface 01-alpha >/dev/null
+    gate_session_rule
+  '
+  assert_success
+
+  local asked
+  asked="$(cat "$PROJECT_DIR/.field-asked")"
+  [ -n "$asked" ] || fail "the scope-guard asked the tracker for no field at all"
+  assert_output_contains "\`$asked:\`"
+}
+
 # ── one iteration is judged on its own writes ────────────────────────────────
 
 @test "an iteration is not charged with what the previous one left in the tree" {
