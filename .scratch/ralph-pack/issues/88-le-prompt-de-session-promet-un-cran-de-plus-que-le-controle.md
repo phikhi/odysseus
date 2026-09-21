@@ -6,14 +6,14 @@
 
 **Write-surface:** `.claude/loop.sh`, `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/gate.sh`, `test/loop-happy-path.bats`, `test/tracker-local.bats`, `test/gate.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] La phrase du prompt sur le tracker est **produite par le module qui tient la promesse**, pas tapée dans le heredoc de `loop_session_prompt` — la forme est celle de `$(lang_session_rules)`, et le nom que la phrase donne est celui que le contrôle désindexe et restaure vraiment.
-- [ ] Un test lit la phrase du prompt et le périmètre du contrôle sur un run réel, et rougit si les deux divergent. Un test qui ne lirait que la phrase mesurerait la phrase.
-- [ ] Ce que la phrase **ne** promet pas est dit dans la phrase elle-même : `spec.md` et le reste de `.scratch/<feature>/` sont une zone morte nommée ([24] : *une zone qu'on ne peut pas fermer, on la nomme à chaque tour*), pas une garantie implicite.
-- [ ] Les deux autres règles tapées du prompt — la write-surface, le statut du ticket — sont passées au même crible : soit elles n'ont pas de liste à dériver et le prompt le dit, soit elles en ont une et elle est demandée. La réponse « pas de liste » est un résultat à écrire, pas un silence.
-- [ ] Une entrée de mutation par garantie livrée, avec le témoin appairé.
-- [ ] La ligne « Ne jamais stager ni commiter le tracker » de `docs/frontiere-de-confiance.md` dit ce que le prompt promet **et** ce que le contrôle couvre, maintenant que les deux ne sont plus la même phrase par accident.
+- [x] La phrase du prompt sur le tracker est **produite par le module qui tient la promesse**, pas tapée dans le heredoc de `loop_session_prompt` — la forme est celle de `$(lang_session_rules)`, et le nom que la phrase donne est celui que le contrôle désindexe et restaure vraiment.
+- [x] Un test lit la phrase du prompt et le périmètre du contrôle sur un run réel, et rougit si les deux divergent. Un test qui ne lirait que la phrase mesurerait la phrase.
+- [x] Ce que la phrase **ne** promet pas est dit dans la phrase elle-même : `spec.md` et le reste de `.scratch/<feature>/` sont une zone morte nommée ([24] : *une zone qu'on ne peut pas fermer, on la nomme à chaque tour*), pas une garantie implicite.
+- [x] Les deux autres règles tapées du prompt — la write-surface, le statut du ticket — sont passées au même crible : soit elles n'ont pas de liste à dériver et le prompt le dit, soit elles en ont une et elle est demandée. La réponse « pas de liste » est un résultat à écrire, pas un silence.
+- [x] Une entrée de mutation par garantie livrée, avec le témoin appairé.
+- [x] La ligne « Ne jamais stager ni commiter le tracker » de `docs/frontiere-de-confiance.md` dit ce que le prompt promet **et** ce que le contrôle couvre, maintenant que les deux ne sont plus la même phrase par accident.
 
 ## Comments
 
@@ -154,3 +154,148 @@
     une fonction qui rendrait la phrase et ne serait pas appelée par l'un des
     deux rougit. C'est le même geste que le piège de test ci-dessus demande pour
     le périmètre : mesurer sur le produit, jamais sur le code qui l'aurait fait.
+
+- **Livré le 21/09/2026.** Write-surface réellement touchée : `.claude/loop.sh`,
+  `.claude/lib/tracker.sh`, `.claude/lib/tracker-local.sh`, `.claude/lib/gate.sh`,
+  `test/loop-happy-path.bats`, `test/tracker-local.bats`, `test/gate.bats`,
+  `test/mutate.sh`, `docs/frontiere-de-confiance.md` — **plus quatre chemins
+  au-delà de la surface déclarée** : `.claude/lib/forge.sh`,
+  `.claude/lib/tracker-github.sh`, `.claude/lib/tracker-gitlab.sh` et
+  `test/tracker-remote.bats`. L'élargissement n'est pas un confort, il est
+  **imposé par un test du pack** — voir « le dispatcher répond quand le backend ne
+  répond pas » ci-dessous — et la consigne du ticket le prévoyait explicitement
+  (*« c'est une write-surface à élargir ou un ticket à ouvrir, pas un silence »*).
+  `init.sh` n'a **pas** été touché : voir la contrainte de [86] plus bas.
+
+  **Ce que le code ne dit pas.**
+
+  - **Trois producteurs et pas quatre, parce que deux règles sont un seul
+    contrôle.** Le statut du ticket et le stagé du tracker étaient deux phrases
+    tapées ; ce qui les tient est le **même** garde (`failures_protect_tracker`,
+    qui demande `tracker_snapshot*`). Les séparer en deux producteurs aurait
+    recréé l'accident que le ticket enlève — deux rédactions d'un fait. Elles
+    sortent donc ensemble de `tracker_session_rule`. Le décompte du prompt passe
+    de quatre règles tapées (dont une dérivée) à trois producteurs :
+    `gate_session_rule`, `lang_session_rules`, `tracker_session_rule`.
+
+  - **Le dispatcher répond quand le backend ne répond pas, et c'est une décision —
+    mais aucun backend livré ne prend cette branche, et c'est un test qui l'a
+    imposé.** `tracker_session_rule` est dispatché. La première version ne
+    l'implémentait que sur `tracker-local.sh` et laissait les deux forges au
+    repli, avec un ticket ouvert pour leur phrase ; **le premier `run.sh` complet
+    l'a refusé** — `test/tracker-remote.bats` « both remote backends implement
+    every operation the dispatcher routes » est un recensement dérivé de [18] qui
+    lit les `tracker__dispatch <op>` de `tracker.sh` et exige que les **trois**
+    backends livrés répondent. C'est la bonne règle et c'est le genre de trouvaille
+    que ce dépôt cherche : le ticket a donc élargi sa write-surface plutôt que
+    d'ouvrir un ticket, et le ticket n° 91 rédigé pendant la session a été
+    supprimé avant tout commit — le numéro 91 est donc libre. Le repli **reste**, et il est toujours atteignable — un
+    backend qu'un projet écrit lui-même est exactement le lecteur qui n'a pas
+    encore écrit sa phrase — mais il n'est plus la réponse d'un backend livré. Il
+    imprime **la moitié que l'interface doit sur tout backend depuis [73]** (instantané pris avant la session, ce qui a bougé remis) suivie
+    de l'aveu que l'autre moitié est une phrase que ce backend ne rend pas. Deux
+    raisons de ne pas composer cette seconde moitié dans le dispatcher à partir de
+    `tracker_tickets_dir`, essayée et jetée : le dispatcher affirmerait que la
+    boucle **désindexe** ce répertoire, ce que seul `tracker-local.sh` sait ; et
+    la branche « il y a un répertoire et le backend ne dit rien » n'est atteignable
+    par aucune configuration livrée, donc intestable. La ligne du dispatcher qui
+    dit `does not implement` est jetée (`2>/dev/null`) : elle serait imprimée une
+    fois par itération pendant toute une nuit.
+
+  - **La write-surface n'a pas de liste à dériver, et c'est le résultat écrit que
+    l'AC 4 demande.** Le périmètre est le ticket que le prompt porte déjà. Ce que
+    `gate_session_rule` dérive à la place, c'est **le champ** que le lecteur
+    demande vraiment au tracker : `GATE_SURFACE_FIELD`, lu par `gate_write_surface`
+    et nommé par la phrase. Les deux listes que `gate.sh` tient sont délibérément
+    hors du prompt : `gate_is_bookkeeping` est nommée par la phrase du tracker
+    (c'est la même zone), et `gate_sealed_paths` est déjà rédigée une fois, par
+    `init_sealed_prose` dans le bloc `CLAUDE.md` que l'installeur dépose ([86]).
+    La retaper dans le prompt aurait été la troisième rédaction — exactement la
+    faute que [86] venait de réparer. **Ce que ça laisse ouvert et qui n'est pas
+    refermé ici** : une session d'un projet où `init.sh` n'a jamais tourné
+    n'apprend les chemins scellés de nulle part. Ce n'était pas vrai non plus
+    avant ce ticket, et c'est une question pour `init.sh`, pas pour le prompt.
+
+  - **La contrainte dure de [86] ne se déclenche pas, et il faut le dire plutôt
+    que de la laisser croire honorée.** [86] demandait : le jour où `tracker.sh`
+    publie une phrase publique « où vivent les tickets » par backend,
+    `init_tracker_prose` doit la consommer au lieu de garder son `case`.
+    `tracker_session_rule` **ne dit pas ce fait-là** : elle dit ce que la boucle
+    désindexe et remet, pas où vivent les tickets. Les deux phrases se recoupent
+    sur un chemin (`.scratch/<feature>/issues/`) et divergent sur tout le reste —
+    l'une parle à un opérateur qui installe, l'autre à une session qui va écrire,
+    et sur une forge la première a un répertoire d'issues et la seconde n'a pas
+    d'index du tout. Fabriquer une fonction qui rend les deux aurait créé la
+    troisième frontière que [86] met en garde contre. **Donc `init.sh` garde son
+    `case`, et la contrainte de [86] reste ouverte pour le ticket qui publiera
+    vraiment « où vivent les tickets ».**
+
+  - **Le test qui compte est le run, et il mesure les deux sens.**
+    `test/loop-happy-path.bats` « the path the prompt names is the one the loop
+    takes out of the index, and no more » : une session stage **un ticket et
+    `spec.md`** dans l'index du dépôt principal (jamais celui du worktree, [13]),
+    écrit ce qu'elle a stagé dans l'état du shim, et le test compare ce qui a
+    quitté l'index avec le nom que la phrase du prompt a donné — extrait du prompt
+    par `sed`, jamais relu du producteur. Les deux sens sont assertés : rien hors
+    du nom ne quitte l'index, rien sous le nom n'y reste. Deux garde-fous de
+    non-vacuité : la sonde doit avoir stagé quelque chose **des deux côtés** du
+    nom, sinon le test échoue en le disant. La mutation
+    « the de-index is wider than the name the prompt gives » est celle qui prouve
+    que le test mesure le contrôle et pas la prose.
+
+  - **Le test unitaire de `tracker-local.bats` ne mesure pas la phrase contre le
+    périmètre** — ce serait le vacuous par construction que le ticket annonce. Il
+    mesure autre chose : que le nom est *celui de ce backend* et bouge avec son
+    stockage, et que le nom du backend local n'est pas prêté à un backend qui ne
+    garde rien (`refute_output_contains ".scratch/demo/issues/"` sous `github`).
+
+  - **Un global de pack de plus, hors du namespace `RALPH_*`** :
+    `GATE_SURFACE_FIELD`. Assigné sans condition au `source`, donc conforme à la
+    règle de [40]. Écrit dans [89], dont l'AC 2 veut que le **critère** du
+    recensement soit dans le test : un critère écrit « les noms `RALPH_*` » ne le
+    voit pas, ni `INIT_CLAUDE_OPEN`, ni `LOOP__FINDINGS`, ni
+    `ROUTER__PINNED_SURFACE`.
+
+  - **Un `DRIFTED` payé, et la leçon de harnais qu'il porte.** Ajouter
+    `session_rule` à la liste des lectures de `tracker__dispatch` a déplacé
+    l'ancre de l'entrée de mutation « 10 writing a receipt counts as writing the
+    ticket », qui épingle cette case-list **entière**. Le `-n` de la famille
+    `88 ` ne l'a pas vu — il ne regarde que les entrées filtrées — et le défaut
+    est sorti au bout d'une heure de gate complet. **Éditer une ligne qu'une
+    entrée d'un autre ticket épingle exige un `bash test/mutate.sh -n` sur tout
+    le fichier**, qui coûte trente secondes. L'entrée a été ré-ancrée (la
+    garantie sous test est inchangée : c'est toujours `emit_receipt` qu'elle
+    retire) et repassée `ok`.
+
+  - **`session_rule` est dans la liste des *lectures* de `tracker__dispatch`**,
+    par le critère de [31] et pas par ce qu'elle fait aujourd'hui : une opération
+    qui n'écrit aucun ticket n'a pas à entrer dans le registre de [13]. Ce
+    n'est pas mutable séparément — l'opération ne prend pas d'argument, donc
+    `tracker__note_write ""` ne écrit rien de toute façon — et c'est dit ici
+    plutôt que couvert par une entrée qui serait VACUOUS.
+
+  - **Ce qui n'est pas touché et le reste à dessein** : `router_prompt`
+    (`router.sh`) porte sa propre règle « ne change pas le statut de ce ticket ».
+    Ce n'est pas une seconde rédaction du même fait — ce que tient cette phrase-là
+    est l'épinglage du drain ([68], [70]) et pas `failures_protect_tracker`, et
+    elle vit déjà à côté de son contrôle. Elle dit d'ailleurs explicitement ce
+    qu'elle **ne** tient pas, ce qui est la forme que ce ticket généralise.
+
+  - **La phrase des deux forges, `forge_session_rule`.** Elle dit l'inverse de
+    celle du backend local, et c'est pour ça qu'elle ne pouvait pas être la même :
+    rien du tracker n'est dans ce dépôt, donc il n'y a **aucun index à tenir** et
+    une règle « ne stage pas le tracker » n'y nommerait rien. Ce qu'elle nomme à
+    la place est la seule zone de cet arbre qu'une session peut écrire ici — le
+    sidecar de [77], `forge_sidecar_path`, demandé et jamais recomposé — et elle
+    dit que rien ne le désindexe et que rien ne le remet. Le témoin est
+    `test/tracker-remote.bats`, qui compare la phrase au chemin que **le backend**
+    rend et non à une chaîne tapée dans le test.
+
+  - **Ce que le test des forges ne mesure pas, dit plutôt que sous-entendu.** Le
+    côté « rien ne quitte l'index » n'est pas sondé sur un run distant : c'est une
+    négation, et le run qui la rendrait fausse est celui où quelque chose du
+    tracker serait dans l'arbre — ce que `tracker_github_tickets_dir` refuse par
+    construction. Ce qui est mesuré sur un run réel, c'est l'égalité du backend
+    local (`test/loop-happy-path.bats`), et la mutation
+    « a forge stops answering the session rule » fait rougir le recensement dérivé
+    de [18] plutôt qu'une assertion de prose.
