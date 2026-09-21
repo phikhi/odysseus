@@ -1412,6 +1412,49 @@ MOVED
   return 0
 }
 
+# ── the rule the prompt hands a session about a tracker that is not here ─────
+#
+# [17]'s shape and [88]'s generalisation of it, on the transport where the local
+# backend's sentence would be a fiction. There is no directory of this repository
+# holding tickets, so there is nothing here to take out of an index and a rule
+# telling a session not to stage the tracker would be naming nothing. What the
+# two forges owe a session is the other half — the issues are listed before it
+# starts and one that moved is put back over the network ([73]) — and then the
+# one zone of *this* repository they really do write, which is the sidecar above:
+# `gate_is_bookkeeping` takes it out of the scope-guard, `failures_protect_tracker`
+# looks at tickets and this is not one, and nothing puts it back ([77]).
+#
+# The sidecar is named by asking for it rather than by composing the path a second
+# time, for `forge_sidecar_path`'s own reason: a layout only this backend knows
+# must not have a second author — and here the second author would be the sentence
+# a session is asked to obey.
+#
+# Non-zero when this backend keeps no sidecar, which no shipped forge does: the
+# dispatcher's own answer is what a backend with nothing to say gets.
+forge_session_rule() {
+  local flavour="$1" sidecar root
+  sidecar="$(forge_sidecar_path)" || return 1
+  root="$(ralph_project_root)"
+  case "$sidecar" in
+    "$root"/*) sidecar="${sidecar#"$root"/}" ;;
+  esac
+  cat <<RULE
+- Do not change the ticket's status, and do not edit any ticket at all.
+  The loop marks them, after the gate. Both are checked, not just asked: the
+  issues are listed before this session starts, any one that moved is put back
+  over the network from that listing, and an iteration that edited one cannot be
+  green.
+- There is nothing of this tracker in this repository to stage or commit. The
+  tickets of this project are issues of the \`$flavour\` repository named by
+  \`TRACKER_REPO\`, and no tree of this repository holds them.
+- What does live here is \`$sidecar\`, where this backend keeps what only this
+  machine knows about a ticket: who holds a claim and since when, and which
+  request carries its receipt. Nothing takes it out of the index and nothing puts
+  it back — a line appended there is what the next run starts from. Leave it
+  alone; no control here would notice.
+RULE
+}
+
 # ── what a session wrote in this tracker, put back ([73] on [21], [18]) ──────
 #
 # The half [18] named and did not take. A session of a remote backend writes this

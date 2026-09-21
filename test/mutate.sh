@@ -2799,8 +2799,15 @@ mutation "10 the attempt is always the first one" "$LOOP" \
 # by the same criterion: one is handed a directory of the run in `$TMPDIR` and the
 # other takes a listing into the calling shell, and neither writes a ticket any
 # guard over `issues/` will compare. Re-checked before the anchor moved.
+# And again by [88], which added `session_rule` — a read by the same criterion:
+# it takes no ticket id, answers with a sentence for the prompt, and writes
+# nothing a guard over `issues/` will compare. The guarantee under test is
+# unchanged — `emit_receipt` is still what this entry takes out of the list — and
+# it was re-checked before the anchor moved. It was **found as a DRIFTED on a full
+# run** and not by the `-n` of the [88] family alone: an entry anchored on a line
+# another ticket edits is only seen by `mutate.sh -n` over the whole file.
 mutation "10 writing a receipt counts as writing the ticket" "$TRACKER_IFACE" \
-  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift \| cache_open \| cache_prime \| snapshot \| snapshot_moved\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime | snapshot | snapshot_moved)/m' \
+  's/^    frontier \| ids \| read_ticket \| field \| receipt_path \| receipt_dir \| tickets_dir \| session_rule \| emit_receipt \| sidecar_path \| sidecar_witness \| sidecar_drift \| cache_open \| cache_prime \| snapshot \| snapshot_moved\)$/    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | session_rule | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime | snapshot | snapshot_moved)/m' \
   test/receipt.bats "not a write in the tracker"
 
 # The journal's own two halves. A rewritten one has to be named; an honest one has
@@ -6575,6 +6582,77 @@ mutation "86 the issues directory is provisioned for a forge-backed project" "$I
 mutation "86 the console and the block are two rewritings of one fact" "$INIT" \
   's!init__note "\$\(init_tracker_prose "\$\(init__effective TRACKER_BACKEND\)" "\$\(init__answer_of FEATURE\)"\)"!init__note "Issues and specs are markdown under .scratch/<feature>/."!' \
   test/install.bats "the sentence the operator was shown"
+
+# ── [88] the rules of the prompt come from the modules that keep them ────────
+#
+# Four rules, one of them derived until this ticket and three typed. What makes
+# these entries worth reading together is the *direction* of the defect they
+# remove: a typed sentence is not wrong because it drifts away from the control,
+# it is wrong because nothing reddens while it does. So the witness is a run —
+# one session stages a ticket and the feature spec, and what left the index is
+# compared with the name the prompt gave.
+
+# The wiring, both halves. A prompt with no tracker rule at all, and a prompt
+# that keeps its own copy of one: the second is the entry that tells a derivation
+# from a sentence that happens to be right today.
+mutation "88 the loop stops asking for the tracker rule" "$LOOP" \
+  's/^\$\(tracker_session_rule\)\n//m' \
+  test/loop-happy-path.bats "takes out of the index"
+
+mutation "88 the prompt keeps its own copy of the tracker rule" "$LOOP" \
+  's/^\$\(tracker_session_rule\)$/- Never stage or commit the tracker (.scratch\/), which is the loop own state./m' \
+  test/loop-happy-path.bats "takes out of the index"
+
+mutation "88 the loop stops asking for the write-surface rule" "$LOOP" \
+  's/^\$\(gate_session_rule\)\n//m' \
+  test/loop-happy-path.bats "pointers to the rest"
+
+# The control moving under a sentence that stays put, which is the whole of what
+# a derived sentence buys: de-index the feature directory instead of the tickets
+# and the run takes out of the index a path the prompt named as a dead zone.
+mutation "88 the de-index is wider than the name the prompt gives" "$TRACKER" \
+  's!  git -C "\$root" reset -q -- "\$dir" 2>/dev/null!  git -C "\$root" reset -q -- "\$\{dir%/\*\}" 2>/dev/null!' \
+  test/loop-happy-path.bats "takes out of the index"
+
+# And the half [24] asks for: a zone that cannot be closed is named at every
+# turn, so a sentence that stops naming it is the defect and not a tidier prompt.
+mutation "88 the rule stops naming the zone it does not cover" "$TRACKER" \
+  's/- Nothing else under \\`\$feature\/\\` is covered by either of those two\.\n  The feature spec, this run.s log and the session streams are the loop.s own\n  working area: nothing takes them out of the index, and nothing puts them back\.\n  Leave them alone — no control here would notice\.\n//' \
+  test/loop-happy-path.bats "takes out of the index"
+
+# A backend with no sentence of its own is handed no rule at all, where the
+# interface owes it the half `snapshot_restore` keeps on every backend ([73]).
+mutation "88 a backend with no sentence of its own loses the rule" "$TRACKER_IFACE" \
+  's/^tracker_session_rule\(\) \{/tracker_session_rule() { tracker__dispatch session_rule 2>\/dev\/null; return 0;/m' \
+  test/tracker-local.bats "sentence of its own"
+
+# The rule with no list to derive, from both sides: the guard reading another
+# field, and the sentence retyping the one it reads.
+mutation "88 the scope-guard reads a field the prompt does not name" "$GATE" \
+  's/declared="\$\(tracker_field "\$1" "\$GATE_SURFACE_FIELD" 2>\/dev\/null\)"/declared="\$(tracker_field "\$1" "Surface" 2>\/dev\/null)"/' \
+  test/gate.bats "field the prompt names"
+
+mutation "88 the sentence retypes the field instead of asking for it" "$GATE" \
+  's/\$GATE_SURFACE_FIELD:/Surface:/' \
+  test/gate.bats "field the prompt names"
+
+# The same operation on the transport where the local backend's sentence would be
+# a fiction. A forge that stops answering it falls back on the dispatcher's own
+# admission, which [18]'s census is the one to refuse: every routed operation is
+# answered by all three shipped backends.
+mutation "88 a forge stops answering the session rule" "$GITHUB" \
+  's/^tracker_github_session_rule\(\) \{ forge_session_rule github; \}\n//m' \
+  test/tracker-remote.bats "every operation the dispatcher routes"
+
+mutation "88 the forge rule tells a session the tracker is here to stage" "$FORGE" \
+  's/- There is nothing of this tracker in this repository to stage or commit\. The\n  tickets of this project are issues of the \\`\$flavour\\` repository named by\n  \\`TRACKER_REPO\\`, and no tree of this repository holds them\.\n//' \
+  test/tracker-remote.bats "names no index to keep out of"
+
+# The layout the sentence names, retyped instead of asked of the one author of
+# it — the [86] shape, on the file a session really can write here ([77]).
+mutation "88 the forge rule retypes the sidecar it names" "$FORGE" \
+  's/  sidecar="\$\(forge_sidecar_path\)" \|\| return 1/  sidecar=".scratch\/somewhere-else\/.forge-claims"/' \
+  test/tracker-remote.bats "names no index to keep out of"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

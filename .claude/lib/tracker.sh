@@ -49,6 +49,10 @@
 #   tracker_snapshot_moved SNAP       what moved since that snapshot, one
 #                                     `outcome<TAB>name` per line
 #   tracker_snapshot_restore ID SNAP  that ticket back to what the snapshot holds
+#   tracker_session_rule              the rule the prompt hands a session about
+#                                     this backend's tracker, in the shape
+#                                     `lang_session_rules` has; non-zero when
+#                                     this backend has no sentence of its own
 #
 # Marking is the loop's job, after the gate — never the session's.
 #
@@ -187,7 +191,7 @@ tracker__dispatch() {
     # `issues/` will ever see; noting it would hand the restore and the quarantine
     # an id to skip for a file they do not look at, and the skip would land on
     # whichever sibling iteration was in flight at the time.
-    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime | snapshot | snapshot_moved)
+    frontier | ids | read_ticket | field | receipt_path | receipt_dir | tickets_dir | session_rule | emit_receipt | sidecar_path | sidecar_witness | sidecar_drift | cache_open | cache_prime | snapshot | snapshot_moved)
       "$fn" "$@"
       ;;
     open_ticket | open_unique | renumber)
@@ -576,6 +580,53 @@ tracker_snapshot_moved() { tracker__dispatch snapshot_moved "$@"; }
 # passed first would write a whole listing into it as though it were an id, and
 # the entry naming the ticket this put back would never be written at all.
 tracker_snapshot_restore() { tracker__dispatch snapshot_restore "$@"; }
+
+# ── the rule handed to a session, next to the control that keeps it ──────────
+#
+# [17]'s shape, generalised by [88]. `$(lang_session_rules)` has put the language
+# rules of the prompt in the module that checks them since [17]; this is the same
+# operation for the tracker, and the perimeter is the **backend's** rather than
+# this interface's — a tracker whose tickets are issues has no index of this
+# repository for anything to be taken out of, and the pathspec the local backend
+# de-indexes is a fact about how that one backend stores tickets.
+#
+# **What a backend that answers nothing gets, and why it is not a silence.** The
+# prompt has to carry a rule about the tracker whatever the backend is: dropping
+# the line would hand a session no sentence at all, which is worse than a narrow
+# one. So what is printed here is the half this *interface* owes on every backend
+# since [73] — the tickets are snapshotted before a session starts and whatever
+# moved is put back — followed by the admission that the other half, what of the
+# tracker lives in this repository, is a sentence this backend does not answer.
+#
+# **No backend this pack ships takes that branch, and a test refuses one that
+# would** ([18]): every operation routed here is answered by all three, which is
+# what makes a refusal mean "a project brought its own backend" rather than "we
+# forgot one". It is still reachable, and it is still the right answer — a
+# project's own adapter is exactly the reader who has not written the sentence
+# yet, and it gets the half that is true of any backend of this interface instead
+# of nothing.
+#
+# The dispatcher's own `does not implement` line is dropped rather than printed,
+# for the reason `tracker_tickets_dir`'s callers drop it: a refusal that is a
+# legitimate answer is not a finding, and this one would be printed once per
+# iteration for the whole of a run.
+tracker_session_rule() {
+  local rule
+  rule="$(tracker__dispatch session_rule 2>/dev/null)" || rule=''
+  if [ -n "$rule" ]; then
+    printf '%s\n' "$rule"
+    return 0
+  fi
+  cat <<RULE
+- Do not change the ticket's status, and do not edit any ticket at all.
+  The loop marks them, after the gate. Both are checked, not just asked: the
+  tickets are snapshotted before this session starts, any ticket that moved is
+  put back from that snapshot, and an iteration that edited one cannot be green.
+- What of its tracker the \`${TRACKER_BACKEND:-local}\` backend keeps in this
+  repository, and what staging it would cost, is a sentence it does not answer.
+  Nothing here tells you, so treat the whole of it as somebody else's.
+RULE
+}
 
 # Read one field of a ticket. Not part of the seven operations, but every
 # backend needs it and the loop reads Failures:/Escalation:/Write-surface:.

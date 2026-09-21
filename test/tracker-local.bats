@@ -350,6 +350,39 @@ printf "the caller is still here\n"'
   assert_output_contains 'backend "jira" does not implement frontier'
 }
 
+# ── the rule the prompt hands a session about this tracker ───────────────────
+
+@test "the rule names the path this backend really de-indexes, and the zone it does not" {
+  # Not a comparison of two readings of the same function — what the sentence is
+  # worth is measured on a run, in test/loop-happy-path.bats. What is asserted
+  # here is the half that test cannot reach: that the name is *this backend's*
+  # and moves with its storage, rather than a constant that happens to be right.
+  pack_run 'tracker_session_rule'
+  assert_success
+  assert_output_contains "which are in \`.scratch/demo/issues/\`"
+  assert_output_contains "Nothing else under \`.scratch/demo/\`"
+}
+
+@test "a backend with no sentence of its own still hands the session a rule" {
+  # Not one of the three this pack ships — [18]'s census refuses a shipped
+  # backend that leaves an operation unanswered, and the two forges answer this
+  # one since [88]. What is staged here is the backend a *project* brings: it
+  # gets the half this interface owes on any backend since [73] — the tickets are
+  # snapshotted before a session starts and one that moved is put back — and then
+  # the admission, rather than no rule about the tracker at all.
+  set_config TRACKER_BACKEND jira
+  pack_run 'tracker_session_rule'
+  assert_success
+  assert_output_contains "do not edit any ticket at all"
+  assert_output_contains "put back from that snapshot"
+  assert_output_contains "\`jira\` backend keeps in this"
+  assert_output_contains "is a sentence it does not answer"
+  # And the local backend's name for its own storage is not lent to a backend
+  # nobody has read: the path below belongs to one adapter, and a session told to
+  # keep out of it would be told a fiction.
+  refute_output_contains ".scratch/demo/issues/"
+}
+
 # ── atomicity ────────────────────────────────────────────────────────────────
 
 # Racing a reader against a writer proves nothing here: the truncation window

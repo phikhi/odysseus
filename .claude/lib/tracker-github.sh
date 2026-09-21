@@ -134,3 +134,9 @@ tracker_github_cache_prime() { forge_cache_prime github; }
 tracker_github_snapshot() { forge_snapshot github; }
 tracker_github_snapshot_moved() { forge_snapshot_moved github "$@"; }
 tracker_github_snapshot_restore() { forge_snapshot_restore github "$1" "$2"; }
+
+# And the rule the prompt hands a session about a tracker that is not in this
+# repository ([88]). The sentence a backend gives is its own: here there is no
+# directory of tickets to keep out of the index, and the one zone of this tree
+# this backend does write is the sidecar above.
+tracker_github_session_rule() { forge_session_rule github; }

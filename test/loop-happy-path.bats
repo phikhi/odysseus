@@ -232,6 +232,10 @@ teardown() {
   # quoted, and only when there is one: see test/retro.bats.
   refute_output_contains "LEARNINGS.md"
   assert_output_contains "The loop marks them, after the gate."
+  # Produced by the module that keeps it and never typed in the heredoc ([88]),
+  # which is why it is asserted here rather than left to the unit that renders it:
+  # a producer nobody calls renders nothing into a prompt.
+  assert_output_contains "Stay inside the ticket's declared write-surface"
 
   # And the rules say which of them are checked rather than merely asked. A
   # session that believes it can edit the tracker spends a whole iteration
@@ -865,4 +869,111 @@ FAKE
   run_loop
   assert_failure 5
   assert_output_contains "no issues directory"
+}
+
+# ── the rules of the prompt, measured against the controls that keep them ────
+#
+# [17]'s rule generalised ([88]): every rule the prompt carries is produced by
+# the module that keeps it, so the sentence cannot go on promising a guarantee
+# the day the control moves. The one that was not, and was wrong by a notch in
+# the direction that costs, is the tracker's: it asked a session never to stage
+# `.scratch/`, and what holds it de-indexes `issues/`.
+#
+# Measured on a **run** and never by reading the producer twice — a test that
+# compared the sentence with the perimeter by calling the same function twice
+# would be vacuous by construction. What is compared here is the name the prompt
+# gave a session and what really left the index of the project once the guard had
+# come back: one session stages a ticket and the feature spec, and the two halves
+# of the sentence are the two answers.
+
+@test "the path the prompt names is the one the loop takes out of the index, and no more" {
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+
+  # The *main* index, and it has to be named: a `git add` in the worktree stages
+  # an index that goes with it ([13]). Only two paths are staged, so what leaves
+  # the index is this guard's doing and not the rollback's.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+root="$(cat "$RALPH_SHIM_STATE/project-dir")"
+tdir="$(cat "$RALPH_SHIM_STATE/tracker-dir")"
+fdir="$(dirname "$tdir")"
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+perl -pi -e 's/^\*\*Status:\*\* .*/**Status:** resolved/' "$tdir/01-alpha.md"
+printf 'a line the session wrote\n' >>"$fdir/spec.md"
+git -C "$root" add -A -- "$tdir/01-alpha.md" "$fdir/spec.md" >/dev/null 2>&1
+git -C "$root" diff --cached --name-only >"$RALPH_SHIM_STATE/staged-by-session"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  local prompt named dead before after path left=''
+  prompt="$(claude_call_stdin 1)"
+  named="$(printf '%s\n' "$prompt" |
+    sed -n 's/.*which are in `\([^`]*\)`.*/\1/p' | head -1)"
+  dead="$(printf '%s\n' "$prompt" |
+    sed -n 's/.*Nothing else under `\([^`]*\)`.*/\1/p' | head -1)"
+  [ -n "$named" ] || fail "the prompt names no tracker path at all:
+$prompt"
+  [ -n "$dead" ] || fail "the prompt names no zone it does not cover:
+$prompt"
+
+  # Not vacuous: the session really staged something on each side of the name,
+  # so both directions below have a case to answer.
+  before="$(cat "$SHIM_STATE/staged-by-session")"
+  printf '%s\n' "$before" | grep -q "^$named" ||
+    fail "the probe staged nothing under $named: $before"
+  printf '%s\n' "$before" | grep -qv "^$named" ||
+    fail "the probe staged nothing outside $named: $before"
+
+  after="$(git -C "$PROJECT_DIR" diff --cached --name-only)"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if printf '%s\n' "$after" | grep -Fxq -- "$path"; then continue; fi
+    left="$left$path
+"
+  done <<BEFORE
+$before
+BEFORE
+
+  # Both directions of one equality, and both have been wrong here. A sentence
+  # wider than the control (`.scratch/`, which is what the prompt said until
+  # [88]) promises a de-index the spec never gets; a control wider than the
+  # sentence takes out of the index a path no session was told about.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      "$named"*) ;;
+      *) fail "$path left the index and the prompt names only $named" ;;
+    esac
+  done <<LEFT
+$left
+LEFT
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      "$named"*)
+        printf '%s' "$left" | grep -Fxq -- "$path" ||
+          fail "$path is under $named and is still staged" ;;
+    esac
+  done <<BEFORE
+$before
+BEFORE
+
+  # And the other half of the sentence, on the same run: what it says it does
+  # not cover really is not covered — still staged, and never put back.
+  case "$FEATURE_DIR/spec.md" in
+    "$PROJECT_DIR/$dead"*) ;;
+    *) fail "the prompt calls $dead a dead zone and the feature spec is not in it" ;;
+  esac
+  printf '%s\n' "$after" | grep -q '/spec\.md$' ||
+    fail "the feature spec left the index, which the prompt says nothing takes it out of:
+$after"
+  assert_file_contains "$FEATURE_DIR/spec.md" "a line the session wrote"
+
+  # The paired witness for the half that *is* kept: the ticket came back.
+  assert_equal "$(ticket_status 01-alpha)" "ready-for-agent"
 }

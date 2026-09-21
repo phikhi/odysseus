@@ -169,10 +169,19 @@ loop_request_stop() {
 # to carry the task and say where to find the rest — the session rebuilds its
 # own context by reading the repository.
 #
-# The language rules come from lib/lang.sh rather than being typed here, and that
-# is the shape [17] wanted: the sentence a session is asked to follow and the
-# check that keeps it live in one file, so the prompt cannot go on promising a
-# guarantee the day the check moves. It says "checked" only where it is.
+# **Every rule of the block below comes from the module that keeps it**, and none
+# of them is typed here ([17], generalised by [88]): the sentence a session is
+# asked to follow and the control that keeps it live in one file, so the prompt
+# cannot go on promising a guarantee the day the control moves. It says "checked"
+# only where it is.
+#
+# That was one rule out of four until [88], and the one it was not was wrong by a
+# notch in the direction that costs: the tracker line asked a session never to
+# stage `.scratch/`, and what holds it de-indexes `issues/`. The three producers
+# answer for the three zones — `gate_session_rule` for the write-surface,
+# `lang_session_rules` for the prose, `tracker_session_rule` for the tracker — and
+# two of them say out loud what they do **not** cover, which is the half a typed
+# sentence never says.
 loop_session_prompt() {
   local ticket="$1"
   cat <<PROMPT
@@ -194,14 +203,9 @@ $(loop__prompt_lessons)
 $(loop__prompt_brief "$ticket")
 ## Rules
 
-- Stay inside the ticket's declared write-surface.
+$(gate_session_rule)
 $(lang_session_rules)
-- Do not change the ticket's status, and do not edit any ticket at all.
-  The loop marks them, after the gate. Both are checked, not just asked: the
-  tickets are snapshotted before this session starts, any edit is restored from
-  that snapshot, and an iteration that edited one cannot be green.
-- Never stage or commit the tracker (\`.scratch/\`). It is the loop's own state,
-  and a commit taken mid-iteration freezes it in a state that was never true.
+$(tracker_session_rule)
 - Finish the task in this session; there is no follow-up conversation.
 PROMPT
 }

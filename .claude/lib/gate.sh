@@ -3048,6 +3048,12 @@ gate__drop_bookkeeping() {
 
 # ── the scope-guard ──────────────────────────────────────────────────────────
 
+# The field of a ticket the scope-guard judges against, named once ([88]). The
+# rule the prompt hands a session says this name, and the reader below is the
+# check that keeps it: a project that renamed the field would otherwise go on
+# asking sessions for a field nothing reads.
+GATE_SURFACE_FIELD='Write-surface'
+
 # The declared write-surface as a plain list of globs, one per line. Backticks
 # and commas are how a ticket writes it for a human; neither means anything here.
 # This is one of the two places an authored whitespace list is converted into the
@@ -3073,12 +3079,38 @@ gate__drop_bookkeeping() {
 #      against — the callers below escalate rather than measure
 gate_write_surface() {
   local declared rc=0
-  declared="$(tracker_field "$1" 'Write-surface' 2>/dev/null)" || rc=$?
+  declared="$(tracker_field "$1" "$GATE_SURFACE_FIELD" 2>/dev/null)" || rc=$?
   case "$rc" in
     0 | 1) ;;
     *) return 2 ;;
   esac
   gate_authored_list "$(printf '%s' "$declared" | tr -d '`,')"
+}
+
+# ── the rule handed to a session, next to the check that keeps it ────────────
+#
+# [17]'s shape, generalised by [88]: the sentence a session is asked to follow
+# and the control that keeps it live in one file, so the prompt cannot go on
+# promising a guarantee the day the control moves. It says where the perimeter
+# comes from, and the reader above is what makes that true.
+#
+# **And the answer here is that this module holds no list of its own**, which is
+# a result rather than a silence ([88]). The perimeter the scope-guard judges
+# against is one field of the ticket the prompt already carries, so what this
+# sentence owes a session is where that perimeter comes from and never a second
+# copy of it. The two zones this module *does* hold a list of belong to somebody
+# else's sentence: `gate_is_bookkeeping` is the loop's own working area, which
+# the tracker's rule names because the tracker is what lives in it, and
+# `gate_sealed_paths` is deposited in the project's own `CLAUDE.md` by the
+# installer ([86]) — retyping it into every prompt would be the third rewriting
+# of a list that already has one writer.
+gate_session_rule() {
+  cat <<RULE
+- Stay inside the ticket's declared write-surface: its \`$GATE_SURFACE_FIELD:\`
+  field, which is the one the scope-guard reads to judge this session. There is
+  no second list on this side — what is in scope is what that ticket says, and
+  what this session writes outside it is rolled back.
+RULE
 }
 
 # Whether a path is covered by a surface. A pattern also covers what is under
