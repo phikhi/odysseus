@@ -98,3 +98,21 @@
   réécriture ; livré derrière, il constate après coup et peut coûter une seconde
   passe sur `init.sh`. [88] derrière [86] parce qu'il généralise une forme dont
   [86] livre le précédent ; [89] en dernier, sans arête.
+
+- **Ce que [88] laisse sous ce ticket, livré le 21/09/2026.** [88] touche
+  `.claude/lib/tracker.sh`, qui est dans la write-surface de celui-ci, et y ajoute
+  une opération publique (`tracker_session_rule`) plus son entrée dans la liste
+  des **lectures** de `tracker__dispatch`. Deux conséquences pour le recensement :
+  - **Aucun nom `RALPH_*` nouveau.** Le compte de 42 mesuré ci-dessus est
+    inchangé, et `RALPH_TRACKER_SAID` — le cinquième des cinq préservations à
+    trancher — n'a pas bougé de `tracker.sh:168`.
+  - **Mais un global de pack de plus hors du namespace `RALPH_*`** :
+    `GATE_SURFACE_FIELD` dans `.claude/lib/gate.sh`, qui porte le nom du champ que
+    le scope-guard lit dans un ticket. Il est assigné **sans condition** au
+    `source`, donc il tient la règle de [40] et une valeur héritée est inoffensive
+    — et c'est précisément pour ça qu'il compte ici : l'AC 2 demande que le
+    **critère** du recensement soit écrit dans le test, et un critère écrit
+    « les noms `RALPH_*` » ne voit ni celui-ci, ni `INIT_CLAUDE_OPEN`, ni
+    `LOOP__FINDINGS`, ni `ROUTER__PINNED_SURFACE`. Le pack se fabrique des globals
+    sous le préfixe de leur module, pas seulement sous `RALPH_`. Trancher le
+    périmètre explicitement plutôt que le laisser tomber du grep.
