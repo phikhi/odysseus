@@ -3823,7 +3823,7 @@ mutation "52 the run takes no baseline of the programs it runs" "$GATE" \
 # resolved `git` before the first session existed. Asked that way the witness
 # reports "nothing moved" on exactly the run whose successor runs the plant.
 mutation "52 the witness asks this shell's hash table instead of PATH" "$GATE" \
-  's/^gate__path_where\(\) \{/gate__path_where() { command -v "\$1" 2>\/dev\/null || printf -- "-\\\\n"; return 0;/m' \
+  's/^gate_path_where\(\) \{/gate_path_where() { command -v "\$1" 2>\/dev\/null || printf -- "-\\\\n"; return 0;/m' \
   test/gate.bats "fresh shell"
 
 # The other half of one measurement: a plant *ahead* of the real one moves the
@@ -3905,8 +3905,80 @@ mutation "52 a name nothing answers for is digested as a file" "$GATE" \
 # The binary that owns both halves of the judgement — every session and every
 # review lens of the next run — left off the list the witness is computed from.
 mutation "52 the binary that owns both halves of the judgement is not watched" "$GATE" \
-  's#    git claude at systemd-run#    git at systemd-run#' \
+  's#    git claude bash sh at systemd-run#    git bash sh at systemd-run#' \
   test/gate.bats "never the directories"
+
+# ── [91] the shell that carries the verdict ──────────────────────────────────
+
+# The name the four commands of a project go through — `bash -c "$TEST_CMD"`,
+# `bash -c "$TYPECHECK_CMD"`, the two of `playthrough__bounded` — and the one
+# `scheduler_command` freezes into a successor's line. It was missing from the
+# list on the day [52] wrote it, and the derivation is what notices now.
+mutation "91 the shell every verdict runs in is on no list" "$GATE" \
+  's#    git claude bash sh at systemd-run#    git claude sh at systemd-run#' \
+  test/gate.bats "derived from the pack"
+
+# The same edit against the other half of what it buys: not the census, the
+# refusal. A run that ends holding a `bash` it did not start with must queue
+# nothing for the morning.
+mutation "91 a planted bash arms a successor anyway" "$GATE" \
+  's#    git claude bash sh at systemd-run#    git claude sh at systemd-run#' \
+  test/scheduler.bats "planted a bash"
+
+# The paired witness, and the direction a one-sided derivation cannot see: a list
+# *wider* than its criterion has stopped being derived and is a list of what
+# somebody once typed. `yes` is a real program on every machine this runs on and
+# this pack launches it nowhere.
+mutation "91 a name on the list that no call site produces is not noticed" "$GATE" \
+  's#basename dirname ps sleep uname#basename dirname ps sleep uname yes#' \
+  test/gate.bats "derived from the pack"
+
+# The second half of the ticket: the first word of the project's own four
+# commands, which is the program this pack believes above everything it measures
+# itself.
+mutation "91 the project's own programs are pinned by nobody" "$GATE" \
+  's/^gate_path_project_programs\(\) \{/gate_path_project_programs() { return 0;/m' \
+  test/gate.bats "out of the configuration"
+
+# And the line that puts them on the manifest, which is a second place the same
+# guarantee is lost without the function above changing at all.
+mutation "91 the manifest never asks for the project's programs" "$GATE" \
+  's#\n\$\(gate_path_project_programs\)\nPROGRAMS#\nPROGRAMS#' \
+  test/gate.bats "out of the configuration"
+
+# And the same edit against a real run, which is where the ordering lives: the
+# four keys are configuration, the witness is taken before the first session, and
+# nothing but a run can say the config was loaded by then.
+mutation "91 a planted project runner arms a successor anyway" "$GATE" \
+  's/^gate_path_project_programs\(\) \{/gate_path_project_programs() { return 0;/m' \
+  test/scheduler.bats "planted the project"
+
+# A first word that is a path is a file of the project, judged by the scope-guard
+# like any other. Pinned as a *name* it is resolved against PATH, where no such
+# name lives — a `-` line accusing a program nobody named ([49]'s defect).
+mutation "91 a project command that names a path is pinned as a bare name" "$GATE" \
+  's#      \*/\*\) continue ;;\n##' \
+  test/gate.bats "nothing to pin"
+
+# An environment assignment is a prefix and not the command. Read as the program,
+# `NODE_ENV=test npm test` pins `NODE_ENV=test` — a name no PATH answers for — and
+# drops the runner on exactly the projects careful enough to set a variable.
+mutation "91 an assignment prefix is read as the project's program" "$GATE" \
+  's#        \[A-Za-z_\]\*=\*\)#        "ralph-no-such-word")#' \
+  test/gate.bats "is a prefix, not the program"
+
+# One name on both lists is one line. Two would be one move reported twice, on a
+# channel whose consequence is refusing a successor.
+mutation "91 a program on both lists is two lines of the manifest" "$GATE" \
+  's#    case "\$seen" in\n      \*" \$name "\*\) continue ;;\n    esac\n##' \
+  test/gate.bats "one line of the manifest"
+
+# The trap [52] found one layer down inside its own instrument, still standing at
+# the one call site where it is worst: an answer out of this shell's hash table,
+# frozen onto a line that runs hours later in a shell that has hashed nothing.
+mutation "91 the successor's shell comes from this shell's hash table" "$SCHEDULER_LIB" \
+  's#  shell="\$\(gate_path_where bash\)"\n  \[ "\$shell" != \x27-\x27 \] \|\| shell=\x27/bin/bash\x27#  shell="\$(command -v bash 2>/dev/null || printf \x27/bin/bash\x27)"#' \
+  test/scheduler.bats "hash table"
 
 # ── [50] a guarded path a project ignores, approved and never committed ──────
 #

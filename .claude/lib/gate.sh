@@ -2130,17 +2130,35 @@ gate_frontier_residue() {
 # then believes** — and not from the two the probe happened to plant ([31], and
 # `gate_config_keys` one section up for the same rule).
 #
+# **Since [91] the criterion is derived by a test rather than trusted here.**
+# `test/gate.bats` lexes the same zone the layering rules and the globals census
+# walk, keeps the command positions of the code and nothing of the prose, and
+# asserts this list *equals* what it finds. Until then the list was written by
+# hand and had been incomplete since the day [52] wrote it: five names it never
+# carried — `bash`, `sh`, `chmod`, `cmp`, `rmdir` — and two it carried for call
+# sites this pack does not have, `diff` and `touch`. `bash` is the one that
+# mattered: the four commands a project's verdict is made of go through it.
+#
 # Bash **builtins are absent, and that is the criterion rather than an omission**:
 # `printf`, `read`, `test`, `[`, `kill`, `cd`, `pwd`, `command` and `wait` are
 # resolved by the shell and never through PATH, so no file can stand in for them.
 # That is also why this list is shorter than a reading of the source suggests —
-# `kill` appears thirty-seven times in this pack and cannot be substituted.
+# `kill` appears thirty-seven times in this pack and cannot be substituted. The
+# test takes that exclusion from `compgen -b` and `compgen -k` rather than from a
+# second hand-written list.
 #
 # What a substituted one buys, by group:
 #
 #   git claude          both halves of the judgement: every tree the scope-guard
 #                       compares, the working-tree lock, the visibility frontier
 #                       — and every session and every review lens.
+#   bash sh             the interpreter of every verdict a project's own commands
+#                       carry — `bash -c "$TEST_CMD"`, `bash -c "$TYPECHECK_CMD"`,
+#                       the two of `playthrough__bounded` — and the shell frozen
+#                       into a successor's command line ([91]). A substituted one
+#                       owns the exit code this pack believes above everything
+#                       else, so a repair made *inside* the gate would be made
+#                       inside a process the plant already owns.
 #   at systemd-run      what the night hands to, hours after anyone stopped
 #                       reading ([09]).
 #   curl date           what the run believes about the subscription and about
@@ -2148,24 +2166,100 @@ gate_frontier_residue() {
 #   cksum awk sed grep  the pack's own arithmetic — every digest, every manifest,
 #   tr cut sort uniq    every ledger and every verdict this file computes is read
 #   head tail wc cat    back through one of these.
-#   diff find ls
+#   find ls cmp
 #   mktemp              the names of the four secrets that are secret because
 #                       nothing exports them ([30], [40]): a predictable one is
 #                       a register a session can find.
-#   rm cp mv mkdir      what a rollback and a worktree are made of ([07], [13]).
-#   touch basename
-#   dirname ps sleep
+#   rm rmdir cp mv      what a rollback, a worktree and an install are made of
+#   mkdir chmod         ([07], [13], [19]).
+#   basename dirname
+#   ps sleep
 #   uname               which chain this platform gets, and therefore whether a
 #                       successor survives a reboot.
 #
 # A call site added to this pack in a program not on this list reopens the hole
-# with nothing to notice it. That is the same debt `gate_config_keys` carries and
-# it is written in both places on purpose.
+# with nothing to notice it. **That debt is the one [91] paid on this list**: the
+# derivation above fails the day a ticket adds such a call site. It is still open
+# on `gate_config_keys`, which has no such test, and it is written in both places
+# on purpose.
 gate_path_programs() {
   printf '%s\n' \
-    git claude at systemd-run curl date cksum awk sed grep tr cut sort uniq \
-    head tail wc cat diff find ls mktemp rm cp mv mkdir touch basename dirname \
-    ps sleep uname
+    git claude bash sh at systemd-run curl date cksum awk sed grep tr cut sort \
+    uniq head tail wc cat find ls cmp mktemp rm rmdir cp mv mkdir chmod \
+    basename dirname ps sleep uname
+  return 0
+}
+
+# The first word of the four commands a project hands this pack, when that word
+# is a bare name — `npm`, `jest`, `pytest`, `cargo`, and in this suite
+# `stub-cmd`. Derived from the configuration and never retyped.
+#
+# This is the half of [91] that is a decision and not an oversight. The criterion
+# above is "what **this pack** launches by its bare name", and these four are
+# launched by the project's own command line, so they fall outside it — which is
+# exactly the answer [91] refused to accept: this pack does not merely run that
+# program, it believes its exit code more than anything else it measures. A
+# `TEST_CMD` whose first word a session put in front of the real one on the PATH
+# makes every iteration of the night green, and the four sites where that word is
+# read are the four branches of the objective tier. So it is watched like the
+# rest, and a move refuses the successor like the rest.
+#
+# **What it does not buy, said rather than implied**: only the first word. `npm`
+# spawns `node` spawns the runner, and none of that is on any list — this holds
+# the door the pack itself opens, not the chain behind it. A first word that is
+# not a bare name is skipped and not guessed at: an absolute or relative path
+# (`./node_modules/.bin/jest`) is a file in the project, judged by the scope-guard
+# like any other; a word carrying an expansion (`$NPM test`) resolves to
+# something different in every shell, which is `gate_path_preflight`'s reason for
+# refusing a relative PATH entry; and a builtin first word (`cd`, `:`) names no
+# file at all. All three land as "nothing to pin" rather than as a name.
+#
+# **An environment assignment is a prefix and not the command**, and that one is
+# walked past rather than skipped: `NODE_ENV=test npm test` is an ordinary
+# `TEST_CMD`, and reading it as "nothing to pin" would drop the runner on exactly
+# the projects that are careful enough to set a variable. Any number of them, the
+# way the shell reads them.
+#
+# Empty is the ordinary case for two of the four — `TYPECHECK_CMD` unset or
+# `none`, `RUN_CMD` and `VISUAL_CMD` on a project with no value gate ([17]) — so
+# it is silence and never a finding.
+gate_path_project_programs() {
+  local cmd rest word
+  for cmd in "${TEST_CMD:-}" "${TYPECHECK_CMD:-}" "${RUN_CMD:-}" "${VISUAL_CMD:-}"; do
+    rest="$cmd"
+    word=''
+    while [ -n "$rest" ]; do
+      case "$rest" in
+        [[:space:]]*)
+          rest="${rest#?}"
+          continue
+          ;;
+      esac
+      word="${rest%%[[:space:]]*}"
+      case "$word" in
+        [A-Za-z_]*=*)
+          rest="${rest#"$word"}"
+          word=''
+          continue
+          ;;
+      esac
+      break
+    done
+    # A path, an expansion, a quoted or escaped word: not a name this pack can
+    # resolve on behalf of the shell that will run it. One branch per form rather
+    # than one bracket expression, because a bracket holding a backtick and both
+    # quotes is a line nobody can read back.
+    case "$word" in
+      '' | none) continue ;;
+      */*) continue ;;
+      *'$'*) continue ;;
+      *'`'*) continue ;;
+      *'"'* | *"'"*) continue ;;
+      *'\'*) continue ;;
+      *=*) continue ;;
+    esac
+    printf '%s\n' "$word"
+  done
   return 0
 }
 
@@ -2195,7 +2289,14 @@ gate_path_programs() {
 # word itself — a builtin, a function and a missing binary are all "no file a
 # session could have written", and recording `git` as a location would make every
 # later comparison meaningless.
-gate__path_where() {
+#
+# **Public since [91], and the rename is this pack's own rule rather than taste**:
+# `scheduler_command` has to resolve the shell it freezes into a successor's
+# command line, and it was doing it with `command -v` — the one function the
+# paragraph above forbids in so many words, on the one answer that is read hours
+# later in a shell that has hashed nothing. A second caller means the name is
+# public, so it is renamed rather than reached into ([07]'s rule, `layering.bats`).
+gate_path_where() {
   local name="${1:-}" list="${PATH:-}:" entry candidate
   if [ -n "$name" ]; then
     while [ -n "$list" ]; do
@@ -2223,16 +2324,28 @@ gate__path_where() {
 # Without the test below, every uninstalled name on the list would digest to that
 # file, and the drift line would accuse a program nobody had touched while the
 # successor was refused for it — [49]'s defect, reached by a different door.
+#
+# Two lists and one manifest ([91]): what this pack runs, then what the project's
+# own four commands start with. Deduplicated on the name, because a project whose
+# `TEST_CMD` is `git …` would otherwise be recorded twice and every later
+# comparison would report the same move twice — one clause, two lines, one event.
+# The pack's names come first so that the order of this file's own list, which
+# several tests read positionally, does not move under a project's configuration.
 gate__path_manifest() {
-  local name where digest
+  local name where digest seen=''
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    where="$(gate__path_where "$name")"
+    case "$seen" in
+      *" $name "*) continue ;;
+    esac
+    seen="$seen $name "
+    where="$(gate_path_where "$name")"
     digest='-'
     [ "$where" = '-' ] || digest="$(gate__digest "$where")"
     printf '%s\t%s\t%s\n' "$name" "$where" "$digest"
   done <<PROGRAMS
 $(gate_path_programs)
+$(gate_path_project_programs)
 PROGRAMS
   return 0
 }
@@ -2263,7 +2376,7 @@ gate__path_moved() {
   [ -n "$dir" ] && [ -s "$dir/path" ] || return 1
   while IFS="$(printf '\t')" read -r name was_where was_digest; do
     [ -n "$name" ] || continue
-    where="$(gate__path_where "$name")"
+    where="$(gate_path_where "$name")"
     # Only about an absolute path, for `gate__path_manifest`'s reason — and this
     # is the half where it bites: this runs in the worktree an iteration works in,
     # which is the directory the session it is judging just wrote.
