@@ -195,7 +195,11 @@ playthrough__spec_path() {
 
 # Where this run's copy of `spec.md` lives, or empty. A shell variable of the
 # **pilot**, inherited by everything below it and never exported.
-RALPH_PLAYTHROUGH_SPEC="${RALPH_PLAYTHROUGH_SPEC:-}"
+#
+# Unconditional since [89]. A control that reads the state from before the session
+# — what the next paragraph is about — is not a control if the state it reads was
+# named by the environment the run was started from.
+RALPH_PLAYTHROUGH_SPEC=''
 
 # Take that copy. Called once, by the pilot, before the first session of the run.
 #
@@ -510,7 +514,10 @@ playthrough__slug() {
 # where it would read best: its caller takes the id out of a **command
 # substitution**, and an append made inside that subshell is gone the moment it
 # returns.
-RALPH_PLAYTHROUGH_OPENED="${RALPH_PLAYTHROUGH_OPENED:-}"
+#
+# Unconditional since [89], for the reason the witness above is: nothing exports
+# it, so the `${…:-}` preserved a shell's value and no run's.
+RALPH_PLAYTHROUGH_OPENED=''
 
 # This is the list `PLAYTHROUGH_REINJECT_MAX` is compared against, and where it
 # comes from is the whole of [65]. Two sources were tried before this one and both

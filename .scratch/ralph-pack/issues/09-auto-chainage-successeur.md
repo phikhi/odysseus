@@ -305,3 +305,13 @@ ce qu'un successeur hérite comme *ligne de base*, jamais ce qu'il hérite comme
 *contexte d'exécution*** — quel programme (`PATH`), quel travail (`FEATURE`, que
 la ligne ne porte pas), quel canal (`successor.log`), et si oui ou non (le
 marqueur).
+
+- **Piège trouvé par [89], livré le 22/09/2026.** Le test structurel de ce ticket,
+  *« the drain never arms a successor »*, compte les `scheduler_[a-z]` de
+  `.claude/human-loop.sh` **commentaires compris** — c'est délibéré (« Structural,
+  because the behavioural half can only ever say "this run did not" ») mais rien ne
+  le dit sur place. [89] a ajouté à ce fichier un commentaire qui nommait
+  `scheduler_command` pour expliquer pourquoi `RALPH_CONFIG` est la seule valeur
+  héritée que le pack garde ; le test est passé au rouge après cinquante minutes de
+  suite. **Une prose ajoutée à `human-loop.sh` ne doit nommer aucune fonction du
+  module scheduler**, même pour dire que ce point d'entrée ne l'appelle pas.

@@ -108,6 +108,182 @@ LEARNINGS_INDEX_MAX RECEIPTS_RETENTION_DAYS RECEIPT_MAX_LINES"
   assert_file_contains "$PACK_DIR/settings.json" '"DISABLE_AUTO_COMPACT"'
 }
 
+@test "the census of the pack's own globals is derived, not written down here" {
+  # `harness__clear_env` wipes two namespaces. The config keys come from the
+  # `.example`, which is where a project declares them. The pack's own globals
+  # come from the pack's source, which is where the pack declares those — and
+  # until [89] that half was six names typed by hand out of a hundred and forty
+  # odd, held together by a sentence in [40] that nothing checked.
+  #
+  # The criterion, restated here rather than read back off the derivation, so
+  # that the two can disagree:
+  #
+  #   a global of this pack is a name that is `RALPH_*`, or `<MODULE>_*` for a
+  #   module of the pack — one source file of `harness_pack_sources` — and that
+  #   the source reads or writes as a variable rather than printing as prose.
+  #
+  # This test holds the first half and lets the derivation hold the second: it
+  # takes every upper-case token in the same zone, keeps the ones the criterion
+  # names, and requires the census to account for each. A derivation that cannot
+  # say what it does not see proves nothing ([85]).
+  local sources pat f mod broad missing
+  sources="$(harness_pack_sources "$RALPH_PACK_ROOT")"
+  pat='^RALPH_'
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mod="$(basename "$f" .sh | LC_ALL=C tr 'a-z-' 'A-Z_')"
+    pat="$pat|^${mod}_"
+  done <<MODULES
+$sources
+MODULES
+
+  broad="$(printf '%s\n' "$sources" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    cat "$f"
+  done | grep -oE '[A-Z][A-Z0-9_]*' | LC_ALL=C sort -u | grep -E "$pat")"
+  [ -n "$broad" ] || fail "the broad sweep found nothing: the zone or the pattern is wrong"
+
+  # The one name the criterion catches and the census must not: `RALPH_REAL_USAGE`
+  # is a sentence `init.sh` prints to a human and a paragraph in `budget.sh`, and
+  # it is the opt-in switch `test/budget.bats` reads *after* `harness_setup`.
+  # Unsetting it would turn a loud skip into a silent one, which is the same
+  # false green this whole file exists to refuse.
+  missing="$(printf '%s\n' "$broad" | grep -vxF -f <(harness_pack_globals) || true)"
+  assert_equal "$missing" "RALPH_REAL_USAGE"
+
+  local census
+  census="$(harness_pack_globals)"
+
+  # The walk, run again the way nothing protects it: three sources of the pack
+  # match none of its three passes, and a pipeline that finds nothing exits 1,
+  # which under the `set -e` of a test ends the walk mid-file and returns 0. The
+  # cache is built inside an `if`, where errexit is disarmed, so the short census
+  # would only ever appear somewhere else — twenty-one names instead of a hundred
+  # and forty-nine, with nothing red to show for it.
+  harness__derive_globals >"$RALPH_TEST_DIR/census-unprotected"
+  assert_equal "$(grep -c . "$RALPH_TEST_DIR/census-unprotected")" \
+    "$(printf '%s\n' "$census" | grep -c .)"
+
+  # And the census is not allowed to be a longer list of the same six names: each
+  # of these is a global of the pack under its own module's prefix, invisible to
+  # any grep for `RALPH_`.
+  for f in GATE_SURFACE_FIELD LOOP__FINDINGS ROUTER__PINNED_SURFACE \
+    INIT_CLAUDE_OPEN HUMAN_LOOP__STATE RALPH_RETRO_STATE RALPH_PROJECT_ROOT; do
+    printf '%s\n' "$census" | grep -qxF "$f" ||
+      fail "the census does not name $f, which the pack assigns itself"
+  done
+
+  # What it must never name: a variable of this harness. The zone prunes `test/`,
+  # so the property is structural rather than a list to maintain — and it has to
+  # be, because `harness__clear_env` runs at the top of every `setup` and would
+  # otherwise unset the ground it stands on.
+  for f in RALPH_PACK_ROOT RALPH_TEST_DIR RALPH_TEST_FEATURE RALPH_FIXTURES \
+    RALPH_HARNESS_DIR RALPH_KEEP_TMP RALPH_REAL_CLAUDE RALPH_SHIM_STATE; do
+    if printf '%s\n' "$census" | grep -qxF "$f"; then
+      fail "the census names $f, which belongs to the harness and not to the pack"
+    fi
+  done
+}
+
+@test "the environment is hermetic: an exported RALPH_ variable does not leak in" {
+  # The pendant of the config-key test below, for the namespace the pack makes
+  # for itself. Three names, each of which reaches a different part of a run:
+  #
+  #   RALPH_PROJECT_ROOT  `state_project_root` answers it when it is set, and it
+  #                       is never assigned by the pack — it is how a successor
+  #                       queued by `at` is told which tree it continues. A value
+  #                       from a developer's shell points the whole run at
+  #                       another tree.
+  #   RALPH_RETRO_STATE   the directory `retro_guards` composes, where the two
+  #                       objects [83] named live.
+  #   RALPH_RECEIPT       where an iteration's evidence accumulates.
+  #
+  # Asserting on what changed, not on the run's exit code: a run pointed at
+  # another tree can still exit 0.
+  harness_teardown
+  local elsewhere
+  elsewhere="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/ralph-test.XXXXXX")" && pwd -P)"
+  export RALPH_PROJECT_ROOT="$elsewhere"
+  export RALPH_RETRO_STATE="$elsewhere"
+  export RALPH_RECEIPT="$elsewhere"
+  harness_setup
+  use_tickets 01-alpha 02-beta
+
+  run_loop
+  local out="$output"
+
+  unset RALPH_PROJECT_ROOT RALPH_RETRO_STATE RALPH_RECEIPT
+
+  # The run did its work in its own tree, on its own tracker.
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  printf '%s\n' "$out" | grep -q "frontier empty after 2 iterations" ||
+    fail "the run did not reach an empty frontier: $out"
+
+  # And nothing of it landed where the environment pointed.
+  assert_equal "$(find "$elsewhere" -mindepth 1 | head -n 5)" ""
+  rm -rf "$elsewhere"
+}
+
+@test "the key the census is cached under sees the installer" {
+  # `harness_pack_globals` reads about a megabyte of shell and runs before every
+  # test, so it is cached under `$TMPDIR` on the template's key. A key blind to
+  # one of the census's own inputs is a census that goes stale without saying so:
+  # `init.sh` is pack source, it is where `INIT_CLAUDE_OPEN` and a dozen of its
+  # neighbours live, and it sat outside this fingerprint until [89].
+  local before after
+  before="$(harness__pack_fingerprint)"
+  mv "$RALPH_PACK_ROOT/init.sh" "$RALPH_PACK_ROOT/init.sh.probe"
+  after="$(harness__pack_fingerprint 2>/dev/null)"
+  mv "$RALPH_PACK_ROOT/init.sh.probe" "$RALPH_PACK_ROOT/init.sh"
+
+  [ "$before" != "$after" ] ||
+    fail "the fingerprint did not change when init.sh left: $before"
+}
+
+@test "a lib's global is assigned before it is read, whatever the shell exported" {
+  # The other half of the [40] sentence `harness__clear_env` used to rest on:
+  # every global of the pack is assigned unconditionally, so an inherited value
+  # is harmless. Five names did not obey it — they were written `X="${X:-}"` at
+  # the top of their lib, which preserves whatever the shell that started the run
+  # had — and nothing noticed, because the only reader of that rule was a
+  # hand-written list of six names elsewhere.
+  #
+  # Derived rather than listed: every name a lib assigns at the top of the file,
+  # minus the config keys, whose whole mechanism is to take an inherited value.
+  # `RALPH_CONFIG` and `RALPH_DIR` are entry-point globals and not in this zone:
+  # `RALPH_CONFIG` is the one value this pack means to inherit, from the command
+  # line `scheduler_command` queues, and its line says so.
+  local names n
+  names="$(harness_pack_sources "$RALPH_PACK_ROOT" | grep '/lib/' |
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      LC_ALL=C sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g' -e 's/#.*$//' "$n" |
+        grep -oE '^[A-Z][A-Z0-9_]*=' | tr -d '='
+    done | LC_ALL=C sort -u | grep -vxF -f <(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/\1/p' \
+      "$RALPH_PACK_ROOT/.claude/ralph.config.sh.example" | LC_ALL=C sort -u))"
+  [ "$(printf '%s\n' "$names" | grep -c .)" -gt 20 ] ||
+    fail "the derivation found $(printf '%s\n' "$names" | grep -c .) names, so it is reading the wrong thing"
+  printf '%s\n' "$names" | grep -qxF RALPH_RETRO_STATE ||
+    fail "the derivation does not see RALPH_RETRO_STATE, which is one of the five"
+
+  for n in $names; do
+    export "$n=a-value-from-the-developers-shell"
+  done
+  export RALPH_PROBE_NAMES="$names"
+
+  # Sourced the way an entry point sources it, then asked what survived.
+  pack_run 'for n in $RALPH_PROBE_NAMES; do
+      if [ "${!n}" = a-value-from-the-developers-shell ]; then
+        printf "%s: preserved\n" "$n"
+      fi
+    done
+    printf "asked about %s names\n" "$(printf %s "$RALPH_PROBE_NAMES" | grep -c .)"'
+  assert_success
+  assert_output_contains "asked about"
+  refute_output_contains "preserved"
+}
+
 @test "the environment is hermetic: an exported config key does not leak in" {
   # Every key is written KEY="${KEY:-default}", so an exported value wins over
   # the file — and a developer with STERILE_K or SOFT_LIMIT_TOKENS in their

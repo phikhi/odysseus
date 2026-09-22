@@ -15,6 +15,8 @@
 # Public API
 #   harness_setup [feature]        create the project, pack, shims, git repo
 #   harness_teardown               remove it (RALPH_KEEP_TMP=1 keeps it)
+#   harness_pack_sources ROOT      every shell file that can be pack source
+#   harness_pack_globals           every global the pack makes for itself
 #   use_tickets [NN-slug ...]      seed the tracker (no args = every fixture)
 #   stamp_claim ID [OWNER] [ISO]   claim a ticket behind the pack's back
 #   $RALPH_SHIM_STATE/tracker-dir  (read by a fake) the real tracker's path
@@ -138,14 +140,190 @@ harness_setup() {
 # the pack's own settings.json exports DISABLE_AUTO_COMPACT into every session
 # of this repository — which made the auto-compact test pass while measuring
 # the environment rather than the loop.
+# Two namespaces and two derivations, because the pack declares them in two
+# different places. A config key is declared by the `.example`, so that file is
+# the census. A global the pack makes for itself is declared by the source that
+# assigns it, so the source is — see `harness_pack_globals`. Until [89] the
+# second half was six names written by hand out of a hundred and forty-nine, and
+# the rule holding the other hundred and forty-three was a sentence in [40]:
+# `loop.sh` assigns them unconditionally, so an inherited value is harmless.
+# Nothing checked that sentence, and five names did not obey it.
 harness__clear_env() {
   local key
   for key in $(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/\1/p' \
     "$RALPH_PACK_ROOT/.claude/ralph.config.sh.example"); do
     unset "$key"
   done
-  unset DISABLE_AUTO_COMPACT DISABLE_COMPACT RALPH_CONFIG RALPH_DIR \
-    RALPH_PROJECT_ROOT RALPH_RUN_LOCK RALPH_TREE_LOCK RALPH_SOFT_LIMIT_HIT
+  for key in $(harness_pack_globals); do
+    unset "$key"
+  done
+  # Neither a config key nor a global of the pack: no source of the pack reads
+  # these as a variable. They are exported into every session of *this*
+  # repository by its own settings.json, which is how the auto-compact test came
+  # to pass while measuring the environment.
+  unset DISABLE_AUTO_COMPACT DISABLE_COMPACT
+}
+
+# Every shell file in the repository that can be pack source, one path per line.
+#
+# A walk and not a glob, because the glob is what went stale. The four pruned
+# names are the places that are deliberately *not* the pack's stack, and each is
+# pruned for a reason rather than for tidiness:
+#
+#   .git        not source at all.
+#   .scratch    the tracker, the passes and the prototypes — including a whole
+#               second copy of `init.sh` under `dev-framework/`, which is a
+#               snapshot of an old form factor and not a fourth entry point.
+#   test        this harness. The rules are about what the pack ships; a rule
+#               that walked the file defining it would be judging its own tools.
+#               And for [89] the same prune is what makes the second census
+#               safe: the harness's own `RALPH_PACK_ROOT`, `RALPH_TEST_DIR` and
+#               the rest are outside the zone, so no derivation can ever unset
+#               the variables it is standing on.
+#   .agents     the skill substrate `.claude/skills` links into. It ships in the
+#               npm payload, but a skill's `*.template.sh` is an asset a skill
+#               hands a human, not a module of this stack. (`find` does not follow
+#               the links in `.claude/skills` either, so this prune is the second
+#               of two locks on the same door.)
+#
+# `node_modules` is pruned wherever it appears: `npx ralph-pack` is a supported
+# entry path, so a checkout can acquire one, and vendored shell would otherwise
+# arrive here as hundreds of unclassifiable findings.
+#
+# `bin/ralph-init.js` is not walked and is not an omission: it is node, these are
+# rules about bash, and [19] keeps it to an exec precisely so that it holds no
+# logic. Shell landing under `bin/` *would* be walked, which is the point.
+#
+# Lives here rather than in `test/layering.bats`, where [87] first derived it,
+# because [89] made it the zone of a second census and this pack's own rule says
+# a `__` name with two callers is a public one.
+harness_pack_sources() {
+  local root="$1"
+  find "$root" \
+    \( -path "$root/.git" \
+    -o -path "$root/.scratch" \
+    -o -path "$root/test" \
+    -o -path "$root/.agents" \
+    -o -name node_modules \) -prune -o \
+    -type f -name '*.sh' -print | LC_ALL=C sort
+}
+
+# Every global the pack makes for itself, one name per line.
+#
+# The criterion, written down here because a census nobody can state is a guess
+# that happens to be green ([85]):
+#
+#   zone   `harness_pack_sources` — the pack's own shell, the same walk the
+#          layering rules use. A fourth entry point is swept the day it lands.
+#   name   `RALPH_*`, plus `<MODULE>_*` for every source file in that zone. A
+#          module of this pack owns its upper-case prefix the way it owns its
+#          function prefix, and `GATE_SURFACE_FIELD`, `LOOP__FINDINGS`,
+#          `ROUTER__PINNED_SURFACE` and `INIT_CLAUDE_OPEN` are globals of the
+#          pack that no `RALPH_` grep would ever see. A name that *is* a module
+#          name and nothing more — `RETRO`, `LENSES`, `CAPABILITY`, `SCHEDULER`
+#          — is a config key, and the loop in `harness__clear_env` already has
+#          it from the `.example`.
+#   form   read or written as a variable, never printed as prose. Three passes,
+#          and each exists because the others get one case wrong:
+#            - an expansion (`$NAME`, `${NAME`) outside a full-line comment;
+#            - an assignment, once every quoted string on the line is gone;
+#            - an assignment whose value starts with an expansion, read with the
+#              strings still there — `FORGE_ID="$id" FORGE_KIND="$kind" awk …`
+#              is a command prefix the string-stripping pass eats whole.
+#          Dropping strings for every pass would lose `"$RALPH_RETRO_STATE"`,
+#          which is how this pack writes nearly every read. Keeping them for
+#          every pass would make `RALPH_REAL_USAGE=1` a name — it is a sentence
+#          `init.sh` prints to a human and a comment in `budget.sh`, and it is an
+#          opt-in switch `test/budget.bats` reads *after* `harness_setup`.
+#          Unsetting it would turn one loud skip into a silent one.
+#
+# Cached under `$TMPDIR` on the template's key, because the walk reads about a
+# megabyte of shell and `harness__clear_env` runs before every one of a thousand
+# tests, each in its own process. The name keeps the `ralph-harness.` prefix so
+# that the stale-template sweep two functions down collects it as well.
+harness_pack_globals() {
+  local cache tmp
+  if [ -z "${HARNESS__PACK_GLOBALS+set}" ]; then
+    cache="${TMPDIR:-/tmp}/ralph-harness.globals.$(harness__pack_fingerprint)"
+    if [ ! -f "$cache" ]; then
+      tmp="$(mktemp "$cache.XXXXXX")" || return 1
+      if harness__derive_globals >"$tmp"; then
+        mv -f "$tmp" "$cache"
+      else
+        rm -f "$tmp"
+        return 1
+      fi
+    fi
+    HARNESS__PACK_GLOBALS="$(cat "$cache")"
+  fi
+  printf '%s\n' "$HARNESS__PACK_GLOBALS"
+}
+
+harness__derive_globals() {
+  local sources pat f mod
+  sources="$(harness_pack_sources "$RALPH_PACK_ROOT")"
+  pat='^RALPH_'
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mod="$(basename "$f" .sh | LC_ALL=C tr 'a-z-' 'A-Z_')"
+    pat="$pat|^${mod}_"
+  done <<MODULES
+$sources
+MODULES
+
+  {
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      harness__globals_read "$f"
+      harness__globals_written "$f"
+      harness__globals_prefixed "$f"
+    done <<SOURCES
+$sources
+SOURCES
+  } | LC_ALL=C sort -u | grep -E "$pat"
+}
+
+# The three passes, one per form. Each ends in `|| true` and on two of the three
+# that is not tidiness: `select.sh` and the two forge adapters match none of the
+# three, `claim.sh`, `lang.sh` and `lenses.sh` match only two, and a pipeline that
+# finds nothing exits 1. Under the `set -e` every test runs with, that return code
+# ends the `while` above mid-walk and the census comes back short with a status of
+# 0 — measured at twenty-one names instead of a hundred and forty-nine, silently.
+# Nothing is green about a census that stops at the fourth of twenty-seven files.
+#
+# On the first pass it *is* symmetry, and the mutation entry that proved it is why
+# this sentence exists: that pipeline ends on `tr`, which succeeds on empty input,
+# so no empty match can reach the loop. The clause stays because the order of a
+# pipeline is not a thing to depend on, and what would catch a reordering is the
+# assertion in `test/smoke.bats` that calls this walk outside the `if` the cache
+# builds it in — not either of the two entries below it.
+
+# An expansion — `$NAME`, `${NAME` — outside a full-line comment. This is how the
+# pack reads nearly every global it has, and almost always from inside a
+# double-quoted string, which is why the next pass cannot be the only one.
+harness__globals_read() {
+  LC_ALL=C sed 's/^[[:space:]]*#.*$//' "$1" |
+    grep -oE '\$\{?[A-Z][A-Z0-9_]*' | LC_ALL=C tr -d '${' || true
+}
+
+# An assignment, read once every quoted string on the line is gone. Dropping the
+# strings is what tells a variable from a sentence: `init.sh` prints
+# `RALPH_REAL_USAGE=1` to a human inside a double-quoted argument, and that is a
+# name this census must not have.
+harness__globals_written() {
+  LC_ALL=C sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g' -e 's/#.*$//' "$1" |
+    grep -oE '(^|[[:space:];&|(])[A-Z][A-Z0-9_]*=' |
+    grep -oE '[A-Z][A-Z0-9_]*' || true
+}
+
+# An assignment whose value starts with an expansion, read with the strings still
+# in place. `FORGE_ID="$id" FORGE_KIND="$kind" awk …` is a command prefix in the
+# middle of a line, which the pass above eats whole when it drops the strings;
+# prose never writes `NAME="$`.
+harness__globals_prefixed() {
+  LC_ALL=C sed 's/^[[:space:]]*#.*$//' "$1" |
+    grep -oE '[A-Z][A-Z0-9_]*="?\$' |
+    grep -oE '[A-Z][A-Z0-9_]*' || true
 }
 
 # ── project template ─────────────────────────────────────────────────────────
@@ -200,11 +378,19 @@ harness__template() {
 # it. The symptom was the honest shape of a false green — a mutation that removed a
 # line from the fixture's git directory reported VACUOUS against a test that was
 # fine, because the mutated line had never run.
+#
+# `init.sh` is in the key since [89], and not because the template installs it —
+# it does not. The key is what says "the pack changed" to everything cached under
+# `$TMPDIR`, and `harness_pack_globals` is cached under this key while reading
+# the installer along with the rest of the pack's sources. A census keyed on a
+# fingerprint blind to one of its own inputs is a census that goes stale without
+# saying so, which is the shape of every false green this file already carries a
+# paragraph about.
 harness__pack_fingerprint() {
   (
     cd "$RALPH_PACK_ROOT" || return 1
     local files
-    files="$(find .claude test/fixtures test/helpers/harness.bash -type f \
+    files="$(find .claude init.sh test/fixtures test/helpers/harness.bash -type f \
       ! -name 'settings.local.json' | LC_ALL=C sort)"
     printf '%s\n' "$files"
     printf '%s' "$files" | tr '\n' '\0' | xargs -0 cat

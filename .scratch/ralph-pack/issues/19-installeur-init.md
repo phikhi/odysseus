@@ -643,3 +643,18 @@ Trois, tous consignés dans le champ en tête :
   liens cassés. La laisser aurait été livrer l'installeur et publier la marche à
   suivre qu'il remplace. La ligne « Ça manque » y est corrigée du même coup : elle
   nommait quatre choses livrées depuis ([16], [10], [09], et celui-ci).
+
+- **Contrainte écrite par [89], livré le 22/09/2026.** `init.sh` est entré dans
+  **deux** recensements du harnais :
+  - `harness__pack_fingerprint` — la clé du template mis en cache sous `$TMPDIR` —
+    le liste désormais (`find .claude init.sh test/fixtures …`). Le template
+    n'installe pas l'installeur et c'est voulu ; la clé n'est pas la liste de ce qui
+    est installé, c'est ce qui dit « le pack a changé » à tout ce qui est caché sous
+    `$TMPDIR`, dont le recensement des globals qui, lui, lit `init.sh`. **Conséquence
+    pratique : éditer `init.sh` reconstruit le template, donc la première suite qui
+    suit une édition de l'installeur est plus lente.**
+  - `harness_pack_globals` recense les dix-huit `INIT_*` de ce fichier. Un global
+    ajouté à `init.sh` sous le préfixe `INIT_` est effacé de l'environnement du
+    développeur le jour où il arrive ; un global ajouté **sans** ce préfixe ne l'est
+    pas, et le test `the census of the pack's own globals is derived` ne le verra pas
+    non plus — le critère est le préfixe du module, pas la position dans le fichier.

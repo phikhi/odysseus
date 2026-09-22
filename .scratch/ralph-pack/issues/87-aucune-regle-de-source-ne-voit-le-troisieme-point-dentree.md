@@ -165,3 +165,15 @@
   un scanner qui suit l'état de citation ne trouve **aucune** backtick non échappée
   en contexte double dans le pack livré — c'est une règle à écrire, pas une
   migration à faire.
+
+- **Contrainte écrite par [89], livré le 22/09/2026.** La zone que ce ticket a
+  dérivée a **déménagé** : `layering__shell_files` est devenue `harness_pack_sources`
+  dans `test/helpers/harness.bash`. [89] en fait un second appelant — il dérive le
+  recensement des globals du pack de la même marche — et la règle 6 du `CLAUDE.md`
+  dit qu'un `__` à deux appelants est public. `test/layering.bats` la consomme,
+  le commentaire de zone a suivi la fonction, et **l'entrée de mutation
+  « 87 the derived zone stops at .claude, as the glob did » vise maintenant
+  `$HARNESS` et non plus `$LAYERING`** — son témoin, `test/layering.bats "derived
+  from the pack"`, n'a pas changé. Une seconde entrée, `89 the zone of the census
+  stops at .claude`, vise la même ligne avec le témoin de `smoke.bats` : la ligne
+  porte deux garanties depuis [89], et une édition qui la déplace en casse deux.
