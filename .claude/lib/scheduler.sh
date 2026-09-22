@@ -500,6 +500,17 @@ scheduler__wake() {
 # config ships `FEATURE="${FEATURE:-}"`, so a run pointed at a tracker by its
 # environment armed a successor that exits 2 on an empty one);
 # `RALPH_PROJECT_ROOT` only when this run was given one.
+#
+# **The shell on that line is searched for and never asked of `command -v`**
+# ([91]). It used to be, and it is the one answer where that function is worst:
+# `command -v` reads bash's hash table, the pilot resolved `bash` before the first
+# session of the night existed, and the answer is frozen into a line that runs
+# hours later in a shell that has hashed nothing. So it goes through
+# `gate_path_where`, the same PATH search the witness is built on — which also
+# means the name is now watched, since [91] put `bash` on `gate_path_programs`,
+# so a `bash` a session planted refuses the successor instead of interpreting it.
+# `/bin/bash` stays the fallback for a PATH that answers for no `bash` at all:
+# the job has to name an interpreter, and `-` is not one.
 scheduler_command() {
   local root cfg log alt marker shell
   root="$(ralph_project_root)"
@@ -507,7 +518,8 @@ scheduler_command() {
   log="$(ralph_feature_dir)/successor.log"
   alt=''
   if marker="$(scheduler_marker_path)"; then alt="$marker.log"; fi
-  shell="$(command -v bash 2>/dev/null || printf '/bin/bash')"
+  shell="$(gate_path_where bash)"
+  [ "$shell" != '-' ] || shell='/bin/bash'
 
   printf 'PATH=%s' "$(scheduler__quote "${PATH:-}")"
   printf ' RALPH_CONFIG=%s' "$(scheduler__quote "$cfg")"

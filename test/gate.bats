@@ -3735,7 +3735,7 @@ $output"
     printf "#!/bin/sh\nexit 0\n" >"$m/git"
     chmod +x "$m/git"
     printf "hash-says %s\n" "$(command -v git)"
-    printf "search-says %s\n" "$(gate__path_where git)"'
+    printf "search-says %s\n" "$(gate_path_where git)"'
   assert_success
   assert_output_contains "search-says $RALPH_TEST_DIR/mine-bin/git"
   refute_output_contains "hash-says $RALPH_TEST_DIR/mine-bin/git"
@@ -3925,4 +3925,311 @@ FAKE
   run env PATH="$PATH:" bash "$PACK_DIR/loop.sh"
   assert_failure 2
   assert_output_contains 'PATH carries the entry ""'
+}
+
+# ── [91] the list of programs, derived from the pack instead of retyped ──────
+#
+# [52] wrote `gate_path_programs` by hand, said so, and named the debt in the
+# same breath: "a call site added to this pack in a program not on this list
+# reopens the hole with nothing to notice it". What the 22/09 pass measured is
+# that the list had never been complete — it was short by five names on the day
+# it was written, and the one that mattered is `bash`, which interprets all four
+# commands a project's verdict is made of. So the list is derived here, and the
+# pack is held to it.
+#
+# The criterion, written down because a census nobody can state is a guess that
+# happens to be green ([62], [85], [89]):
+#
+#   zone   `harness_pack_sources` — the pack's own shell, the same walk the
+#          layering rules and the globals census use. A fourth entry point is
+#          judged the day it lands.
+#   code   what a shell would run, and nothing it would print: single- and
+#          double-quoted strings (across lines, and nested the way `"$(basename
+#          "$f" .sh)"` nests them), heredoc bodies, comments, `${…}` and `$((…))`
+#          are all removed. Prose is where nearly every word in this pack lives,
+#          and a scan that reads it comes back with `who`, `yes`, `open` and
+#          `install` — programs this machine really has.
+#   line   a backslash at end of line **joins**; it does not break. Without that,
+#          `printf '%s\n' \` followed by one name per line reads every name as a
+#          command, `router_reasons` contributes `failed-impl` and `too-big`, and
+#          `gate_path_programs` certifies itself — which is the one answer this
+#          test must not be able to give.
+#   place  a command position: the start of a logical line, or after `;`, `|`,
+#          `&`, `(`, `{` or `$(`. **Not** after a backtick — this pack writes
+#          markdown backticks in prose by the hundred and never uses backtick
+#          substitution, which is a rule of its own ([61], [90]). A case pattern
+#          (`at | systemd-run)`) is not a command position; an assignment prefix
+#          is not the command, and that one is not a nicety —
+#          `DISABLE_AUTO_COMPACT=1 claude -p` is how this pack starts every
+#          session it has.
+#   name   minus the functions this pack defines, and minus whatever `compgen -b`
+#          and `compgen -k` call a builtin or a keyword. That exclusion is asked
+#          of bash rather than typed here, and it is [52]'s own criterion: a
+#          builtin is resolved by the shell and never through PATH.
+#
+# It reads `$RALPH_PACK_ROOT` and not the fixture copy, for the reason [62] and
+# [89] both give: the pack's source sits in a tree a judged session writes to, so
+# a census the pack publishes about itself is a census that session can shorten.
+# The derivation lives here; what the pack publishes is what it is checked
+# against.
+
+# The lexer. An awk program, in a file, because that is what it is.
+path_scan_lexer() {
+  cat >"$RALPH_TEST_DIR/code.awk" <<'LEXER'
+BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; state = "C"; top = 0; heredoc = 0; held = "" }
+{
+  line = $0
+  if (heredoc) {
+    t = line
+    sub(/^[ \t]+/, "", t)
+    if (line == hterm || (hdash && t == hterm)) heredoc = 0
+    next
+  }
+  out = ""
+  cont = 0
+  n = length(line)
+  i = 1
+  while (i <= n) {
+    c = substr(line, i, 1)
+    two = substr(line, i, 2)
+    three = substr(line, i, 3)
+    if (state == "S") { if (c == SQ) state = "C"; i++; continue }
+    if (state == "D") {
+      if (c == BS) { if (i == n) { cont = 1 }; i += 2; continue }
+      if (three == "$((") { i = skiparith(line, i, n); continue }
+      if (two == "$(") { top++; stack[top] = "D"; state = "C"; out = out " $("; i += 2; continue }
+      if (c == DQ) state = "C"
+      i++
+      continue
+    }
+    if (c == BS) { if (i == n) { cont = 1 } else { out = out " " }; i += 2; continue }
+    if (three == "$((") { i = skiparith(line, i, n); out = out " "; continue }
+    if (two == "${") { i = skipbrace(line, i, n); out = out " "; continue }
+    if (two == "$(") { top++; stack[top] = "C"; out = out " $("; i += 2; continue }
+    if (c == ")" && top > 0) { state = stack[top]; top--; out = out " "; i++; continue }
+    if (c == SQ) { state = "S"; out = out " "; i++; continue }
+    if (c == DQ) { state = "D"; out = out " "; i++; continue }
+    if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|(]/)) break
+    if (three == "<<<") { out = out " "; i += 3; continue }
+    if (two == "<<") {
+      rest = substr(line, i + 2)
+      hdash = 0
+      if (substr(rest, 1, 1) == "-") { hdash = 1; rest = substr(rest, 2) }
+      sub(/^[ \t]*/, "", rest)
+      q = substr(rest, 1, 1)
+      if (q == SQ || q == DQ) rest = substr(rest, 2)
+      if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) { hterm = substr(rest, RSTART, RLENGTH); heredoc = 1 }
+      out = out " "
+      i += 2
+      continue
+    }
+    out = out c
+    i++
+  }
+  if (cont) { held = held out " "; next }
+  print held out
+  held = ""
+}
+END { if (held != "") print held }
+function skiparith(s, i, n,   d, c) {
+  d = 0
+  while (i <= n) {
+    c = substr(s, i, 1)
+    if (c == "(") d++
+    if (c == ")") { d--; if (d == 0) { return i + 1 } }
+    i++
+  }
+  return i
+}
+function skipbrace(s, i, n,   d, c) {
+  d = 0
+  while (i <= n) {
+    c = substr(s, i, 1)
+    if (c == "{") d++
+    if (c == "}") { d--; if (d == 0) { return i + 1 } }
+    i++
+  }
+  return i
+}
+LEXER
+}
+
+# Every name this pack launches by its bare name, one per line, sorted.
+#
+# Each `grep` in the pipeline ends in `|| true`, and on the two that scan one file
+# that is not symmetry: a file with no command position at all exits 1, and under
+# the `set -e` every test runs with that status ends the walk mid-way and hands
+# back a short census with a status of 0 — [89] measured exactly that, twenty-one
+# names instead of a hundred and forty-nine, silently.
+path_bare_names() {
+  local root="$1" f out="$RALPH_TEST_DIR/bare"
+  path_scan_lexer
+  : >"$out.raw"
+  : >"$out.funcs"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    { LC_ALL=C grep -oE '^[a-z][a-z0-9_]*\(\)' "$f" || true; } | tr -d '()' >>"$out.funcs"
+    awk -f "$RALPH_TEST_DIR/code.awk" "$f" |
+      LC_ALL=C sed -E 's/^[[:space:]]*[^()|&;]*(\|[^()|&;]*)*\)//' |
+      LC_ALL=C sed -E 's/(^|[[:space:];&|(])(then|else|elif|do|while|until|if|!|exec|nohup|time)[[:space:]]/\1; /g' |
+      LC_ALL=C sed -E 's/(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+/\1 /g' |
+      { LC_ALL=C grep -oE '(^|[;&|({]|\$\()[[:space:]]*[a-z][a-z0-9_.+-]*[[:space:]]' || true; } |
+      { LC_ALL=C grep -oE '[a-z][a-z0-9_.+-]*' || true; } >>"$out.raw"
+  done <<SOURCES
+$(harness_pack_sources "$root")
+SOURCES
+  LC_ALL=C sort -u "$out.raw" >"$out.words"
+  LC_ALL=C sort -u "$out.funcs" >"$out.fn"
+  bash -c 'compgen -b; compgen -k' | LC_ALL=C sort -u >"$out.builtin"
+  LC_ALL=C comm -23 "$out.words" "$out.fn" | LC_ALL=C comm -23 - "$out.builtin"
+  return 0
+}
+
+@test "the programs the witness watches are derived from the pack's source, not retyped" {
+  local scanned="$RALPH_TEST_DIR/scanned" listed="$RALPH_TEST_DIR/listed"
+  local report="$RALPH_TEST_DIR/programs.diff" found
+
+  path_bare_names "$RALPH_PACK_ROOT" >"$scanned"
+
+  # The floor, because a scan that found nothing would pass the equality below by
+  # emptying both sides of it — and the three shapes a weaker scan drops silently,
+  # named one at a time rather than counted.
+  found="$(grep -c . "$scanned" | tr -d ' ')"
+  [ "$found" -ge 30 ] ||
+    fail "the scan found $found programs, which is fewer than this pack runs:
+$(cat "$scanned")"
+  LC_ALL=C grep -qx claude "$scanned" ||
+    fail "the scan no longer reads a command behind an assignment prefix, so it is blind to \`DISABLE_AUTO_COMPACT=1 claude\` — the call site this whole document is about"
+  LC_ALL=C grep -qx basename "$scanned" ||
+    fail "the scan no longer reads a command substitution nested inside a double-quoted string, which is how this pack writes most of them"
+  LC_ALL=C grep -qx uname "$scanned" ||
+    fail "the scan no longer reads a command substitution inside a case subject"
+
+  pack_run 'gate_path_programs'
+  assert_success
+  printf '%s\n' "$output" | LC_ALL=C sort -u >"$listed"
+
+  # Equality, both ways, and each direction is a different failure. A name in the
+  # scan and not on the list is the hole [52] named: a program this pack runs by
+  # its bare name that no witness pins, so a plant on it is never reported and a
+  # successor is armed over it. A name on the list and not in the scan is the
+  # other half — a list that has stopped being derived from its criterion and is
+  # now a list of what somebody once typed.
+  if ! diff -u "$listed" "$scanned" >"$report" 2>&1; then
+    fail "gate_path_programs is not what this pack launches by its bare name
+(- on the list and launched by nothing, + launched and on no list):
+$(cat "$report")"
+  fi
+}
+
+@test "the shell that carries every verdict is one of the names the run pins" {
+  # The finding of the 22/09 pass, as an assertion. Four sites launch `bash` by
+  # its bare name — `bash -c "$TEST_CMD"` and `bash -c "$TYPECHECK_CMD"` in the
+  # objective fan, `bash -c "$cmd"` in `playthrough__bounded` for RUN_CMD and
+  # VISUAL_CMD, and the shell `scheduler_command` freezes into a successor's line
+  # — and `sh` is a fifth, in `proc_self`. None of them was on a list of
+  # thirty-two names, and a planted one owns the exit code this pack believes
+  # above everything else it measures.
+  pack_run 'gate_path_programs'
+  assert_success
+  assert_output_contains "bash"
+  assert_output_contains "sh"
+
+  pack_run 'dir="$(mktemp -d)"; gate_path_witness "$dir"; cat "$dir/path"'
+  assert_success
+  printf '%s\n' "$output" | LC_ALL=C grep -q '^bash	/' ||
+    fail "the run pins no file as the \`bash\` its verdicts go through:
+$output"
+  printf '%s\n' "$output" | LC_ALL=C grep -q '^sh	/' ||
+    fail "the run pins no file as the \`sh\` it runs:
+$output"
+}
+
+@test "the first word of the project's own commands is pinned, out of the configuration" {
+  # The second half of [91], and it is a decision rather than an oversight: this
+  # word is outside [52]'s criterion — the project's command line launches it, not
+  # this pack — and it is the program whose exit code decides everything. So it is
+  # derived from the four configuration keys and pinned like the rest.
+  #
+  # Driven on a name this list could not possibly already carry, because a check
+  # written on `stub-cmd` alone would still pass if the derivation were four
+  # retyped words.
+  mkdir -p "$RALPH_TEST_DIR/runner-bin"
+  printf '#!/bin/sh\nexit 0\n' >"$RALPH_TEST_DIR/runner-bin/ralph-fake-runner"
+  chmod +x "$RALPH_TEST_DIR/runner-bin/ralph-fake-runner"
+  export PATH="$RALPH_TEST_DIR/runner-bin:$PATH"
+  set_config TEST_CMD "ralph-fake-runner --ci"
+
+  pack_run 'gate_path_project_programs'
+  assert_success
+  assert_output_contains "ralph-fake-runner"
+  # The other three keys of this suite's config, so what is measured is four keys
+  # and not one.
+  assert_output_contains "stub-cmd"
+
+  pack_run 'dir="$(mktemp -d)"; gate_path_witness "$dir"; cat "$dir/path"'
+  assert_success
+  assert_output_contains "$RALPH_TEST_DIR/runner-bin/ralph-fake-runner"
+}
+
+@test "a project command whose first word names no program is nothing to pin, not a guess" {
+  # Three forms, and none of them is a name this pack can resolve on behalf of the
+  # shell that will run it: a path is a file of the project, judged by the
+  # scope-guard like any other; a word carrying an expansion resolves to something
+  # different in every shell, which is `gate_path_preflight`'s own reason for
+  # refusing a relative PATH entry; `none` is a project saying it has no such
+  # command ([17]). Silence, and never a `-` line accusing a program nobody named.
+  set_config TEST_CMD './node_modules/.bin/jest --ci'
+  set_config TYPECHECK_CMD none
+  set_config RUN_CMD '$RUNNER visual'
+  set_config VISUAL_CMD ''
+
+  pack_run 'gate_path_project_programs; printf "(end)\n"'
+  assert_success
+  assert_output_contains "(end)"
+  refute_output_contains "jest"
+  refute_output_contains "node_modules"
+  refute_output_contains "none"
+  refute_output_contains "RUNNER"
+
+  # And the paired witness: the same four keys with one ordinary bare name in them
+  # do produce one.
+  set_config TEST_CMD 'ralph-fake-runner --ci'
+  pack_run 'gate_path_project_programs'
+  assert_success
+  assert_output_contains "ralph-fake-runner"
+}
+
+@test "an environment assignment in a project command is a prefix, not the program" {
+  # `NODE_ENV=test npm test` is an ordinary `TEST_CMD`, and reading its first word
+  # as the program would pin `NODE_ENV=test` — a name no PATH answers for, so a
+  # `-` line accusing nothing, on exactly the projects careful enough to set a
+  # variable. Walked past, the way the shell reads it, and any number of them.
+  set_config TEST_CMD 'NODE_ENV=test RALPH_X=1 ralph-fake-runner --ci'
+
+  pack_run 'gate_path_project_programs'
+  assert_success
+  assert_output_contains "ralph-fake-runner"
+  refute_output_contains "NODE_ENV"
+  refute_output_contains "RALPH_X"
+}
+
+@test "a program named by both lists is one line of the manifest, not two" {
+  # A project whose suite is a script it keeps under version control runs `git`,
+  # and there is nothing exotic about it. Two lines for one name would be one move
+  # reported twice on a channel whose consequence is refusing a successor — and
+  # `gate__path_moved` walks the file, so it would say it twice as well.
+  set_config TEST_CMD 'git status --short'
+
+  pack_run 'dir="$(mktemp -d)"; gate_path_witness "$dir"; cut -f1 <"$dir/path"'
+  assert_success
+  assert_equal "$(printf '%s\n' "$output" | LC_ALL=C grep -cx git | tr -d ' ')" "1"
+
+  # The paired witness: a project program that is *not* one of the pack's own is
+  # still there, so what is measured above is the deduplication and not a second
+  # list that stopped being read.
+  set_config TEST_CMD 'ralph-fake-runner --ci'
+  pack_run 'dir="$(mktemp -d)"; gate_path_witness "$dir"; cut -f1 <"$dir/path"'
+  assert_success
+  assert_output_contains "ralph-fake-runner"
 }

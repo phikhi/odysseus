@@ -803,3 +803,124 @@ FAKE
   assert_output_contains "it has to be schedule or human"
   assert_equal "$(claude_call_count)" "0"
 }
+
+# ── the shell the line is written in ([91]) ──────────────────────────────────
+
+@test "the shell frozen into a successor's line is searched for, not read out of this shell's hash table" {
+  # `scheduler_command` resolved it with `command -v` until [91], which is the one
+  # function `gate_path_where`'s own comment forbids in so many words — and this is
+  # the worst answer to get out of a hash table, because it is not used now: it is
+  # written onto a line that runs hours later in a shell that has hashed nothing.
+  #
+  # The two answers are asked for side by side, exactly as [52] asks them of the
+  # witness, and the guarantee is that they differ.
+  mkdir -p "$RALPH_TEST_DIR/mine-bin"
+  export PATH="$RALPH_TEST_DIR/mine-bin:$PATH"
+
+  pack_run 'm="'"$RALPH_TEST_DIR"'/mine-bin"
+    bash -c "exit 0"
+    printf "#!/bin/bash\nexec /bin/bash \"\$@\"\n" >"$m/bash"
+    chmod +x "$m/bash"
+    printf "hash-says %s\n" "$(command -v bash)"
+    printf "line-says %s\n" "$(scheduler_command)"'
+  assert_success
+  printf '%s\n' "$output" |
+    LC_ALL=C grep -q "^line-says .*$RALPH_TEST_DIR/mine-bin/bash" ||
+    fail "the queued line does not name the bash a fresh shell would find:
+$output"
+  refute_output_contains "hash-says $RALPH_TEST_DIR/mine-bin/bash"
+}
+
+@test "a real run whose session planted a bash queues nothing for the morning" {
+  # The end-to-end half, on the name the 22/09 pass found missing. A **green**
+  # iteration plants a passthrough `bash` in a directory already on the pilot's
+  # PATH — no write-surface declares it, no rollback reaches it, no tree the
+  # scope-guard compares holds it — and then the weekly wall goes up. The plant is
+  # a passthrough and not a stub for the reason the `git` one is: what is measured
+  # is reach, not damage, and a broken `bash` would red the run for the wrong
+  # reason.
+  #
+  # `#!/bin/bash` and `exec /bin/bash`, both absolute: a plant named `bash` whose
+  # own shebang says `/usr/bin/env bash` re-resolves `bash` through the PATH it is
+  # at the head of, and recurses until the machine says so.
+  mine="$RALPH_TEST_DIR/mine-bin"
+  mkdir -p "$mine"
+  export PATH="$mine:$PATH"
+
+  use_tickets 01-alpha
+  set_config USAGE_CACHE_TTL 0
+  set_config STERILE_K 5
+  usage_respond "$(sched_all_clear)" "$(sched_weekly_wall "$(sched_soon 200000)")"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+target=""
+IFS=: read -ra dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  case "$d" in *mine-bin) target="$d"; break ;; esac
+done
+if [ -n "$target" ] && [ ! -e "$target/bash" ]; then
+  printf '#!/bin/bash\nexec /bin/bash "$@"\n' >"$target/bash"
+  chmod +x "$target/bash"
+fi
+printf 'alpha\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 6
+  [ -x "$mine/bash" ] || fail "the fake never planted anything, so this measures nothing"
+  assert_output_contains "$mine/bash"
+  assert_output_contains "a fresh shell days from now resolves those names the same way"
+  assert_equal "$(at_call_count)" "0"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-path"
+}
+
+@test "a real run whose session planted the project's own runner queues nothing either" {
+  # The second half of [91] on a real run, and it has to be a run: what
+  # `gate_path_project_programs` reads is four *configuration* keys, and the
+  # witness is taken by `gate_frontier_common` before the first session exists —
+  # so the whole guarantee rests on the config being loaded by the time that
+  # happens. A module test drives the function directly and cannot see that
+  # ordering at all.
+  #
+  # `stub-cmd` is what `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD` and `VISUAL_CMD` all
+  # start with in this suite: the program whose exit code every branch of the
+  # objective tier believes.
+  mine="$RALPH_TEST_DIR/mine-bin"
+  mkdir -p "$mine"
+  export PATH="$mine:$PATH"
+
+  use_tickets 01-alpha
+  set_config USAGE_CACHE_TTL 0
+  set_config STERILE_K 5
+  usage_respond "$(sched_all_clear)" "$(sched_weekly_wall "$(sched_soon 200000)")"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+target=""
+IFS=: read -ra dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  case "$d" in *mine-bin) target="$d"; break ;; esac
+done
+if [ -n "$target" ] && [ ! -e "$target/stub-cmd" ]; then
+  real="$(PATH="${PATH#*:}" command -v stub-cmd)"
+  cat >"$target/stub-cmd" <<PLANT
+#!/usr/bin/env bash
+exec "$real" "\$@"
+PLANT
+  chmod +x "$target/stub-cmd"
+fi
+printf 'alpha\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 6
+  [ -x "$mine/stub-cmd" ] || fail "the fake never planted anything, so this measures nothing"
+  assert_output_contains "$mine/stub-cmd"
+  assert_equal "$(at_call_count)" "0"
+  assert_file_contains "$FEATURE_DIR/run.log" "successor-blocked-path"
+}
