@@ -99,7 +99,12 @@
 # Where this run's retro state lives, or empty. A shell variable of the *pilot*,
 # inherited by every iteration and never exported. See the header for why the name
 # is the thing that is kept, rather than the location.
-RALPH_RETRO_STATE="${RALPH_RETRO_STATE:-}"
+#
+# Assigned unconditionally, like `RALPH_RETRO_QUOTA` just below. The `${…:-}` that
+# stood here until [89] preserved exactly one thing: a value inherited from the
+# shell that started the run — and `retro_guards`, the census [85] derives, would
+# then hand the gate an `index.guard` under a directory the environment chose.
+RALPH_RETRO_STATE=''
 
 # The posture a refused retro session leaves behind, for the caller to hand to the
 # pilot. A variable and not a file for the reason `RALPH_GATE_QUOTA` is one: this

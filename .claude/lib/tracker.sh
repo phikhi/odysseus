@@ -169,7 +169,10 @@
 
 # The names this process has already put in front of a human, one per line. See
 # `tracker_finding_said`.
-RALPH_TRACKER_SAID="${RALPH_TRACKER_SAID:-}"
+#
+# Unconditional since [89]: this is what *silences* the fallback of a finding
+# ([64]), so a value inherited from a shell is a finding a human never sees.
+RALPH_TRACKER_SAID=''
 
 tracker__dispatch() {
   local op="$1"

@@ -63,7 +63,11 @@
 # iteration and never exported: `claude` is spawned from this very shell, and a
 # path handed to a session in its environment is exactly as writable as a file in
 # the tree — the lesson [40] paid for on the tracker register.
-RALPH_RECEIPT="${RALPH_RECEIPT:-}"
+#
+# Unconditional since [89]. Nothing exports this, so the `${…:-}` it replaces
+# preserved a value from the shell that started the run and nothing else — which
+# is the one thing the sentence above says must not reach a session.
+RALPH_RECEIPT=''
 
 # How much of a red branch's output is kept. The findings of a review lens are the
 # only copy that survives the gate ([06]: the stream dies with the gate's temporary

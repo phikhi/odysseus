@@ -46,41 +46,11 @@ teardown() {
 
 # ── the zone, derived ────────────────────────────────────────────────────────
 
-# Every shell file in the repository that can be pack source, one path per line.
-#
-# A walk and not a glob, because the glob is what went stale. The four pruned
-# names are the places that are deliberately *not* the pack's stack, and each is
-# pruned for a reason rather than for tidiness:
-#
-#   .git        not source at all.
-#   .scratch    the tracker, the passes and the prototypes — including a whole
-#               second copy of `init.sh` under `dev-framework/`, which is a
-#               snapshot of an old form factor and not a fourth entry point.
-#   test        this harness. The rules are about what the pack ships; a rule
-#               that walked the file defining it would be judging its own tools.
-#   .agents     the skill substrate `.claude/skills` links into. It ships in the
-#               npm payload, but a skill's `*.template.sh` is an asset a skill
-#               hands a human, not a module of this stack. (`find` does not follow
-#               the links in `.claude/skills` either, so this prune is the second
-#               of two locks on the same door.)
-#
-# `node_modules` is pruned wherever it appears: `npx ralph-pack` is a supported
-# entry path, so a checkout can acquire one, and vendored shell would otherwise
-# arrive here as hundreds of unclassifiable findings.
-#
-# `bin/ralph-init.js` is not walked and is not an omission: it is node, these are
-# rules about bash, and [19] keeps it to an exec precisely so that it holds no
-# logic. Shell landing under `bin/` *would* be walked, which is the point.
-layering__shell_files() {
-  local root="$1"
-  find "$root" \
-    \( -path "$root/.git" \
-    -o -path "$root/.scratch" \
-    -o -path "$root/test" \
-    -o -path "$root/.agents" \
-    -o -name node_modules \) -prune -o \
-    -type f -name '*.sh' -print | LC_ALL=C sort
-}
+# The walk itself is `harness_pack_sources`, in test/helpers/harness.bash, where
+# [89] moved it: it derives a second census from the same zone — every global the
+# pack makes for itself — and by this pack's own rule a `__` name with a second
+# caller is a public one. What the walk prunes, and why, is documented where it
+# now lives.
 
 # Each of those files classified, one `<kind><TAB><path>` per line, `kind` being
 # `lib`, `entry`, or `unclassified` followed by a third field saying why.
@@ -133,7 +103,7 @@ layering_sources() {
     fi
     printf '%s\t%s\n' "$kind" "$f"
   done <<FILES
-$(layering__shell_files "$root")
+$(harness_pack_sources "$root")
 FILES
   return "$rc"
 }
@@ -685,7 +655,7 @@ layering__probe_body() {
   # neither counted by hand: a classification that dropped what it could not
   # place would read exactly like a pack in which everything is placed.
   assert_equal "$(printf '%s\n' "$output" | grep -c .)" \
-    "$(layering__shell_files "$RALPH_PACK_ROOT" | grep -c .)"
+    "$(harness_pack_sources "$RALPH_PACK_ROOT" | grep -c .)"
 
   # The pruned zones are pruned, and the witness is a real file in each: a walk
   # that reached into `test/` would judge this harness, and one that reached into

@@ -6447,7 +6447,10 @@ mutation "19 a checkout deletes its own init.sh on the way out" "$INIT" \
 # refusal from reaching the rule that asked. An entry that only ever narrowed
 # would be satisfied by a derivation that refused everything.
 
-mutation "87 the derived zone stops at .claude, as the glob did" "$LAYERING" \
+# Aimed at the harness since [89], which is where the walk moved: the zone is now
+# read by two censuses, and this entry is the one that keeps the layering rules
+# honest about it.
+mutation "87 the derived zone stops at .claude, as the glob did" "$HARNESS" \
   's!  find "\$root" \\\n!  find "\$root/.claude" \\\n!' \
   test/layering.bats "derived from the pack"
 
@@ -6653,6 +6656,93 @@ mutation "88 the forge rule tells a session the tracker is here to stage" "$FORG
 mutation "88 the forge rule retypes the sidecar it names" "$FORGE" \
   's/  sidecar="\$\(forge_sidecar_path\)" \|\| return 1/  sidecar=".scratch\/somewhere-else\/.forge-claims"/' \
   test/tracker-remote.bats "names no index to keep out of"
+
+# ── [89] the pack's own namespace, censused ──────────────────────────────────
+
+# Thirteen entries, because what the hermetic environment is made of *is* the
+# check. Until this ticket `harness__clear_env` wiped sixty-four config keys
+# derived from the `.example` and six pack globals typed by hand out of a hundred
+# and forty-nine; the rule holding the other hundred and forty-three was a
+# sentence in [40] that nothing read.
+#
+# The census has four ways to lie and each gets an entry: the zone it walks, the
+# names it keeps, the three forms it reads them in, and the key it is cached
+# under. Then the thing the census is *for*, which is a separate way to be wrong:
+# deriving it and not wiping it.
+#
+# The paired witness for the run entries is the same suite with nothing exported
+# — `an exported config key does not leak in` drives the identical two-ticket run
+# without a `RALPH_` variable in sight, and stays green under every entry here.
+# Without it, an entry that merely broke the run would read exactly like one that
+# proved a leak.
+
+mutation "89 the census is derived and then nobody wipes it" "$HARNESS" \
+  's/  for key in \$\(harness_pack_globals\); do\n    unset "\$key"\n  done\n//' \
+  test/smoke.bats "exported RALPH_"
+
+mutation "89 the zone of the census stops at .claude, as the old glob did" "$HARNESS" \
+  's!  find "\$root" \\\n!  find "\$root/.claude" \\\n!' \
+  test/smoke.bats "census of the pack"
+
+mutation "89 only RALPH_ counts as a global the pack makes for itself" "$HARNESS" \
+  's/    pat="\$pat\|\^\$\{mod\}_"\n//' \
+  test/smoke.bats "census of the pack"
+
+mutation "89 the census stops reading expansions" "$HARNESS" \
+  's/^harness__globals_read\(\) \{/harness__globals_read() { return 0;/m' \
+  test/smoke.bats "census of the pack"
+
+mutation "89 the census reads assignments with the prose still in them" "$HARNESS" \
+  's/^harness__globals_written\(\) \{/harness__globals_written() { return 0;/m' \
+  test/smoke.bats "census of the pack"
+
+mutation "89 a command prefix mid-line is not read as an assignment" "$HARNESS" \
+  's/^harness__globals_prefixed\(\) \{/harness__globals_prefixed() { return 0;/m' \
+  test/smoke.bats "census of the pack"
+
+# Not tidiness: three sources match none of the three passes, and errexit turns a
+# pipeline that found nothing into a walk that stops at the fourth file and
+# reports success. Twenty-one names out of a hundred and forty-nine, silently.
+#
+# Two entries and not three, and the third is the one that taught the lesson: the
+# same edit on the first pass came back VACUOUS, because that pipeline ends on `tr`
+# and `tr` succeeds on empty input. A clause that cannot fail is not a guarantee,
+# and the honest thing was to say so where it is written rather than keep an entry
+# that proves the suite notices a harmless edit.
+mutation "89 an empty assignment pass ends the walk" "$HARNESS" \
+  's/\|\| true\n\}\n\n# An assignment whose value starts/\n}\n\n# An assignment whose value starts/' \
+  test/smoke.bats "census of the pack"
+
+mutation "89 an empty command-prefix pass ends the walk" "$HARNESS" \
+  's/\[A-Z0-9_\]\*="\?\\\$\x27 \|\n    grep -oE \x27\[A-Z\]\[A-Z0-9_\]\*\x27 \|\| true/[A-Z0-9_]*="?\\\$\x27 |\n    grep -oE \x27[A-Z][A-Z0-9_]*\x27/' \
+  test/smoke.bats "census of the pack"
+
+mutation "89 the key the census is cached under is blind to the installer" "$HARNESS" \
+  's/find \.claude init\.sh test\/fixtures/find .claude test\/fixtures/' \
+  test/smoke.bats "cached under sees"
+
+# The five names that preserved an inherited value at `source`, one entry each.
+# They are the reason the sentence in [40] was not a rule: it described what
+# `loop.sh` does, and these are libs.
+mutation "89 a lib keeps the retro state directory a shell exported" "$RETRO" \
+  's/^RALPH_RETRO_STATE=\x27\x27$/RALPH_RETRO_STATE="\$\{RALPH_RETRO_STATE:-\}"/m' \
+  test/smoke.bats "assigned before it is read"
+
+mutation "89 a lib keeps the receipt directory a shell exported" "$RECEIPT" \
+  's/^RALPH_RECEIPT=\x27\x27$/RALPH_RECEIPT="\$\{RALPH_RECEIPT:-\}"/m' \
+  test/smoke.bats "assigned before it is read"
+
+mutation "89 a lib keeps the silenced findings a shell exported" "$TRACKER_IFACE" \
+  's/^RALPH_TRACKER_SAID=\x27\x27$/RALPH_TRACKER_SAID="\$\{RALPH_TRACKER_SAID:-\}"/m' \
+  test/smoke.bats "assigned before it is read"
+
+mutation "89 a lib keeps the spec witness a shell exported" "$PLAYTHROUGH" \
+  's/^RALPH_PLAYTHROUGH_SPEC=\x27\x27$/RALPH_PLAYTHROUGH_SPEC="\$\{RALPH_PLAYTHROUGH_SPEC:-\}"/m' \
+  test/smoke.bats "assigned before it is read"
+
+mutation "89 a lib keeps the opened list a shell exported" "$PLAYTHROUGH" \
+  's/^RALPH_PLAYTHROUGH_OPENED=\x27\x27$/RALPH_PLAYTHROUGH_OPENED="\$\{RALPH_PLAYTHROUGH_OPENED:-\}"/m' \
+  test/smoke.bats "assigned before it is read"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

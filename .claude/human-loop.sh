@@ -71,6 +71,13 @@ case "$_ralph_src" in
 esac
 RALPH_DIR="$(cd "$_ralph_src" && pwd)"
 unset _ralph_src
+# The one inherited value this pack keeps on purpose, and [89] is why it says so
+# here: the AFK entry point queues a successor with `RALPH_CONFIG=` on its command
+# line, so a run woken by `at` is told which config it continues. This loop never
+# queues one — see `the drain never arms a successor`, which is why the sentence
+# above names no function of that module. Every other global of the pack is
+# assigned before it is read, which is what makes an inherited one harmless, and
+# five of them did not obey that until [89].
 RALPH_CONFIG="${RALPH_CONFIG:-$RALPH_DIR/ralph.config.sh}"
 export RALPH_DIR
 
