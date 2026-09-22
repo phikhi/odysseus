@@ -16,6 +16,15 @@
 
 ## Comments
 
+- **Ordre validé par Philippe le 22/09/2026** : **[91] → [92] → [93]**.
+  Le critère est celui d'habitude — minimiser la reprise, jamais l'urgence. [91]
+  devant parce qu'un `bash` planté possède l'interpréteur des quatre commandes du
+  projet et rendrait inutile toute réparation faite à l'intérieur du gate ; [92]
+  ensuite, seul ticket qui touche le cycle de vie d'une session, et il réécrit la
+  borne de la ligne 35 du tableau ; [93] en dernier, purement dans `test/`, sa
+  ligne de tableau étant l'aveu générique dont les deux autres sont les cas
+  adressables.
+
 - **Ouvert par la passe transversale du 22/09/2026** (`../passe-transversale-22-09.md`,
   §1). Sonde : `../sondes/passe-22-09/q2-le-verdict-passe-par-un-nom-non-surveille.bats`.
 
