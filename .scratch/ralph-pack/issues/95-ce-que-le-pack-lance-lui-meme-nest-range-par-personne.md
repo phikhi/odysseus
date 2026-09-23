@@ -20,7 +20,7 @@
 
 - **Ouvert par la passe transversale du 23/09/2026** (`../passe-transversale-23-09.md`, §2). Sonde : `../sondes/passe-23-09/q2-ce-que-la-commande-de-test-laisse.bats`.
 
-- **Ordre PROPOSÉ, à valider par Philippe** : **[95] → [94] → [96]**. Ce ticket passe devant sans être ni le plus gros ni le plus grave : il change la **forme du fork** que [94] doit ensuite traverser avec une classe, une zone et une posture. Concevoir ce canal avant que la forme du fork ne bouge, c'est le reprendre.
+- **Ordre VALIDÉ par Philippe le 23/09/2026** : **[95] → [94] → [96]**. Ce ticket passe devant sans être ni le plus gros ni le plus grave : il change la **forme du fork** que [94] doit ensuite traverser avec une classe, une zone et une posture. Concevoir ce canal avant que la forme du fork ne bouge, c'est le reprendre.
 
 - **Rien d'hostile n'est nécessaire.** La mise en scène mesurée est un `&` et un `nohup` — ce que fait tout script qui monte un serveur avant ses tests. Le commentaire de `proc_kill_tree` décrit exactement ce cas pour expliquer pourquoi la marche d'arbre existe : *« une suite de tests qui pend, un serveur de dev monté par l'outil Bash d'une session »*. Il n'est traité que sur les chemins d'échéance, et seulement pour la session.
 

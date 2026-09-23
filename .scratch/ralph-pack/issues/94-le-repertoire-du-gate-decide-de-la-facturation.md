@@ -20,7 +20,7 @@
 
 - **Ouvert par la passe transversale du 23/09/2026** (`../passe-transversale-23-09.md`, §1). Sondes : `../sondes/passe-23-09/q1-le-flux-dune-lentille.bats` et `../sondes/passe-23-09/q5-la-classe-dechec.bats`.
 
-- **Ordre PROPOSÉ, à valider par Philippe** : **[95] → [94] → [96]**. [95] devant parce qu'il change la **forme du fork** (`set -m` autour de `gate__start`, un groupe par branche, la course du chien de garde) et que ce ticket-ci doit précisément concevoir un canal **autour** de ce fork : le concevoir avant, c'est le reprendre. Le `Blocked by: 95` ci-dessus suit cette proposition et se corrige si la file change.
+- **Ordre VALIDÉ par Philippe le 23/09/2026** : **[95] → [94] → [96]**. [95] devant parce qu'il change la **forme du fork** (`set -m` autour de `gate__start`, un groupe par branche, la course du chien de garde) et que ce ticket-ci doit précisément concevoir un canal **autour** de ce fork : le concevoir avant, c'est le reprendre. Le `Blocked by: 95` ci-dessus est donc définitif.
 
 - **Ce que [92] a fermé et où il s'est arrêté.** Le `.rc` par branche et le marqueur `timed-out` sont sortis du répertoire parce qu'ils **étaient** des verdicts. Le commentaire de `gate__lens_phase` dit même pourquoi le second comptait : *« a survivor … that dropped a `timed-out` into the gate's directory would silence the refusal check for the whole fan »* — et la phrase suivante lit ce même contrôle dans un fichier du même répertoire. L'interrupteur a été fermé, la source non.
 

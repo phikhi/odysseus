@@ -271,7 +271,7 @@ s'est passé.
 | **[95]** | ce que le pack lance lui-même est rangé et nommé comme ce qu'une session laisse, aux trois sites et pas au premier | `.claude/lib/gate.sh`, `.claude/lib/playthrough.sh`, `.claude/lib/proc.sh`, `.claude/lib/session.sh`, `test/gate.bats`, `test/playthrough.bats`, `test/proc.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md` |
 | **[96]** | le reçu d'audit est assemblé hors de portée de ce dont il rend compte, ou dit ce qu'il ne tient pas | `.claude/lib/receipt.sh`, `.claude/lib/gate.sh`, `test/receipt.bats`, `test/mutate.sh`, `docs/frontiere-de-confiance.md` |
 
-### Ordre proposé
+### Ordre — **validé par Philippe le 23/09/2026**
 
 **[95] → [94] → [96]**, critère habituel — minimiser la reprise, jamais
 l'urgence :
