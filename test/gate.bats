@@ -214,8 +214,10 @@ FAKE
 @test "a branch that leaves no verdict at all counts red" {
   use_tickets 01-alpha
   set_config STERILE_K 1
-  # Kills the branch that runs it, so no exit code is ever recorded. A gate
-  # that only looks at the branches that reported back would call this green.
+  # Kills the branch that runs it, so the only thing the fan gets back is a status
+  # over 128 — a subshell that died of a signal without reaching the end of its
+  # command. A gate that only looked at the branches that answered would call this
+  # green.
   set_config TEST_CMD 'kill -KILL $PPID'
 
   run_loop
@@ -3233,22 +3235,30 @@ FAKE
 @test "the gate's deadline does not fire once the run that armed it is gone" {
   # Probe A of [36], staged. `GATE_TIMEOUT=8`, `TEST_CMD='sleep 45'`, `kill -9` on
   # the run as soon as the suite was in flight: nine seconds later a process nobody
-  # owned wrote `timed-out` into a directory nobody would ever clean and took down a
+  # owned wrote its marker into a directory nobody would ever clean and took down a
   # process tree. At the shipped default that is half an hour later, and macOS
   # reissues pids at 99999 — `proc_kill_tree` descends, so it is a signal to a
   # descendance and not to a process.
+  #
+  # What the marker was is [92]'s doing: the deadline answered through a file in
+  # the gate's directory until then, and now it answers through its own exit
+  # status, which an orphaned run is in no position to collect. So the observable
+  # here is the deadline process itself — it has to be gone, and gone because it
+  # gave up rather than because it fired.
   pack_run_bg '
     sleep 30 &
     victim=$!
     printf "%s\n" "$victim" >"$RALPH_SHIM_STATE/victim.pid"
-    gate__watchdog 2 "$RALPH_SHIM_STATE/timed-out" "$victim" &
+    gate__watchdog 2 "$victim" &
+    printf "%s\n" "$!" >"$RALPH_SHIM_STATE/watchdog.pid"
     : >"$RALPH_SHIM_STATE/armed"
     wait
   '
 
   wait_for_file "$SHIM_STATE/armed" 200 || fail "the stand-in run never armed a deadline"
-  local victim
+  local victim watchdog
   victim="$(cat "$SHIM_STATE/victim.pid")"
+  watchdog="$(cat "$SHIM_STATE/watchdog.pid")"
 
   kill -9 "$PACK_BG_PID"
   wait "$PACK_BG_PID" 2>/dev/null || true
@@ -3258,7 +3268,9 @@ FAKE
   # here rather than passing for one that gave up.
   sleep 5
 
-  refute_file_exists "$SHIM_STATE/timed-out"
+  if kill -0 "$watchdog" 2>/dev/null; then
+    fail "the deadline was still standing five seconds after the run that armed it was killed"
+  fi
   if ! kill -0 "$victim" 2>/dev/null; then
     fail "an orphaned deadline took down a process tree on behalf of a run that no longer exists"
   fi
@@ -3278,11 +3290,15 @@ FAKE
     mid=$!
     while [ ! -f "$RALPH_SHIM_STATE/victim.pid" ]; do sleep 0.05; done
     victim="$(cat "$RALPH_SHIM_STATE/victim.pid")"
-    gate__watchdog 3 "$RALPH_SHIM_STATE/timed-out" "$victim" &
+    gate__watchdog 3 "$victim" &
+    watchdog=$!
+    printf "%s\n" "$GATE_WATCHDOG_FIRED" >"$RALPH_SHIM_STATE/fired.code"
     sleep 1
     kill -9 "$mid" || true
     wait "$mid" 2>/dev/null || true
-    wait
+    rc=0
+    wait "$watchdog" || rc=$?
+    printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/watchdog.rc"
     : >"$RALPH_SHIM_STATE/run-done"
   '
 
@@ -3296,10 +3312,12 @@ FAKE
   # have been ordered.
   wait_for_file "$SHIM_STATE/run-done" 600 ||
     fail "the deadline never came back at all"
-  # The marker still lands, and losing it would cost the cause in the report —
-  # `gate__aggregate` reads this file to say "red (timed out)" rather than "red (no
-  # verdict)".
-  assert_file_exists "$SHIM_STATE/timed-out"
+  # The deadline still reports that it expired, and losing that would cost the
+  # cause in the report — `gate__await` reads this status to let `gate__aggregate`
+  # say "red (timed out)" rather than "red (no verdict)". It is a status and no
+  # longer a file since [92]: the file lived in the gate's own directory under
+  # `$TMPDIR`, where a process a session left behind could have written it.
+  assert_equal "$(cat "$SHIM_STATE/watchdog.rc")" "$(cat "$SHIM_STATE/fired.code")"
 
   # Plus the delivery window: an ordered signal takes a moment to land, so aliveness
   # is asserted over three seconds rather than at one instant.
@@ -3322,10 +3340,15 @@ FAKE
   pack_run_bg '
     sleep 30 &
     victim=$!
-    gate__watchdog 1 "$RALPH_SHIM_STATE/timed-out" "$victim" &
+    gate__watchdog 1 "$victim" &
+    watchdog=$!
+    printf "%s\n" "$GATE_WATCHDOG_FIRED" >"$RALPH_SHIM_STATE/fired.code"
     rc=0
     wait "$victim" || rc=$?
     printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/victim.rc"
+    rc=0
+    wait "$watchdog" || rc=$?
+    printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/watchdog.rc"
   '
 
   wait_for_file "$SHIM_STATE/victim.rc" 400 ||
@@ -3334,7 +3357,197 @@ FAKE
   # its own thirty seconds, which is what an assertion on liveness alone would let
   # through if this test ever became slow enough.
   assert_equal "$(cat "$SHIM_STATE/victim.rc")" "143"
-  assert_file_exists "$SHIM_STATE/timed-out"
+  # And it says so on the one channel a process outside this run cannot write
+  # ([92]): its own exit status, distinct from the 0 of a deadline that gave up
+  # and from the 143 of one `gate__await` terminated while it slept.
+  wait_for_file "$SHIM_STATE/watchdog.rc" 400 ||
+    fail "the deadline never came back with a status of its own"
+  assert_equal "$(cat "$SHIM_STATE/watchdog.rc")" "$(cat "$SHIM_STATE/fired.code")"
+}
+
+@test "a deadline that has fired still says so when it is put away" {
+  # The race [92] found the expensive way, and the reason the answer carries a
+  # trap. `gate__await` collects the branches and then TERMs the deadline — and
+  # the branches die *because* the deadline killed them, so that TERM lands while
+  # it is still inside the walk, forking a `ps` per level and per target. Without
+  # the trap armed before the first signal, what comes back is 143, GATE_TIMED_OUT
+  # stays 0, and a gate that ran out of time reports `no verdict` instead. Seen
+  # for real on `test/loop-happy-path.bats` before the trap existed.
+  #
+  # Staged with a `ps` slow enough to make that window certain rather than likely,
+  # and with the same target named four times so the walk is still going when the
+  # first kill lands. A test of a race that only usually loses proves nothing.
+  mkdir -p "$SHIM_STATE/slowps"
+  printf '%s\n' '#!/usr/bin/env bash' 'sleep 0.5' 'exec /bin/ps "$@"' \
+    >"$SHIM_STATE/slowps/ps"
+  chmod +x "$SHIM_STATE/slowps/ps"
+
+  pack_run_bg '
+    sleep 30 &
+    victim=$!
+    printf "%s\n" "$GATE_WATCHDOG_FIRED" >"$RALPH_SHIM_STATE/fired.code"
+    PATH="$RALPH_SHIM_STATE/slowps:$PATH"
+    gate__watchdog 1 "$victim" "$victim" "$victim" "$victim" &
+    watchdog=$!
+    rc=0
+    wait "$victim" || rc=$?
+    printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/victim.rc"
+    kill -TERM "$watchdog" 2>/dev/null || true
+    rc=0
+    wait "$watchdog" || rc=$?
+    printf "%s\n" "$rc" >"$RALPH_SHIM_STATE/watchdog.rc"
+  '
+
+  wait_for_file "$SHIM_STATE/victim.rc" 600 ||
+    fail "the deadline never took down the branch it was aimed at"
+  assert_equal "$(cat "$SHIM_STATE/victim.rc")" "143"
+  wait_for_file "$SHIM_STATE/watchdog.rc" 600 ||
+    fail "the deadline never came back after being put away"
+  # And not 143: the TERM arrived after it had decided, so the cause survives it.
+  assert_equal "$(cat "$SHIM_STATE/watchdog.rc")" "$(cat "$SHIM_STATE/fired.code")"
+}
+
+# ── what a session leaves running, and what it can reach with it ─────────────
+#
+# [92]. "The session has finished" and "the processes of the session have
+# finished" are two different things, and until this ticket the pack confused
+# them everywhere but on a deadline: `proc_kill_tree` has four callers and all
+# four are deadlines, so a session that returned normally was walked by nobody.
+# What it left ran on through the gate that judged it, through the iterations
+# after it, and past the end of the run — reparented to init, with `$TMPDIR` in
+# front of it and not one line naming it.
+#
+# Two halves, and they are tested apart because they fail apart. The channel is
+# the guarantee: whatever is still running, it cannot write a verdict. The sweep
+# is a request: what stayed in the session's process group is asked to go, and
+# said out loud. A survivor that ignores TERM defeats the second and must not
+# defeat the first, which is why the first test's survivor ignores it.
+
+@test "a process the session left behind cannot write a branch's verdict" {
+  # The measurement that opened the ticket, staged. At `MAX_PARALLEL=1` — the
+  # shipped value — a `nohup` left by the session that waits for
+  # `$TMPDIR/ralph-gate.*` and writes `0` into the exit-code files turned a suite
+  # that exits 1 into `tests=green typecheck=green scope=green lang=green`, marked
+  # the ticket `resolved` and exited the run 0, on the first iteration.
+  #
+  # It writes both of the files the gate used to read — an exit code per branch
+  # and the deadline's marker — because both were reachable and both decided
+  # something. Neither is read any more: a branch's verdict is its own exit
+  # status, and the deadline's answer is the watchdog's.
+  use_tickets 01-alpha
+  set_config RETRY_N 0
+  # Slow enough for the survivor to land inside the fan rather than after it: the
+  # scenario is a race, and a test that loses it would pass for the wrong reason
+  # — which is what the `survivor.saw` assertion below is there to catch.
+  set_config TEST_CMD 'sleep 1; exit 1'
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  end=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$end" ]; do
+    for d in "$TMPDIR"/ralph-gate.*; do
+      [ -f "$d/tests.out" ] || continue
+      for name in tests typecheck scope lang; do
+        printf "0\n" >"$d/$name.rc"
+      done
+      : >"$d/timed-out"
+      printf "%s\n" "$d" >>"$RALPH_SHIM_STATE/survivor.saw"
+    done
+    sleep 0.01
+  done
+' >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+FAKE
+
+  run_loop_own_tmp
+  local out="$output"
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+
+  # The scenario really happened, and this is the assertion the whole test rests
+  # on: the survivor reached the gate's own directory while the fan was in flight
+  # and wrote into it. Without this the two below would hold just as well against
+  # a survivor that never woke up.
+  assert_file_exists "$SHIM_STATE/survivor.saw"
+
+  # And it bought nothing at all.
+  printf '%s\n' "$out" | grep -q "tests=red" ||
+    fail "the suite exited 1 and the gate did not say so: $out"
+  assert_ticket_status 01-alpha ready-for-human
+}
+
+@test "the paired witness: the same suite, with nothing left behind" {
+  # Without the survivor the run has to end the same way, which is what makes the
+  # test above about the *channel* rather than about a red suite. Reverse the
+  # repair and this one is unchanged while its pair goes green with a resolved
+  # ticket.
+  use_tickets 01-alpha
+  set_config RETRY_N 0
+  set_config TEST_CMD 'sleep 1; exit 1'
+
+  run_loop_own_tmp
+  local out="$output"
+
+  refute_file_exists "$SHIM_STATE/survivor.saw"
+  printf '%s\n' "$out" | grep -q "tests=red" ||
+    fail "the suite exited 1 and the gate did not say so: $out"
+  assert_ticket_status 01-alpha ready-for-human
+}
+
+@test "a process the session left running is taken back, and named" {
+  # The other half. `session_spawn` puts the session in a process group of its
+  # own so that what it starts has a name at all — see `proc_group_members` for
+  # why the ppid walk cannot supply one once the session is gone — and
+  # `session__sweep` asks whatever is still in that group to stop.
+  #
+  # Nothing hostile is needed to stage it: a session that leaves a `sleep` was
+  # measured still running after the run had exited, reparented to init.
+  use_tickets 01-alpha
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup sleep 120 >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+FAKE
+
+  run_loop
+  local out="$output"
+  assert_ticket_status 01-alpha resolved
+
+  local survivor waited=0
+  survivor="$(cat "$SHIM_STATE/survivor.pid")"
+  while kill -0 "$survivor" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 50 ]; then
+      kill -KILL "$survivor" 2>/dev/null || true
+      fail "the process the session started outlived the run"
+    fi
+  done
+
+  # Said as well as done: the zone nobody guards gets named every time round
+  # ([24]), and a night that quietly accumulates dev servers is exactly the kind
+  # of thing a human reads the morning log for.
+  printf '%s\n' "$out" | grep -q "process(es) of its own running" ||
+    fail "nothing in the run named what the session left behind: $out"
+}
+
+@test "the paired witness: a session that leaves nothing is not accused of it" {
+  # A line printed on every iteration whether or not there is anything to say
+  # would be worth nothing, and would hide the one that matters.
+  use_tickets 01-alpha
+
+  run_loop
+  local out="$output"
+  assert_ticket_status 01-alpha resolved
+  if printf '%s\n' "$out" | grep -q "process(es) of its own running"; then
+    fail "the run accused a session that started nothing: $out"
+  fi
 }
 
 # ── what the pack leaves outside the repository ──────────────────────────────

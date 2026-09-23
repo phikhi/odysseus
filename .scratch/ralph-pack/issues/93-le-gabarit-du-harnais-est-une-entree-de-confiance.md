@@ -61,3 +61,14 @@
 - **Hérité de [92]** : la ligne de tableau écrite ici est l'aveu générique dont
   [91] et [92] sont les deux cas adressables. Elle se lit après la borne que [92]
   réécrit, pas avant.
+
+- **Ce que [92] laisse, livré le 23/09/2026.** La borne de la ligne 35 est
+  réécrite et une ligne neuve a été ajoutée sous elle (« ce qu'une session laisse
+  **tourner** derrière elle »). La ligne générique de ce ticket se lit après les
+  deux. Et ce que [92] a nommé sans le refermer appartient à la même famille, donc
+  à relire en écrivant la ligne générique : dans le répertoire du gate,
+  `<branche>.out`, `scope.class` et `lang.zone` restent à portée de ce qu'une
+  session laisse tourner. Aucun n'est un verdict — le verdict est le statut de
+  sortie de la branche — mais `scope.class` décide d'une classe d'échec, donc d'un
+  budget de reprise, et `<branche>.out` devient les constats d'un reçu que lit un
+  humain.

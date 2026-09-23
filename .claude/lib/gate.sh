@@ -3408,14 +3408,36 @@ SCOPE
 
 # ── running the branches ─────────────────────────────────────────────────────
 
-# One branch, in its own process: output to a file, exit code to another. The
-# exit code file is the verdict, and its absence is a verdict too.
+# One branch, in its own process: output to a file, verdict in its own exit
+# status. There is no second channel, and that is [92] rather than a
+# simplification.
+#
+# What it replaces is a file. The branch wrote its exit code into
+# `$dir/$name.rc` and the aggregation read it back — and `$dir` is a `mktemp`
+# under `$TMPDIR`, made by the gate *after* the run sealed its own witnesses
+# ([81]), in a directory an `ls` enumerates. So the verdict of every branch was a
+# file any process on the machine could write, and the one process with a reason
+# to is the one a session leaves behind. Measured at `MAX_PARALLEL=1`, the
+# shipped value, on a suite that exits 1: a `nohup` left by the session, waiting
+# for `$TMPDIR/ralph-gate.*` and writing `0` into the `.rc` files, turns
+# `tests=red` into `tests=green typecheck=green scope=green lang=green`, marks
+# the ticket resolved and exits the run 0 — on the first iteration, with no line
+# anywhere saying so.
+#
+# An exit status cannot be written from outside the process that has it: the only
+# way into `gate__await` is to *be* the branch. Which is why nothing is written
+# here any more. Keeping the file as a diagnostic would leave the forgeable
+# object in place for the next reader to trust, and it is read by nobody: `$dir`
+# goes with `rm -rf` at the end of `gate_run`, before a human could open it.
+#
+# Three answers travel on that one number and they have to stay three ([43],
+# [45]); `gate__aggregate` is where they are told apart.
 gate__branch() {
   local dir="$1" name="$2"
   shift 2
   local rc=0
   "$@" >"$dir/$name.out" 2>&1 || rc=$?
-  printf '%s\n' "$rc" >"$dir/$name.rc"
+  return "$rc"
 }
 
 gate__start() {
@@ -3458,14 +3480,29 @@ gate__start() {
 #     much alive — so "is it alive" is not the question, "is it still the one I was
 #     aimed at" is.
 #
-# What is *not* conditional is the marker. The tempting shape is to give up as soon
+# What is *not* conditional is the answer. The tempting shape is to give up as soon
 # as there is nothing left to kill, and it would lose the cause: `gate__aggregate`
-# reads this file to say "red (timed out)" rather than "red (no verdict)", and a
-# branch that overran is the case where both are true at once. The deadline expired
-# — that is a fact about this gate, not about which pids are still standing.
+# needs to say "red (timed out)" rather than "red (no verdict)", and a branch that
+# overran is the case where both are true at once. The deadline expired — that is a
+# fact about this gate, not about which pids are still standing.
+#
+# It is an exit status and no longer a marker file in `$dir`, for the reason
+# `gate__branch` above no longer writes one ([92]): a file under `$TMPDIR` is
+# writable by whatever a session left running, and this one decides two things —
+# which sentence a branch with no verdict gets, and whether the lens phase is
+# allowed to read a refusal out of a stream it no longer trusts. This process is
+# a child of the shell that armed it, so its status reaches that shell and
+# nothing else can put a number there.
+#
+# GATE_WATCHDOG_FIRED is the value, and it is a value rather than 1 because 1 is
+# what this function would return by accident: a `return` taken from a failed
+# test, an errexit, a `proc_kill_tree` that came back non-zero. 0 and 143 are
+# both taken as well — 0 is "gave up, the run is gone", 143 is the TERM
+# `gate__await` sends a deadline that is still sleeping.
+GATE_WATCHDOG_FIRED=7
 gate__watchdog() {
-  local limit="$1" marker="$2"
-  shift 2
+  local limit="$1"
+  shift
   local pid parent aimed=''
 
   for pid in "$@"; do
@@ -3476,14 +3513,20 @@ gate__watchdog() {
 
   proc_countdown "$limit" || return 0
 
-  : >"$marker"
+  # Armed before the first signal goes out, and it is the whole of what makes
+  # this answer reliable rather than usually right. `gate__await` collects the
+  # branches and then TERMs this process, and the branches only die because of
+  # the walk below — so the TERM lands while this is still inside it, forking a
+  # `ps` per level of the tree. Without the trap the answer would be 143 and the
+  # cause of a timed-out gate would be lost in a race nothing could see.
+  trap "exit $GATE_WATCHDOG_FIRED" TERM
   for pid in $aimed; do
     parent="${pid#*:}"
     pid="${pid%%:*}"
     [ "$(proc_parent_of "$pid")" = "$parent" ] || continue
     proc_kill_tree "$pid"
   done
-  return 0
+  return "$GATE_WATCHDOG_FIRED"
 }
 
 # The zone this gate did not look at, named on every iteration rather than left
@@ -3582,46 +3625,95 @@ gate__report_lang() {
 #
 # An unset, zero or non-numeric GATE_TIMEOUT means no deadline. That is the status
 # quo and not a false green: a hung branch never comes back green.
+#
+# This is where the gate's verdicts enter the pilot's own shell, and since [92]
+# it is the only door. The statuses used to be dropped here — *"a branch's
+# verdict is the `.rc` file it wrote"* — which put every verdict of every gate on
+# a file under `$TMPDIR` that any process on the machine could write, the one
+# process with a reason to being whatever the session left running. They are kept
+# now, in GATE_AWAITED, where `gate__aggregate` reads them; `proc_collect` was
+# already handing them back, for the caller that did need one ([28],
+# `session_spawn`, whose exit code is the session's).
+#
+# Two lists, walked in step, and they may be walked in step because both fans
+# build them that way: a name is appended to `names` in the same breath as the
+# pid `gate__start` just left in `$!`. A name with no pid beside it would come
+# out of `gate__aggregate` as a branch that left no verdict — red, and said as
+# such — which is the safe direction for a list that fell out of step.
+#
+# One window `proc_collect` documents becomes a verdict here, and it is worth
+# saying because it did not used to be one: a branch that exits in the instant a
+# trapped signal reaches this shell is indistinguishable from one the signal
+# killed, so its status comes back over 128 and `gate__aggregate` reads a green
+# branch as one that left no verdict. That is red where the file used to say
+# green — the cautious direction, and the same trade that comment makes for a
+# session, which it would cost a retry rather than a pass.
+#
+# GATE_TIMED_OUT is the other half, and it is the watchdog's own exit status
+# rather than a file it touched: see `gate__watchdog`. Set on every call,
+# including the calls that arm no deadline at all, because the aggregation that
+# follows reads it whatever happened — a stale 1 from the fan before would
+# relabel a branch that died on its own as one this gate killed.
 gate__await() {
-  local dir="$1" pids="$2" watchdog='' brc
+  local pids="$1" names="$2" watchdog='' brc name rest rc
+
+  GATE_AWAITED=''
+  GATE_TIMED_OUT=0
 
   case "${GATE_TIMEOUT:-0}" in
     '' | 0 | *[!0-9]*) ;;
     *)
       # shellcheck disable=SC2086
-      gate__watchdog "$GATE_TIMEOUT" "$dir/timed-out" $pids &
+      gate__watchdog "$GATE_TIMEOUT" $pids &
       watchdog=$!
       ;;
   esac
 
-  # The status is dropped here on purpose: a branch's verdict is the `.rc` file it
-  # wrote, and the watchdog is expected to come back 143 because we just killed it.
-  # `proc_collect` hands the child's status back for the caller that does need it —
-  # `session_spawn`, whose exit code is the session's ([28]).
+  rest="${names# }"
   for brc in $pids; do
-    proc_collect "$brc" || true
+    name="${rest%% *}"
+    rest="${rest#"$name"}"
+    rest="${rest# }"
+    rc=0
+    proc_collect "$brc" || rc=$?
+    [ -n "$name" ] || continue
+    GATE_AWAITED="$GATE_AWAITED $name=$rc"
   done
 
   if [ -n "$watchdog" ]; then
+    # The TERM is what a deadline still sleeping gets, and it is sent before the
+    # collection rather than instead of it: a watchdog that has already fired is
+    # a zombie this shell has not reaped yet, so the signal is a no-op and the
+    # status that comes back is its own.
     kill -TERM "$watchdog" 2>/dev/null || true
-    proc_collect "$watchdog" || true
+    rc=0
+    proc_collect "$watchdog" || rc=$?
+    if [ "$rc" = "$GATE_WATCHDOG_FIRED" ]; then
+      GATE_TIMED_OUT=1
+    fi
   fi
   return 0
 }
 
-# Turn the exit-code files a fan left behind into verdicts, and say what went
-# wrong. Appends to RALPH_GATE_VERDICTS and RALPH_GATE_FAILED, so it must be
-# called in the loop's own shell and never from a subshell or a pipeline — the
-# detail would be lost in silence, and the failure policy would be unable to tell
-# a drift from a neutral file ([05]).
+# Turn the statuses a fan came back with into verdicts, and say what went wrong.
+# Appends to RALPH_GATE_VERDICTS and RALPH_GATE_FAILED, so it must be called in
+# the loop's own shell and never from a subshell or a pipeline — the detail would
+# be lost in silence, and the failure policy would be unable to tell a drift from
+# a neutral file ([05]).
 #
-# The absence of an exit-code file is a verdict of its own, and it is red.
+# It reads GATE_AWAITED, which `gate__await` fills in that same shell, and no
+# longer a file per branch under `$TMPDIR` ([92]). A branch this fan has no
+# status for is a verdict of its own, and it is red.
 gate__aggregate() {
-  local dir="$1" names="$2" name brc rc=0
+  local dir="$1" names="$2" name brc pair rc=0
 
   for name in $names; do
     brc=""
-    if [ -f "$dir/$name.rc" ]; then brc="$(cat "$dir/$name.rc")"; fi
+    for pair in ${GATE_AWAITED:-}; do
+      case "$pair" in
+        "$name="*) brc="${pair#*=}" ;;
+      esac
+    done
     if [ "$brc" = 0 ]; then
       RALPH_GATE_VERDICTS="$RALPH_GATE_VERDICTS $name=green"
       continue
@@ -3645,9 +3737,23 @@ gate__aggregate() {
     # case is healthy and must stay as it is — a lens that dies writes its own
     # sentence into its `.out` and exits non-zero, so it arrives here as an exit
     # code and reaches the receipt through the findings.
-    if [ -n "$brc" ]; then
+    #
+    # How the three are told apart is [92]'s doing and the shape is the whole of
+    # it: a status under 128 is a branch that reached the end of its own command
+    # and returned that code, and a status over it is a subshell that died of a
+    # signal without reaching it. `gate__start` forks a subshell whose traps are
+    # reset, so nothing between the signal and the end of the branch can fake the
+    # first — and a command that dies of a signal *itself* lands on the second
+    # arm, which is where it belongs: a `TEST_CMD` the kernel killed judged
+    # nothing either.
+    #
+    # Which of the two "nothing ran" sentences it gets is the deadline's own
+    # answer and not a file in this directory, for the reason the exit codes are
+    # no longer files: a session's survivor that could write the cause would get
+    # a branch it starved read as one this gate killed on purpose.
+    if [ -n "$brc" ] && [ "$brc" -lt 128 ]; then
       gate__log "$name red (exit $brc)"
-    elif [ -f "$dir/timed-out" ]; then
+    elif [ "${GATE_TIMED_OUT:-0}" = 1 ]; then
       gate__say "$name red (timed out after ${GATE_TIMEOUT}s): this branch was killed at the gate's own deadline, so it judged nothing — the verdict is red because no verdict came back, and not because anything was found wrong"
     else
       gate__say "$name red (no verdict): this branch ended without leaving one, so it judged nothing — the verdict is red because no verdict came back, and not because anything was found wrong"
@@ -3716,7 +3822,7 @@ gate__lens_phase() {
     pids="$pids $!"
   done
 
-  gate__await "$dir" "$pids"
+  gate__await "$pids" "$lenses"
   gate__aggregate "$dir" "$lenses" || agg=1
 
   # Which of them judged nothing because the API refused the session, read here
@@ -3728,11 +3834,19 @@ gate__lens_phase() {
   # out of the stream of what it measured. A lens the watchdog killed judged
   # nothing either, and letting its last event speak would hand a free give-back to
   # anything that can arrange to hang past `GATE_TIMEOUT` with a blocked line in
-  # the stream. The marker is this fan's own: an objective fan that timed out is
+  # the stream. The answer is this fan's own: an objective fan that timed out is
   # red, and a red objective fan skips this phase before the tree is even
   # snapshotted. A green fan that raced the watchdog reads as timed out here, which
   # costs a give-back the ticket would have got — the cautious side.
-  if [ ! -f "$dir/timed-out" ]; then
+  #
+  # Read off GATE_TIMED_OUT since [92], which `gate__await` set from the
+  # watchdog's exit status a few lines above, and no longer off a file in `$dir`.
+  # This read is the second thing that file decided, and the more expensive of
+  # the two: a survivor of the session being judged that dropped a `timed-out`
+  # into the gate's directory would silence the refusal check for the whole fan,
+  # so a lens the API never let start would be counted as an attempt at the
+  # ticket and charged to its retry budget.
+  if [ "${GATE_TIMED_OUT:-0}" != 1 ]; then
     for name in $lenses; do
       if posture="$(lenses_refused_posture "$dir" "$name")"; then
         RALPH_GATE_QUOTA="$posture"
@@ -3953,7 +4067,7 @@ IGNORE
       pids="$pids $!"
     fi
 
-    gate__await "$dir" "$pids"
+    gate__await "$pids" "$names"
     gate__aggregate "$dir" "$names" || rc=1
     gate__report_lang "$ticket" "$dir"
 

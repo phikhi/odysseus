@@ -58,6 +58,19 @@ session_spawn() {
   # descriptor, and a descriptor cannot be opened on a file that is not there.
   : >"$outfile"
 
+  # Job control, for exactly one fork. Without it a background child sits in the
+  # shell's own process group, and then "what this session started" has no name
+  # at all — which is how a session's leftovers used to outlive the run without a
+  # line anywhere ([92]). With it the session is the leader of a group of its
+  # own, and that number is the only handle on its descendance that survives the
+  # session itself: see `proc_group_members` for why a ppid walk cannot be, and
+  # `session__sweep` below for what is done with it.
+  #
+  # Turned straight off again, because the shape above is the whole of what it is
+  # for. It is not needed to *collect* the session and it is not wanted for the
+  # gate's branches, which this same shell forks a few moments later and which
+  # `gate__watchdog` aims at by pid.
+  set -m
   DISABLE_AUTO_COMPACT=1 claude -p \
     --model "$MODEL" \
     --output-format stream-json \
@@ -66,6 +79,7 @@ session_spawn() {
     "$@" \
     <"$promptfile" >"$outfile" &
   pid=$!
+  set +m
 
   if ! monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS"; then
     case "${MONITOR_STOPPED:-}" in
@@ -89,7 +103,59 @@ session_spawn() {
     kill -TERM "$reaper" 2>/dev/null || true
     proc_collect "$reaper" || true
   fi
+  session__sweep "$pid"
   return "$rc"
+}
+
+# What the session left running, taken back and said out loud ([92]).
+#
+# Until this existed, "the session has finished" and "the processes of the
+# session have finished" were two different things and the pack confused them
+# everywhere but on a deadline. `proc_kill_tree` has four callers and all four
+# are deadlines; a session that returns normally was walked by nobody, so a dev
+# server, a watcher or a test suite a Bash tool started went on running — through
+# the gate that judges the iteration, through the iterations after it, and past
+# the end of the run, reparented to init, with not one line naming it. Measured:
+# a session that leaves a `sleep` is still there when the run exits.
+#
+# Which mattered for more than tidiness. A process left by the session being
+# judged is a process running *while its own gate runs*, under no supervision at
+# all, with `$TMPDIR` in front of it — and that is the other half of [92], the
+# half `gate__branch` answers by taking the verdicts out of the files it could
+# write.
+#
+# The price, and it is a real one rather than a formality:
+#
+#   - TERM and nothing after it. A survivor that ignores the signal stays, and
+#     there is no reaper here: the iteration has to get on with the gate, and a
+#     grace of its own would put a KILL in flight against processes of a session
+#     that is already over. The request is made and the line is printed whether
+#     or not it is honoured.
+#   - A descendant that leaves the group is out of reach, exactly as it is out of
+#     reach of the ppid walk. Anything that calls `setsid` — a daemon that
+#     daemonises properly, which is precisely the dev server the walk exists for
+#     — is gone from both. The pack does not promise that nothing survives a
+#     session; it promises to take back what stayed in the group and to name what
+#     it found.
+#   - It is the *group* that is sound here, not the pid: see
+#     `proc_group_members`, which enumerates the members instead of signalling
+#     the number, and refuses its own group rather than guess.
+#
+# Said on stderr, where `monitor_watch`'s own refusal goes: a lib may not reach up
+# into the loop for its reporting channel, and the one line this prints belongs in
+# the morning log beside the iteration it came from.
+session__sweep() {
+  local leader="$1" left pid n=0
+  left="$(proc_group_members "$leader" | tr '\n' ' ')"
+  left="${left% }"
+  [ -n "$left" ] || return 0
+  for pid in $left; do
+    kill -TERM "$pid" 2>/dev/null || true
+    n=$((n + 1))
+  done
+  printf 'ralph: this session left %s process(es) of its own running (%s): TERM sent to each, and nothing here follows it up\n' \
+    "$n" "$left" >&2
+  return 0
 }
 
 # The other posture, and there are exactly two: a session with a human in it.
