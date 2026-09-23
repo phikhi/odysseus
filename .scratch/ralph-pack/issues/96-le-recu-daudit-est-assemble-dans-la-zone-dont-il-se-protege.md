@@ -19,7 +19,7 @@
 
 - **Ouvert par la passe transversale du 23/09/2026** (`../passe-transversale-23-09.md`, §3). Sonde : `../sondes/passe-23-09/q4-le-recu-daudit.bats`.
 
-- **Ordre PROPOSÉ, à valider par Philippe** : **[95] → [94] → [96]**. Ce ticket en dernier parce qu'il cite `$dir/<branche>.out` comme source : ce qui lui reste en propre — son workspace et la phrase qu'il imprime sur lui-même — n'appartient qu'à lui.
+- **Ordre VALIDÉ par Philippe le 23/09/2026** : **[95] → [94] → [96]**. Ce ticket en dernier parce qu'il cite `$dir/<branche>.out` comme source : ce qui lui reste en propre — son workspace et la phrase qu'il imprime sur lui-même — n'appartient qu'à lui.
 
 - **Mesuré**, suite rouge, le reçu déposé dans `receipts/<feature>/01-alpha.md`. Témoin appairé, sans survivant : `tests=red`, findings `FAIL: 3 of 12 tests failed in src/alpha`, outcome `gate-red`. Avec un `nohup` laissé par la session qui écrit dans `$TMPDIR/ralph-receipt.*` : **`tests=green typecheck=green scope=green lang=green`**, findings *« the suite passed cleanly on the first attempt »*, outcome **`resolved`** — et le document forgé porte toujours sa propre phrase de garantie.
 
