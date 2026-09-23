@@ -241,6 +241,17 @@ harness_pack_sources() {
 # megabyte of shell and `harness__clear_env` runs before every one of a thousand
 # tests, each in its own process. The name keeps the `ralph-harness.` prefix so
 # that the stale-template sweep two functions down collects it as well.
+#
+# And this cache is *not* compared back against its source, where the template
+# next to it is ([93]). It is the one thing under that prefix the suite still
+# takes on trust, so it is said here and in `docs/frontiere-de-confiance.md`
+# rather than left to be discovered: comparing this one back means deriving it
+# again — 0.45 s measured, against a test that takes 0.54 s, which is the whole
+# suite a second time — and there is no cheaper check, because a cache whose
+# forgery is an *omission* can only be caught by the derivation it stands in for.
+# What makes that bearable is what [89] measured: a name this census drops is a
+# name nothing unsets, and a name nothing unsets only matters if a shell above
+# the run exported it. It is not a channel a session reaches on its own.
 harness_pack_globals() {
   local cache tmp
   if [ -z "${HARNESS__PACK_GLOBALS+set}" ]; then
@@ -335,18 +346,31 @@ harness__template() {
   key="$(harness__pack_fingerprint)"
   root="${TMPDIR:-/tmp}/ralph-harness.$key"
 
-  [ -f "$root/.ready" ] && {
+  # Every root this function hands out is compared back against the tree first,
+  # this one included: the run that built it is not the run about to believe it.
+  if [ -f "$root/.ready" ]; then
+    harness__template_verify "$root" || return 1
     printf '%s\n' "$root"
     return 0
-  }
+  fi
 
   # mkdir is the test-and-set: exactly one concurrent runner builds it.
   if mkdir "$root" 2>/dev/null; then
     # Each pack revision leaves a template behind; drop the stale ones rather
-    # than accumulating them on a machine that never reboots.
+    # than accumulating them on a machine that never reboots. Seven days and not
+    # seven minutes on purpose, and [93] left it there on purpose: the key is the
+    # content of the pack, so a template is never stale in the sense a lifetime
+    # would fix. What a lifetime never bought is trust, and shortening it would
+    # only have made the forged copy cheaper to keep fresh.
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'ralph-harness.*' -mtime +7 \
       -exec rm -rf {} + 2>/dev/null || true
     harness__build_project "$root/project"
+    # Compared back *before* it is published: a project that is not this pack
+    # must not get the `.ready` every other runner on this machine copies from.
+    if ! harness__template_verify "$root"; then
+      rm -rf "$root"
+      return 1
+    fi
     : >"$root/.ready"
     printf '%s\n' "$root"
     return 0
@@ -358,14 +382,187 @@ harness__template() {
     tries=$((tries - 1))
   done
 
+  if [ -f "$root/.ready" ]; then
+    harness__template_verify "$root" || return 1
+    printf '%s\n' "$root"
+    return 0
+  fi
+
   # The builder died mid-way. Fall back to a private copy rather than hand out
   # a half-built project.
-  if [ ! -f "$root/.ready" ]; then
-    root="$RALPH_TEST_DIR/template"
-    mkdir -p "$root"
-    harness__build_project "$root/project"
-  fi
+  root="$RALPH_TEST_DIR/template"
+  mkdir -p "$root"
+  harness__build_project "$root/project"
+  harness__template_verify "$root" || return 1
   printf '%s\n' "$root"
+}
+
+# ── the template, compared back against the tree it claims to be a copy of ───
+#
+# The template is the cache of a pure function of the repository, and it lives
+# where anything on this machine can write: `$TMPDIR`, under a name that *is*
+# the content of the pack, so whoever knows what tree they are about to hand the
+# gate knows the key to drop a clean copy under. Measured end to end by the pass
+# of 22/09/2026: a lib of the tree gutted, a clean template dropped under the new
+# key, `TEST_CMD` green on `1 tests, 0 failures` with the pack of the tree broken.
+#
+# So the cache is compared back against its input, at the moment it is handed out
+# rather than at the moment it was built. Four clauses, and none of them covers
+# what another one covers:
+#
+#   contents  every import is byte for byte the file the repository holds.
+#   census    the project holds nothing the census does not name. `loop.sh`
+#             sources `lib/*.sh` in lexical order, so a file that rode in is not
+#             a stray file — it is a module of the pack the whole suite runs.
+#   config    `ralph.config.sh` is generated and not copied, so it is compared
+#             against what `harness__install_config` writes.
+#   history   what a run rolls back to is `HEAD`, not the working tree, and the
+#             pack rolls back. A clean `status` is what binds the two: the files
+#             of the tree are named and verified above, so a `HEAD` carrying
+#             anything else — a lib deleted from the tree and kept in the commit
+#             — shows up here and nowhere else.
+#
+# A forged root passes none of these without being the pack of this tree. What it
+# does *not* cover is the second object under the same prefix — the globals
+# census cached as `ralph-harness.globals.<key>` — and that is written down
+# rather than pretended: comparing that cache back means deriving it again, which
+# is 0.45 s against a test that takes 0.54 s, the whole suite twice over. It is
+# the half [89] measured as inconsequential taken alone (a name it drops still
+# has to be exported by a shell above the run to mean anything), and it is a line
+# of `docs/frontiere-de-confiance.md`.
+harness__template_verify() {
+  local root="$1" project imports listed found sandbox dirty rc
+  project="$root/project"
+  imports="$(harness__template_imports)" || return 1
+
+  [ -d "$project" ] ||
+    { harness__template_refuse "$root" "there is no project in it"; return 1; }
+
+  if [ "$(harness__import_seal "$project" 1 "$imports")" \
+    != "$(harness__import_seal "$RALPH_PACK_ROOT" 2 "$imports")" ]; then
+    harness__template_refuse "$root" "these files are not the ones the tree holds" \
+      "$(harness__import_diff "$project" "$imports")"
+    return 1
+  fi
+
+  listed="$(harness__import_names "$imports" | LC_ALL=C sort)"
+  found="$(cd "$project" &&
+    find . -name .git -prune -o -type f -print | sed 's|^\./||' | LC_ALL=C sort)"
+  if [ "$listed" != "$found" ]; then
+    harness__template_refuse "$root" "the files in it are not the ones the pack puts there" \
+      "$(printf '%s\n%s\n' "$listed" "$found" | LC_ALL=C sort | LC_ALL=C uniq -u)"
+    return 1
+  fi
+
+  sandbox="$RALPH_TEST_DIR/template-config"
+  mkdir -p "$sandbox" || return 1
+  (
+    PROJECT_DIR="$sandbox"
+    PACK_DIR="$RALPH_PACK_ROOT/.claude"
+    RALPH_CONFIG_FILE="$sandbox/ralph.config.sh"
+    harness__install_config
+  ) || { harness__template_refuse "$root" "its config could not be rebuilt"; return 1; }
+  if ! cmp -s "$sandbox/ralph.config.sh" "$project/.claude/ralph.config.sh"; then
+    harness__template_refuse "$root" \
+      "its ralph.config.sh is not the one this harness writes"
+    return 1
+  fi
+
+  # `GIT_OPTIONAL_LOCKS=0` because this reads a template every test of every
+  # concurrent runner shares: a plain `git status` refreshes the index, which
+  # takes `index.lock` and writes into the very directory being vouched for. Two
+  # runners would then refuse each other at random, which is the shape of a gate
+  # that cries wolf and gets switched off.
+  #
+  # And the status of `git` is read apart from its output, because "git said
+  # nothing" and "git could not be asked" are two different answers and only one
+  # of them is a clean tree.
+  rc=0
+  dirty="$(GIT_OPTIONAL_LOCKS=0 git -C "$project" status --porcelain 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    harness__template_refuse "$root" "its git directory does not answer" "$dirty"
+    return 1
+  fi
+  if [ -n "$dirty" ]; then
+    harness__template_refuse "$root" \
+      "the tree it commits is not the tree it holds" "$dirty"
+    return 1
+  fi
+  return 0
+}
+
+# `<name>` then `<contents>`, for every import in census order, as one number.
+# FIELD picks the side — 1 is the path inside the template, 2 the path inside the
+# repository.
+#
+# The names go in as well as the bytes, and no entry of `test/mutate.sh` aims at
+# that line, because it is not what holds anything: a renamed or missing import
+# is what the census clause above reads, name by name. What the names buy here is
+# that the number stops meaning "these bytes in this order" and starts meaning
+# "these files" — cheap, and not a guarantee this file claims.
+harness__import_seal() {
+  local root="$1" field="$2" imports="$3" dest src names sum
+  local paths=()
+  names=""
+  while read -r dest src; do
+    [ -n "$dest" ] || continue
+    names="$names$dest
+"
+    case "$field" in
+      1) paths+=("$root/$dest") ;;
+      *) paths+=("$root/$src") ;;
+    esac
+  done <<IMPORTS
+$imports
+IMPORTS
+  # One `cat` and one `cksum`, built in the shell rather than piped through
+  # `awk`/`xargs`: this runs on every test of the suite, and on this platform the
+  # cost of the comparison is the processes it starts, not the megabyte it reads.
+  sum="$( {
+    printf '%s' "$names"
+    cat "${paths[@]}" 2>/dev/null
+  } | cksum)"
+  printf '%s\n' "${sum%% *}"
+}
+
+# Every file the built project is supposed to hold: the imports, template side,
+# plus the one file of it that is generated rather than imported. The empty
+# `issues/` directory is not in it and does not need to be — this is the list a
+# `find` of the tree is compared against, and a `find` of files sees no
+# directories.
+harness__import_names() {
+  local imports="$1" dest src
+  while read -r dest src; do
+    [ -n "$dest" ] || continue
+    printf '%s\n' "$dest"
+  done <<IMPORTS
+$imports
+IMPORTS
+  printf '%s\n' '.claude/ralph.config.sh'
+}
+
+# The slow half, run only once the two seals have already disagreed: which file,
+# so that the refusal names something a reader can open.
+harness__import_diff() {
+  local project="$1" imports="$2" dest src
+  while read -r dest src; do
+    [ -n "$dest" ] || continue
+    cmp -s "$project/$dest" "$RALPH_PACK_ROOT/$src" || printf '%s\n' "$dest"
+  done <<IMPORTS
+$imports
+IMPORTS
+}
+
+# Loud, and fatal. A template that is not this pack is evidence and not an
+# inconvenience, so the suite stops rather than quietly rebuilding underneath the
+# question of how a copy of another pack came to sit under this pack's key.
+harness__template_refuse() {
+  printf 'harness: refusing the cached template %s:\n  %s\n' "$1" "$2" >&2
+  if [ -n "${3:-}" ]; then
+    printf '%s\n' "$3" | sed 's/^/    /' >&2
+  fi
+  printf 'harness: it is a cache of this tree and not a fact about it. Remove it and the suite rebuilds it:\n  rm -rf %s\n' "$1" >&2
+  return 0
 }
 
 # Names as well as contents: hashing only the bytes made the key blind to a
@@ -408,8 +605,6 @@ harness__build_project() {
   mkdir -p "$PACK_DIR/lib" "$TRACKER_DIR" "$dest/.git-template"
 
   harness__install_pack
-  cp "$RALPH_FIXTURES/CONTEXT.md" "$dest/CONTEXT.md"
-  cp "$RALPH_FIXTURES/spec.md" "$FEATURE_DIR/spec.md"
 
   # Committed last: a run starts from a clean tree, which is what the pre-spawn
   # HEAD snapshot and the scope-guard diff both assume.
@@ -429,24 +624,62 @@ harness_teardown() {
 
 # ── pack ─────────────────────────────────────────────────────────────────────
 
-harness__install_pack() {
-  local f
-  cp "$RALPH_PACK_ROOT/.claude/loop.sh" "$PACK_DIR/loop.sh"
-  cp "$RALPH_PACK_ROOT/.claude/ralph.config.sh.example" "$PACK_DIR/"
-  [ -f "$RALPH_PACK_ROOT/.claude/settings.json" ] &&
-    cp "$RALPH_PACK_ROOT/.claude/settings.json" "$PACK_DIR/"
-  [ -f "$RALPH_PACK_ROOT/.claude/human-loop.sh" ] &&
-    cp "$RALPH_PACK_ROOT/.claude/human-loop.sh" "$PACK_DIR/"
+# Every file the template holds byte for byte out of the repository, one
+# `<path under the template's project> <path under the pack root>` per line.
+#
+# One census and two consumers: this is what `harness__install_pack` copies in
+# and what `harness__template_verify` compares back out. A file that reaches the
+# template by any other route is a file the verification does not cover, so both
+# sides read this list instead of naming the copies twice — a census retyped at
+# the second site is the drift this pack keeps finding ([85], [89], [91]).
+harness__template_imports() {
+  local f name
+  printf '%s %s\n' \
+    '.claude/loop.sh' '.claude/loop.sh' \
+    '.claude/ralph.config.sh.example' '.claude/ralph.config.sh.example' \
+    'CONTEXT.md' 'test/fixtures/CONTEXT.md' \
+    ".scratch/$RALPH_TEMPLATE_FEATURE/spec.md" 'test/fixtures/spec.md'
+  # Optional in the repository, so optional in the template — and absent here
+  # means refused there. That is the point of one census for both sides: a file
+  # the pack stops shipping cannot stay behind in a cached template and go on
+  # being sourced by every test.
+  for name in settings.json human-loop.sh; do
+    if [ -f "$RALPH_PACK_ROOT/.claude/$name" ]; then
+      printf '.claude/%s .claude/%s\n' "$name" "$name"
+    fi
+  done
   for f in "$RALPH_PACK_ROOT"/.claude/lib/*.sh; do
     [ -e "$f" ] || continue
-    cp "$f" "$PACK_DIR/lib/"
+    printf '.claude/lib/%s .claude/lib/%s\n' "${f##*/}" "${f##*/}"
   done
-  chmod +x "$PACK_DIR"/*.sh
+  return 0
+}
 
+harness__install_pack() {
+  local dest src
+  while read -r dest src; do
+    [ -n "$dest" ] || continue
+    case "$dest" in */*) mkdir -p "$PROJECT_DIR/${dest%/*}" ;; esac
+    cp "$RALPH_PACK_ROOT/$src" "$PROJECT_DIR/$dest" || return 1
+  done <<IMPORTS
+$(harness__template_imports)
+IMPORTS
+  chmod +x "$PACK_DIR"/*.sh
+  harness__install_config
+}
+
+# The one file of the template that is generated rather than copied, which is
+# why `harness__template_verify` compares it against what this function writes
+# and not against a file of the repository.
+harness__install_config() {
   # The config a project would actually run, plus the injections every test
   # needs. Starting from the shipped example also proves the example is sound.
   cp "$PACK_DIR/ralph.config.sh.example" "$RALPH_CONFIG_FILE"
-  set_config FEATURE "$RALPH_TEST_FEATURE"
+  # The template's own feature and not the feature of whichever test happened to
+  # build it: a cache that is compared back against its source has to be a pure
+  # function of that source. `harness_setup` appends the test's own on top when
+  # the two differ, which is the line it already had.
+  set_config FEATURE "$RALPH_TEMPLATE_FEATURE"
   set_config TEST_CMD "stub-cmd tests"
   set_config TYPECHECK_CMD "stub-cmd typecheck"
   set_config MODEL "test-model"
@@ -517,8 +750,12 @@ harness__commit() {
   git -C "$PROJECT_DIR" commit -q -m "$1"
 }
 
+# Bash 3.2 parameter expansion and not `sed`, because two forks per config line
+# is a price the whole suite pays: `harness__template_verify` rebuilds the
+# template's config on every test to compare it, and `set_config` writes it.
 harness__quote() {
-  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  local s=${1//\'/\'\\\'\'}
+  printf "'%s'" "$s"
 }
 
 # ── shims ────────────────────────────────────────────────────────────────────

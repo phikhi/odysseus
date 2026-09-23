@@ -6874,6 +6874,58 @@ mutation "89 a lib keeps the opened list a shell exported" "$PLAYTHROUGH" \
   's/^RALPH_PLAYTHROUGH_OPENED=\x27\x27$/RALPH_PLAYTHROUGH_OPENED="\$\{RALPH_PLAYTHROUGH_OPENED:-\}"/m' \
   test/smoke.bats "assigned before it is read"
 
+# ── [93] the cached template, as an entry of trust of the suite ──────────────
+#
+# Every entry here names the same thing from a different side: what the suite is
+# built out of comes from `$TMPDIR`, under a name that is the content of the
+# pack, and until this ticket nothing compared it back. The pass of 22/09/2026
+# measured the whole chain — a lib of the tree gutted, a clean copy of the
+# template dropped under the new key, the suite green on `1 tests, 0 failures`.
+
+mutation "93 the cached template is taken on trust" "$HARNESS" \
+  's/^harness__template_verify\(\) \{/harness__template_verify() { return 0;/m' \
+  test/smoke.bats "not the pack of this tree"
+
+mutation "93 the seal of a template reads its names and not its files" "$HARNESS" \
+  's/    cat "\$\{paths\[\@\]\}" 2>\/dev\/null\n//' \
+  test/smoke.bats "not the pack of this tree"
+
+# The refusal has to name something a reader can open: the seals say *that* the
+# two sides differ and never *which* file does.
+mutation "93 the refusal does not say which file" "$HARNESS" \
+  's/^harness__import_diff\(\) \{/harness__import_diff() { return 0;/m' \
+  test/smoke.bats "not the pack of this tree"
+
+# `loop.sh` sources `lib/*.sh` in lexical order, so a file that rode in on the
+# template is a module of the pack in every test of the suite.
+mutation "93 what rides in on a template is not counted" "$HARNESS" \
+  's/  if \[ "\$listed" != "\$found" \]; then/  if false; then/' \
+  test/smoke.bats "does not name cannot ride in"
+
+# The one file of the template that is generated and not copied, so the one file
+# no source of the repository can be compared against.
+mutation "93 the config of a template is not compared back" "$HARNESS" \
+  's/  if ! cmp -s "\$sandbox\/ralph.config.sh" "\$project\/.claude\/ralph.config.sh"; then/  if false; then/' \
+  test/smoke.bats "config in a cached template"
+
+# What a run rolls back to is `HEAD`, and a lib kept in the commit and absent
+# from the tree is a difference no listing of the tree can show.
+mutation "93 what a template commits is not looked at" "$HARNESS" \
+  's/  if \[ -n "\$dirty" \]; then/  if false; then/' \
+  test/smoke.bats "commits is what it holds"
+
+# A cache compared back against its source has to be a cache of that source
+# alone. This was true and unnoticed: no test asks for another feature.
+mutation "93 the template takes the feature of whichever test built it" "$HARNESS" \
+  's/  set_config FEATURE "\$RALPH_TEMPLATE_FEATURE"/  set_config FEATURE "\$RALPH_TEST_FEATURE"/' \
+  test/smoke.bats "not of the test that built it"
+
+# The quoting the comparison leans on: the config is written twice per test now,
+# once into the template and once into the sandbox it is compared against.
+mutation "93 a config value with a quote in it is eaten" "$HARNESS" \
+  's/^harness__quote\(\) \{/harness__quote() { printf "\x27%s\x27" "\$1"; return 0;/m' \
+  test/smoke.bats "quotes a value"
+
 # ── the canary ───────────────────────────────────────────────────────────────
 
 mutation "canary a hostile world still has to come out green" "$GATE" \

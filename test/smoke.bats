@@ -519,6 +519,17 @@ FAKE
   assert_output_contains "zzz-probe"
 }
 
+@test "set_config quotes a value the shell would otherwise eat" {
+  # Small, and the whole suite leans on it: this is what writes the template's
+  # config, and `harness__template_verify` writes it a second time on every test
+  # to compare the cached one against it. It quotes with a parameter expansion
+  # rather than a `sed` for that reason — two forks a line, sixty lines a test.
+  set_config MODEL "a 'b' c"
+
+  run tail -1 "$RALPH_CONFIG_FILE"
+  assert_output_contains "MODEL='a '\''b'\'' c'"
+}
+
 @test "the project template is keyed by names as well as contents" {
   # Hashing only the bytes made the key blind to a rename: moving a lib reused
   # the cached template and quietly tested the previous layout.
@@ -531,4 +542,134 @@ FAKE
   mv "$RALPH_PACK_ROOT/.claude/lib/selection.sh" "$RALPH_PACK_ROOT/.claude/lib/select.sh"
 
   [ "$before" != "$after" ] || fail "the fingerprint did not change: $before"
+}
+# ── the cached template, as a thing the suite believes ───────────────────────
+#
+# `harness__template` keeps a whole project — the pack included — under
+# `$TMPDIR/ralph-harness.<key>`, and every test is stamped out of it. The key is
+# the content of the pack, so whoever knows the tree they are about to hand the
+# gate knows the name to drop a copy under, and `$TMPDIR` is a directory anything
+# on this machine can write. The pass of 22/09/2026 measured the whole chain: a
+# lib of the tree gutted, a clean copy of the template dropped under the new key,
+# the suite green on `1 tests, 0 failures` with the pack of the tree broken.
+#
+# These four stage the forgery from the other side — the copy is what gets
+# doctored, which is the same forgery and the one a test can run without editing
+# the repository under the rest of the suite's feet.
+
+# A private copy of the template the suite is stamped from, under a `$TMPDIR` of
+# this test's own, sitting under the same key.
+template_copy() {
+  local tmp="$1" key
+  key="$(harness__pack_fingerprint)"
+  mkdir -p "$tmp"
+  cp -R "$(harness__template)" "$tmp/ralph-harness.$key"
+  printf '%s\n' "$tmp/ralph-harness.$key"
+}
+
+# What `harness_setup` asks for, asked where the forged copy is what it finds.
+# In a subshell of its own: taking a template moves `$PROJECT_DIR` and its
+# neighbours, and this test is still standing in its own project.
+template_take() {
+  (
+    TMPDIR="$1"
+    RALPH_TEST_DIR="$1/take"
+    mkdir -p "$RALPH_TEST_DIR"
+    harness__template
+  )
+}
+
+# Committed, because a forgery left loose is a forgery `git status` would name
+# on its own — and the clause that reads `git status` is one of the four.
+template_commit() {
+  git -C "$1/project" add -A
+  git -C "$1/project" commit -qm "forged"
+}
+
+@test "a cached template that is not the pack of this tree is refused" {
+  local tmp="$RALPH_TEST_DIR/probe" root
+  root="$(template_copy "$tmp")"
+
+  run template_take "$tmp"
+  assert_success
+
+  : >"$root/project/.claude/lib/state.sh"
+  template_commit "$root"
+
+  run template_take "$tmp"
+  assert_failure
+  assert_output_contains ".claude/lib/state.sh"
+
+  # The counter-witness, and it is not decoration: it says the refusal answered
+  # to what the file holds and not to the fact that something was committed.
+  cp "$RALPH_PACK_ROOT/.claude/lib/state.sh" "$root/project/.claude/lib/state.sh"
+  template_commit "$root"
+
+  run template_take "$tmp"
+  assert_success
+}
+
+@test "a module the census does not name cannot ride in on a cached template" {
+  # `loop.sh` sources `lib/*.sh` in lexical order, so a file that rides in on the
+  # template is not a stray file: it is a module of the pack, in every test.
+  local tmp="$RALPH_TEST_DIR/probe" root
+  root="$(template_copy "$tmp")"
+  printf 'RALPH_FORGED=1\n' >"$root/project/.claude/lib/zz-forged.sh"
+  template_commit "$root"
+
+  run template_take "$tmp"
+  assert_failure
+  assert_output_contains "zz-forged.sh"
+}
+
+@test "the config in a cached template is the one this harness writes" {
+  # The one file of the template that is generated and not copied, so it is the
+  # one file no source of the repository can be compared against. A forged value
+  # here is a switch thrown under every test of the suite at once.
+  local tmp="$RALPH_TEST_DIR/probe" root
+  root="$(template_copy "$tmp")"
+  printf 'MAX_PARALLEL=7\n' >>"$root/project/.claude/ralph.config.sh"
+  template_commit "$root"
+
+  run template_take "$tmp"
+  assert_failure
+  assert_output_contains "ralph.config.sh"
+}
+
+@test "what a cached template commits is what it holds" {
+  # A lib in the commit and not in the tree is a difference no listing of the
+  # tree can show. It matters because the pack rolls an iteration back to `HEAD`,
+  # and the rollback is what would put the file there.
+  local tmp="$RALPH_TEST_DIR/probe" root
+  root="$(template_copy "$tmp")"
+  printf 'RALPH_FORGED=1\n' >"$root/project/.claude/lib/zz-forged.sh"
+  template_commit "$root"
+  rm "$root/project/.claude/lib/zz-forged.sh"
+
+  run template_take "$tmp"
+  assert_failure
+  assert_output_contains "zz-forged.sh"
+}
+
+@test "the cached template is a function of the pack, not of the test that built it" {
+  # A cache that is compared back against its source has to be a cache of that
+  # source alone. The feature baked into the template's config used to be
+  # whichever feature the first test to want a template happened to ask for, and
+  # nothing noticed because no test asks for another one.
+  local tmp="$RALPH_TEST_DIR/probe"
+  mkdir -p "$tmp"
+
+  run bash -c '
+    . "$1/test/helpers/harness.bash"
+    TMPDIR="$2"
+    RALPH_TEST_DIR="$2/build"
+    RALPH_TEST_FEATURE=zz-other
+    mkdir -p "$RALPH_TEST_DIR"
+    harness__template >/dev/null
+  ' _ "$RALPH_PACK_ROOT" "$tmp"
+  assert_success
+
+  # Built by a process that asked for another feature; taken by one that did not.
+  run template_take "$tmp"
+  assert_success
 }
