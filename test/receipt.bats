@@ -354,9 +354,11 @@ FAKE
   # `timed out` are one admission — this branch judged nothing — while an exit code
   # is a verdict whose output travels to the findings on its own.
   #
-  # Staged by killing the subshell that collects the branch rather than the command
-  # under it: `gate__branch` writes the `.rc` after its command returns, so a
-  # command that dies of a signal still leaves one and only this does not.
+  # Staged by killing the subshell that runs the branch. Since [92] the verdict is
+  # that subshell's own exit status, so the arm this lands on is "the status is a
+  # signal and the gate's deadline did not fire" — and a `TEST_CMD` the kernel
+  # kills lands on it too, which is where it belongs: a suite that died judged
+  # nothing either.
   use_tickets 01-alpha
   set_config RETRY_N 0
   set_config TEST_CMD 'kill -9 $PPID'

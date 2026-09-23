@@ -410,7 +410,7 @@ mutation "05 the gate branches run in sequence" "$GATE" \
   test/gate.bats "concurrently"
 
 mutation "05 a branch with no verdict counts green" "$GATE" \
-  's/if \[ "\$brc" = 0 \]; then/if [ "\$brc" = 0 ] || [ -z "\$brc" ]; then/' \
+  's/if \[ "\$brc" = 0 \]; then/if [ "\$brc" = 0 ] || [ "\$brc" -gt 128 ]; then/' \
   test/gate.bats "no verdict"
 
 mutation "05 only the tests branch is aggregated" "$GATE" \
@@ -672,7 +672,7 @@ mutation "07 a git that refuses the branch takes the run down" "$FAILURES" \
 # half would report VACUOUS about a guarantee that is held twice.
 
 mutation "07 a gate branch that hangs is left to hang" "$GATE" \
-  's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
+  's/      gate__watchdog "\$GATE_TIMEOUT" \$pids &\n//' \
   test/failures.bats "hangs is red"
 
 mutation "07 the deadline is hard-coded" "$GATE" \
@@ -684,7 +684,7 @@ mutation "07 the deadline is hard-coded" "$GATE" \
 # to be reported as one and not as a bare missing verdict — so the edit now takes
 # the question away instead of the line, and the arm falls through to `no verdict`.
 mutation "07 a timed-out branch is not reported as one" "$GATE" \
-  's/^    elif \[ -f "\$dir\/timed-out" \]; then$/    elif false; then/m' \
+  's/^    elif \[ "\$\{GATE_TIMED_OUT:-0\}" = 1 \]; then$/    elif false; then/m' \
   test/failures.bats "hangs is red"
 
 # ── [21] the tracker a session must not write ────────────────────────────────
@@ -1010,7 +1010,7 @@ mutation "25 a stop request abandons the branch it interrupted" "$PROC" \
   test/loop-happy-path.bats "during the gate waits"
 
 mutation "25 the branches are collected with a bare wait again" "$GATE" \
-  's/    proc_collect "\$brc" \|\| true/    wait "\$brc" 2>\/dev\/null || true/' \
+  's/    proc_collect "\$brc" \|\| rc=\$\?/    rc=0; wait "\$brc" 2>\/dev\/null || rc=\$?/' \
   test/loop-happy-path.bats "during the gate waits"
 
 # The one guarantee here whose absence is a hang and not a red: without the
@@ -1022,7 +1022,7 @@ mutation "25 a branch the deadline killed is waited for for ever" "$PROC" \
   test/proc.bats "spinning"
 
 mutation "25 a stopped run has no deadline left on a hung branch" "$GATE" \
-  's/      gate__watchdog "\$GATE_TIMEOUT" "\$dir\/timed-out" \$pids &\n//' \
+  's/      gate__watchdog "\$GATE_TIMEOUT" \$pids &\n//' \
   test/loop-happy-path.bats "bounded by the deadline"
 
 # ── [28] the graceful stop, during a session's shutdown ──────────────────────
@@ -1653,7 +1653,7 @@ mutation "06 the lenses are spawned on an already-red gate" "$GATE" \
 # carries its own deadline — see the [25] entries for why that is the only shape
 # that works here.
 mutation "06 a lens that never returns is left to hang" "$GATE" \
-  's/^gate__await\(\) \{\n  local dir="\$1" pids="\$2" watchdog='"''"' brc\n/gate__await() {\n  local dir="\$1" pids="\$2" watchdog='"''"' brc\n  GATE_TIMEOUT=0\n/m' \
+  's/^gate__await\(\) \{\n  local pids="\$1" names="\$2" watchdog='"''"' brc name rest rc\n/gate__await() {\n  local pids="\$1" names="\$2" watchdog='"''"' brc name rest rc\n  GATE_TIMEOUT=0\n/m' \
   test/lenses.bats "deadline of its own"
 
 # ── the fake that drives all of the above
@@ -1869,10 +1869,13 @@ mutation "36 a deadline fires at a pid that changed hands" "$GATE" \
 
 # The other half of the same line, and the piège the ticket wrote down: a deadline
 # that gives up as soon as there is nothing left to kill loses the *cause*.
-# `gate__aggregate` reads this marker to say "red (timed out)" rather than "red (no
-# verdict)", and a branch that overran is where both are true at once.
+# `gate__aggregate` says "red (timed out)" rather than "red (no verdict)" on the
+# strength of it, and a branch that overran is where both are true at once.
+# Re-anchored by [92]: the answer is the deadline's own exit status now and not a
+# marker in the gate's directory, so the edit moves the answer inside the loop
+# instead of removing a write — a deadline that killed nobody then comes back 0.
 mutation "36 a deadline that fires at nobody loses the cause" "$GATE" \
-  's/  : >"\$marker"\n  for pid in \$aimed; do/  for pid in \$aimed; do/' \
+  's/    proc_kill_tree "\$pid"\n  done\n  return "\$GATE_WATCHDOG_FIRED"/    proc_kill_tree "\$pid"\n    return "\$GATE_WATCHDOG_FIRED"\n  done\n  return 0/' \
   test/gate.bats "changed hands"
 
 # And the disarming one. It has to name the test that proves the deadline still
@@ -2665,11 +2668,13 @@ mutation "43 a stream that says nothing about quota is read as a refusal" "$BUDG
   's/^  budget_refused "\$\{2:-\}"$/  return 0/m' \
   test/budget.bats "without being refused is still an attempt"
 
-# The measurement the pack takes itself, against the claim it reads. Without the
-# marker, anything able to hang a lens past `GATE_TIMEOUT` with one blocked line in
-# its stream buys the give-back a real refusal buys.
+# The measurement the pack takes itself, against the claim it reads. Without this
+# question, anything able to hang a lens past `GATE_TIMEOUT` with one blocked line
+# in its stream buys the give-back a real refusal buys. Asked of GATE_TIMED_OUT
+# since [92] and no longer of a file in the gate's directory, which is the read a
+# survivor of the judged session could have answered for it.
 mutation "43 a lens the watchdog killed speaks through its last event" "$GATE" \
-  's/  if \[ ! -f "\$dir\/timed-out" \]; then/  if true; then/' \
+  's/  if \[ "\$\{GATE_TIMED_OUT:-0\}" != 1 \]; then/  if true; then/' \
   test/budget.bats "deadline killed is not read as a refusal"
 
 mutation "43 a refused lens cancels the red of a lens that judged" "$GATE" \
@@ -3979,6 +3984,59 @@ mutation "91 a program on both lists is two lines of the manifest" "$GATE" \
 mutation "91 the successor's shell comes from this shell's hash table" "$SCHEDULER_LIB" \
   's#  shell="\$\(gate_path_where bash\)"\n  \[ "\$shell" != \x27-\x27 \] \|\| shell=\x27/bin/bash\x27#  shell="\$(command -v bash 2>/dev/null || printf \x27/bin/bash\x27)"#' \
   test/scheduler.bats "hash table"
+
+# ── [92] the verdict of a branch, and what a session leaves running ──────────
+
+# The channel itself. Reading the exit code back off a file in the gate's own
+# directory is what made a verdict writable by whatever the judged session left
+# running — a `mktemp` under `$TMPDIR`, created after the run sealed its witnesses
+# ([81]), in a directory an `ls` enumerates.
+mutation "92 a branch's verdict is read back off a file again" "$GATE" \
+  's/    for pair in \$\{GATE_AWAITED:-\}; do\n      case "\$pair" in\n        "\$name="\*\) brc="\$\{pair#\*=\}" ;;\n      esac\n    done/    if [ -f "\$dir\/\$name.rc" ]; then brc="\$(cat "\$dir\/\$name.rc")"; fi/' \
+  test/gate.bats "cannot write a branch's verdict"
+
+# And the other end of it: a branch that does not answer with its own status has
+# nothing to put in GATE_AWAITED, whoever reads it.
+mutation "92 a branch does not answer with its own exit status" "$GATE" \
+  's/  "\$\@" >"\$dir\/\$name.out" 2>&1 \|\| rc=\$\?\n  return "\$rc"/  "\$@" >"\$dir\/\$name.out" 2>\&1 || rc=\$?\n  return 0/' \
+  test/gate.bats "with nothing left behind"
+
+# The deadline's half. Losing this answer does not lose the red — a killed branch
+# comes back over 128 either way — it loses the sentence that says nothing ran,
+# which is the distinction [43] and [45] paid for.
+#
+# Named against the unit test and not against a run, and that is a measurement
+# rather than a preference: the answer is carried twice, by the `return` here and
+# by the trap below it, and on a real gate the TERM `gate__await` sends always
+# arrives during the walk — so the trap answers and `loop-happy-path` stays green
+# without this line. VACUOUS, measured on 23/09/2026. The path that depends on
+# this one is a deadline nobody puts away, which is what the test below stages.
+mutation "92 the deadline never reports that it expired" "$GATE" \
+  's/  return "\$GATE_WATCHDOG_FIRED"\n\}/  return 0\n}/' \
+  test/gate.bats "run that armed it is there"
+
+# And the trap that makes that answer reliable rather than usually right: the
+# branches die *because* the deadline killed them, so the TERM `gate__await` sends
+# next lands while it is still walking the tree.
+mutation "92 the deadline's answer is lost to the TERM that puts it away" "$GATE" \
+  's/  trap "exit \$GATE_WATCHDOG_FIRED" TERM\n//' \
+  test/gate.bats "still says so when it is put away"
+
+# What a session leaves running. Two entries and they are one guarantee held in
+# two places: without the group there is nothing to enumerate, and without the
+# call nothing enumerates it.
+mutation "92 the session is spawned in the group of whoever spawned it" "$SESSION" \
+  's/^  set -m$/  :/m' \
+  test/gate.bats "taken back, and named"
+
+mutation "92 what the session left running is nobody's business" "$SESSION" \
+  's/^  session__sweep "\$pid"\n//m' \
+  test/gate.bats "taken back, and named"
+
+# The refusal underneath it, which is what makes the sweep safe to fire at all.
+mutation "92 a caller is handed the group it is standing in" "$PROC" \
+  's/  \[ -n "\$mine" \] && \[ "\$mine" != 0 \] && \[ "\$leader" != "\$mine" \] \|\| return 0\n//' \
+  test/proc.bats "never the group it is handed back"
 
 # ── [50] a guarded path a project ignores, approved and never committed ──────
 #

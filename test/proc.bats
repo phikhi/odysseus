@@ -70,8 +70,9 @@ teardown() {
 
   wait_for_file "$SHIM_STATE/collected" 100 ||
     fail "proc_collect never came back on a child that had been killed"
-  # And it says what happened rather than swallowing it. The gate drops this status
-  # — its verdicts are the `.rc` files — but the loop reads it as the session's own.
+  # And it says what happened rather than swallowing it, which is what both of its
+  # callers now depend on: the loop reads this as the session's own exit code, and
+  # since [92] the gate reads it as a branch's verdict.
   assert_equal "$(cat "$SHIM_STATE/collected")" "143"
 }
 
@@ -183,4 +184,69 @@ teardown() {
   # 1 and not 0: the pid it was told to expect is no longer the parent it answers
   # to, and nothing but init can have taken that place.
   assert_equal "$(cat "$SHIM_STATE/take.dead")" "1"
+}
+
+# ── what a session leaves in a group of its own ──────────────────────────────
+
+@test "the processes a session's group still holds are the ones it left" {
+  # [92]. The walk above answers "what is under this process", and once the
+  # process is gone it answers nothing: its children are init's by then, and bash
+  # has reaped it before anybody could wait on it. A process group outlives its
+  # leader — the number is held for as long as the group has a member — so it is
+  # the only handle left on what a session that returned *normally* started.
+  #
+  # Staged the way `session_spawn` does it: job control for exactly one fork, so
+  # the child is a group leader, and the question asked once the leader has been
+  # collected.
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'nohup sleep 30 >/dev/null 2>&1 &' \
+    'printf "%s\n" "$!" >"$RALPH_SHIM_STATE/left.pid"' >"$SHIM_STATE/leaver.sh"
+
+  pack_run_bg '
+    set -m
+    bash "$RALPH_SHIM_STATE/leaver.sh" &
+    leader=$!
+    set +m
+    printf "%s\n" "$leader" >"$RALPH_SHIM_STATE/leader.pid"
+    proc_collect "$leader" || true
+    proc_group_members "$leader" >"$RALPH_SHIM_STATE/members"
+    : >"$RALPH_SHIM_STATE/asked"
+  '
+
+  wait_for_file "$SHIM_STATE/asked" 400 ||
+    fail "the group was never enumerated"
+  local left leader
+  left="$(cat "$SHIM_STATE/left.pid")"
+  leader="$(cat "$SHIM_STATE/leader.pid")"
+  grep -qx "$left" "$SHIM_STATE/members" ||
+    fail "the group did not name the process the leader left: $(cat "$SHIM_STATE/members")"
+  # And not the leader itself, which is gone: a caller signalling what comes back
+  # would be aiming at a pid the system is free to have reissued.
+  if grep -qx "$leader" "$SHIM_STATE/members"; then
+    fail "the group named its own dead leader"
+  fi
+  kill -KILL "$left" 2>/dev/null || true
+}
+
+@test "the group a shell is in is never the group it is handed back" {
+  # The refusal, and it is the half that decides whether this is safe to signal.
+  # A shell *without* job control puts a background child in its own group, so a
+  # caller asking this about a session spawned without `set -m` would be handed
+  # its own siblings — the run, the harness, whatever else the terminal started —
+  # and `session__sweep` would TERM them. What it turns into instead is "nothing
+  # was left behind", which is the direction a guard about killing has to fail
+  # in.
+  pack_run_bg '
+    proc_self
+    mine="$(ps -o pgid= -p "$PROC_SELF" | tr -d " ")"
+    printf "%s\n" "$mine" >"$RALPH_SHIM_STATE/mine"
+    proc_group_members "$mine" >"$RALPH_SHIM_STATE/own"
+    : >"$RALPH_SHIM_STATE/asked"
+  '
+
+  wait_for_file "$SHIM_STATE/asked" 200 || fail "the question was never asked"
+  # The group is a real one with real members — this shell is in it — and the
+  # answer is still nothing.
+  [ -s "$SHIM_STATE/mine" ] || fail "the probe could not read its own group"
+  assert_equal "$(cat "$SHIM_STATE/own")" ""
 }

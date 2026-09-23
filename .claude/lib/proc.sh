@@ -80,10 +80,17 @@
 # hangs the run rather than failing an assertion.
 #
 # The status is returned rather than swallowed, which is the one difference from
-# the gate-private version this replaces. The gate reads its verdicts off the `.rc`
-# files and does not care, but `session_spawn` returns the session's exit code to
-# the loop, and a primitive that answered 0 for every child would turn a crashed
-# session into a resolved ticket.
+# the gate-private version this replaces. `session_spawn` returns the session's
+# exit code to the loop, and a primitive that answered 0 for every child would
+# turn a crashed session into a resolved ticket.
+#
+# The gate did not care when this was written — it read its verdicts off a `.rc`
+# file per branch — and it is the only caller that cares now. Those files were a
+# `mktemp` under `$TMPDIR`, so every verdict of every gate was writable by
+# whatever the judged session had left running; since [92] a branch's verdict is
+# the status this function hands back, and the file is gone. Which makes the
+# sentence above the whole of the module's reason to exist: the value both
+# callers depend on is the one a bare `wait` drops on a graceful stop.
 #
 # One window stays open, and it is the same one a bare `wait` had: a child that
 # dies in the instant a trapped signal arrives is indistinguable from one the
@@ -105,22 +112,74 @@ proc_collect() {
 # Every descendant, deepest first, then the process itself. Killing the process
 # alone would leave whatever it started — a hung test suite holding a port or a
 # database, a dev server a session's Bash tool brought up — running for the rest
-# of the night, and `kill -- -PID` needs a process group this shell never made.
-# `ps` is POSIX; the pack still needs nothing installed.
+# of the night. `ps` is POSIX; the pack still needs nothing installed.
 #
-# The signal is an argument because the two callers ask for different things at
+# The signal is an argument because the callers ask for different things at
 # different moments, and the second one only exists because the first is a
 # request. The gate's deadline and a session deadline both start with TERM, which
 # is what lets `claude` shut down cleanly and a test suite remove its lock file;
 # what follows a TERM nobody honoured is the caller's business, not this walk's —
 # see monitor__reaper for the session's answer, and for why the gate does not need
 # the same one.
+#
+# All four of them are deadlines — `monitor__terminate`, `monitor__reaper`, the
+# gate's watchdog, the playthrough's — and that is the shape [92] had to answer.
+# A ppid walk only reaches what is still under the process it starts from, so it
+# is an instrument for killing something that is *still there*, and there is
+# exactly one moment it cannot serve: the ordinary one, a session that finished
+# by itself. By the time `proc_collect` comes back the session is reaped — bash
+# collects a background child in its own SIGCHLD handler, so it is already out of
+# the process table before anyone waits on it, probed on 3.2.57 — and whatever it
+# left is init's child, not its own. "`proc_kill_tree` on the pid afterwards" is
+# not an option there; it is a walk from a pid that no longer exists.
+#
+# So the other handle, and it is the one this comment used to say this shell
+# never makes: a process group. `session_spawn` makes one now, `proc_group_members`
+# below reads it, and what that does and does not buy is written there and in
+# `docs/frontiere-de-confiance.md`.
 proc_kill_tree() {
   local pid="$1" signal="${2:-TERM}" child
   for child in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$pid" '$2 == p { print $1 }'); do
     proc_kill_tree "$child" "$signal"
   done
   kill -"$signal" "$pid" 2>/dev/null || true
+  return 0
+}
+
+# What is still running in the process group whose leader was <pid>, one pid per
+# line, the leader itself excluded. The answer to "what did this session start
+# that is still going", asked once the session itself is gone.
+#
+# A group is the one handle on a descendance that outlives the process at the top
+# of it. The ppid chain does not: a child reparents to init the moment its parent
+# exits, and the walk above then finds nothing. A group number, by contrast, is
+# held for as long as the group has a member — so at the instant a session is
+# collected, either it left something and the number still names exactly that, or
+# it left nothing and there is nothing to find.
+#
+# Which is also the whole of why this enumerates rather than signalling the group
+# directly. `kill -- -PGID` at this moment would be a signal aimed at a number the
+# system is free to reissue the instant the last member goes, which is the fault
+# [36] paid for one layer up; listing the members and letting the caller signal
+# each one costs a `ps` and can only ever reach processes that exist.
+#
+# It refuses its own group outright, and that refusal is not defensive tidiness.
+# A shell without job control puts a background child in the shell's *own* group,
+# so a caller that asked this about a session spawned without `set -m` would be
+# handed its own siblings — the run, the harness, the terminal's other children —
+# and would TERM them. The failure it turns into is "the sweep found nothing",
+# which is the direction a guard about killing has to fail in.
+proc_group_members() {
+  local leader="$1" mine members
+  local PROC_SELF=''
+  [ -n "$leader" ] || return 0
+  proc_self
+  mine="$(ps -o pgid= -p "${PROC_SELF:-0}" 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
+  [ -n "$mine" ] && [ "$mine" != 0 ] && [ "$leader" != "$mine" ] || return 0
+  members="$(ps -A -o pid= -o pgid= 2>/dev/null |
+    awk -v g="$leader" '$2 == g && $1 != g { print $1 }' || true)"
+  [ -n "$members" ] || return 0
+  printf '%s\n' "$members"
   return 0
 }
 
