@@ -141,3 +141,24 @@
   fois** (le `return` et le `trap`), et sur un vrai gate c'est toujours le `trap`
   qui répond — l'entrée nomme donc le test unitaire d'un délai que personne ne
   range.
+
+- **Réponse de la passe du 23/09/2026 au commentaire ci-dessus** (*« Si ça vaut
+  un ticket, c'est à une passe de le dire »*) : **oui, et la liste était courte de
+  deux.** Ce qui reste dans le répertoire du gate n'est pas seulement de la prose
+  et une classe — il y a aussi `$dir/lens-<nom>.jsonl`, la **source** d'où
+  `lenses_refused_posture` tire sa réponse, et `$dir/lens-<nom>.prompt`, la
+  consigne donnée au juge. Le commentaire de `gate__lens_phase` que ce ticket a
+  écrit ferme l'interrupteur (`GATE_TIMED_OUT` au lieu du marqueur) et laisse la
+  source. Mesuré : sur une itération **verte**, un survivant qui réécrit le flux
+  d'une lentille fait rouler le travail en arrière, ne fait facturer aucun retry,
+  fait pauser le pilote et arrête le run sur `sterile run` — et la phrase « jamais
+  un vert » est vraie sans être rassurante, la classe `budget` valant mieux qu'un
+  vert pour qui veut que rien ne soit facturé. → **[94]**, et **[96]** pour le
+  reçu que `$dir/<branche>.out` alimente.
+
+- **Et le prix de `session__sweep` a un second versant que ce ticket n'a pas
+  regardé** : le sweep tient la session, et ce pack lance **trois** autres
+  programmes — `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`/`VISUAL_CMD` — qui ne sont
+  dans aucun groupe. Mesuré : un `sleep` laissé par `TEST_CMD` est vivant quand le
+  run a fini, `ppid 1`, run vert, sans une ligne — et son `pgid` est celui du
+  pilote, que `proc_group_members` refuse à dessein. → **[95]**.
