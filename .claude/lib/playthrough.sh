@@ -283,13 +283,33 @@ playthrough_witness() {
 # answers to the parent it answered to when the countdown was armed, because a
 # process that finished between the last tick and the signal leaves a number the
 # system is free to hand to somebody else.
+#
+# **What it leaves behind is taken back and named** ([95]), and of the three sites
+# where this pack runs a program it did not write this is the most exposed one:
+# `RUN_CMD` *is* a server by design, and it runs `cd "$(ralph_project_root)"` — in
+# the human's own working tree, not in a worktree a rollback throws away. Until
+# [95] the walk below was the only thing that ever looked at what it started, and
+# the walk only happens on the deadline: a `RUN_CMD` that came back by itself
+# having forked a watcher left that watcher running through the rest of the night,
+# with nobody to say so. So the command is forked into a process group of its own
+# and swept on the way out — see `proc_sweep` for what that buys and the three
+# things it does not.
+#
+# Swept on both paths, which is not what this ticket set out to write. The sweep
+# was made conditional first, on the argument that after the deadline's walk it
+# would name processes in the act of dying of it — and the mutation measured that
+# argument to be false: by the time `proc_collect` has the leader, everything the
+# walk signalled is already gone, the group is empty and the sweep says nothing.
+# So the condition bought silence in no case at all and cost coverage in two: a
+# member that ignored the TERM is a fact worth printing, and a member that left
+# the ppid tree but stayed in the group is one the walk cannot reach and this can.
 playthrough__bounded() {
-  local out="$1" limit="$2" cmd="$3"
+  local out="$1" limit="$2" cmd="$3" subject="$4"
   local pid parent watch='' rc=0
+  local PROC_GROUP_PID=''
 
-  : >"$out"
-  (cd "$(ralph_project_root)" && exec bash -c "$cmd") >"$out" 2>&1 &
-  pid=$!
+  proc_group_fork "$(ralph_project_root)" "$cmd" >"$out" 2>&1
+  pid="$PROC_GROUP_PID"
   parent="$(proc_parent_of "$pid")"
 
   case "$limit" in
@@ -309,6 +329,7 @@ playthrough__bounded() {
     kill -TERM "$watch" 2>/dev/null || true
     proc_collect "$watch" || true
   fi
+  proc_sweep "$pid" "$subject"
   return "$rc"
 }
 
@@ -952,8 +973,10 @@ playthrough_close() {
   fi
 
   playthrough__log "playing the feature through on its own assets: $RUN_CMD"
-  playthrough__bounded "$dir/run.out" "${GATE_TIMEOUT:-0}" "$RUN_CMD" || runrc=$?
-  playthrough__bounded "$dir/visual.out" "${GATE_TIMEOUT:-0}" "$VISUAL_CMD" || visrc=$?
+  playthrough__bounded "$dir/run.out" "${GATE_TIMEOUT:-0}" "$RUN_CMD" \
+    "the project's run command" || runrc=$?
+  playthrough__bounded "$dir/visual.out" "${GATE_TIMEOUT:-0}" "$VISUAL_CMD" \
+    "the project's visual check" || visrc=$?
 
   playthrough__prompt "$spec" "$tree" "$runrc" "$visrc" \
     "$dir/run.out" "$dir/visual.out" >"$dir/prompt" || {

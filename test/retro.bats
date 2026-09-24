@@ -688,16 +688,27 @@ FAKE
   # built on one measures the machine. What it does stage is that the guard is
   # taken and honoured, and that a lesson this loop could not write is said rather
   # than dropped.
+  #
+  # The holder is this test's own process and no longer one `TEST_CMD` forks, and
+  # that rewrite is [95] arriving: what a project command leaves running when it
+  # returns is now in a process group of its own, taken back with a TERM and named
+  # — so the old staging had the pack killing its own scenery, recovering a guard
+  # whose owner it had just removed, and publishing the index. A holder the gate
+  # cannot reach is what this test meant all along: it is staging a *live* owner,
+  # which is the only kind `state_guard_take` refuses.
   use_tickets 01-alpha
   retro_on
   retro_answer "RALPH-RETRO-LESSON: a lesson nobody will get to write"
+  sleep 30 &
+  local holder=$!
+  printf '%s\n' "$holder" >"$SHIM_STATE/holder.pid"
   set_config TEST_CMD \
-    'stub-cmd tests; for d in "$TMPDIR"/ralph-retro.*; do mkdir -p "$d/index.guard"; sleep 30 & echo $! >"$d/index.guard/pid"; echo $! >"$RALPH_SHIM_STATE/holder.pid"; done'
+    'stub-cmd tests; for d in "$TMPDIR"/ralph-retro.*; do mkdir -p "$d/index.guard"; cat "$RALPH_SHIM_STATE/holder.pid" >"$d/index.guard/pid"; done'
 
   run_loop_own_tmp
   assert_success
 
-  kill "$(cat "$SHIM_STATE/holder.pid" 2>/dev/null)" 2>/dev/null || true
+  kill "$holder" 2>/dev/null || true
 
   refute_file_exists "$(index_path)"
   assert_file_contains "$(receipt_path 01-alpha)" "lesson index was busy"

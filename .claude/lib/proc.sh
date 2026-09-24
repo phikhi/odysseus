@@ -134,8 +134,10 @@ proc_collect() {
 # not an option there; it is a walk from a pid that no longer exists.
 #
 # So the other handle, and it is the one this comment used to say this shell
-# never makes: a process group. `session_spawn` makes one now, `proc_group_members`
-# below reads it, and what that does and does not buy is written there and in
+# never makes: a process group. `session_spawn` makes one for the session and
+# `proc_group_fork` makes one for every command line a project handed this pack
+# ([95]); `proc_group_members` below reads it and `proc_sweep` acts on it, and what
+# that does and does not buy is written there and in
 # `docs/frontiere-de-confiance.md`.
 proc_kill_tree() {
   local pid="$1" signal="${2:-TERM}" child
@@ -180,6 +182,116 @@ proc_group_members() {
     awk -v g="$leader" '$2 == g && $1 != g { print $1 }' || true)"
   [ -n "$members" ] || return 0
   printf '%s\n' "$members"
+  return 0
+}
+
+# What is still running in a process group, asked to stop, and said out loud.
+#
+# [92] wrote this for a session, as `session__sweep`; [95] gave it three more
+# callers and that is what makes it public. This pack runs four programs it did
+# not write — `claude`, and the project's own `TEST_CMD`, `TYPECHECK_CMD` and
+# `RUN_CMD`/`VISUAL_CMD` — and every one of them can hand the shell back with work
+# of its own still going. Until [95] only the session was taken back: a `sleep`
+# left by the project's test command was measured still alive when the run had
+# finished, reparented to init, on a green run with the ticket marked `resolved`
+# and not one line naming it.
+#
+# Which mattered for more than tidiness, and the measurement is the ticket: what
+# one of those commands leaves runs *while the gate that launched it runs*, with
+# `$TMPDIR` in front of it. A process left by `TEST_CMD` sees `tests.out
+# scope.out typecheck.out lang.out` in the gate's own directory, and it was enough
+# on its own — with no hostile session anywhere — to play the whole of [92]'s
+# scenario back.
+#
+# The subject is a phrase rather than a name because it is printed: "this
+# session", "the project's test command". A human reading the morning log acts on
+# which of the four it was, and never on a pid.
+#
+# The price, and it is a real one rather than a formality:
+#
+#   - TERM and nothing after it. A survivor that ignores the signal stays, and
+#     there is no reaper here: the caller has to get on with the run, and a grace
+#     of its own would put a KILL in flight against the processes of something
+#     that is already over. The request is made and the line is printed whether or
+#     not it is honoured.
+#   - A descendant that leaves the group is out of reach, exactly as it is out of
+#     reach of the ppid walk. Anything that calls `setsid` — a daemon that
+#     daemonises properly, which is precisely the dev server `RUN_CMD` starts — is
+#     gone from both. The pack does not promise that nothing survives; it promises
+#     to take back what stayed in the group and to name what it found.
+#   - It is the *group* that is sound here, not the pid: see `proc_group_members`,
+#     which enumerates the members instead of signalling the number, and refuses
+#     its own group rather than guess. A caller that forked without `set -m` is
+#     handed nothing at all, which is the direction this has to fail in.
+#
+# Said on stderr, where `monitor_watch`'s own refusal goes: a lib may not reach up
+# into the loop for its reporting channel, and the one line this prints belongs in
+# the morning log beside the iteration it came from. From a gate branch that is
+# also the only channel out: `proc_group_fork` redirects the command and nothing
+# else, so this leaves on the branch's own stderr instead of landing in
+# `$dir/<name>.out` — a file `gate_run` deletes and nobody reads on a green branch.
+proc_sweep() {
+  local leader="$1" subject="$2" left pid n=0
+  left="$(proc_group_members "$leader" | tr '\n' ' ')"
+  left="${left% }"
+  [ -n "$left" ] || return 0
+  for pid in $left; do
+    kill -TERM "$pid" 2>/dev/null || true
+    n=$((n + 1))
+  done
+  printf 'ralph: %s left %s process(es) of its own running (%s): TERM sent to each, and nothing here follows it up\n' \
+    "$subject" "$n" "$left" >&2
+  return 0
+}
+
+# Start a command line this pack did not write, in a process group of its own, in
+# the background. Sets PROC_GROUP_PID — the leader of that group — for the caller
+# to wait on and to sweep.
+#
+# The one place in this pack where a shell is handed a command string a *project*
+# supplied, the way `session.sh` is the one place it runs `claude`, and for the
+# same reason. Before [95] three sites forked `bash -c "$SOMETHING"` on their own
+# — the gate's test branch, its type-check branch, and `playthrough__bounded` for
+# `RUN_CMD` and `VISUAL_CMD` — and not one of them gave what it launched a name,
+# so nothing could be taken back when the command returned. A fourth site written
+# tomorrow would have inherited that silence; the census in `test/gate.bats` is
+# what turns "somebody should have noticed" into a red test on the day it lands.
+#
+# Job control for exactly one fork, and turned straight off again — the shape
+# `session_spawn` takes, for the same purpose. Without it the child sits in the
+# shell's own process group, `proc_group_members` refuses that group by design,
+# and a sweep finds nothing at all: the group has to be made before there is
+# anything to sweep, which the tests show rather than assume.
+#
+# `cd` before `exec` rather than a flag on the command: the gate's fan runs the
+# project's commands in the worktree an iteration was given ([13]) and the
+# playthrough runs them in the main working tree ([11]), because `RUN_CMD` plays
+# the feature through on the project's own assets. The directory is the caller's
+# to name, and empty means "here".
+#
+# Where the transcript goes is the caller's too, and that is not a detail of
+# style: the background child inherits whatever this call was given, so the gate's
+# branch hands it the redirection it is already running under and the playthrough
+# redirects this call itself. A file argument here would have made this function
+# the one that decides where a command's output lands, which is a decision two
+# callers make differently — and in the gate's case it is the difference between a
+# sweep that reaches the morning log and one that lands in a file nobody reads.
+#
+# stdin is `/dev/null`, and that one is the group's price rather than tidiness: a
+# process in a background process group that reads the terminal is stopped with
+# SIGTTIN instead of being served, and a stopped `TEST_CMD` would hang its branch
+# until the gate's deadline — half an hour at the shipped value. EOF is what the
+# same command gets from every CI that ever ran it.
+proc_group_fork() {
+  local cwd="$1" cmd="$2"
+  PROC_GROUP_PID=''
+  set -m
+  (
+    [ -z "$cwd" ] || cd "$cwd"
+    exec bash -c "$cmd"
+  ) </dev/null &
+  PROC_GROUP_PID=$!
+  set +m
   return 0
 }
 

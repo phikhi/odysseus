@@ -64,12 +64,20 @@ session_spawn() {
   # line anywhere ([92]). With it the session is the leader of a group of its
   # own, and that number is the only handle on its descendance that survives the
   # session itself: see `proc_group_members` for why a ppid walk cannot be, and
-  # `session__sweep` below for what is done with it.
+  # `proc_sweep` for what is done with it.
   #
   # Turned straight off again, because the shape above is the whole of what it is
-  # for. It is not needed to *collect* the session and it is not wanted for the
-  # gate's branches, which this same shell forks a few moments later and which
-  # `gate__watchdog` aims at by pid.
+  # for: it is not needed to *collect* the session.
+  #
+  # This used to end with "and it is not wanted for the gate's branches, which
+  # this same shell forks a few moments later and which `gate__watchdog` aims at
+  # by pid", and the 23/09 pass measured what that sentence cost. Aiming by pid
+  # was never what a group would have taken away: the watchdog names the branch
+  # subshell and walks down it by ppid, and neither handle moves when a child is
+  # put in a group of its own. What those branches were missing is the *other*
+  # handle — the one that outlives the process at the top of it — and since [95]
+  # they have it, armed one level further down by `proc_group_fork`, around the
+  # command line the project wrote rather than around the subshell this pack forks.
   set -m
   DISABLE_AUTO_COMPACT=1 claude -p \
     --model "$MODEL" \
@@ -103,60 +111,15 @@ session_spawn() {
     kill -TERM "$reaper" 2>/dev/null || true
     proc_collect "$reaper" || true
   fi
-  session__sweep "$pid"
+  proc_sweep "$pid" 'this session'
   return "$rc"
 }
 
-# What the session left running, taken back and said out loud ([92]).
-#
-# Until this existed, "the session has finished" and "the processes of the
-# session have finished" were two different things and the pack confused them
-# everywhere but on a deadline. `proc_kill_tree` has four callers and all four
-# are deadlines; a session that returns normally was walked by nobody, so a dev
-# server, a watcher or a test suite a Bash tool started went on running — through
-# the gate that judges the iteration, through the iterations after it, and past
-# the end of the run, reparented to init, with not one line naming it. Measured:
-# a session that leaves a `sleep` is still there when the run exits.
-#
-# Which mattered for more than tidiness. A process left by the session being
-# judged is a process running *while its own gate runs*, under no supervision at
-# all, with `$TMPDIR` in front of it — and that is the other half of [92], the
-# half `gate__branch` answers by taking the verdicts out of the files it could
-# write.
-#
-# The price, and it is a real one rather than a formality:
-#
-#   - TERM and nothing after it. A survivor that ignores the signal stays, and
-#     there is no reaper here: the iteration has to get on with the gate, and a
-#     grace of its own would put a KILL in flight against processes of a session
-#     that is already over. The request is made and the line is printed whether
-#     or not it is honoured.
-#   - A descendant that leaves the group is out of reach, exactly as it is out of
-#     reach of the ppid walk. Anything that calls `setsid` — a daemon that
-#     daemonises properly, which is precisely the dev server the walk exists for
-#     — is gone from both. The pack does not promise that nothing survives a
-#     session; it promises to take back what stayed in the group and to name what
-#     it found.
-#   - It is the *group* that is sound here, not the pid: see
-#     `proc_group_members`, which enumerates the members instead of signalling
-#     the number, and refuses its own group rather than guess.
-#
-# Said on stderr, where `monitor_watch`'s own refusal goes: a lib may not reach up
-# into the loop for its reporting channel, and the one line this prints belongs in
-# the morning log beside the iteration it came from.
-session__sweep() {
-  local leader="$1" left pid n=0
-  left="$(proc_group_members "$leader" | tr '\n' ' ')"
-  left="${left% }"
-  [ -n "$left" ] || return 0
-  for pid in $left; do
-    kill -TERM "$pid" 2>/dev/null || true
-    n=$((n + 1))
-  done
-  printf 'ralph: this session left %s process(es) of its own running (%s): TERM sent to each, and nothing here follows it up\n' \
-    "$n" "$left" >&2
-  return 0
-}
+# What a session leaves running is taken back by `proc_sweep`, in lib/proc.sh:
+# [95] gave that sweep three more callers — the two commands of the gate's
+# objective fan and the playthrough's — and this pack's own rule is that a second
+# caller makes a `__` name public. What it buys, and the three prices it does not
+# pay, are written there and in `docs/frontiere-de-confiance.md`.
 
 # The other posture, and there are exactly two: a session with a human in it.
 #
