@@ -3432,11 +3432,23 @@ SCOPE
 #
 # Three answers travel on that one number and they have to stay three ([43],
 # [45]); `gate__aggregate` is where they are told apart.
+#
+# Two of the four branches run a command line the *project* wrote, and those can
+# come back with work of their own still going ([95]). What one of them started is
+# taken back **here** rather than inside it, and the reason is this function's two
+# halves: everything the branch prints goes into `$dir/$name.out` — a file
+# `gate_run` deletes and nobody reads on a green branch, which is exactly the
+# branch a leftover hides behind — while this shell's own stderr is still the
+# console the morning log is made of. So the callee names what it started through
+# GATE_BRANCH_LEADER and GATE_BRANCH_SUBJECT, the way `proc_self` answers through
+# PROC_SELF, and the sentence leaves from out here, after the redirection.
 gate__branch() {
   local dir="$1" name="$2"
   shift 2
-  local rc=0
+  local rc=0 GATE_BRANCH_LEADER='' GATE_BRANCH_SUBJECT=''
   "$@" >"$dir/$name.out" 2>&1 || rc=$?
+  [ -z "$GATE_BRANCH_LEADER" ] ||
+    proc_sweep "$GATE_BRANCH_LEADER" "$GATE_BRANCH_SUBJECT"
   return "$rc"
 }
 
@@ -3444,6 +3456,42 @@ gate__start() {
   local dir="$1" name="$2"
   shift 2
   (gate__branch "$dir" "$name" "$@") &
+}
+
+# The callee of the two branches whose command line the project wrote rather than
+# this pack ([95]), and a branch like the other two in every other way: it is
+# forked by `gate__start`, its output goes where a branch's output goes, and its
+# verdict is its exit status and nothing else ([92]).
+#
+# What differs is that `bash -c "$TEST_CMD"` hands the shell back while work of
+# its own may still be going. Measured on the 23/09 pass: a `sleep` left by a test
+# command was alive when the run had finished, reparented to init, on a green run
+# that marked its ticket `resolved` without a line anywhere. So the command is
+# forked into a process group of its own — the one handle on a descendance that
+# outlives the process at the top of it — and named to `gate__branch` above, which
+# is where what stayed in that group is asked to stop and said out loud.
+#
+# No signal is trapped here, and that is a measurement rather than an omission.
+# The group could only have taken a signal away from the command if one had been
+# reaching it, and the two candidates both answer no. A TERM comes from
+# `gate__watchdog`, which walks children before parents by pid and by ppid —
+# neither handle moves when a child is put in a group of its own, and the walk
+# reaches the command exactly as it did before. An INT is the terminal's, and it
+# never arrived: bash ignores SIGINT in an asynchronous subshell of a
+# non-interactive shell and the disposition is *inherited* by what that subshell
+# starts, so a Ctrl-C has never reached a `TEST_CMD` through this branch — probed
+# on 3.2.57, both with and without a trap, the trap being untrappable there in the
+# first place. So there is nothing to take back on a signal path, and nothing to
+# take back after one either: measured from the playthrough's own deadline, the
+# walk has emptied the group by the time anything could look at it.
+gate__command_branch() {
+  local subject="$1" cmd="$2" rc=0
+  local PROC_GROUP_PID=''
+  proc_group_fork '' "$cmd"
+  GATE_BRANCH_LEADER="$PROC_GROUP_PID"
+  GATE_BRANCH_SUBJECT="$subject"
+  proc_collect "$PROC_GROUP_PID" || rc=$?
+  return "$rc"
 }
 
 # The deadline. `wait` cannot take a timeout in bash 3.2, so the deadline is a
@@ -4038,14 +4086,16 @@ gate_run() {
 ${RALPH_GATE_FRONTIER:-}
 IGNORE
   else
-    gate__start "$dir" tests bash -c "$TEST_CMD"
+    gate__start "$dir" tests \
+      gate__command_branch "the project's test command" "$TEST_CMD"
     names="$names tests"
     pids="$pids $!"
 
     # "none" is a project declaring it has no type check. Not triggered, so not
     # part of the verdict — and never counted as a pass.
     if [ -n "${TYPECHECK_CMD:-}" ] && [ "$TYPECHECK_CMD" != none ]; then
-      gate__start "$dir" typecheck bash -c "$TYPECHECK_CMD"
+      gate__start "$dir" typecheck \
+        gate__command_branch "the project's type check" "$TYPECHECK_CMD"
       names="$names typecheck"
       pids="$pids $!"
     fi

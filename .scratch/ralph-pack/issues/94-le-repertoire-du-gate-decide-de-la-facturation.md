@@ -33,3 +33,9 @@
 - **La borne que ce ticket ne déplace pas** : `MAX_PARALLEL=1` est la valeur livrée et tout ce qui est mesuré ici l'est à cette valeur. Ce n'est pas la ligne du haut du tableau (une session sœur) : le porteur mesuré est un process de l'itération **elle-même**, et le plus ordinaire des trois est la commande de test du projet ([95]).
 
 - **Ce qui borne déjà la forge et qui n'est pas une réparation** : `STERILE_K`. Le commentaire de `failures_handle` l'écrit — *« What bounds a session that forges this class … is `STERILE_K` in the loop »*. La borne fonctionne, et ce qu'elle achète est **l'arrêt du run**. Elle a été écrite en pensant au flux de la session de livraison ; le flux d'une **lentille** est la chose que le pack croit non-forgeable puisqu'elle est spawnée sans outil d'écriture.
+
+- **Contrainte écrite par [95], livré le 23/09/2026.** La forme du fork d'une branche de commande a changé, et c'est le contexte que ce ticket doit traverser :
+  - `gate__start_command "$dir" <nom> <sujet> <cmd>` forke `(gate__command_branch …) &`. Le verdict reste **le statut de sortie de ce sous-shell** ([92]) : rien n'est écrit dans `$dir/<nom>.rc`, et ce canal-là n'a pas bougé.
+  - La commande du projet est un **petit-fils** : `proc_group_fork` la lance en arrière-plan, dans un **groupe de process à elle** (`set -m` le temps d'un fork), avec `</dev/null`, et c'est **elle** qui ouvre `$dir/<nom>.out` — plus la branche. Une branche a donc un process de plus entre elle et la commande : tout ce qui compte des process, marche un arbre ou raisonne sur « qui écrit ce fichier » est à relire avec ça.
+  - La propriété que [94] voulait utiliser tient toujours, un étage plus bas : une variable **non exportée** est héritée par le sous-shell de branche et **jamais** par le `exec bash -c` de la commande.
+  - Et la phrase du balayage sort sur le **stderr de la branche**, pas dans `$dir/<nom>.out` : si [94] déplace ou referme ce répertoire, ce canal-là n'en dépend pas.

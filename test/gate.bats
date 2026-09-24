@@ -3501,7 +3501,7 @@ FAKE
   # The other half. `session_spawn` puts the session in a process group of its
   # own so that what it starts has a name at all — see `proc_group_members` for
   # why the ppid walk cannot supply one once the session is gone — and
-  # `session__sweep` asks whatever is still in that group to stop.
+  # `proc_sweep` asks whatever is still in that group to stop.
   #
   # Nothing hostile is needed to stage it: a session that leaves a `sleep` was
   # measured still running after the run had exited, reparented to init.
@@ -3548,6 +3548,140 @@ FAKE
   if printf '%s\n' "$out" | grep -q "process(es) of its own running"; then
     fail "the run accused a session that started nothing: $out"
   fi
+}
+
+# ── [95] what this pack launches itself, and what it leaves ──────────────────
+#
+# The other side of the same question, and the one [92] did not ask. A session is
+# not the only thing this pack starts: it runs four programs it did not write, and
+# three of the four are the project's own command lines — `TEST_CMD` and
+# `TYPECHECK_CMD` in the fan above, `RUN_CMD` and `VISUAL_CMD` in the playthrough.
+# None of them was in a group, and none was looked at when it returned normally.
+#
+# Measured on the 23/09 pass, with nothing hostile in it: a `sleep` left by the
+# test command — a `&`, which is what every script that brings a server up before
+# its suite does — was alive when the run had finished, reparented to init, on a
+# green run with the ticket `resolved` and no line anywhere. It saw `tests.out
+# scope.out typecheck.out lang.out` in the gate's own directory while the fan was
+# still in flight, and it was enough on its own to play back the whole of the
+# scenario the test above stages with a hostile session.
+
+@test "a process the project's test command left running is taken back, and named" {
+  use_tickets 01-alpha
+  # The staging, and it is the measurement: one `&`, one `nohup`, and a command
+  # that exits 0. Output to /dev/null on purpose — a `nohup.out` in the worktree
+  # would be a change the scope guard judges, and this test is not about that.
+  set_config TEST_CMD 'nohup sleep 120 >/dev/null 2>&1 & printf "%s\n" "$!" >"$RALPH_SHIM_STATE/survivor.pid"; exit 0'
+
+  run_loop
+  local out="$output"
+  # Green, and that is half the point: the leftover lived behind the one outcome
+  # nobody goes back to read.
+  assert_ticket_status 01-alpha resolved
+
+  local survivor waited=0
+  survivor="$(cat "$SHIM_STATE/survivor.pid")"
+  while kill -0 "$survivor" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 50 ]; then
+      kill -KILL "$survivor" 2>/dev/null || true
+      fail "the process the project's test command started outlived the run"
+    fi
+  done
+
+  # And said, naming which of the four commands it was: a human reading the
+  # morning log acts on that and never on a pid ([24]).
+  printf '%s\n' "$out" | grep -q "the project's test command left 1 process(es) of its own running" ||
+    fail "nothing in the run named what the test command left behind: $out"
+}
+
+@test "the paired witness: a test command that leaves nothing is not accused of it" {
+  # Without this, a sweep that named something every iteration would pass the test
+  # above and be worth nothing.
+  use_tickets 01-alpha
+  set_config TEST_CMD 'exit 0'
+
+  run_loop
+  local out="$output"
+  assert_ticket_status 01-alpha resolved
+  if printf '%s\n' "$out" | grep -q "the project's test command left"; then
+    fail "the run accused a test command that started nothing: $out"
+  fi
+}
+
+@test "the deadline still reaches a command the pack put in a group of its own" {
+  # The race [92] paid for, taken again against the shape [95] gives a branch. A
+  # group is a second handle on a descendance, not a replacement for the first:
+  # `gate__watchdog` names the branch by pid and walks down it by ppid, and a
+  # `setpgid` moves neither. That is the sentence this test refuses to take on
+  # trust — the whole ticket rests on the guard still reaching what the branch
+  # started, one process deeper than before.
+  #
+  # Staged the way the race above is staged, and for the same reason: a `ps` slow
+  # enough to make the window certain rather than likely, and the same target
+  # named four times so the walk is still going when `gate__await`'s TERM lands. A
+  # test of a race that only usually loses proves nothing.
+  mkdir -p "$SHIM_STATE/slowps"
+  printf '%s\n' '#!/usr/bin/env bash' 'sleep 0.5' 'exec /bin/ps "$@"' \
+    >"$SHIM_STATE/slowps/ps"
+  chmod +x "$SHIM_STATE/slowps/ps"
+
+  # A command that starts something of its own and then waits, which is the shape
+  # of every project command that brings a server up before it runs.
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'sleep 120 &' \
+    'printf "%s\n" "$!" >"$RALPH_SHIM_STATE/under.pid"' \
+    'sleep 120' >"$SHIM_STATE/deep.sh"
+
+  pack_run_bg '
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-probe.XXXXXX")"
+    printf "%s
+" "$GATE_WATCHDOG_FIRED" >"$RALPH_SHIM_STATE/fired.code"
+    gate__start "$dir" tests gate__command_branch \
+      "the project of this test" "bash $RALPH_SHIM_STATE/deep.sh"
+    branch=$!
+    PATH="$RALPH_SHIM_STATE/slowps:$PATH"
+    gate__watchdog 1 "$branch" "$branch" "$branch" "$branch" &
+    watchdog=$!
+    rc=0
+    wait "$branch" || rc=$?
+    printf "%s
+" "$rc" >"$RALPH_SHIM_STATE/branch.rc"
+    kill -TERM "$watchdog" 2>/dev/null || true
+    rc=0
+    wait "$watchdog" || rc=$?
+    printf "%s
+" "$rc" >"$RALPH_SHIM_STATE/watchdog.rc"
+    rm -rf "$dir"
+  '
+
+  wait_for_file "$SHIM_STATE/under.pid" 600 ||
+    fail "the branch never started the command it was given"
+  wait_for_file "$SHIM_STATE/branch.rc" 600 ||
+    fail "the deadline never took down the branch it was aimed at"
+  # Over 128 and not a verdict of its own: the branch died of the signal, which is
+  # the bucket `gate__aggregate` reads and `GATE_TIMED_OUT` then tells apart.
+  [ "$(cat "$SHIM_STATE/branch.rc")" -gt 128 ] ||
+    fail "the branch answered $(cat "$SHIM_STATE/branch.rc") instead of dying of the deadline's signal"
+
+  # And what the command had started under it is gone too — the assertion that
+  # fails the day the group is read as a replacement for the walk.
+  local under waited=0
+  under="$(cat "$SHIM_STATE/under.pid")"
+  while kill -0 "$under" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 100 ]; then
+      kill -KILL "$under" 2>/dev/null || true
+      fail "the deadline no longer reaches what the project's command started"
+    fi
+  done
+
+  # And the cause survives the TERM that puts the deadline away ([92]).
+  wait_for_file "$SHIM_STATE/watchdog.rc" 600 ||
+    fail "the deadline never came back after being put away"
+  assert_equal "$(cat "$SHIM_STATE/watchdog.rc")" "$(cat "$SHIM_STATE/fired.code")"
 }
 
 # ── what the pack leaves outside the repository ──────────────────────────────
@@ -4336,13 +4470,15 @@ $(cat "$report")"
 }
 
 @test "the shell that carries every verdict is one of the names the run pins" {
-  # The finding of the 22/09 pass, as an assertion. Four sites launch `bash` by
+  # The finding of the 22/09 pass, as an assertion. Four sites launched `bash` by
   # its bare name — `bash -c "$TEST_CMD"` and `bash -c "$TYPECHECK_CMD"` in the
   # objective fan, `bash -c "$cmd"` in `playthrough__bounded` for RUN_CMD and
   # VISUAL_CMD, and the shell `scheduler_command` freezes into a successor's line
   # — and `sh` is a fifth, in `proc_self`. None of them was on a list of
   # thirty-two names, and a planted one owns the exit code this pack believes
-  # above everything else it measures.
+  # above everything else it measures. Since [95] the first three are one site,
+  # `proc_group_fork`, which changes nothing here: the name this pins is the
+  # shell, and the shell is still `bash`.
   pack_run 'gate_path_programs'
   assert_success
   assert_output_contains "bash"
@@ -4445,4 +4581,112 @@ $output"
   pack_run 'dir="$(mktemp -d)"; gate_path_witness "$dir"; cut -f1 <"$dir/path"'
   assert_success
   assert_output_contains "ralph-fake-runner"
+}
+
+# ── [95] every shell this pack starts on a command line, and what owns it ────
+#
+# [92] gave a session a process group and a sweep; this pack starts three other
+# programs it did not write — the project's `TEST_CMD`, `TYPECHECK_CMD` and
+# `RUN_CMD`/`VISUAL_CMD` — and until [95] not one of them was in a group, and not
+# one was looked at when it came back on its own.
+#
+# Three was the count on the day the pass measured it, which is exactly the reason
+# this is derived rather than written down: the fault [52] named on
+# `gate_path_programs` is not that a list was wrong, it is that a *fourth* site
+# written tomorrow inherits the silence with nothing to notice. So the criterion is
+# stated and then asked of the source:
+#
+#   zone   `harness_pack_sources` — the pack's own shell, the same walk the
+#          layering rules, the globals census and [91]'s scan use.
+#   code   `path_scan_lexer`, the lexer [91] wrote: what a shell would run, and
+#          nothing it would print. Prose is where nearly every word of this pack
+#          lives, and `gate.sh` alone mentions `bash -c` five times in comments.
+#   shape  a shell started on a command line: `sh` or `bash`, by bare name or as
+#          `/bin/sh`, with `-c` as its first word. That is the form all four sites
+#          were written in, and the form a fifth would be written in.
+#   home   the function the call sits in, taken from the last `name()` the lexer
+#          passed — the shape every function in this pack is declared in, and the
+#          same "enclosing function, derived" [85] used for its own census.
+#
+# What the census must come back with is three homes and no others, and each of
+# the three is a different answer to the same question:
+#
+#   proc_group_fork      the project's four command lines, in a group of their own
+#                        and swept when they return — the whole of [95].
+#   proc_self            a one-word literal this pack wrote itself (`echo $PPID`),
+#                        which starts nothing and leaves nothing.
+#   scheduler__submit    the successor's own command line, handed to `systemd-run`
+#                        on purpose: that one is *meant* to outlive this run, and a
+#                        group would be a promise to take it back.
+#
+# A fourth home is the finding, and the failure message says which.
+
+# Every line of the pack's own code that matches <pattern>, as `file:function`,
+# sorted and without duplicates. Comments, strings and heredoc bodies are gone
+# before anything is matched: `path_scan_lexer` is [91]'s lexer, and what it hands
+# over is what a shell would run.
+#
+# The function a line sits in is the last `name()` the lexer passed, which is the
+# one shape every function in this pack is declared in — the "enclosing function,
+# derived" of [85], where a census of call sites had the same problem.
+pack_code_homes() {
+  local root="$1" pat="$2" f out="$RALPH_TEST_DIR/homes"
+  path_scan_lexer
+  : >"$out"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -f "$RALPH_TEST_DIR/code.awk" "$f" |
+      awk -v file="$(basename "$f")" -v pat="$pat" '
+        /^[a-z_][a-z0-9_]*\(\)/ { fn = $0; sub(/\(\).*/, "", fn) }
+        $0 ~ pat { printf "%s:%s\n", file, (fn == "" ? "(top level)" : fn) }' >>"$out"
+  done <<SOURCES
+$(harness_pack_sources "$root")
+SOURCES
+  LC_ALL=C sort -u "$out"
+  return 0
+}
+
+@test "every shell this pack starts on a command line has a home that owns it" {
+  local found expected
+  found="$(pack_code_homes "$RALPH_PACK_ROOT" \
+    '(^|[ \t;&|(])(/bin/)?(bash|sh)[ \t]+-c([ \t]|$)')"
+  expected="$(printf '%s\n' \
+    'proc.sh:proc_group_fork' \
+    'proc.sh:proc_self' \
+    'scheduler.sh:scheduler__submit' | LC_ALL=C sort)"
+
+  # The floor first: a scan that matched nothing would pass the comparison below
+  # by emptying both sides of it, which is how [89] lost a census of a hundred and
+  # forty-nine names down to twenty-one and reported success.
+  [ "$(printf '%s\n' "$found" | grep -c .)" -ge 3 ] ||
+    fail "the scan found $(printf '%s\n' "$found" | grep -c .) call sites, so it is reading the wrong thing:
+$found"
+
+  if [ "$found" != "$expected" ]; then
+    fail "a shell is started on a command line somewhere this pack does not own it
+(expected on the left, found on the right — a new line is a site that gives what it starts no group and no sweep):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
+}
+
+@test "the pack takes job control for exactly the forks it has to name" {
+  # The other half of the same census, and it is the half that decides whether a
+  # sweep can find anything at all: `proc_group_members` refuses the caller's own
+  # group, so a fork made without `set -m` is a fork whose leftovers nothing will
+  # ever enumerate. Two homes, and they are the two kinds of program this pack
+  # starts and does not write.
+  local found expected
+  found="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[ \t;&|(])set -m([ \t]|$)')"
+  expected="$(printf '%s\n' \
+    'proc.sh:proc_group_fork' \
+    'session.sh:session_spawn' | LC_ALL=C sort)"
+
+  [ "$(printf '%s\n' "$found" | grep -c .)" -ge 2 ] ||
+    fail "the scan found $(printf '%s\n' "$found" | grep -c .) sites, so it is reading the wrong thing:
+$found"
+  if [ "$found" != "$expected" ]; then
+    fail "job control is armed somewhere other than the two forks that are named
+(expected on the left, found on the right):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
 }

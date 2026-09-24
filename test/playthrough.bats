@@ -821,3 +821,109 @@ FAKE
   esac
   assert_file_contains "$(playthrough_file)" "**Verdict:** pass"
 }
+
+# ── [95] what the project's own commands leave running ───────────────────────
+#
+# The most exposed of the three sites where this pack starts a program it did not
+# write, and it is exposed by design rather than by accident: `RUN_CMD` *is* a
+# server — "a server that boots correctly and waits is the normal case" — and it
+# runs in `ralph_project_root`, the human's own working tree, not in a worktree a
+# rollback throws away. Until [95] the only thing that ever looked at what it
+# started was the deadline's walk, so a `RUN_CMD` that came back on its own having
+# forked something left it running for the rest of the night with no line anywhere.
+
+@test "a process the project's run command left running is taken back, and named" {
+  use_tickets 01-alpha
+  # Nothing hostile: a `&` and a `nohup`, which is what a script that brings a
+  # server up before it checks it does. Output to /dev/null because this command
+  # runs in the project's own tree, where a `nohup.out` would be a real file.
+  set_config RUN_CMD 'nohup sleep 120 >/dev/null 2>&1 & printf "%s\n" "$!" >"$RALPH_SHIM_STATE/survivor.pid"; exit 0'
+
+  run_loop
+  local out="$output"
+  # The feature still closes, which is the half that makes this about the
+  # leftover rather than about a red value gate.
+  assert_file_exists "$(playthrough_file)"
+
+  local survivor waited=0
+  survivor="$(cat "$SHIM_STATE/survivor.pid")"
+  while kill -0 "$survivor" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 50 ]; then
+      kill -KILL "$survivor" 2>/dev/null || true
+      fail "the process the project's run command started outlived the run"
+    fi
+  done
+
+  printf '%s\n' "$out" | grep -q "the project's run command left 1 process(es) of its own running" ||
+    fail "nothing in the run named what the run command left behind: $out"
+}
+
+@test "a command the deadline stopped is not accused of leaving what the deadline killed" {
+  # The sweep runs on this path too, and this is the measurement that says it may.
+  # The ticket first made it conditional, on the argument that a sweep taken right
+  # after the deadline's walk would enumerate processes in the act of dying of it
+  # and accuse the command of leaving them — every night, on every project whose
+  # `RUN_CMD` is the server this gate documents. The mutation measured that
+  # argument to be false and this test is what measures it: by the time the leader
+  # has been collected the walk is done, the group is empty, and silence is what a
+  # sweep with nothing to find produces. Which is also what makes this the witness
+  # for `proc_sweep`'s own early return — take that line out and this goes red
+  # with "left 0 process(es)".
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'sleep 120 &' \
+    'printf "%s\n" "$!" >"$RALPH_SHIM_STATE/under.pid"' \
+    'sleep 120' >"$SHIM_STATE/server.sh"
+
+  pack_run 'rc=0
+    playthrough__bounded "$RALPH_SHIM_STATE/out" 1 "bash $RALPH_SHIM_STATE/server.sh" \
+      "the project of this test" || rc=$?
+    printf "rc=%s\n" "$rc"'
+  assert_success
+  # Stopped, not failed: the transcript is kept and the status says a signal took
+  # it down, which is what `playthrough__prompt` reads.
+  assert_output_contains "rc=143"
+  refute_output_contains "the project of this test left"
+
+  # And what it had started under it is gone, which is the deadline's own walk and
+  # not the sweep: the point is that one of the two happened, not neither.
+  local under waited=0
+  under="$(cat "$SHIM_STATE/under.pid")"
+  while kill -0 "$under" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 50 ]; then
+      kill -KILL "$under" 2>/dev/null || true
+      fail "the deadline left behind what the command had started"
+    fi
+  done
+}
+
+@test "the paired witness: a command that came back on its own is swept and said" {
+  # Byte for byte the same staging with the command returning instead of waiting,
+  # which is the only difference between the two paths. Without it the test above
+  # would be satisfied by a sweep that never prints anything at all.
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'nohup sleep 120 >/dev/null 2>&1 &' \
+    'printf "%s\n" "$!" >"$RALPH_SHIM_STATE/under.pid"' >"$SHIM_STATE/quick.sh"
+
+  pack_run 'rc=0
+    playthrough__bounded "$RALPH_SHIM_STATE/out" 1 "bash $RALPH_SHIM_STATE/quick.sh" \
+      "the project of this test" || rc=$?
+    printf "rc=%s\n" "$rc"'
+  assert_success
+  assert_output_contains "rc=0"
+  assert_output_contains "the project of this test left 1 process(es) of its own running"
+
+  local under waited=0
+  under="$(cat "$SHIM_STATE/under.pid")"
+  while kill -0 "$under" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 50 ]; then
+      kill -KILL "$under" 2>/dev/null || true
+      fail "the process the command left behind was never asked to stop"
+    fi
+  done
+}

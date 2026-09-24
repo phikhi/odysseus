@@ -233,7 +233,7 @@ teardown() {
   # A shell *without* job control puts a background child in its own group, so a
   # caller asking this about a session spawned without `set -m` would be handed
   # its own siblings — the run, the harness, whatever else the terminal started —
-  # and `session__sweep` would TERM them. What it turns into instead is "nothing
+  # and `proc_sweep` would TERM them. What it turns into instead is "nothing
   # was left behind", which is the direction a guard about killing has to fail
   # in.
   pack_run_bg '
@@ -249,4 +249,76 @@ teardown() {
   # answer is still nothing.
   [ -s "$SHIM_STATE/mine" ] || fail "the probe could not read its own group"
   assert_equal "$(cat "$SHIM_STATE/own")" ""
+}
+
+# ── the commands this pack did not write, and the group they get ─────────────
+
+@test "a command line the pack was handed is the leader of a group of its own" {
+  # [95]. The sweep below can only ever find what a group holds, and a group is
+  # not a thing a shell makes by accident: without job control the child sits in
+  # the *forking* shell's own group, which `proc_group_members` refuses by design
+  # — so a sweep posted over a plain background fork finds nothing at all, and
+  # says nothing, and reads exactly like a command that left nothing behind.
+  #
+  # That is why this is asserted and not assumed: the group is the precondition of
+  # the whole ticket, and it is invisible at the surface the other tests watch.
+  pack_run_bg '
+    proc_self
+    ps -o pgid= -p "$PROC_SELF" | tr -d " " >"$RALPH_SHIM_STATE/forker.pgid"
+    proc_group_fork "" "sleep 30" >"$RALPH_SHIM_STATE/cmd.out" 2>&1
+    printf "%s\n" "$PROC_GROUP_PID" >"$RALPH_SHIM_STATE/cmd.pid"
+    ps -o pgid= -p "$PROC_GROUP_PID" | tr -d " " >"$RALPH_SHIM_STATE/cmd.pgid"
+    : >"$RALPH_SHIM_STATE/asked"
+    kill -KILL "$PROC_GROUP_PID" 2>/dev/null || true
+  '
+
+  wait_for_file "$SHIM_STATE/asked" 400 ||
+    fail "the fork never came back with a pid to ask about"
+  local pid forker group
+  pid="$(cat "$SHIM_STATE/cmd.pid")"
+  forker="$(cat "$SHIM_STATE/forker.pgid")"
+  group="$(cat "$SHIM_STATE/cmd.pgid")"
+
+  # A leader is a process whose group is its own pid, and that is the number the
+  # sweep is handed. Reading it off `ps` rather than trusting the fork is the
+  # point: this is the one assertion that fails the day somebody drops `set -m`.
+  assert_equal "$group" "$pid"
+  if [ "$group" = "$forker" ]; then
+    fail "the command was left in the group of the shell that forked it ($forker), which is the group proc_group_members refuses"
+  fi
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+@test "what a command left in its group is asked to stop, and named" {
+  # The other half, and it is a request rather than a guarantee: TERM and nothing
+  # after it. Staged with nothing hostile — a `&` and a `nohup`, which is what any
+  # script that brings a server up before its tests does.
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'nohup sleep 120 >/dev/null 2>&1 &' \
+    'printf "%s\n" "$!" >"$RALPH_SHIM_STATE/left.pid"' >"$SHIM_STATE/leaver.sh"
+
+  pack_run_bg '
+    proc_group_fork "" "bash $RALPH_SHIM_STATE/leaver.sh" >"$RALPH_SHIM_STATE/cmd.out" 2>&1
+    proc_collect "$PROC_GROUP_PID" || true
+    proc_sweep "$PROC_GROUP_PID" "the project of this test" 2>"$RALPH_SHIM_STATE/said"
+    : >"$RALPH_SHIM_STATE/swept"
+  '
+
+  wait_for_file "$SHIM_STATE/swept" 400 || fail "the sweep never happened"
+  local left waited=0
+  left="$(cat "$SHIM_STATE/left.pid")"
+  while kill -0 "$left" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge 50 ]; then
+      kill -KILL "$left" 2>/dev/null || true
+      fail "the process the command left behind was never asked to stop"
+    fi
+  done
+
+  # Said as well as done, on stderr, and naming the subject a human can act on
+  # rather than the pid it cannot ([24]).
+  grep -q "the project of this test left 1 process(es) of its own running" \
+    "$SHIM_STATE/said" ||
+    fail "nothing named what the command left behind: $(cat "$SHIM_STATE/said")"
 }

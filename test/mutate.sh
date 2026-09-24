@@ -3998,7 +3998,7 @@ mutation "92 a branch's verdict is read back off a file again" "$GATE" \
 # And the other end of it: a branch that does not answer with its own status has
 # nothing to put in GATE_AWAITED, whoever reads it.
 mutation "92 a branch does not answer with its own exit status" "$GATE" \
-  's/  "\$\@" >"\$dir\/\$name.out" 2>&1 \|\| rc=\$\?\n  return "\$rc"/  "\$@" >"\$dir\/\$name.out" 2>\&1 || rc=\$?\n  return 0/' \
+  's/  "\$\@" >"\$dir\/\$name.out" 2>&1 \|\| rc=\$\?/  "\$@" >"\$dir\/\$name.out" 2>\&1 || rc=0/' \
   test/gate.bats "with nothing left behind"
 
 # The deadline's half. Losing this answer does not lose the red — a killed branch
@@ -4027,16 +4027,55 @@ mutation "92 the deadline's answer is lost to the TERM that puts it away" "$GATE
 # call nothing enumerates it.
 mutation "92 the session is spawned in the group of whoever spawned it" "$SESSION" \
   's/^  set -m$/  :/m' \
-  test/gate.bats "taken back, and named"
+  test/gate.bats "a process the session left running is taken back"
 
 mutation "92 what the session left running is nobody's business" "$SESSION" \
-  's/^  session__sweep "\$pid"\n//m' \
-  test/gate.bats "taken back, and named"
+  's/^  proc_sweep "\$pid"[^\n]*\n//m' \
+  test/gate.bats "a process the session left running is taken back"
 
 # The refusal underneath it, which is what makes the sweep safe to fire at all.
 mutation "92 a caller is handed the group it is standing in" "$PROC" \
   's/  \[ -n "\$mine" \] && \[ "\$mine" != 0 \] && \[ "\$leader" != "\$mine" \] \|\| return 0\n//' \
   test/proc.bats "never the group it is handed back"
+
+# ── [95] what this pack launches itself, taken back and named ───────────────
+#
+# [92] gave a session a process group and a sweep and left the three command lines
+# a project hands this pack with neither — measured, and not on a hostile session:
+# a `sleep` left by `TEST_CMD` was alive when the run had finished, on a green run
+# with the ticket resolved and no line anywhere.
+#
+# Six entries, and they fail apart. Without the group there is nothing to
+# enumerate; without the call nothing enumerates it, at either of the two modules;
+# without the one home the two call sites fork a shell of their own again and the
+# census is the only thing that notices. The last one is the sweep's silence: it
+# speaks only when it found something, and the witness for that is the path where
+# the deadline's walk has already emptied the group — where a sweep that spoke
+# anyway would accuse a command of leaving `0 process(es)` behind.
+
+mutation "95 the project's command is left in the group that forked it" "$PROC" \
+  's/^  set -m$/  :/m' \
+  test/proc.bats "leader of a group of its own"
+
+mutation "95 what the project's test command left running is nobody's business" "$GATE" \
+  's/  \[ -z "\$GATE_BRANCH_LEADER" \] \|\|\n    proc_sweep "\$GATE_BRANCH_LEADER" "\$GATE_BRANCH_SUBJECT"\n//' \
+  test/gate.bats "test command left running is taken back"
+
+mutation "95 the gate's test branch forks a shell of its own again" "$GATE" \
+  's/    gate__start "\$dir" tests \\\n      gate__command_branch "the project.s test command" "\$TEST_CMD"/    gate__start "\$dir" tests bash -c "\$TEST_CMD"/' \
+  test/gate.bats "has a home that owns it"
+
+mutation "95 the type check forks a shell of its own again" "$GATE" \
+  's/      gate__start "\$dir" typecheck \\\n        gate__command_branch "the project.s type check" "\$TYPECHECK_CMD"/      gate__start "\$dir" typecheck bash -c "\$TYPECHECK_CMD"/' \
+  test/gate.bats "has a home that owns it"
+
+mutation "95 what the project's run command left running is nobody's business" "$PLAYTHROUGH" \
+  's/^  proc_sweep "\$pid" "\$subject"\n//m' \
+  test/playthrough.bats "came back on its own is swept"
+
+mutation "95 the sweep speaks whether or not it found anything" "$PROC" \
+  's/  \[ -n "\$left" \] \|\| return 0\n//m' \
+  test/playthrough.bats "deadline stopped is not accused"
 
 # ── [50] a guarded path a project ignores, approved and never committed ──────
 #
@@ -4814,7 +4853,7 @@ mutation "11 the value gate judges through the pin of the iteration that is over
 # The material half: the project's own commands, and the claim that makes them
 # worth persisting.
 mutation "11 the feature is judged without ever being run" "$PLAYTHROUGH" \
-  's/  playthrough__bounded "\$dir\/run.out" "\$\{GATE_TIMEOUT:-0\}" "\$RUN_CMD" \|\| runrc=\$\?\n//' \
+  's/  playthrough__bounded "\$dir\/run.out" "\$\{GATE_TIMEOUT:-0\}" "\$RUN_CMD" \\\n    "the project.s run command" \|\| runrc=\$\?\n//' \
   test/playthrough.bats "the material half really runs"
 
 mutation "11 a project that never claimed real assets closes features all the same" "$PLAYTHROUGH" \
