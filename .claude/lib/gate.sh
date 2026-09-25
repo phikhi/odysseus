@@ -45,7 +45,8 @@
 # What the loop reads back, for the failure policy and the audit receipt:
 #   RALPH_GATE_VERDICTS     e.g. "tests=green typecheck=red scope=green"
 #   RALPH_GATE_FAILED       the red branch names
-#   RALPH_GATE_SCOPE_CLASS  internal | contract, when the scope-guard is red
+#   RALPH_GATE_SCOPE_CLASS  internal | contract, when the scope-guard is red — off
+#                           the scope branch's own note since [94], never a file
 #   RALPH_GATE_FRONTIER     the sources outside the working tree this session moved
 #                           — the ignore rules that decide what every check can see
 #                           ([30]) and the git configuration that decides what git
@@ -66,10 +67,12 @@
 #                           misrouted
 #   RALPH_GATE_QUOTA        the in-band posture of the last review lens whose
 #                           session the API refused, as `<status> <window>
-#                           <reset>`, or empty. Read out of the lens's stream
-#                           before this module removes it ([43]); it is a
-#                           correction for the pilot's budget watch and may only
-#                           ever make the run more cautious
+#                           <reset>`, or empty. Read out of the lens's stream by
+#                           the branch that owns it and sent out on the note
+#                           channel ([43], and [94] for why this shell no longer
+#                           opens that file itself); it is a correction for the
+#                           pilot's budget watch and may only ever make the run
+#                           more cautious
 #   RALPH_GATE_QUOTA_ONLY   1 when this gate is red and **every** red branch is a
 #                           lens the API refused before it could look. Not a green,
 #                           and never a forgiven red: the verdicts still say red,
@@ -3312,7 +3315,7 @@ IDS
 # A ticket with no declared write-surface is the fail-safe case: an unknown
 # surface can never be assumed to contain anything.
 gate__scope_guard() {
-  local ticket="$1" base="$2" now="$3" classfile="$4"
+  local ticket="$1" base="$2" now="$3"
   local surface changed file owner ownerrc=0 class='' rc=0
 
   if [ -z "$now" ] || ! changed="$(gate_changed_files "$base" "$now")"; then
@@ -3344,7 +3347,7 @@ gate__scope_guard() {
   # exactly what [18] stopped doing one function down.
   if ! surface="$(gate_write_surface "$ticket")"; then
     printf 'the tracker would not say what write-surface %s declares, so nothing here can tell a write inside it from a write outside it — and an unreadable surface is not an empty one\n' "$ticket"
-    printf 'contract\n' >"$classfile"
+    gate_note class contract || true
     return 1
   fi
 
@@ -3400,10 +3403,200 @@ gate__scope_guard() {
 $changed
 SCOPE
 
+  # The kind of overflow, to the shell that forked this branch, and no longer a
+  # file in the gate's directory ([94]). What it decides is the retry budget:
+  # `contract` is the class `failures_classify` does not retry, so a process able
+  # to write it turned three attempts at a ticket into one escalation — and one
+  # able to erase it turned an escalation into three attempts. Never fatal here: a
+  # class that does not arrive leaves the failure retryable, which costs retries
+  # and cannot buy a green.
   if [ -n "$class" ]; then
-    printf '%s\n' "$class" >"$classfile"
+    gate_note class "$class" || true
   fi
   return "$rc"
+}
+
+# ── a branch's second answer ([94]) ──────────────────────────────────────────
+
+# A branch answers with its exit status and nothing else ([92]). Three of them
+# have something more to say than a colour, and until this ticket each of those
+# crossed on a file in `$dir`: the scope-guard's kind of overflow, the language
+# gate's coverage line, and the refusal posture of a review lens whose session the
+# API never let start. Written inside the branch, read back out here once the
+# branch was gone — and `$dir` is a `mktemp` under `$TMPDIR`, in a directory any
+# process on the machine enumerates.
+#
+# [92] took the *verdicts* out of that directory and stopped there, which was the
+# switch closed and the source left standing. What the 23/09 pass then measured at
+# `MAX_PARALLEL=1`, the shipped value, with nothing more hostile than a `nohup`
+# the session left behind — or than the project's own test command, which needs no
+# hostility at all ([95]):
+#
+#   - `contract` written into `$dir/scope.class` on a red suite: one attempt
+#     instead of three, `Failures:` left empty, the ticket escalated to the human
+#     sink as a decision, the run exiting 0, and two neighbouring lines of the
+#     journal contradicting each other — `scope=green`, then `scope overflow …
+#     contract`;
+#   - a lens's stream rewritten to carry a blocked `rate_limit_event` and no
+#     verdict, on a **green** iteration: `budget-pause`, the work rolled back, the
+#     ticket never billed, and the pilot pausing and then stopping the night on a
+#     subscription it believes is empty. No line of the run names anything unusual.
+#
+# So the second answer travels the way the first one does: on something no process
+# outside this shell's own descendance can reach. Not a file with a better name —
+# a name is not a guard ([81]), and same-user permissions are not one either — but
+# a file with **no** name. `gate__notes_open` makes one in `$dir`, opens it twice
+# (once to write, once to read from offset zero) and unlinks it before a byte is
+# written. From then on the only handles on that inode are the two descriptors
+# this shell holds: a branch is a subshell, so it inherits them, and `gate_noted`
+# reads them back out here, in the shell that forked it.
+#
+# Two ends and not one, because a descriptor cannot be rewound and `/dev/fd/N` is
+# a `dup` on darwin — it shares the offset of whatever it was duplicated from.
+# That is the measurement [80] made when it refused a descriptor for the loop's
+# write register, and the reason the same shape is not refused here: that register
+# is re-read from the start at every window, where a fan's notes are written once
+# and read once. The read end keeps an offset of its own, so the two fans of one
+# gate read in turn and what the first said is still in hand for the second.
+#
+# What is left is the one thing a descriptor does that a variable does not: it
+# survives an `exec`. The two branches that run a command line the *project* wrote
+# and the one that spawns a `claude` would otherwise hand the write end to exactly
+# the population this channel exists to keep out, and to everything those leave
+# behind — so those three calls go through `gate_notes_shut`. That is the whole of
+# the guarantee, and it is asked of the run rather than of the prose: the suite
+# plants a `TEST_CMD` and a lens session that both try to write a note, and asserts
+# that neither of them arrives.
+#
+# What did **not** move is `$dir/<branch>.out`. See `gate__report` for the bound
+# that was measured and refused, and the table in docs/frontiere-de-confiance.md
+# for what a process writing there still buys.
+#
+# The numbers are literals because bash 3.2 has no `{var}>`: an `exec` wants a
+# digit. They are spent through `eval` in the three places that open, shut and
+# close them and nowhere else. 3 is not among them, and that is not luck —
+# `monitor_watch` follows a session's stream through it, one tier down and inside
+# these very branches.
+GATE_NOTES_FD=9
+GATE_NOTES_BACK=8
+GATE_NOTES=''
+
+gate__notes_open() {
+  local dir="$1" file
+  GATE_NOTES=''
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  # A `mktemp` name rather than a fixed one, for the few microseconds the name
+  # exists: `$dir` is enumerable, and a fixed `$dir/notes` is a name a watching
+  # process can create first. It would not get to forge anything — it never sees
+  # the descriptors — but a symlink or a fifo planted there would send this
+  # channel somewhere else or block the gate on an open that never returns, and
+  # a denial is still a defect. Not a line in `gate_tmp_names`: it is not at the
+  # top level of `$TMPDIR`, and it is gone before the next statement.
+  #
+  # Three things in series refuse a directory this cannot use — the guard above,
+  # this `mktemp`, and the `exec` below — so no single one of them can be mutated
+  # to remove the refusal. The guarantee a test can hold this to is the one at the
+  # end: it never reports success without having opened the channel.
+  file="$(mktemp "$dir/notes.XXXXXX")" || return 1
+  if ! eval "exec $GATE_NOTES_FD>\"\$file\" $GATE_NOTES_BACK<\"\$file\""; then
+    rm -f "$file"
+    return 1
+  fi
+  rm -f "$file"
+  return 0
+}
+
+gate__notes_close() {
+  eval "exec $GATE_NOTES_FD>&- $GATE_NOTES_BACK<&-" 2>/dev/null || true
+  GATE_NOTES=''
+  return 0
+}
+
+# Everything the branches of one fan wrote, taken once and kept in this shell.
+# Appended rather than replaced: a gate has two fans, and the objective fan's
+# notes are still wanted when the lens fan comes back.
+gate__notes_take() {
+  local more
+  more="$(cat <&"$GATE_NOTES_BACK" 2>/dev/null)" || more=''
+  [ -n "$more" ] || return 0
+  GATE_NOTES="$GATE_NOTES$more
+"
+  return 0
+}
+
+# One line from a branch to the shell that forked it: the branch's own name, a
+# key, and the value on the rest of the line.
+#
+# Refused outside a branch, and that is the shape rather than a precaution.
+# `GATE_BRANCH_NAME` is a local of `gate__branch`, so a callee sees it exactly
+# when it is running as part of a branch — the PROC_SELF idiom, pointing the
+# other way. A direct call writes nothing and says so in its status.
+#
+# The value is flattened onto one line, and that is not tidiness. One of the
+# three values a branch sends — a lens's refusal posture — is derived from a
+# stream a process outside this gate can write, and a newline inside it would let
+# that process append a second line and sign it with another branch's name.
+#
+# An empty value is refused for `gate_noted`'s sake: a key nobody wrote and a key
+# written blank have to stay one answer, or the reader would have three where the
+# pack means two ([82]).
+#
+# **And a value has a length, because the branches of a fan write here at the same
+# time.** Measured on 24/09/2026, eight concurrent writers on one inherited
+# descriptor: at a thousand bytes a line, 480 of 480 lines arrive whole; at four
+# thousand, 147 of 480 do. `printf` is one `write(2)` up to the buffer it flushes
+# at and two after that, and two writes from two branches interleave. That is not
+# only a lost answer: one of the three values that travel here — a lens's refusal
+# posture — is extracted from a stream a process outside this gate can write, so a
+# value long enough to be split in two is a value long enough to make its own tail
+# arrive as a line, and a line signed with whatever name that tail starts with.
+# The bound is under the measurement by a factor of two and under the buffer by
+# eight; the longest thing this pack sends is the language gate's coverage
+# sentence, around two hundred and fifty bytes.
+GATE_NOTE_MAX=512
+gate_note() {
+  local key="${1:-}" value="${2:-}"
+  [ -n "${GATE_BRANCH_NAME:-}" ] || return 1
+  [ -n "$key" ] && [ -n "$value" ] || return 1
+  [ "${#value}" -le "$GATE_NOTE_MAX" ] || return 1
+  value="${value//$'\n'/ }"
+  value="${value//$'\r'/ }"
+  printf '%s %s %s\n' "$GATE_BRANCH_NAME" "$key" "$value" >&"$GATE_NOTES_FD" ||
+    return 1
+  return 0
+}
+
+# The last thing a branch said under a key, or nothing at all and a status to say
+# so. The *last* for `budget_stream_posture`'s reason: a branch that said a thing
+# twice meant the second one.
+gate_noted() {
+  local name="${1:-}" key="${2:-}" line found=''
+  [ -n "$name" ] && [ -n "$key" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "$name $key "*) found="${line#"$name $key "}" ;;
+    esac
+  done <<NOTES
+${GATE_NOTES:-}
+NOTES
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
+  return 0
+}
+
+# Run something with both ends of the channel closed.
+#
+# Three calls, one reason: a descriptor survives an `exec`, so `bash -c
+# "$TEST_CMD"` and a review lens's `claude` would hand the write end to their own
+# descendance — and a process the project's suite or the judged session left
+# behind is precisely the writer this channel is built to keep out. Public because
+# the third call is in lenses.sh.
+#
+# It closes the read end too, which buys nothing against a forger and is there for
+# the reader of the next ticket: a descendant that can read the notes of the fan
+# judging it learns which branch said what, and there is no reason to hand it that.
+gate_notes_shut() {
+  eval "\"\$@\" $GATE_NOTES_FD>&- $GATE_NOTES_BACK<&-"
 }
 
 # ── running the branches ─────────────────────────────────────────────────────
@@ -3446,6 +3639,11 @@ gate__branch() {
   local dir="$1" name="$2"
   shift 2
   local rc=0 GATE_BRANCH_LEADER='' GATE_BRANCH_SUBJECT=''
+  # What a branch signs its second answer with ([94]). A local rather than an
+  # argument threaded through four callees: `gate_note` is called from the two
+  # libs the branches run, and the name of the branch is not something either of
+  # them is otherwise told.
+  local GATE_BRANCH_NAME="$name"
   "$@" >"$dir/$name.out" 2>&1 || rc=$?
   [ -z "$GATE_BRANCH_LEADER" ] ||
     proc_sweep "$GATE_BRANCH_LEADER" "$GATE_BRANCH_SUBJECT"
@@ -3487,7 +3685,12 @@ gate__start() {
 gate__command_branch() {
   local subject="$1" cmd="$2" rc=0
   local PROC_GROUP_PID=''
-  proc_group_fork '' "$cmd"
+  # Through `gate_notes_shut`, because this is the one line in the pack where a
+  # command the *project* wrote is handed this shell's descriptors ([94]). Without
+  # it the write end of the note channel reaches `bash -c "$TEST_CMD"` and
+  # everything it leaves behind, which is the population the channel exists to
+  # keep out — measured on the 23/09 pass as the most ordinary carrier of all.
+  gate_notes_shut proc_group_fork '' "$cmd"
   GATE_BRANCH_LEADER="$PROC_GROUP_PID"
   GATE_BRANCH_SUBJECT="$subject"
   proc_collect "$PROC_GROUP_PID" || rc=$?
@@ -3654,14 +3857,19 @@ gate__report_changed() {
 # project may run without a language gate, and a run that does must not look like
 # a run whose prose was checked and found right.
 gate__report_lang() {
-  local ticket="$1" dir="$2"
+  local ticket="$1" zone
 
   if ! lang_enabled; then
     gate__say "$ticket: the language gate is off (LANG_CHECK=off): nothing here checked what language this iteration wrote its prose in"
     return 0
   fi
-  [ -f "$dir/lang.zone" ] || return 0
-  gate__say "$ticket: $(cat "$dir/lang.zone")"
+  # Off the branch's own note since [94], and no longer off a file in the gate's
+  # directory. The sentence is a coverage announcement and not a verdict, so what
+  # a process rewriting it bought was the number of files a human is told were
+  # looked at — which is the one number that says whether the check was worth
+  # anything, and [24]'s whole reason for printing it every iteration.
+  zone="$(gate_noted lang zone)" || return 0
+  gate__say "$ticket: $zone"
   return 0
 }
 
@@ -3740,6 +3948,11 @@ gate__await() {
       GATE_TIMED_OUT=1
     fi
   fi
+  # And the second answer of every branch of this fan, taken here because this is
+  # where the first one is taken ([94]). After the collection and not before: a
+  # branch writes its note on the way out, so anything read earlier would be a
+  # fan half of whose answers had not been given yet.
+  gate__notes_take
   return 0
 }
 
@@ -3873,9 +4086,22 @@ gate__lens_phase() {
   gate__await "$pids" "$lenses"
   gate__aggregate "$dir" "$lenses" || agg=1
 
-  # Which of them judged nothing because the API refused the session, read here
-  # and nowhere else: the streams live under `$dir`, and `gate_run` removes it
-  # ([43]). A branch is a subshell, so this cannot be the branch's own answer.
+  # Which of them judged nothing because the API refused the session.
+  #
+  # It *is* the branch's own answer since [94], which is the whole of the change:
+  # what used to happen here was that this shell opened the lens's stream, in the
+  # gate's `mktemp` directory, after the branch that produced it was gone — so the
+  # posture was read out of a file any process on the machine could rewrite, and a
+  # survivor that rewrote it bought a `budget-pause` on a green iteration, the
+  # work rolled back, nothing billed and the pilot stopping the night. The branch
+  # reads its own stream now, while it still owns it, and sends three words out on
+  # the note channel; this reads them back out of GATE_NOTES.
+  #
+  # What that does not buy, and the table says it in the same words: the stream is
+  # still a named file while the session is writing to it, so a process that
+  # injects into it *during* the session is injecting into the lens's own
+  # testimony. That boundary is `session_spawn`'s and belongs to every tier that
+  # spawns a session, not to this directory — ticket [97].
   #
   # Not asked at all when this fan hit its deadline, and that is [23]'s rule one
   # layer down: a reason this pack measured itself is not overwritten by one read
@@ -3894,9 +4120,18 @@ gate__lens_phase() {
   # into the gate's directory would silence the refusal check for the whole fan,
   # so a lens the API never let start would be counted as an attempt at the
   # ticket and charged to its retry budget.
+  #
+  # And what this question owns changed with [94], which is why the mutation entry
+  # that covers it now takes two edits. A lens the watchdog killed cannot have
+  # written a note at all — it died inside its own session, well before the line
+  # that writes one — so "a killed lens does not speak through its last event" is
+  # now a property of the branch and not of this `if`. What is left to this `if` is
+  # the case it now owns alone, and it is still the cautious side of a real trade:
+  # a lens that *finished* with a genuine refusal, beside a sibling the deadline
+  # cut, loses the give-back its ticket had earned.
   if [ "${GATE_TIMED_OUT:-0}" != 1 ]; then
     for name in $lenses; do
-      if posture="$(lenses_refused_posture "$dir" "$name")"; then
+      if posture="$(gate_noted "$name" posture)"; then
         RALPH_GATE_QUOTA="$posture"
         refused="$refused $name"
         # Said *and* kept, and this one is the reason [43] left work here ([10]):
@@ -4003,6 +4238,20 @@ gate__contain_lens_writes() {
 
 # Up to 20 lines of what a red branch had to say. Enough to see which test
 # broke in the journal; the full picture belongs to the audit receipt.
+#
+# The one object of this directory [94] left where it was, and the reason is a
+# measurement rather than a shortage of ideas. The tempting bound is for the
+# branch to note how long its own output was and for this to refuse a file that
+# is no longer that length — the shape [81] ships for the sidecar. It cannot be
+# had here: `proc_sweep` sends a TERM to what a command branch left running and
+# says out loud that it does not follow it up ([95]), so an ordinary project whose
+# test server logs a line on the way down would have its findings refused every
+# morning. A control that accuses an honest project daily is worse than the hole
+# it closes, and the hole is bounded: since [92] nothing in this file is a
+# verdict — a branch is red or green on its exit status alone — so what a process
+# writing here buys is prose in the morning log and in the audit receipt, never a
+# colour. That is the line this carries in docs/frontiere-de-confiance.md, and it
+# is what [96] inherits, the receipt being the other reader.
 gate__report() {
   [ -s "$1" ] || return 0
   tail -20 "$1" | sed 's/^/  /'
@@ -4027,6 +4276,17 @@ gate_run() {
   RALPH_GATE_QUOTA_ONLY=0
   RALPH_GATE_FRONTIER_READ=0
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-gate.XXXXXX")" || return 1
+
+  # The channel every branch of this gate answers on, opened before the first fork
+  # because a branch inherits what is set before it starts and nothing after
+  # ([94]). A gate that cannot open it is refused rather than run: three of the
+  # four branches would come back with a colour and no second answer, and the one
+  # that decides the retry budget would silently stop deciding it.
+  if ! gate__notes_open "$dir"; then
+    rm -rf "$dir"
+    gate__say "$ticket: this gate could not open the channel its own branches answer on — refusing to run it"
+    return 1
+  fi
 
   # Before the tree, so that every branch runs in a repository whose visibility is
   # the run's own and not the session's. The verdict does *not* rest on that
@@ -4101,7 +4361,7 @@ IGNORE
     fi
 
     gate__start "$dir" scope \
-      gate__scope_guard "$ticket" "$base" "$RALPH_GATE_TREE" "$dir/scope.class"
+      gate__scope_guard "$ticket" "$base" "$RALPH_GATE_TREE"
     names="$names scope"
     pids="$pids $!"
 
@@ -4112,18 +4372,17 @@ IGNORE
     # every iteration rather than leaving a silent gap in the verdicts.
     if lang_enabled; then
       gate__start "$dir" lang \
-        lang_check "$ticket" "$base" "$RALPH_GATE_TREE" "$dir/lang.zone"
+        lang_check "$ticket" "$base" "$RALPH_GATE_TREE"
       names="$names lang"
       pids="$pids $!"
     fi
 
     gate__await "$pids" "$names"
     gate__aggregate "$dir" "$names" || rc=1
-    gate__report_lang "$ticket" "$dir"
+    gate__report_lang "$ticket"
 
-    if [ -f "$dir/scope.class" ]; then
-      RALPH_GATE_SCOPE_CLASS="$(cat "$dir/scope.class")"
-    fi
+    RALPH_GATE_SCOPE_CLASS="$(gate_noted scope class)" ||
+      RALPH_GATE_SCOPE_CLASS=""
 
     # The judgement tier, and it is handed the objective verdict rather than
     # deciding for itself: a phase that consulted `rc` from inside would have to
@@ -4138,6 +4397,7 @@ IGNORE
   gate__report_unguarded "$ticket"
   gate__report_frontier "$ticket"
   gate__report_changed "$ticket" "$RALPH_GATE_TREE"
+  gate__notes_close
   rm -rf "$dir"
   return "$rc"
 }

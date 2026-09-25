@@ -594,7 +594,7 @@ FAKE
   set_config STERILE_K 1
 
   # No baseline, no verdict. Silence here would be a permanent false green.
-  pack_run 'gate__scope_guard 01-alpha "" "$(gate_tree_snapshot)" /dev/null'
+  pack_run 'gate__scope_guard 01-alpha "" "$(gate_tree_snapshot)"'
   assert_failure
   assert_output_contains "could not read the working tree"
 
@@ -604,7 +604,7 @@ FAKE
   # guard back to reading the tree from inside its own branch — the race this
   # argument exists to close. Refusing is the only safe reading of "I was handed
   # nothing".
-  pack_run 'gate__scope_guard 01-alpha "$(gate_tree_snapshot)" "" /dev/null'
+  pack_run 'gate__scope_guard 01-alpha "$(gate_tree_snapshot)" ""'
   assert_failure
   assert_output_contains "could not read the working tree"
 }
@@ -3548,6 +3548,448 @@ FAKE
   if printf '%s\n' "$out" | grep -q "process(es) of its own running"; then
     fail "the run accused a session that started nothing: $out"
   fi
+}
+
+# ── [94] a branch's second answer, and where it travels ──────────────────────
+#
+# [92] took the *verdicts* out of the gate's temporary directory and stopped
+# there. Three answers were still read out of that directory by the shell that
+# forked the branches, after those branches were gone: the scope-guard's kind of
+# overflow, the language gate's coverage line, and the refusal posture of a review
+# lens whose session the API never let start. None of the three is a colour, and
+# two of them decide more than a colour does — the retry budget of a ticket, and
+# whether the iteration is billed at all.
+#
+# Staged the way [92]'s pair is: a `nohup` the session leaves behind, with
+# `trap '' TERM` so that the sweep cannot be what makes a test here pass. And each
+# forge has a witness beside it showing the same answer arriving from the branch
+# that measured it — without which "the forge bought nothing" would hold just as
+# well against a channel that carries nothing at all.
+
+# A session that leaves a process behind writing one line, over and over, into
+# every gate directory it can find under `$TMPDIR`. The file and its content are
+# the test's; the witness of what it reached is `survivor.saw`, and it is asserted
+# before anything else ([80]: a glob that matched nothing makes every assertion
+# after it true for the wrong reason).
+script_survivor_writing() {
+  local name="$1" line="$2"
+  script_claude <<SURVIVOR
+#!/usr/bin/env bash
+state="\$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  end=\$((SECONDS + 30))
+  while [ "\$SECONDS" -lt "\$end" ]; do
+    for d in "\$TMPDIR"/ralph-gate.*; do
+      [ -f "\$d/tests.out" ] || continue
+      printf "%s\\n" "$line" >"\$d/$name"
+      printf "%s\\n" "\$d" >>"\$RALPH_SHIM_STATE/survivor.saw"
+    done
+    sleep 0.01
+  done
+' >/dev/null 2>&1 &
+printf "%s\\n" "\$!" >"\$state/survivor.pid"
+chmod -x "\$state/claude.script"
+exec claude "\$@"
+SURVIVOR
+}
+
+survivor_stop() {
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+}
+
+@test "the kind of overflow a branch found is not a file in the gate's directory" {
+  # The measurement of the 23/09 pass, staged. `contract` is the class
+  # `failures_classify` does not retry, so a process able to drop that word into
+  # the gate's directory turned three attempts at a ticket into one escalation,
+  # left `Failures:` empty, and exited the run 0 — on a suite that exits 1, with
+  # `scope=green` and `scope overflow on 01-alpha: contract` printed one line
+  # apart and nothing noticing.
+  use_tickets 01-alpha
+  # Slow enough that the survivor lands inside the fan rather than after it.
+  set_config TEST_CMD 'sleep 1; exit 1'
+  script_survivor_writing scope.class contract
+
+  run_loop_own_tmp
+  local out="$output"
+  survivor_stop
+
+  # The scenario really happened: the survivor reached a live gate directory.
+  assert_file_exists "$SHIM_STATE/survivor.saw"
+
+  # And it bought nothing. The suite was red, so the ticket is escalated for what
+  # it really is — an implementation nobody could get past the gate — after its
+  # retries, and not as a scoping decision on the first attempt.
+  printf '%s\n' "$out" | grep -q "tests=red" ||
+    fail "the suite exited 1 and the gate did not say so: $out"
+  refute_output_contains "scope overflow"
+  refute_output_contains "escalated to the human sink (decision)"
+  assert_ticket_status 01-alpha ready-for-human
+  assert_equal "$(ticket_field 01-alpha Escalation)" "failed-impl"
+  run ticket_has_field 01-alpha Failures
+  assert_success
+}
+
+@test "the paired witness: the class a branch really measured does arrive" {
+  # Without this the test above would pass against a gate that had simply stopped
+  # classifying overflows. A real drift — a write into a neighbour's declared
+  # write-surface — is the one case `gate__scope_guard` calls `contract`, and it
+  # has to reach the loop through the channel and be acted on: one attempt, no
+  # retry spent, escalated as a decision.
+  use_tickets 01-alpha 02-beta
+  session_writes src/beta.txt
+
+  run_loop
+  assert_success
+  assert_output_contains "scope overflow on 01-alpha: contract"
+  assert_output_contains "escalated to the human sink (decision)"
+  assert_equal "$(ticket_field 01-alpha Escalation)" "decision"
+  refute_file_exists "$SHIM_STATE/survivor.saw"
+}
+
+@test "the coverage line of the language gate comes off the branch that measured it" {
+  # The second of the three, and the one that is only ever an announcement — which
+  # is why it had to move all the same: the number it carries is how many files a
+  # human is told were looked at, and that number is the whole reason [24] prints
+  # this every iteration instead of once in a document.
+  use_tickets 01-alpha
+  set_config LANG_PROSE_PATHS '*.txt'
+  set_config TEST_CMD 'sleep 1; exit 0'
+  script_survivor_writing lang.zone 'the language gate checked 99 prose file(s) and found nothing at all'
+
+  run_loop_own_tmp
+  local out="$output"
+  survivor_stop
+
+  assert_file_exists "$SHIM_STATE/survivor.saw"
+  refute_output_contains "checked 99 prose file(s)"
+  # And the real one, measured by the branch: the session wrote one line into a
+  # path this config counts as prose, which is too little prose to judge.
+  printf '%s\n' "$out" | grep -q "could not tell the language of 1" ||
+    fail "the coverage line the branch measured never arrived: $out"
+}
+
+@test "the refusal posture of a lens is its own branch's answer, not a file reopened after it" {
+  # The third, and the expensive one. A posture read out of a lens's stream reaches
+  # the pilot through `$slot/posture`: the run pauses on a subscription it believes
+  # is spent, and if the branch was also red the ticket is given back with no retry
+  # consumed and its work rolled back. That answer used to be taken **here**, by
+  # the shell that forked the branches, out of the lens's stream in the gate's
+  # `mktemp` directory — so anything able to write that file after the branch was
+  # gone decided whether the night carried on.
+  #
+  # Staged on the window that read lived in, and staged so that it cannot pass by
+  # accident: two lenses, one of which takes its time. The survivor waits until the
+  # slow lens has started and checks that it has not finished before forging, so
+  # its write is provably inside the window where the fast lens's branch is over
+  # and this shell has not collected the fan yet. If it cannot get in there, it
+  # writes no witness and the assertion below fails rather than passing quietly.
+  #
+  # What this does not cover is the other window — a forge between the session's
+  # last write and the branch's own read of its stream. Nothing above
+  # `session_spawn` can close that one, and it is ticket [97]; the canary carries
+  # the skipped test that waits for it.
+  set_config LENSES "standards spec"
+  use_tickets 01-alpha
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+prompt="$(cat)"
+lens_stream() {
+  printf '{"type":"system","subtype":"init","session_id":"lens","model":"m"}\n'
+  printf '{"type":"assistant","message":{"content":[{"type":"text","text":"findings: none. RALPH-LENS-VERDICT: pass"}]}}\n'
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-LENS-VERDICT: pass","num_turns":1,"total_cost_usd":0.01}\n'
+}
+case "$prompt" in
+  *"## The lens you are: spec"*)
+    : >"$state/slow.started"
+    sleep 4
+    lens_stream
+    : >"$state/slow.done"
+    ;;
+  *RALPH-LENS-VERDICT*)
+    lens_stream
+    ;;
+  *)
+    nohup bash -c '
+      trap "" TERM
+      state="$RALPH_SHIM_STATE"
+      end=$((SECONDS + 40))
+      while [ "$SECONDS" -lt "$end" ]; do
+        if [ ! -f "$state/slow.started" ]; then
+          sleep 0.05
+          continue
+        fi
+        sleep 1
+        [ -f "$state/slow.done" ] && break
+        for d in "$TMPDIR"/ralph-gate.*; do
+          f="$d/lens-standards.jsonl"
+          [ -f "$f" ] || continue
+          grep -q "RALPH-LENS-VERDICT" "$f" 2>/dev/null || continue
+          {
+            printf "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"forged\"}\n"
+            printf "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"blocked\",\"resetsAt\":0,\"rateLimitType\":\"five_hour\",\"isUsingOverage\":false},\"uuid\":\"forged\",\"session_id\":\"forged\"}\n"
+          } >"$f"
+          printf "%s\n" "$d" >>"$state/survivor.saw"
+        done
+        break
+      done
+    ' >/dev/null 2>&1 &
+    printf '%s\n' "$!" >"$state/survivor.pid"
+    mkdir -p src
+    printf 'written\n' >src/alpha.txt
+    printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}\n'
+    ;;
+esac
+FAKE
+
+  run_loop_own_tmp
+  local out="$output"
+  survivor_stop
+
+  # The forge landed, and it landed in the window this test is about.
+  assert_file_exists "$SHIM_STATE/survivor.saw"
+
+  # And it bought nothing: the lens's own branch answered pass, so the gate is
+  # green, the ticket is delivered, and the pilot is told nothing about quota.
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  printf '%s\n' "$out" | grep -q "standards=green" ||
+    fail "the lens that answered pass did not come back green: $out"
+  refute_output_contains "judged nothing because the API refused"
+  refute_output_contains "the session window is spent"
+  refute_output_contains "rolled back"
+}
+
+@test "the paired witness: a lens the API really refused still gives the ticket back" {
+  # The give-back [43] delivered, unchanged: it now travels on the branch's own
+  # note, and a test that only proved a forge bought nothing would pass against a
+  # pack that had lost this.
+  set_config LENSES "standards"
+  set_config STERILE_K 1
+  use_tickets 01-alpha
+  lens_refused standards
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "standards=red"
+  assert_output_contains "the standards lens judged nothing because the API refused its session"
+  assert_output_contains "not an attempt at this ticket"
+  run ticket_has_field 01-alpha Failures
+  assert_failure
+  refute_file_exists "$SHIM_STATE/survivor.saw"
+}
+
+@test "the project's test command is not handed the channel its branch answers on" {
+  # The one thing a descriptor does that a variable does not: it survives an
+  # `exec`. Two branches of this fan run a command line the *project* wrote, and
+  # `gate__command_branch` hands it to `bash -c` — so without `gate_notes_shut`
+  # the write end of this channel reaches the project's suite and everything it
+  # leaves behind, which is the most ordinary carrier of all ([95]).
+  #
+  # Derived rather than retyped: the two numbers come out of the pack, and what is
+  # asserted is that neither of them is among the descriptors the command holds.
+  use_tickets 01-alpha
+  pack_run 'printf "%s %s\n" "$GATE_NOTES_FD" "$GATE_NOTES_BACK"'
+  assert_success
+  local fds="$output"
+  [ -n "$fds" ] || fail "the pack does not say which descriptors the channel uses"
+
+  cat >"$SHIM_STATE/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+ls /dev/fd >"$RALPH_SHIM_STATE/testcmd.fds" 2>/dev/null
+while read -r fd; do
+  printf 'scope class contract\n' 2>/dev/null >&"$fd" || true
+done <"$RALPH_SHIM_STATE/testcmd.fds"
+exit 0
+PROBE
+  chmod +x "$SHIM_STATE/probe.sh"
+  set_config TEST_CMD "bash '$SHIM_STATE/probe.sh'"
+
+  run_loop
+  local out="$output"
+
+  assert_file_exists "$SHIM_STATE/testcmd.fds"
+  local fd
+  for fd in $fds; do
+    if grep -qxF -- "$fd" "$SHIM_STATE/testcmd.fds"; then
+      fail "the project's test command holds descriptor $fd: $(cat "$SHIM_STATE/testcmd.fds" | tr '\n' ' ')"
+    fi
+  done
+  # And the forge it tried on every descriptor it did hold bought nothing.
+  printf '%s\n' "$out" | grep -q "scope overflow" &&
+    fail "a note written by the project's test command was read as the scope-guard's: $out"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a review lens's session is not handed it either" {
+  # The other `exec` inside a branch. A lens is spawned with `--tools` that cannot
+  # write ([06]), which says nothing about the descriptors it inherits — and what
+  # a lens leaves running inherits them too.
+  set_config LENSES "standards"
+  use_tickets 01-alpha
+  pack_run 'printf "%s %s\n" "$GATE_NOTES_FD" "$GATE_NOTES_BACK"'
+  assert_success
+  local fds="$output"
+
+  # The fake is replaced for this test, so it answers both questions itself: the
+  # delivery session writes the ticket's surface, the lens probes its descriptors
+  # and then answers pass.
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+prompt="$(cat)"
+case "$prompt" in
+  *RALPH-LENS-VERDICT*)
+    ls /dev/fd >"$state/lens.fds" 2>/dev/null
+    while read -r fd; do
+      printf 'scope class contract\n' 2>/dev/null >&"$fd" || true
+    done <"$state/lens.fds"
+    printf '{"type":"system","subtype":"init","session_id":"lens","model":"m"}\n'
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"findings: none. RALPH-LENS-VERDICT: pass"}]}}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-LENS-VERDICT: pass","num_turns":1,"total_cost_usd":0.01}\n'
+    ;;
+  *)
+    mkdir -p src
+    printf 'written\n' >src/alpha.txt
+    printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}\n'
+    ;;
+esac
+FAKE
+
+  run_loop
+  local out="$output"
+
+  assert_file_exists "$SHIM_STATE/lens.fds"
+  local fd
+  for fd in $fds; do
+    if grep -qxF -- "$fd" "$SHIM_STATE/lens.fds"; then
+      fail "a lens session holds descriptor $fd: $(cat "$SHIM_STATE/lens.fds" | tr '\n' ' ')"
+    fi
+  done
+  printf '%s\n' "$out" | grep -q "scope overflow" &&
+    fail "a note written by a lens session was read as the scope-guard's: $out"
+  assert_ticket_status 01-alpha resolved
+}
+
+@test "a note exists only inside a branch, on one line, and absent is not empty" {
+  # The three properties of the channel itself, and each of them is load-bearing.
+  # Outside a branch there is nothing to sign a note with, so there is no note —
+  # which is what keeps a second caller, or a test, from writing one by accident.
+  # A value is flattened onto one line because one of the three that travel here
+  # is derived from a stream a process outside the gate can write, and a newline
+  # in it would let that process append a second line under another branch's name.
+  # And a key nobody wrote answers with a status rather than an empty string
+  # ([82]), because the scope-guard writes no class at all when what it found has
+  # no kind.
+  pack_run '
+    gate__notes_open "$RALPH_SHIM_STATE"
+    rc=0
+    gate_note class contract || rc=$?
+    printf "outside=%s\n" "$rc"
+    GATE_BRANCH_NAME=lang gate_note zone "$(printf "first line\nscope class contract")"
+    GATE_BRANCH_NAME=scope gate_note class internal
+    gate__notes_take
+    printf "zone=[%s]\n" "$(gate_noted lang zone)"
+    printf "class=[%s]\n" "$(gate_noted scope class)"
+    rc=0
+    gate_noted tests out || rc=$?
+    printf "absent=%s\n" "$rc"
+    printf "lines=%s\n" "$(printf "%s" "$GATE_NOTES" | grep -c .)"'
+  assert_success
+  assert_output_contains "outside=1"
+  assert_output_contains "zone=[first line scope class contract]"
+  assert_output_contains "class=[internal]"
+  assert_output_contains "absent=1"
+  # Two notes, two lines: the newline in the first value did not become a third.
+  assert_output_contains "lines=2"
+}
+
+@test "the branches of one fan write on it at once, and a value too long to do that is refused" {
+  # What the harness counts, asked of the thing this ticket added ([94] and the
+  # rule in CLAUDE.md): the four branches of a fan answer concurrently on one
+  # inherited descriptor. Measured on 24/09/2026 — eight writers, a thousand bytes
+  # a line, 480 of 480 arrive whole; four thousand bytes, 147 of 480. `printf` is
+  # one write up to the buffer it flushes at and two after that, and two writes
+  # from two branches interleave.
+  #
+  # The half that matters is not the lost answer. One of the three values that
+  # travel here is extracted from a stream a process outside this gate can write,
+  # so a value long enough to be split is a value whose own tail arrives as a line
+  # — signed with whatever name that tail happens to start with. Hence the bound,
+  # and hence this test asserts both halves: eight concurrent notes all arrive
+  # whole, and a value over the bound does not arrive at all.
+  pack_run '
+    d="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    gate__notes_open "$d"
+    long="$(head -c "$((GATE_NOTE_MAX + 1))" /dev/zero | tr "\0" "x")"
+    fits="$(head -c "$GATE_NOTE_MAX" /dev/zero | tr "\0" "x")"
+    rc=0
+    GATE_BRANCH_NAME=lang gate_note zone "$long" || rc=$?
+    printf "toolong=%s\n" "$rc"
+    rc=0
+    GATE_BRANCH_NAME=lang gate_note zone "$fits" || rc=$?
+    printf "fits=%s\n" "$rc"
+    i=0
+    while [ "$i" -lt 8 ]; do
+      i=$((i + 1))
+      (
+        n=0
+        while [ "$n" -lt 40 ]; do
+          n=$((n + 1))
+          GATE_BRANCH_NAME="branch$i" gate_note zone "$fits"
+        done
+      ) &
+    done
+    wait
+    gate__notes_take
+    printf "whole=%s\n" "$(printf "%s" "$GATE_NOTES" |
+      awk -v L="$GATE_NOTE_MAX" \
+        "\$1 ~ /^branch[1-8]\$/ && \$2 == \"zone\" && NF == 3 && length(\$3) == L { n++ } END { print n + 0 }")"
+    gate__notes_close'
+  assert_success
+  assert_output_contains "toolong=1"
+  assert_output_contains "fits=0"
+  # Every one of them, whole. A channel that dropped notes under concurrency would
+  # be a class nobody classified and a coverage line nobody printed, on the
+  # iterations where four branches finish together.
+  assert_output_contains "whole=320"
+}
+
+@test "the file a fan answers on has no name for anything to open" {
+  # The whole of why this channel is a guarantee and not a better-named file. Same
+  # user, same machine: permissions buy nothing, and a name is not a guard ([81]).
+  # The file is made, opened twice and unlinked before a byte goes into it, so the
+  # two descriptors this shell holds are the only handles on it — and a subshell
+  # inherits them where a stranger cannot find them.
+  pack_run '
+    d="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    gate__notes_open "$d"
+    printf "left=[%s]\n" "$(ls -A "$d" | tr "\n" " ")"
+    GATE_BRANCH_NAME=scope gate_note class internal
+    gate__notes_take
+    printf "class=[%s]\n" "$(gate_noted scope class)"
+    printf "still=[%s]\n" "$(ls -A "$d" | tr "\n" " ")"
+    gate__notes_close'
+  assert_success
+  assert_output_contains "left=[]"
+  # And it really is the channel that carried the answer, not a file read back.
+  assert_output_contains "class=[internal]"
+  assert_output_contains "still=[]"
+}
+
+@test "a channel that cannot be opened is a gate that refuses to run" {
+  # A gate whose branches had nowhere to answer would go on returning colours
+  # while the answer that decides the retry budget quietly stopped arriving. It is
+  # refused at the door instead, which is the shape every other instrument of this
+  # module uses when it cannot be set up ([34]).
+  pack_run 'set +e
+    gate__notes_open "$RALPH_SHIM_STATE/no-such-directory"
+    printf "open=%s\n" "$?"
+    gate__notes_open ""
+    printf "empty=%s\n" "$?"'
+  assert_output_contains "open=1"
+  assert_output_contains "empty=1"
 }
 
 # ── [95] what this pack launches itself, and what it leaves ──────────────────

@@ -351,8 +351,10 @@ MEASURE
   printf '%s artifact\n' "${LANG_ARTIFACT:-en}"
 }
 
-# Runs as a gate branch: findings on stdout, the zone line in a sidecar file
-# because a branch runs in its own process and cannot log from the loop's shell.
+# Runs as a gate branch: findings on stdout, the zone line on the gate's note
+# channel because a branch runs in its own process and cannot log from the loop's
+# shell. A sidecar file in the gate's directory until [94], which is the same
+# sentence with a file any process on the machine could rewrite at the end of it.
 #
 # Both trees are given and neither is read from disk, for the reason [29] wrote
 # down at length: `TEST_CMD` is running while this branch runs, so a check that
@@ -365,8 +367,8 @@ MEASURE
 # fail-closed is somebody else's is a guard that goes green the day that somebody
 # else moves ([34]).
 lang_check() {
-  local ticket="$1" base="$2" now="$3" zonefile="${4:-}"
-  local changed file expected why prose exempt
+  local ticket="$1" base="$2" now="$3"
+  local changed file expected why prose exempt zone
   local total hits dominant dhits share
   local seen=0 undecided=0 skipped=0 unaddressable=0 rc=0 min pct
 
@@ -454,10 +456,18 @@ MEASURE
 $changed
 PROSE
 
-  if [ -n "$zonefile" ] &&
-    [ $((seen + undecided + skipped + unaddressable)) -gt 0 ]; then
-    printf 'the language gate checked %s prose file(s), could not tell the language of %s (too little prose to judge), could not address %s (a name git prints quoted), and did not look at %s (LANG_EXEMPT_PATHS)\n' \
-      "$seen" "$undecided" "$unaddressable" "$skipped" >"$zonefile"
+  # The coverage line, out to the shell that forked this branch on the gate's note
+  # channel, and no longer into a file in the gate's own temporary directory
+  # ([94]). It is an announcement and not a verdict, which is exactly why it had to
+  # move: what a process rewriting it changed is the number of files a human is
+  # told were looked at, and that number is the whole reason [24] prints this every
+  # iteration instead of once in a document. Never fatal — a run whose branches
+  # were started by something that is not the gate has no channel to answer on, and
+  # this check's verdict does not depend on being able to say what it covered.
+  if [ $((seen + undecided + skipped + unaddressable)) -gt 0 ]; then
+    zone="$(printf 'the language gate checked %s prose file(s), could not tell the language of %s (too little prose to judge), could not address %s (a name git prints quoted), and did not look at %s (LANG_EXEMPT_PATHS)' \
+      "$seen" "$undecided" "$unaddressable" "$skipped")"
+    gate_note zone "$zone" || true
   fi
 
   return "$rc"

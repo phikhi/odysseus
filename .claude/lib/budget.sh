@@ -35,8 +35,9 @@
 #
 # Not gated is not the same as not *read*, and [43] is the difference. A lens the
 # API refused judged nothing, so the two readers below are pointed at its stream
-# too — by `lenses_refused_posture`, in the gate, before the gate's temporary
-# directory goes. What comes back is a correction the pilot applies at the top of
+# too — by `lenses__refused_posture`, inside the lens branch, while the stream is
+# still that branch's own ([94]; it was the gate's, on the same file after the
+# branch was gone, until then). What comes back is a correction the pilot applies at the top of
 # the next iteration, exactly like the delivery session's, and a ticket the gate
 # went red on for that reason alone is given back without a retry charged. It
 # still is not a decision taken inside the iteration: nothing sleeps down there.
@@ -344,7 +345,7 @@ budget_refused() {
 #
 # The one ordering every tier that reads an answer out of a stream shares, and a
 # function rather than a sentence repeated in each of them because that is how it
-# was got wrong: [43] wrote it in prose in `lenses_refused_posture`, [11] wrote it
+# was got wrong: [43] wrote it in prose in `lenses__refused_posture`, [11] wrote it
 # again in prose in `playthrough_close`, and the third tier asked the two
 # questions the other way round — `retro_run` consulted the budget *before* it
 # read a word the session had said, and threw away a lesson, an architecture

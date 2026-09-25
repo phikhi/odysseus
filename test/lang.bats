@@ -268,7 +268,7 @@ script_session_writing_prose() {
   # Fail-closed, and deliberately not delegated to the scope-guard's refusal on
   # the same tree: a guard whose fail-closed belongs to somebody else goes green
   # the day that somebody else moves ([34]).
-  pack_run 'lang_check 01-alpha "" "" /dev/null'
+  pack_run 'lang_check 01-alpha "" ""'
   assert_failure
   assert_output_contains "could not read the working tree"
 }
@@ -283,14 +283,20 @@ script_session_writing_prose() {
   use_tickets 01-alpha
   set_config LANG_ARTIFACT fr
 
+  # The zone line comes back on the gate's note channel since [94] and no longer
+  # in a file beside the stream, so the staging opens that channel and gives this
+  # call the name a branch would have given it — the two things `gate__branch`
+  # does around a callee.
   pack_run '
+    gate__notes_open "$RALPH_SHIM_STATE"
     base="$(gate_tree_snapshot)"
     mkdir -p .claude src
     printf "The pack documents itself in English, whatever this project writes.\n" >.claude/NOTES.md
     printf "written\n" >src/alpha.txt
-    lang_check 01-alpha "$base" "$(gate_tree_snapshot)" "$RALPH_SHIM_STATE/zone"
+    GATE_BRANCH_NAME=lang lang_check 01-alpha "$base" "$(gate_tree_snapshot)"
     printf "rc=%s\n" "$?"
-    cat "$RALPH_SHIM_STATE/zone"'
+    gate__notes_take
+    gate_noted lang zone'
   assert_success
   assert_output_contains "rc=0"
   assert_output_contains "did not look at 1"
@@ -317,7 +323,7 @@ script_session_writing_prose() {
 
   # `rc=0; … || rc=$?` and not a bare call: pack_run runs under `set -e`, so a red
   # branch would take the whole process down before it printed anything.
-  pack_run "rc=0; lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" '$SHIM_STATE/zone' || rc=\$?; printf 'rc=%s\n' \"\$rc\"; cat '$SHIM_STATE/zone'"
+  pack_run "gate__notes_open '$SHIM_STATE'; rc=0; GATE_BRANCH_NAME=lang lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" || rc=\$?; printf 'rc=%s\n' \"\$rc\"; gate__notes_take; gate_noted lang zone"
   assert_success
   assert_output_contains "rc=1"
   # Named readably, which is the half a human acts on: the finding is useless if
@@ -342,7 +348,7 @@ script_session_writing_prose() {
   mkdir -p "$PROJECT_DIR/docs"
   lang_french >"$PROJECT_DIR/$(printf 'docs/a\tb.md')"
 
-  pack_run "lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" '$SHIM_STATE/zone'; printf 'rc=%s\n' \"\$?\"; cat '$SHIM_STATE/zone'"
+  pack_run "gate__notes_open '$SHIM_STATE'; GATE_BRANCH_NAME=lang lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\"; printf 'rc=%s\n' \"\$?\"; gate__notes_take; gate_noted lang zone"
   assert_success
   assert_output_contains "rc=0"
   assert_output_contains "could not address 1"
