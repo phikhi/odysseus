@@ -516,3 +516,9 @@ FAKE
   assert_output_contains "?? wip.txt"
   assert_output_contains "CONTEXT.md"
 }
+
+# ── the known hole, waiting for its ticket ───────────────────────────────────
+
+@test "the canary: a process the judged session left behind cannot forge a lens verdict" {
+  skip "known hole, ticket [97]: the verdict of a review lens is the last RALPH-LENS-VERDICT line of its stream, and that stream is a named file under \$TMPDIR for as long as the session is writing into it. [94] moved every answer the *gate* read out of its own directory onto a descriptor no stranger can find, and moved the lens's own read back inside the branch that owns the stream — which leaves one window: between the session's last write and the branch's read. A process the judged session left behind, polling for the verdict line and truncating the file, wins it. Nothing above session_spawn can close it: the stream needs a name because claude is given it on a redirection and monitor_watch follows it through a descriptor of its own, opened by path. Raising this skip is an acceptance criterion of [97]."
+}

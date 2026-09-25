@@ -293,3 +293,34 @@ l'urgence :
 
 Arêtes : **[95] → [94]** (la forme du fork avant ce qui le traverse),
 **[94] → [96]** (la source avant le document qui la cite). Aucune autre.
+
+### Suite — livraison de [94], 24/09/2026
+
+**[95] ✅ `c022a7f` (+ `d7cf83e`) · [94] ✅ livré le 24/09 · [96] ouvert.**
+
+Ce que [94] a fermé et ce qu'il a **rendu visible sans pouvoir le fermer**, parce
+que la distinction décide de la suite de la file :
+
+- **Fermé** : la lecture faite par le **shell qui forke**, dans le répertoire du
+  gate, **après la mort de la branche**. Les trois réponses (classe d'échec, ligne
+  de couverture, posture de refus d'une lentille) voyagent sur un descripteur d'un
+  fichier **délié avant qu'un octet y soit écrit**, et les trois `exec` du pack qui
+  lancent autre chose que le pack passent par `gate_notes_shut`. `$dir/scope.class`
+  et `$dir/lang.zone` ne sont plus écrits du tout. Le **prompt** d'une lentille est
+  sans nom lui aussi — c'était le seul objet de ce répertoire qu'une réécriture
+  transformait en vert.
+- **Pas fermé, et c'est une trouvaille de livraison → [97]** : le **flux** d'une
+  session. Il doit avoir un nom pendant toute la session (`claude` le reçoit par
+  une redirection, `monitor_watch` le suit par un descripteur ouvert **par le
+  chemin**), et `session.sh` / `monitor.sh` étaient hors de la write-surface de
+  [94]. Ce que la passe avait mesuré en `q1c` était donc **deux fenêtres en une** :
+  celle du parent (fermée) et celle de la branche (ouverte). La seconde est
+  gagnable par un process qui poll, et pour le **verdict** ce n'est même pas une
+  course — `lenses__verdict` prend la dernière occurrence. Un `skip` du canari
+  garde la faille ; le lever est un AC de [97].
+
+La leçon transversale de cette livraison, pour la passe suivante : **la passe a
+nommé le canal et pris le fichier au bout du canal pour la source.** La source
+d'une réponse lue dans un flux de session n'est pas le répertoire où le flux est
+rangé, c'est le fait qu'un flux de session soit un fichier nommé — et ça, aucun des
+trois §  ne le disait. Quatre étages en tirent un verdict.

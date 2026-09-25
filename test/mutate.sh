@@ -1462,7 +1462,7 @@ mutation "34 the snapshot's pathspec branch hands git a pattern" "$GATE" \
 # charged to the session. Without the sleep this entry would be a draw, which is
 # the whole complaint about the code it plants.
 mutation "29 the scope-guard snapshots the tree from inside its branch again" "$GATE" \
-  's/^gate__scope_guard\(\) \{/gate__scope_guard() { set -- "\$1" "\$2" "\$(sleep 1; gate_tree_snapshot)" "\$4";/m' \
+  's/^gate__scope_guard\(\) \{/gate__scope_guard() { set -- "\$1" "\$2" "\$(sleep 1; gate_tree_snapshot)";/m' \
   test/gate.bats "writes at once is not charged"
 
 # The other half of the hoist, and the one [06] needs: the tree is still taken once
@@ -1917,7 +1917,7 @@ mutation "36 a run beside this one is counted as a leak" "$GATE" \
 # into the prompt and the test that must notice is a refutation.
 
 mutation "17 no branch of the gate looks at the language" "$GATE" \
-  's/    if lang_enabled; then\n      gate__start "\$dir" lang \\\n        lang_check "\$ticket" "\$base" "\$RALPH_GATE_TREE" "\$dir\/lang.zone"\n      names="\$names lang"\n      pids="\$pids \$!"\n    fi\n\n//' \
+  's/    if lang_enabled; then\n      gate__start "\$dir" lang \\\n        lang_check "\$ticket" "\$base" "\$RALPH_GATE_TREE"\n      names="\$names lang"\n      pids="\$pids \$!"\n    fi\n\n//' \
   test/lang.bats "another language than LANG_ARTIFACT is red"
 
 mutation "17 the share of the expected language is not compared" "$LANGLIB" \
@@ -2653,7 +2653,7 @@ mutation "41 a register that got shorter is nobody's business" "$GATE" \
 # a give-back and never a green.
 
 mutation "43 a refused lens is never noticed" "$LENSES_LIB" \
-  's/^lenses_refused_posture\(\) \{/lenses_refused_posture() { return 1;/m' \
+  's/^lenses__refused_posture\(\) \{/lenses__refused_posture() { return 1;/m' \
   test/budget.bats "costs the ticket what a refused delivery session costs"
 
 # Both halves of the ordering, re-anchored by [63]: the question is now asked in
@@ -2661,7 +2661,7 @@ mutation "43 a refused lens is never noticed" "$LENSES_LIB" \
 # is the argument it passes — and the shared half is mutated once, below, against
 # a tier that is not the one that got it wrong.
 mutation "43 a lens that answered is read as refused all the same" "$LENSES_LIB" \
-  's/budget_refused_silence "\$\(lenses__verdict "\$stream"\)"/budget_refused_silence none/' \
+  's/  budget_refused_silence "\$verdict" "\$posture" \|\| return 1/  budget_refused_silence none "\$posture" || return 1/' \
   test/lenses.bats "told apart from every other way"
 
 mutation "43 a stream that says nothing about quota is read as a refusal" "$BUDGET" \
@@ -2673,8 +2673,18 @@ mutation "43 a stream that says nothing about quota is read as a refusal" "$BUDG
 # in its stream buys the give-back a real refusal buys. Asked of GATE_TIMED_OUT
 # since [92] and no longer of a file in the gate's directory, which is the read a
 # survivor of the judged session could have answered for it.
+#
+# **Two substitutions since [94], and the second one alone came back VACUOUS.**
+# That is the whole of what [94] changed here and it is worth reading before
+# re-aiming it again: the posture is now read out of the note its own branch left,
+# and a branch the watchdog killed never reached the line that writes one — so the
+# guarantee is carried per *branch* and no longer by this fan-wide question. The
+# question still earns its line, for the case it now owns alone: a lens that
+# finished with a genuine refusal beside one the deadline cut. So the edit that
+# removes the guarantee has to put the read back in the parent **and** switch the
+# question off; either half on its own leaves it standing.
 mutation "43 a lens the watchdog killed speaks through its last event" "$GATE" \
-  's/  if \[ "\$\{GATE_TIMED_OUT:-0\}" != 1 \]; then/  if true; then/' \
+  's/      if posture="\$\(gate_noted "\$name" posture\)"; then/      if posture="\$(lenses__refused_posture "\$dir\/lens-\$name.jsonl" "\$(lenses__verdict "\$dir\/lens-\$name.jsonl")")"; then/; s/  if \[ "\$\{GATE_TIMED_OUT:-0\}" != 1 \]; then/  if true; then/' \
   test/budget.bats "deadline killed is not read as a refusal"
 
 mutation "43 a refused lens cancels the red of a lens that judged" "$GATE" \
@@ -6178,7 +6188,7 @@ mutation "82 a write-surface nobody could read is an empty surface again" "$GATE
   test/tracker-remote.bats "verdict and not an empty perimeter"
 
 mutation "82 the scope-guard judges the tree against a surface nobody read" "$GATE" \
-  's#  if ! surface="\$\(gate_write_surface "\$ticket"\)"; then\n    printf \x27the tracker would not say[^\n]*\n    printf \x27contract\\n\x27 >"\$classfile"\n    return 1\n  fi#  surface="\$(gate_write_surface "\$ticket")" || surface=\x27\x27#' \
+  's#  if ! surface="\$\(gate_write_surface "\$ticket"\)"; then\n    printf \x27the tracker would not say[^\n]*\n    gate_note class contract \|\| true\n    return 1\n  fi#  surface="\$(gate_write_surface "\$ticket")" || surface=\x27\x27#' \
   test/tracker-remote.bats "verdict and not an empty perimeter"
 
 mutation "82 one ticket's unreadable surface reads as not this one" "$GATE" \
@@ -6964,6 +6974,87 @@ mutation "93 the template takes the feature of whichever test built it" "$HARNES
 mutation "93 a config value with a quote in it is eaten" "$HARNESS" \
   's/^harness__quote\(\) \{/harness__quote() { printf "\x27%s\x27" "\$1"; return 0;/m' \
   test/smoke.bats "quotes a value"
+
+# ── [94] a branch's second answer, and where it travels ──────────────────────
+#
+# [92] took the *verdicts* out of the gate's temporary directory and stopped
+# there. Three answers were still read out of that directory by the shell that
+# forked the branches, after the branches were gone — the kind of overflow, the
+# coverage line, the refusal posture of a lens — and two of them decide more than
+# a colour: the retry budget of a ticket, and whether the iteration is billed.
+#
+# Every entry below either puts one of the three back on a file, or takes away the
+# one thing that makes the descriptor a guarantee: that nothing the pack `exec`s
+# outside itself is holding it.
+
+mutation "94 the gate reads the kind of overflow out of a file again" "$GATE" \
+  's/    RALPH_GATE_SCOPE_CLASS="\$\(gate_noted scope class\)" \|\|\n      RALPH_GATE_SCOPE_CLASS=""/    if [ -f "\$dir\/scope.class" ]; then\n      RALPH_GATE_SCOPE_CLASS="\$(cat "\$dir\/scope.class")"\n    fi/' \
+  test/gate.bats "kind of overflow a branch found"
+
+mutation "94 a branch's class never leaves the branch" "$GATE" \
+  's/  if \[ -n "\$class" \]; then\n    gate_note class "\$class" \|\| true\n  fi\n//' \
+  test/gate.bats "class a branch really measured does arrive"
+
+mutation "94 the notes of a fan are never taken" "$GATE" \
+  's/^  gate__notes_take\n  return 0\n}/  return 0\n}/m' \
+  test/gate.bats "class a branch really measured does arrive"
+
+mutation "94 the file a fan answers on keeps its name" "$GATE" \
+  's/^  rm -f "\$file"\n  return 0\n}/  return 0\n}/m' \
+  test/gate.bats "file a fan answers on has no name"
+
+# Anchored on the function and not on its first guard, and the reason is a VACUOUS
+# this entry earned on its first try: three things in series refuse an unusable
+# directory — the guard, the `mktemp` in it, and the `exec` after that — so taking
+# any one of them away leaves the refusal standing. What the guarantee is, is that
+# `gate__notes_open` never claims to have opened a channel it did not.
+mutation "94 a channel that was never opened reports success" "$GATE" \
+  's/^gate__notes_open\(\) \{/gate__notes_open() { GATE_NOTES=""; return 0;/m' \
+  test/gate.bats "channel that cannot be opened"
+
+mutation "94 a note is as long as it likes" "$GATE" \
+  's/^  \[ "\$\{#value\}" -le "\$GATE_NOTE_MAX" \] \|\| return 1\n//m' \
+  test/gate.bats "write on it at once"
+
+mutation "94 a note keeps the newlines it was handed" "$GATE" \
+  's/  value="\$\{value\/\/\$.\\n.\/ \}"\n  value="\$\{value\/\/\$.\\r.\/ \}"\n//' \
+  test/gate.bats "note exists only inside a branch"
+
+mutation "94 a note can be written from outside a branch" "$GATE" \
+  's/^  \[ -n "\$\{GATE_BRANCH_NAME:-\}" \] \|\| return 1\n//m' \
+  test/gate.bats "note exists only inside a branch"
+
+mutation "94 the coverage line comes back off a file again" "$GATE" \
+  's/  zone="\$\(gate_noted lang zone\)" \|\| return 0/  zone="\$(cat "\$\{TMPDIR:-\/tmp\}"\/ralph-gate.*\/lang.zone 2>\/dev\/null | tail -1)"; [ -n "\$zone" ] || return 0/' \
+  test/gate.bats "coverage line of the language gate comes off"
+
+mutation "94 the language branch says nothing about what it covered" "$LANGLIB" \
+  's/^    gate_note zone "\$zone" \|\| true\n//m' \
+  test/lang.bats "the exemption is counted"
+
+mutation "94 the gate reopens a lens's stream after its branch is gone" "$GATE" \
+  's/      if posture="\$\(gate_noted "\$name" posture\)"; then/      if posture="\$(lenses__refused_posture "\$dir\/lens-\$name.jsonl" "\$(lenses__verdict "\$dir\/lens-\$name.jsonl")")"; then/' \
+  test/gate.bats "refusal posture of a lens is its own"
+
+mutation "94 a refused lens never gets its posture out of its branch" "$LENSES_LIB" \
+  's/  if posture="\$\(lenses__refused_posture "\$stream" "\$verdict"\)"; then\n    gate_note posture "\$posture" \|\| true\n  fi\n//' \
+  test/gate.bats "lens the API really refused still gives the ticket back"
+
+mutation "94 the project's test command keeps the channel open" "$GATE" \
+  's/  gate_notes_shut proc_group_fork .. "\$cmd"/  proc_group_fork \x27\x27 "\$cmd"/' \
+  test/gate.bats "test command is not handed the channel"
+
+mutation "94 a lens's session keeps the channel open" "$LENSES_LIB" \
+  's/  gate_notes_shut session_spawn "\$promptfile"/  session_spawn "\$promptfile"/' \
+  test/gate.bats "review lens's session is not handed"
+
+mutation "94 the prompt of a lens keeps its name" "$LENSES_LIB" \
+  's/^  rm -f "\$file"\n  # The read end named as a path/  # The read end named as a path/m' \
+  test/lenses.bats "no name for another process to rewrite"
+
+mutation "94 a lens is spawned with a prompt anything can rewrite" "$LENSES_LIB" \
+  's/^lenses__prompt_open\(\) \{/lenses__prompt_open() { return 1;/m' \
+  test/lenses.bats "handed the diff, not just the names"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

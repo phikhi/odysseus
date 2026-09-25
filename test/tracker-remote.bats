@@ -967,19 +967,21 @@ DO
   # burned its whole budget against a tracker nobody could read.
   use_tickets 01-alpha 07-overlaps-alpha
   mkdir -p "$PROJECT_DIR/src"
-  local class="$RALPH_TEST_DIR/class"
 
   pack_run 'tracker_ids() { return 3; }
     mkdir -p src
     base="$(gate_tree_snapshot)"
     printf "spill\n" >src/eta.txt
     now="$(gate_tree_snapshot)"
+    gate__notes_open "$RALPH_SHIM_STATE"
     set +e
-    gate__scope_guard 01-alpha "$base" "$now" '"'$class'"'
-    printf "rc=%s\n" "$?"'
+    GATE_BRANCH_NAME=scope gate__scope_guard 01-alpha "$base" "$now"
+    printf "rc=%s\n" "$?"
+    gate__notes_take
+    gate_noted scope class'
   assert_output_contains "nothing here can say whose write-surface it is"
   assert_output_contains "rc=1"
-  assert_equal "$(cat "$class")" "contract"
+  assert_output_contains "contract"
 }
 
 @test "the same guard still tells a stray write from a drift when the tracker answers" {
@@ -988,7 +990,6 @@ DO
   # always did.
   use_tickets 01-alpha 07-overlaps-alpha
   mkdir -p "$PROJECT_DIR/src"
-  local class="$RALPH_TEST_DIR/class"
 
   pack_run 'gate__surface_owner "src/alpha.txt" 07-overlaps-alpha'
   assert_success
@@ -1001,11 +1002,14 @@ DO
     base="$(gate_tree_snapshot)"
     printf "spill\n" >src/eta.txt
     now="$(gate_tree_snapshot)"
+    gate__notes_open "$RALPH_SHIM_STATE"
     set +e
-    gate__scope_guard 01-alpha "$base" "$now" '"'$class'"'
-    printf "rc=%s\n" "$?"'
+    GATE_BRANCH_NAME=scope gate__scope_guard 01-alpha "$base" "$now"
+    printf "rc=%s\n" "$?"
+    gate__notes_take
+    gate_noted scope class'
   assert_output_contains "inside the write-surface of 07-overlaps-alpha"
-  assert_equal "$(cat "$class")" "contract"
+  assert_output_contains "contract"
 }
 
 # ── wait_ci ──────────────────────────────────────────────────────────────────
@@ -2169,7 +2173,6 @@ remote__ceiling_refuses() {
   use_forge github
   remote__tagged
   remote__ceiling_refuses
-  local class="$RALPH_TEST_DIR/class"
 
   pack_run 'set +e
     gate_write_surface 1-alpha; printf "surface=%s\n" "$?"'
@@ -2180,9 +2183,12 @@ remote__ceiling_refuses() {
     base="$(gate_tree_snapshot)"
     printf "alpha\n" >src/alpha.txt
     now="$(gate_tree_snapshot)"
+    gate__notes_open "$RALPH_SHIM_STATE"
     set +e
-    gate__scope_guard 1-alpha "$base" "$now" '"'$class'"'
-    printf "rc=%s\n" "$?"'
+    GATE_BRANCH_NAME=scope gate__scope_guard 1-alpha "$base" "$now"
+    printf "rc=%s\n" "$?"
+    gate__notes_take
+    gate_noted scope class'
   assert_output_contains "rc=1"
   assert_output_contains "the tracker would not say what write-surface 1-alpha declares"
   assert_output_contains "an unreadable surface is not an empty one"
@@ -2190,7 +2196,7 @@ remote__ceiling_refuses() {
   refute_output_contains "outside the declared write-surface"
   # `contract`, for the reason `gate__surface_owner` has used it since [18]: a
   # tracker that will not answer is not something a fresh session fixes.
-  assert_equal "$(cat "$class")" "contract"
+  assert_output_contains "contract"
 }
 
 @test "the same surface under a ceiling that fits is read, and the session stays inside it" {
@@ -2198,7 +2204,6 @@ remote__ceiling_refuses() {
   remote__tagged
   set_config FORGE_PAGE 2
   set_config FORGE_PAGES 4
-  local class="$RALPH_TEST_DIR/class"
 
   pack_run 'gate_write_surface 1-alpha'
   assert_success
@@ -2208,12 +2213,18 @@ remote__ceiling_refuses() {
     base="$(gate_tree_snapshot)"
     printf "alpha\n" >src/alpha.txt
     now="$(gate_tree_snapshot)"
+    gate__notes_open "$RALPH_SHIM_STATE"
     set +e
-    gate__scope_guard 1-alpha "$base" "$now" '"'$class'"'
-    printf "rc=%s\n" "$?"'
+    GATE_BRANCH_NAME=scope gate__scope_guard 1-alpha "$base" "$now"
+    printf "rc=%s\n" "$?"
+    gate__notes_take
+    gate_noted scope class'
   assert_output_contains "rc=0"
   refute_output_contains "would not say what write-surface"
-  refute_file_exists "$class"
+  # No note at all rather than an empty one: a guard that found nothing to
+  # classify says nothing, and `gate_noted` answers with a status ([82]).
+  refute_output_contains "contract"
+  refute_output_contains "internal"
 }
 
 @test "a lens gated on a tag the tracker would not answer is not a lens that has nothing to look at" {

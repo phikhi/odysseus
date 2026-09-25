@@ -54,17 +54,29 @@
 # read-only tool set means an injected instruction cannot make the judge write.
 #
 # Since [43] the branch is still red when the API refused the session, and only
-# the *bill* changes: `lenses_refused_posture` lets the gate say which of its red
-# lenses looked at nothing at all, and the loop gives such a ticket back without
-# charging a retry for it. The direction is the one the whole budget half is built
-# on — a signal read out of a stream may make a run more cautious and never less.
+# the *bill* changes: a lens that looked at nothing at all says so, and the loop
+# gives such a ticket back without charging a retry for it. The direction is the
+# one the whole budget half is built on — a signal read out of a stream may make a
+# run more cautious and never less.
+#
+# Who reads that stream moved with [94]. It is this branch, while the file is
+# still its own, and the three words go out to the gate on the note channel; the
+# gate used to open the file itself, after this branch was gone, which put the
+# answer on a file every process on the machine could write. What that does not
+# buy: the stream is a named file for as long as the session is writing into it,
+# so a process injecting into it *during* the session is injecting into the lens's
+# own testimony. Nothing above `session_spawn` can close that, and this module is
+# above it — ticket [97].
 
 # ── the registry ─────────────────────────────────────────────────────────────
 #
-# gate.sh reaches into this module through exactly three functions —
-# `lenses_triggered`, `lenses_review` and `lenses_refused_posture` — and this
-# module reaches back only for gate.sh's public readers of tree objects and
-# write-surfaces, plus budget.sh's two readers of a stream. Keeping it to that
+# gate.sh reaches into this module through exactly two functions —
+# `lenses_triggered` and `lenses_review` — and this module reaches back only for
+# gate.sh's public readers of tree objects and write-surfaces, for the two ends of
+# its note channel ([94]), plus budget.sh's two readers of a stream. The third
+# function was `lenses_refused_posture`, which the gate called on a lens's stream
+# after the branch that wrote it was gone; it is a private of this module now,
+# asked inside the branch, for the reason [94] exists. Keeping it to that
 # is deliberate: the two files do refer to each other, and the only thing keeping
 # that from becoming a mesh is that the fan stays on one side and the registry on
 # the other. A lens that wanted to start a branch of its own has left the design.
@@ -310,11 +322,65 @@ lenses_posture() {
 LENSES_VERDICT_TOKEN='RALPH-LENS-VERDICT'
 
 # Where a lens's stream lives, in the gate's own temporary directory. One
-# definition and not two since [43], which gave that file a second reader: a
-# second spelling would drift, and the symptom would be a posture nobody could
-# find rather than an error.
+# definition and not two since [43], which gave that file a second reader; the
+# second reader is back inside the branch since [94], and the definition stays
+# here all the same — a second spelling would drift, and the symptom would be a
+# posture nobody could find rather than an error.
+#
+# A named file, and the one object of this tier that could not be made nameless:
+# `session_spawn` hands the path to `claude` on a redirection and `monitor_watch`
+# follows it through a descriptor of its own, so the stream has to have a name for
+# as long as the session is writing into it. What that leaves open is a process
+# injecting into a lens's own testimony while it is being written — ticket [97].
 lenses__stream() {
   printf '%s/lens-%s.jsonl\n' "$1" "$2"
+}
+
+# Where the two ends of a prompt no other process can open live. Same shape as
+# the gate's note channel and for the same reason, one tier down: a file made in
+# the gate's directory, opened to write and to read, and unlinked before a byte
+# goes into it ([94]).
+#
+# The prompt is the one object of that directory a rewrite turns into a *green*.
+# It is the instruction handed to the judge — it says which lens this is, what
+# question to answer and to end on a verdict line — and it was written by the
+# branch and read back by `claude` a moment later, from a path anything watching
+# `$TMPDIR` could guess from the lens's name. Between those two moments a process
+# could put its own instructions in front of the judge, and nothing downstream
+# would tell the difference: the stream would carry a real verdict from a real
+# session asked the wrong question.
+#
+# Two numbers, literals for the reason the gate's two are, and 6 and 7 rather
+# than 8 and 9 because a lens branch holds all four at once.
+LENSES_PROMPT_FD=7
+LENSES_PROMPT_BACK=6
+
+# Not a value on stdout, because `exec` in a command substitution opens
+# descriptors in a subshell that is gone by the time the caller reads them. The
+# path comes back in a variable instead, the way `proc_group_fork` answers
+# through PROC_GROUP_PID.
+LENSES_PROMPT_PATH=''
+lenses__prompt_open() {
+  local dir="$1" file
+  LENSES_PROMPT_PATH=''
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  file="$(mktemp "$dir/prompt.XXXXXX")" || return 1
+  if ! eval "exec $LENSES_PROMPT_FD>\"\$file\" $LENSES_PROMPT_BACK<\"\$file\""; then
+    rm -f "$file"
+    return 1
+  fi
+  rm -f "$file"
+  # The read end named as a path, because `session_spawn` takes a path and opens
+  # it: on darwin that is a `dup` of this descriptor, which is what makes it
+  # readable at all once the name is gone.
+  LENSES_PROMPT_PATH="/dev/fd/$LENSES_PROMPT_BACK"
+  return 0
+}
+
+lenses__prompt_close() {
+  eval "exec $LENSES_PROMPT_FD>&- $LENSES_PROMPT_BACK<&-" 2>/dev/null || true
+  LENSES_PROMPT_PATH=''
+  return 0
 }
 
 # One lens, as a gate branch: findings on stdout, the verdict as the exit code.
@@ -325,8 +391,8 @@ lenses__stream() {
 # nobody wired up must not be indistinguishable from a gate everything passes.
 lenses_review() {
   local name="$1" ticket="$2" base="$3" tree="$4" dir="$5"
-  local promptfile="$dir/lens-$name.prompt" stream
-  local verdict rc=0
+  local stream promptfile
+  local verdict posture rc=0
   stream="$(lenses__stream "$dir" "$name")"
 
   if ! lenses__is_runnable "$name"; then
@@ -344,18 +410,46 @@ lenses_review() {
     return 1
   fi
 
-  if ! lenses__write_prompt "$name" "$ticket" "$base" "$tree" >"$promptfile"; then
+  if ! lenses__prompt_open "$dir"; then
+    printf 'the %s lens could not be handed a prompt no other process can reach — refusing to spend a session on a question this gate cannot vouch for\n' \
+      "$name"
+    return 1
+  fi
+  promptfile="$LENSES_PROMPT_PATH"
+
+  if ! lenses__write_prompt "$name" "$ticket" "$base" "$tree" >&"$LENSES_PROMPT_FD"; then
+    lenses__prompt_close
     printf 'the %s lens has nothing to review: this iteration changed no file the gate can see\n' \
       "$name"
     return 1
   fi
+  # The write end goes before the session does, so that what the judge is given
+  # cannot be added to once it has been written — by this shell or by anything
+  # that would otherwise inherit the descriptor.
+  eval "exec $LENSES_PROMPT_FD>&-"
 
+  # Through `gate_notes_shut`, because a descriptor survives an `exec`: without it
+  # this session and everything it leaves behind would hold the write end of the
+  # channel the gate reads its branches' second answers on ([94]).
+  #
   # Unquoted on purpose: the posture is several flags, and one string is what keeps
   # them in one definition a test can read.
   # shellcheck disable=SC2046
-  session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
+  gate_notes_shut session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
+  lenses__prompt_close
 
   verdict="$(lenses__verdict "$stream")"
+
+  # Asked here, in the branch that owns the stream, and sent out as three words
+  # ([94]). The gate used to open this file itself once this branch was gone, and
+  # a process that rewrote it between those two moments bought a `budget-pause` on
+  # a green iteration — the work rolled back, the ticket never billed and the
+  # pilot stopping the night. Never fatal: a lens that cannot say it was refused
+  # stays red and billed, which is the direction silence is allowed to move.
+  if posture="$(lenses__refused_posture "$stream" "$verdict")"; then
+    gate_note posture "$posture" || true
+  fi
+
   lenses_findings "$stream"
 
   case "$verdict" in
@@ -406,18 +500,23 @@ lenses__verdict() {
 # event, and the tier that wrote that sentence a third time in prose is the tier
 # that got it backwards.
 #
-# Read by the gate, out of the stream in the gate's own temporary directory and
-# before it removes that directory. Deliberately not returned by `lenses_review`:
-# that runs in a gate branch, which is a subshell, so a variable set there dies
-# with the branch — the boundary `RALPH_SESSION_TIMEOUT` meets, and the one [23]
-# refused a file beside the stream for. Nothing new is written here either. The
-# stream is already there, and the caller is the shell that made the directory.
-lenses_refused_posture() {
-  local dir="$1" name="$2" stream posture
-  stream="$(lenses__stream "$dir" "$name")"
+# Asked inside the branch since [94], on the stream while it is still this
+# branch's own, and given the verdict this branch has already read rather than
+# reading it a second time — one read of a file a session wrote, not two.
+#
+# It used to be the gate's, called on the same file after this branch was gone,
+# and that is the whole of what [94] moved: the answer decided whether the
+# iteration was billed at all, and it was taken out of a file in a `mktemp`
+# directory any process on the machine enumerates. The obstacle then was that a
+# branch is a subshell, so a variable set here dies with it — the boundary
+# `RALPH_SESSION_TIMEOUT` meets, and the one [23] refused a file beside the stream
+# for. What answers it is the gate's note channel: a descriptor opened on a file
+# with no name, which a subshell inherits and a stranger cannot find.
+lenses__refused_posture() {
+  local stream="$1" verdict="$2" posture
   [ -f "$stream" ] || return 1
   posture="$(budget_stream_posture "$stream")"
-  budget_refused_silence "$(lenses__verdict "$stream")" "$posture" || return 1
+  budget_refused_silence "$verdict" "$posture" || return 1
   printf '%s\n' "$posture"
   return 0
 }

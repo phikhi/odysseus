@@ -348,6 +348,50 @@ lens_diff_headers() {
   assert_equal "$(printf '%s\n' "$prompt" | lens_diff_headers '')" "2"
 }
 
+@test "the prompt a lens is handed has no name for another process to rewrite" {
+  # The one object of this tier a rewrite turns into a **green** ([94]). It is the
+  # instruction given to the judge — which lens this is, what question to answer,
+  # and to end on a verdict line — and it was written into the gate's temporary
+  # directory under a name anything watching `$TMPDIR` could guess from the lens's
+  # own name, then read back by `claude` a moment later. Between those two moments
+  # a process could put its own instructions in front of the judge, and what came
+  # back would be a real verdict from a real session asked the wrong question.
+  #
+  # It is a file with no name now: made, opened twice and unlinked before a byte
+  # goes into it, and handed to the spawn as the read descriptor. The path is not
+  # spelled out here on purpose — what is asserted is that it is a descriptor and
+  # not a directory entry.
+  pack_run '
+    d="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    lenses__prompt_open "$d"
+    printf "left=[%s]\n" "$(ls -A "$d" | tr "\n" " ")"
+    case "$LENSES_PROMPT_PATH" in
+      /dev/fd/*) printf "path=descriptor\n" ;;
+      *) printf "path=[%s]\n" "$LENSES_PROMPT_PATH" ;;
+    esac
+    printf "the question this judge is asked\n" >&"$LENSES_PROMPT_FD"
+    printf "read=[%s]\n" "$(cat "$LENSES_PROMPT_PATH")"
+    lenses__prompt_close'
+  assert_success
+  assert_output_contains "left=[]"
+  assert_output_contains "path=descriptor"
+  # And it is really the prompt that comes back through it: a channel that carried
+  # nothing would satisfy the two assertions above.
+  assert_output_contains "read=[the question this judge is asked]"
+}
+
+@test "a lens whose prompt could not be put out of reach is not spawned at all" {
+  # Fail-closed, and the direction matters: a lens the gate cannot ask a question
+  # it can vouch for must not answer, and a branch that answers nothing is red.
+  # Spending a session on a prompt this pack cannot stand behind is the one thing
+  # it must not do.
+  pack_run 'set +e
+    lenses_review standards 01-alpha basetree nowtree "$RALPH_SHIM_STATE/no-such-directory"
+    printf "rc=%s\n" "$?"'
+  assert_output_contains "rc=1"
+  assert_output_contains "could not be handed a prompt no other process can reach"
+}
+
 @test "an iteration that changed nothing never reaches a lens" {
   # A session that reported success having delivered no ticket. [06] refused it
   # here, once per lens, and [35] moved the refusal into the gate — before the fan
@@ -468,7 +512,9 @@ lens_diff_headers() {
   # A branch whose session never wrote a byte: nothing to read either way.
   : >"$dir/lens-empty.jsonl"
 
-  pack_run "for n in refused silent judged empty; do printf '%s=%s\\n' \"\$n\" \"\$(lenses_refused_posture $dir \$n || printf no)\"; done"
+  # Asked the way the branch asks it since [94]: the stream it owns, and the
+  # verdict it has already read out of that stream.
+  pack_run "for n in refused silent judged empty; do printf '%s=%s\\n' \"\$n\" \"\$(lenses__refused_posture $dir/lens-\$n.jsonl \"\$(lenses__verdict $dir/lens-\$n.jsonl)\" || printf no)\"; done"
   assert_success
   assert_output_contains "refused=blocked five_hour 123"
   assert_output_contains "silent=no"
