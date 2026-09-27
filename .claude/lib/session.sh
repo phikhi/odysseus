@@ -78,8 +78,14 @@ session_spawn() {
   # handle — the one that outlives the process at the top of it — and since [95]
   # they have it, armed one level further down by `proc_group_fork`, around the
   # command line the project wrote rather than around the subshell this pack forks.
+  # Through `receipt_shut_exec`, because a descriptor survives an `exec` and this is
+  # the one place in the pack that runs `claude`: without it the evidence an audit
+  # receipt is assembled from is writable by the very session it is about ([96] —
+  # measured, an inherited write end forges a record with one `printf`). The `exec`
+  # variant and not the plain one: `$!` below has to be the session's own pid, and a
+  # function called with `&` would put a subshell there instead.
   set -m
-  DISABLE_AUTO_COMPACT=1 claude -p \
+  DISABLE_AUTO_COMPACT=1 receipt_shut_exec claude -p \
     --model "$MODEL" \
     --output-format stream-json \
     --verbose \

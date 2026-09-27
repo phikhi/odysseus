@@ -704,10 +704,10 @@ FAKE
 }
 
 @test "two iterations in flight write two receipts, each about its own ticket" {
-  # The question [13] makes every ticket ask: what does the harness count. The
-  # receipt's workspace is a `mktemp -d` per iteration held in a variable of that
-  # iteration's subshell, so two in flight cannot see each other's — and a single
-  # shared path would show up here as one document carrying both tickets' zones.
+  # The question [13] makes every ticket ask: what does the harness count. Since
+  # [96] an iteration's evidence is a variable of its own process, so two in flight
+  # cannot see each other's at all — and this is the witness for a property no edit
+  # can remove any more, which is written where the mutation for it used to be.
   use_tickets 01-alpha 02-beta
   set_config MAX_PARALLEL 3
 
@@ -737,4 +737,274 @@ FAKE
 
   assert_ticket_status 01-alpha resolved
   assert_file_exists "$(receipt_path 01-alpha)"
+}
+
+# ── where the document is assembled ([96]) ───────────────────────────────────
+#
+# The layer above these assertions is `run.log`: a file the judged session can
+# rewrite, which is why the receipt exists at all. What [10] wrote and [96]
+# measured is that the receipt's own evidence was in the same position — a
+# `mktemp -d` under `$TMPDIR`, which enumerates. So these four are the pendants of
+# the journal test above, asked of every population that can reach a descriptor of
+# the measuring shell: the session itself, the command line the project wrote, a
+# process either of them leaves behind, and the one site of [95]'s census that runs
+# outside an iteration.
+#
+# All four derive the two numbers from the pack rather than retyping them: a
+# channel that moved to other descriptors would otherwise make every one of them
+# pass by asserting about numbers nothing uses.
+#
+# And all four ask by *writing*, where the same question one tier down is asked by
+# listing `/dev/fd` ([94]). That is not a preference: `ls` opens the directory it is
+# about to read, which takes the lowest free descriptor — precisely the number under
+# test once the pack has closed it. Measured here first, on a correct pack: the
+# listing came back `0 1 10 11 2 3 4` and named 4 as held, which is `ls`'s own
+# handle. A write is the property anyway — what a forger needs is not to see the
+# descriptor but to write on it.
+
+@test "the judged session is not handed the channel its receipt is assembled on" {
+  # The threat in its purest form. A variable of the measuring shell is out of a
+  # session's reach by construction — a session inherits an environment, not a
+  # shell — but the channel a subshell answers on is a descriptor, and a descriptor
+  # survives an `exec`. Measured before this was written: an inherited write end
+  # forges a record with one `printf`.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 4
+  stub_exit tests 1
+  printf 'FAIL: 3 of 12 tests failed in src/alpha\n' >"$SHIM_STATE/stub-tests.out"
+
+  pack_run 'printf "%s %s\n" "$RECEIPT_CHANNEL_FD" "$RECEIPT_CHANNEL_BACK"'
+  assert_success
+  local fds="$output"
+  [ -n "$fds" ] || fail "the pack does not say which descriptors the receipt's channel uses"
+
+  printf '%s\n' $fds >"$SHIM_STATE/channel.fds"
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+: >"$state/session.probe"
+while read -r fd; do
+  [ -n "$fd" ] || continue
+  if (
+    printf 'fact\toutcome\tresolved\n' >&"$fd"
+    printf 'fact\tverdicts\ttests=green typecheck=green scope=green lang=green\n' >&"$fd"
+    printf 'branch\ttests\tthe suite passed cleanly on the first attempt\n' >&"$fd"
+  ) 2>/dev/null; then
+    printf 'OPEN %s\n' "$fd" >>"$state/session.probe"
+  else
+    printf 'shut %s\n' "$fd" >>"$state/session.probe"
+  fi
+done <"$state/channel.fds"
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}\n'
+FAKE
+
+  run_loop
+  assert_success
+
+  # It ran and it tried: without this the rest is true for the wrong reason ([80]).
+  assert_file_exists "$SHIM_STATE/session.probe"
+  grep -q '^shut ' "$SHIM_STATE/session.probe" ||
+    fail "the session never tried the channel: $(cat "$SHIM_STATE/session.probe")"
+  ! grep -q '^OPEN ' "$SHIM_STATE/session.probe" ||
+    fail "the judged session can write on the channel: $(cat "$SHIM_STATE/session.probe")"
+
+  # And the document says what happened rather than what the session wrote.
+  assert_ticket_status 01-alpha ready-for-human
+  assert_file_contains "$(receipt_path 01-alpha)" "tests=red"
+  assert_file_contains "$(receipt_path 01-alpha)" "escalated:failed-impl"
+  refute_file_contains "$(receipt_path 01-alpha)" "passed cleanly on the first attempt"
+  refute_file_contains "$(receipt_path 01-alpha)" "01-alpha — resolved"
+}
+
+@test "the project's test command is not handed it either" {
+  # The most ordinary carrier of all, and the one that needs nothing hostile: a
+  # suite is a command line the project wrote, `gate__command_branch` hands it to
+  # `bash -c`, and what it leaves behind inherits whatever it held.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 4
+
+  pack_run 'printf "%s %s\n" "$RECEIPT_CHANNEL_FD" "$RECEIPT_CHANNEL_BACK"'
+  assert_success
+  local fds="$output"
+
+  printf '%s\n' $fds >"$SHIM_STATE/channel.fds"
+  cat >"$SHIM_STATE/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+: >"$state/testcmd.probe"
+while read -r fd; do
+  [ -n "$fd" ] || continue
+  if (
+    printf 'fact\toutcome\tresolved\n' >&"$fd"
+    printf 'fact\tverdicts\ttests=green typecheck=green scope=green lang=green\n' >&"$fd"
+  ) 2>/dev/null; then
+    printf 'OPEN %s\n' "$fd" >>"$state/testcmd.probe"
+  else
+    printf 'shut %s\n' "$fd" >>"$state/testcmd.probe"
+  fi
+done <"$state/channel.fds"
+printf 'FAIL: 3 of 12 tests failed in src/alpha\n'
+exit 1
+PROBE
+  chmod +x "$SHIM_STATE/probe.sh"
+  set_config TEST_CMD "bash '$SHIM_STATE/probe.sh'"
+
+  run_loop
+  assert_success
+
+  assert_file_exists "$SHIM_STATE/testcmd.probe"
+  grep -q '^shut ' "$SHIM_STATE/testcmd.probe" ||
+    fail "the test command never tried the channel: $(cat "$SHIM_STATE/testcmd.probe")"
+  ! grep -q '^OPEN ' "$SHIM_STATE/testcmd.probe" ||
+    fail "the project's test command can write on the channel: $(cat "$SHIM_STATE/testcmd.probe")"
+
+  assert_file_contains "$(receipt_path 01-alpha)" "tests=red"
+  refute_file_contains "$(receipt_path 01-alpha)" "tests=green"
+  refute_file_contains "$(receipt_path 01-alpha)" "01-alpha — resolved"
+}
+
+@test "a process the session left behind finds no workspace to forge" {
+  # The measurement of the 23/09 pass, rerun as a test. The survivor is what a
+  # session leaves in the most ordinary way — a `nohup` with a `trap "" TERM` — and
+  # it does exactly what the pass did: enumerate `$TMPDIR`, find the receipt's
+  # workspace, append the two facts that decide what a human reads.
+  #
+  # The witness is paired the other way round from usual, and that is [80]'s lesson
+  # taken rather than repeated: a glob that matches nothing makes every assertion
+  # below it true for the wrong reason, so the survivor records that it *looked*
+  # before it records what it found. `receipt.looked` present and `receipt.saw`
+  # absent is the guarantee; `receipt.looked` absent means this test measured
+  # nothing at all.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 4
+  stub_exit tests 1
+  printf 'FAIL: 3 of 12 tests failed in src/alpha\n' >"$SHIM_STATE/stub-tests.out"
+
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  end=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$end" ]; do
+    printf "looked\n" >>"$RALPH_SHIM_STATE/receipt.looked"
+    for d in "$TMPDIR"/ralph-receipt.*; do
+      [ -e "$d" ] || continue
+      printf "%s\n" "$d" >>"$RALPH_SHIM_STATE/receipt.saw"
+      if [ -d "$d" ]; then
+        printf "fact\toutcome\tresolved\n" >>"$d/facts" 2>/dev/null || true
+        printf "fact\tverdicts\ttests=green typecheck=green scope=green lang=green\n" >>"$d/facts" 2>/dev/null || true
+      else
+        printf "fact\toutcome\tresolved\n" >>"$d" 2>/dev/null || true
+        printf "fact\tverdicts\ttests=green typecheck=green scope=green lang=green\n" >>"$d" 2>/dev/null || true
+      fi
+      printf "forged\n" >>"$RALPH_SHIM_STATE/receipt.forged"
+    done
+    sleep 0.01
+  done
+' >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+SCRIPT
+
+  run_loop_own_tmp
+  assert_success
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+
+  assert_file_exists "$SHIM_STATE/receipt.looked"
+  refute_file_exists "$SHIM_STATE/receipt.saw"
+  refute_file_exists "$SHIM_STATE/receipt.forged"
+
+  assert_ticket_status 01-alpha ready-for-human
+  assert_file_contains "$(receipt_path 01-alpha)" "tests=red"
+  assert_file_contains "$(receipt_path 01-alpha)" "escalated:failed-impl"
+  refute_file_contains "$(receipt_path 01-alpha)" "tests=green"
+  refute_file_contains "$(receipt_path 01-alpha)" "01-alpha — resolved"
+}
+
+@test "the paired witness: the same red iteration with nothing left behind" {
+  # The half that says the assertions above are about the survivor and not about a
+  # document that reads `red` whatever happens.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 4
+  stub_exit tests 1
+  printf 'FAIL: 3 of 12 tests failed in src/alpha\n' >"$SHIM_STATE/stub-tests.out"
+
+  run_loop_own_tmp
+  assert_success
+
+  refute_file_exists "$SHIM_STATE/receipt.looked"
+  assert_file_contains "$(receipt_path 01-alpha)" "tests=red"
+  assert_file_contains "$(receipt_path 01-alpha)" "FAIL: 3 of 12 tests failed in src/alpha"
+}
+
+@test "the playthrough's command line runs where no receipt is open" {
+  # The third site of [95]'s census, and the one that takes no shut: `playthrough_close`
+  # runs in the pilot, and the pilot never opens a receipt — so there is no
+  # descriptor there to hand anybody. Asserted rather than reasoned, because a
+  # ticket that moves the playthrough inside an iteration inherits the need for a
+  # shut and this is where it will be told: the same probe, against a `RUN_CMD`
+  # that runs in the human's own tree.
+  use_tickets 01-alpha
+
+  pack_run 'printf "%s %s\n" "$RECEIPT_CHANNEL_FD" "$RECEIPT_CHANNEL_BACK"'
+  assert_success
+  local fds="$output"
+
+  printf '%s\n' $fds >"$SHIM_STATE/channel.fds"
+  cat >"$SHIM_STATE/runprobe.sh" <<'PROBE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+: >"$state/runcmd.probe"
+while read -r fd; do
+  [ -n "$fd" ] || continue
+  if ( printf 'fact\toutcome\tresolved\n' >&"$fd" ) 2>/dev/null; then
+    printf 'OPEN %s\n' "$fd" >>"$state/runcmd.probe"
+  else
+    printf 'shut %s\n' "$fd" >>"$state/runcmd.probe"
+  fi
+done <"$state/channel.fds"
+exit 0
+PROBE
+  chmod +x "$SHIM_STATE/runprobe.sh"
+  set_config RUN_CMD "bash '$SHIM_STATE/runprobe.sh'"
+
+  run_loop
+  assert_file_exists "$(playthrough_file)"
+
+  assert_file_exists "$SHIM_STATE/runcmd.probe"
+  grep -q '^shut ' "$SHIM_STATE/runcmd.probe" ||
+    fail "the run command never tried the channel: $(cat "$SHIM_STATE/runcmd.probe")"
+  ! grep -q '^OPEN ' "$SHIM_STATE/runcmd.probe" ||
+    fail "the project's run command can write on the channel: $(cat "$SHIM_STATE/runcmd.probe")"
+}
+
+@test "the document says where it was assembled, and what that does not cover" {
+  # [24] rather than a paragraph in `docs/`: the exposure is named on every
+  # iteration, in the document itself, where the person acting on it is. Both halves
+  # are asserted together on purpose — the sentence that only claimed the strong
+  # one is what [96] was opened for, and a document that dropped the reservation
+  # while keeping the claim would be back there.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 4
+  stub_exit tests 1
+  printf 'FAIL: 3 of 12 tests failed in src/alpha\n' >"$SHIM_STATE/stub-tests.out"
+
+  run_loop
+  assert_success
+
+  assert_file_contains "$(receipt_path 01-alpha)" "Assembled nowhere a name reaches"
+  assert_file_contains "$(receipt_path 01-alpha)" "unlinked before a byte was written"
+  # The half it does not hold, named in the same breath.
+  assert_file_contains "$(receipt_path 01-alpha)" "One source above is not of that kind"
+  assert_file_contains "$(receipt_path 01-alpha)" "a process of this run can write to"
+  assert_file_contains "$(receipt_path 01-alpha)" "never a colour"
 }

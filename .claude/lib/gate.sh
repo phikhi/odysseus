@@ -3685,12 +3685,14 @@ gate__start() {
 gate__command_branch() {
   local subject="$1" cmd="$2" rc=0
   local PROC_GROUP_PID=''
-  # Through `gate_notes_shut`, because this is the one line in the pack where a
-  # command the *project* wrote is handed this shell's descriptors ([94]). Without
-  # it the write end of the note channel reaches `bash -c "$TEST_CMD"` and
-  # everything it leaves behind, which is the population the channel exists to
-  # keep out — measured on the 23/09 pass as the most ordinary carrier of all.
-  gate_notes_shut proc_group_fork '' "$cmd"
+  # Through both shuts, because this is the one line in the pack where a command
+  # the *project* wrote is handed this shell's descriptors ([94]). Without them the
+  # write end of the note channel and of the receipt's channel ([96]) reach `bash -c
+  # "$TEST_CMD"` and everything it leaves behind, which is the population both exist
+  # to keep out — measured on the 23/09 pass as the most ordinary carrier of all.
+  # Nested rather than merged: each module closes what it opened, and neither has to
+  # know the other's numbers.
+  receipt_shut gate_notes_shut proc_group_fork '' "$cmd"
   GATE_BRANCH_LEADER="$PROC_GROUP_PID"
   GATE_BRANCH_SUBJECT="$subject"
   proc_collect "$PROC_GROUP_PID" || rc=$?

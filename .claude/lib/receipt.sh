@@ -26,14 +26,56 @@
 # The receipt is therefore built from what the *loop* measured and from objects the
 # loop wrote: the gate's own verdict variables, the branch output the gate collected
 # before it removed its temporary directory, the durable commit, the tree objects
-# the scope-guard was handed, the `failed/<ticket>` ref. None of those is reachable
-# from a session's write-surface, and none of them is a file whose name a session is
-# told — this workspace lives in `$TMPDIR` under a `mktemp` name that is never
-# exported, the same secret discipline as the ignore pin ([30]) and the tracker
-# register ([40]). The register itself is not a source either, and that is a
+# the scope-guard was handed, the `failed/<ticket>` ref. The register itself is not a
+# source either, and that is a
 # decision rather than an omission: it is an unauthenticated trace between processes
 # of one run, and its granularity is an id, so "the loop wrote X" says neither who
 # nor what. A receipt that quoted it would assert more than its source.
+#
+# **Where those pieces were assembled was the hole, and closing it is [96].** What
+# stood here claimed that none of them was reachable from a session's write-surface
+# and that this workspace lived under a `mktemp` name never exported, "the same
+# secret discipline as the ignore pin ([30]) and the tracker register ([40])". Both
+# halves were false, and the citation was the tell: `$TMPDIR` enumerates, which is
+# what [80] paid for on that very register — a name is not a guard ([81]), and the
+# permissions of one's own user are not one either. Measured by the 23/09 pass with
+# a `nohup` a session left behind: `outcome resolved`, `verdicts tests=green
+# typecheck=green scope=green lang=green` and a findings section reading "the suite
+# passed cleanly on the first attempt" — on an iteration whose suite was red and
+# whose ticket was escalated. The document a human reads *instead of* what happened,
+# forged, and still carrying its own sentence of provenance.
+#
+# So an iteration's evidence is not in a place. It is in this shell, in a variable
+# it never exports, which is the one thing a process outside this shell's own
+# descendance cannot reach: a session inherits an environment, not a shell. That
+# asymmetry is [81]'s witness seal one tier up, and the 23/09 pass measured it again
+# from the other side — of the seventy variables `bash -c "$TEST_CMD"` receives,
+# none is the seal.
+#
+# **What a variable cannot do is come back out of a subshell, and this pack writes
+# eleven of its own sentences from one.** Measured rather than assumed, by
+# instrumenting every write over the suite: 11 of 2445. `gate_tree_snapshot` and
+# `gate_restore_tree` name what they could not read or could not put back, and every
+# caller takes their tree through a command substitution — that is [59]'s shape and
+# not an accident — and the three drift witnesses ([46], [52], [70]) are read by the
+# loop through one as well. Dropping them was refused: the drift sentences are the
+# only account an iteration gets of a capability surface, a program or a human's
+# record moving under the run, and [70] promises them on the receipt of the
+# iteration in flight.
+#
+# They travel the way a gate branch's second answer does ([94]): a file in `$TMPDIR`
+# opened twice — once to write, once to read from offset zero — and unlinked before
+# a byte is written, so the only handles on that inode are the two descriptors this
+# shell holds. A subshell inherits them, and `receipt__take` reads the far end back
+# into the variable on every call the opening shell makes itself, so a sentence
+# written a level down is in the store before anything renders.
+#
+# The price of a descriptor is that it survives an `exec`. Measured: an inherited
+# write end forges a record with one `printf`. So the three places where this pack
+# runs a program it did not write ([95]'s census) and every `claude` it spawns go
+# through `receipt_shut`, and the guarantee is asked of the run rather than of this
+# paragraph — the suite makes a `TEST_CMD`, a session and a review lens list their
+# own descriptors and asserts the two numbers, derived from the pack, are not there.
 #
 # What that costs is written down rather than papered over: a ticket delivered on
 # its third attempt has two earlier receipts and this one, and nothing here counts
@@ -50,24 +92,44 @@
 #   receipt_keep_branch NAME FILE   keep a red branch's output while it exists
 #   receipt_branches             the red branches kept, one name per line
 #   receipt_branch_text NAME     what that branch had to say
+#   receipt_shut CMD...          run something with the channel closed
+#   receipt_shut_exec CMD...     the same, replacing this shell (for a `&` spawn)
 #   receipt_render TICKET        the document on stdout
 #   receipt_emit TICKET          render it and hand it to the tracker adapter
-#   receipt_close                throw the workspace away
+#   receipt_close                close the channel and forget the evidence
 #
 # Everything is a no-op when no receipt is open, so a lib may call `receipt_note`
 # unconditionally: the gate and the failure policy both run outside a receipt in
 # their own tests, and a module that had to ask first would grow the check in five
 # places and forget it in the sixth.
 
-# Where this iteration's evidence accumulates, or empty. A shell variable of the
-# iteration and never exported: `claude` is spawned from this very shell, and a
-# path handed to a session in its environment is exactly as writable as a file in
-# the tree — the lesson [40] paid for on the tracker register.
+# Whether a receipt is open, and since [96] that is all it is: a word, because
+# there is no path to hold. Every public function here is a no-op while it is
+# empty, and forty call sites depend on that.
 #
-# Unconditional since [89]. Nothing exports this, so the `${…:-}` it replaces
-# preserved a value from the shell that started the run and nothing else — which
-# is the one thing the sentence above says must not reach a session.
+# Unconditional since [89]. Nothing exports it, so the `${…:-}` it replaces
+# preserved a value from the shell that started the run and nothing else.
 RALPH_RECEIPT=''
+
+# The evidence of this iteration, one record per line, `kind<TAB>…`. A variable of
+# the iteration's own shell and never exported — that is the whole of what keeps a
+# session and its leftovers out of the document ([96], and see the head of this
+# file for what it replaces).
+RECEIPT_STORE=''
+
+# The subshell level `receipt_open` was called at. Only that shell may take the
+# channel's far end into the store: a subshell that read it would advance an offset
+# nothing can rewind and then die with what it read, which is the one way this
+# design loses a sentence rather than misplacing it.
+RECEIPT_LEVEL=''
+
+# The channel a subshell answers on, as literal digits because bash 3.2 has no
+# `{var}>` and an `exec` wants a digit. Spent through `eval` in the four places
+# that open, shut, close and hand them over, and nowhere else. The numbers left:
+# `monitor_watch` has 3, the lens prompt of [94] has 7 and 6, and the gate's note
+# channel has 9 and 8.
+RECEIPT_CHANNEL_FD=5
+RECEIPT_CHANNEL_BACK=4
 
 # How much of a red branch's output is kept. The findings of a review lens are the
 # only copy that survives the gate ([06]: the stream dies with the gate's temporary
@@ -98,19 +160,119 @@ receipt_preflight() {
   return 0
 }
 
+# A `mktemp` name rather than a fixed one for the few microseconds the name exists:
+# `$TMPDIR` is enumerable, and a fixed name is one a watching process can create
+# first. It would forge nothing — it never sees the descriptors — but a symlink or a
+# fifo planted there would send the channel elsewhere or hang the open, and a denial
+# is a defect too. Still a line in `gate_tmp_names`, which derives from this very
+# call ([62]): the name is composed at the top level of `$TMPDIR`, and that list is
+# about what a call can compose, not about how long it lasts.
+#
+# Three things in series refuse a channel this cannot have — the `mktemp`, the
+# `exec` and the unlink — and the guarantee a test can hold this to is at the end:
+# it never reports success without a channel open and unlinked.
 receipt_open() {
-  local dir
-  RALPH_RECEIPT=""
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-receipt.XXXXXX")" || return 1
-  RALPH_RECEIPT="$dir"
+  local file
+  RALPH_RECEIPT=''
+  RECEIPT_STORE=''
+  RECEIPT_LEVEL=''
+  file="$(mktemp "${TMPDIR:-/tmp}/ralph-receipt.XXXXXX")" || return 1
+  if ! eval "exec $RECEIPT_CHANNEL_FD>\"\$file\" $RECEIPT_CHANNEL_BACK<\"\$file\""; then
+    rm -f "$file"
+    return 1
+  fi
+  # Before a byte is written, and that is the order rather than a tidy-up: a record
+  # that reached a named file was reachable, and no later unlink takes that back.
+  rm -f "$file"
+  RECEIPT_LEVEL="${BASH_SUBSHELL:-0}"
+  RALPH_RECEIPT='open'
   return 0
 }
 
 receipt_close() {
   [ -n "${RALPH_RECEIPT:-}" ] || return 0
-  rm -rf "$RALPH_RECEIPT"
-  RALPH_RECEIPT=""
+  eval "exec $RECEIPT_CHANNEL_FD>&- $RECEIPT_CHANNEL_BACK<&-" 2>/dev/null || true
+  RALPH_RECEIPT=''
+  RECEIPT_STORE=''
+  RECEIPT_LEVEL=''
   return 0
+}
+
+# One record, onto the channel and straight back off it when this is the shell that
+# opened the receipt.
+#
+# Everything goes through the channel, including the writes this shell makes
+# itself, and that is deliberate: a store with two ways in would have the rare one
+# — the subshell's — exercised by almost nothing, and this pack has paid for
+# branches that only a hostile day reaches. It costs no fork: `receipt__take` is
+# builtin `read` on a regular file.
+#
+# Flattened onto one line, and that is not tidiness. Half of what these sentences
+# quote comes from outside the pack — a path a session chose, what git printed —
+# and a newline inside a value would let that content close the record and open a
+# second one under a `kind` of its choosing. The pack's own multi-line notes were
+# already two bullets in the document before this, so nothing reads differently.
+receipt__put() {
+  local line="$1"
+  [ -n "${RALPH_RECEIPT:-}" ] || return 0
+  line="${line//$'\n'/ }"
+  line="${line//$'\r'/ }"
+  printf '%s\n' "$line" >&"$RECEIPT_CHANNEL_FD" 2>/dev/null || return 0
+  receipt__take
+  return 0
+}
+
+# The channel's far end into the store, from where it was last read to wherever it
+# now ends. Refused anywhere but the shell that opened the receipt, for the reason
+# `RECEIPT_LEVEL` carries.
+receipt__take() {
+  local line chunk=''
+  [ -n "${RALPH_RECEIPT:-}" ] || return 0
+  [ "${BASH_SUBSHELL:-0}" = "${RECEIPT_LEVEL:-}" ] || return 0
+  while IFS= read -r line; do
+    chunk="$chunk$line
+"
+  done <&"$RECEIPT_CHANNEL_BACK"
+  [ -n "$chunk" ] || return 0
+  RECEIPT_STORE="$RECEIPT_STORE$chunk"
+  return 0
+}
+
+# Every record of one kind, the kind stripped off. A reader and therefore a taker:
+# a document rendered in a command substitution — which is how the retro reads one
+# ([14]) — sees whatever the opening shell has already taken, and the opening shell
+# takes on every write it makes.
+receipt__records() {
+  local kind="$1"
+  receipt__take
+  awk -F'\t' -v k="$kind" '
+    $1 == k { line = $0; sub(/^[^\t]*\t/, "", line); print line }
+  ' <<RECORDS
+${RECEIPT_STORE:-}
+RECORDS
+  return 0
+}
+
+# Run something with both ends of the channel closed.
+#
+# A descriptor survives an `exec`, so `bash -c "$TEST_CMD"`, a `RUN_CMD` and every
+# `claude` this pack spawns would hand the write end to their own descendance — and
+# a process the project's suite or the judged session leaves behind is exactly the
+# writer this channel exists to keep out. The read end goes too: a descendant that
+# can read an iteration's evidence learns what the document will say about it, and
+# there is no reason to hand it that ([94] made the same two decisions one tier
+# down).
+receipt_shut() {
+  eval "\"\$@\" $RECEIPT_CHANNEL_FD>&- $RECEIPT_CHANNEL_BACK<&-"
+}
+
+# The same, for the one site that spawns into the background: `session_spawn` reads
+# `$!` and hands it to the monitor, the collection and the deadline, so the pid has
+# to be the program's own. A function called with `&` would put a subshell there
+# instead — the seam [95] hit from the other side — and an `exec` inside that
+# subshell is what keeps the number honest.
+receipt_shut_exec() {
+  eval "exec \"\$@\" $RECEIPT_CHANNEL_FD>&- $RECEIPT_CHANNEL_BACK<&-"
 }
 
 # One fact. Appended rather than replaced, and read back as the *last* occurrence:
@@ -120,17 +282,20 @@ receipt_close() {
 receipt_fact() {
   local key="$1"
   shift
-  [ -n "${RALPH_RECEIPT:-}" ] || return 0
-  printf '%s\t%s\n' "$key" "$*" >>"$RALPH_RECEIPT/facts" 2>/dev/null || true
+  receipt__put "fact"$'\t'"$key"$'\t'"$*"
   return 0
 }
 
 receipt__fact() {
-  [ -n "${RALPH_RECEIPT:-}" ] && [ -f "$RALPH_RECEIPT/facts" ] || return 0
+  [ -n "${RALPH_RECEIPT:-}" ] || return 0
+  receipt__take
   awk -F'\t' -v k="$1" '
-    $1 == k { line = $0; sub(/^[^\t]*\t/, "", line); out = line }
+    $1 == "fact" && $2 == k { line = $0; sub(/^[^\t]*\t[^\t]*\t/, "", line); out = line }
     END { if (out != "") print out }
-  ' "$RALPH_RECEIPT/facts" 2>/dev/null || true
+  ' <<FACTS
+${RECEIPT_STORE:-}
+FACTS
+  return 0
 }
 
 # One line the run said out loud, kept in the order it was said.
@@ -141,8 +306,7 @@ receipt__fact() {
 # provisioning put in the worktree ([13]) — plus the admissions that are not zeroes
 # ([34]). They scroll past on stdout during a night; this is where they last.
 receipt_note() {
-  [ -n "${RALPH_RECEIPT:-}" ] || return 0
-  printf '%s\n' "$*" >>"$RALPH_RECEIPT/notes" 2>/dev/null || true
+  receipt__put "note"$'\t'"$*"
   return 0
 }
 
@@ -165,8 +329,7 @@ receipt_note() {
 # an empty zone. An empty gap list is a list of **events** that did not occur, so
 # its absence says no such event was recorded — which is all it ever claimed.
 receipt_gap() {
-  [ -n "${RALPH_RECEIPT:-}" ] || return 0
-  printf '%s\n' "$*" >>"$RALPH_RECEIPT/gaps" 2>/dev/null || true
+  receipt__put "gap"$'\t'"$*"
   return 0
 }
 
@@ -178,18 +341,23 @@ receipt_gap() {
 # findings is twenty lines that scrolled past on stdout. This receipt is the one
 # place they can survive the night.
 receipt_keep_branch() {
-  local name="$1" file="$2" total
+  local name="$1" file="$2" total line
   [ -n "${RALPH_RECEIPT:-}" ] || return 0
   [ -n "$name" ] && [ -s "$file" ] || return 0
   total="$(awk 'END { print NR + 0 }' "$file")"
-  {
-    if [ "$total" -gt "$RECEIPT_MAX_LINES" ]; then
-      printf '(the first %s line(s) of %s are not kept here: this branch is quoted from the end)\n\n' \
-        "$((total - RECEIPT_MAX_LINES))" "$total"
-    fi
-    tail -"$RECEIPT_MAX_LINES" "$file"
-  } >"$RALPH_RECEIPT/branch.$name" 2>/dev/null || true
-  printf '%s\n' "$name" >>"$RALPH_RECEIPT/branches" 2>/dev/null || true
+  if [ "$total" -gt "$RECEIPT_MAX_LINES" ]; then
+    receipt__put "branch"$'\t'"$name"$'\t'"(the first $((total - RECEIPT_MAX_LINES)) line(s) of $total are not kept here: this branch is quoted from the end)"
+    receipt__put "branch"$'\t'"$name"$'\t'
+  fi
+  # One record per line of output, which is what makes a branch'"'"'s text fit a store
+  # of lines at all — and it is also what keeps this the one source here that cannot
+  # forge a record: a line of a file has no newline in it to close one with.
+  while IFS= read -r line; do
+    receipt__put "branch"$'\t'"$name"$'\t'"$line"
+  done <<LINES
+$(tail -"$RECEIPT_MAX_LINES" "$file")
+LINES
+  receipt__put "branches"$'\t'"$name"
   return 0
 }
 
@@ -203,13 +371,19 @@ receipt_keep_branch() {
 # somewhere would be re-reading a stream that no longer exists, or `run.log`,
 # which the judged session can rewrite.
 receipt_branches() {
-  [ -n "${RALPH_RECEIPT:-}" ] && [ -f "$RALPH_RECEIPT/branches" ] || return 0
-  cat "$RALPH_RECEIPT/branches" 2>/dev/null || true
+  [ -n "${RALPH_RECEIPT:-}" ] || return 0
+  receipt__records branches
 }
 
 receipt_branch_text() {
-  [ -n "${RALPH_RECEIPT:-}" ] && [ -f "$RALPH_RECEIPT/branch.$1" ] || return 0
-  cat "$RALPH_RECEIPT/branch.$1" 2>/dev/null || true
+  [ -n "${RALPH_RECEIPT:-}" ] || return 0
+  receipt__take
+  awk -F'\t' -v n="$1" '
+    $1 == "branch" && $2 == n { line = $0; sub(/^[^\t]*\t[^\t]*\t/, "", line); print line }
+  ' <<BRANCH
+${RECEIPT_STORE:-}
+BRANCH
+  return 0
 }
 
 # ── the document ─────────────────────────────────────────────────────────────
@@ -360,10 +534,12 @@ BRANCHES
 # recorded, which is the one thing this section is entitled to mean: these are
 # events, and no event of this kind was seen.
 receipt__gaps() {
-  [ -s "$RALPH_RECEIPT/gaps" ] || return 0
+  local gaps
+  gaps="$(receipt__records gap)"
+  [ -n "$gaps" ] || return 0
   printf '## What did not happen\n\n'
   printf 'Things this run set out to do and could not. None of them is a verdict on the code, and each of them means some other line of this document is narrower than it looks — a tree that is not back where the session found it, a reference that was promised and not written.\n\n'
-  sed 's/^/- /' "$RALPH_RECEIPT/gaps"
+  printf '%s\n' "$gaps" | sed 's/^/- /'
   printf '\n'
   return 0
 }
@@ -380,10 +556,11 @@ receipt__gaps() {
 # that simply vanished would read as "the zones were empty" on exactly the routes
 # where nobody looked at them.
 receipt__unjudged() {
-  local provisioned
+  local provisioned notes
   provisioned="$(receipt__fact provisioned)"
+  notes="$(receipt__records note)"
   case "$provisioned" in '' | 0) provisioned='' ;; esac
-  if [ ! -s "$RALPH_RECEIPT/notes" ] && [ -z "$provisioned" ]; then
+  if [ -z "$notes" ] && [ -z "$provisioned" ]; then
     printf '## What nothing here judged\n\n'
     printf 'Nothing here named a zone, and that is a statement about this iteration and not about the repository. The sentences that go here are written as the fact becomes known — the gate names what it did not judge, the rollback names what it could not undo — so an iteration neither of them reached produces none of them: the ignored paths, the ignore frontier and whatever was written after the tree was taken were never walked. An empty list here is not an empty zone.\n\n'
     return 0
@@ -395,7 +572,7 @@ receipt__unjudged() {
   [ -z "$provisioned" ] ||
     printf -- '- %s path(s) were copied into this iteration'"'"'s worktree by `WORKTREE_PROVISION`, which nothing here judges and no rollback undoes\n' \
       "$provisioned"
-  [ ! -s "$RALPH_RECEIPT/notes" ] || sed 's/^/- /' "$RALPH_RECEIPT/notes"
+  [ -z "$notes" ] || printf '%s\n' "$notes" | sed 's/^/- /'
   printf '\n'
   return 0
 }
@@ -455,7 +632,14 @@ receipt_render() {
   receipt__unjudged
   receipt__meta
   printf '\n## Where this receipt comes from\n\n'
-  printf 'Assembled by the process that measured this iteration, from the gate'"'"'s own verdicts, the branch output it collected before removing its temporary directory, and the objects the loop wrote. It does **not** read `run.log`: that file lives under `.scratch/`, which no check in this pack guards, so the session this receipt is about can rewrite it.\n'
+  printf 'Assembled by the process that measured this iteration, from the gate'"'"'s own verdicts, the branch output it collected before removing its temporary directory, and the objects the loop wrote. It does **not** read `run.log`: that file lives under `.scratch/`, which no check in this pack guards, so the session this receipt is about can rewrite it.\n\n'
+  # And where it was *assembled*, which until [96] this paragraph did not say and
+  # the head of `lib/receipt.sh` got wrong ([24]: named on every iteration, not
+  # once in a document somebody has to go and find).
+  printf 'Assembled nowhere a name reaches: the evidence above was held in a variable of the shell that measured this iteration and on a descriptor of a file unlinked before a byte was written to it, so neither the session this receipt is about nor anything it left running could reach it.\n\n'
+  # The half this does not hold, in the same breath as the half it does. A document
+  # that claimed both would be back where [96] found it.
+  printf 'One source above is not of that kind, and here is where that is said rather than left to be found: the quoted output of a red branch under **Findings** is read from a file in the gate'"'"'s temporary directory, which a process of this run can write to ([94] measured the bound that was refused, and why). Since [92] nothing in that file is a verdict — those come from the branches'"'"' own exit statuses — so what a process writing there buys is the wording of that section, and never a colour.\n'
   return 0
 }
 
