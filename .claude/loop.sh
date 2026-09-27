@@ -647,18 +647,23 @@ loop__iterate() {
     return 0
   fi
 
-  # The audit receipt's workspace, opened before anything is measured so that every
-  # line the gate and the failure policy say about what they could *not* judge lands
-  # in it as it is said ([10]). It lives in `$TMPDIR` under a `mktemp` name this
-  # shell never exports — the same secret as the ignore pin ([30]) and the tracker
-  # register ([40]) — because `claude` is spawned from this very shell, and a path
-  # handed to a session in its environment is as writable as a file in the tree.
+  # The audit receipt, opened before anything is measured so that every line the
+  # gate and the failure policy say about what they could *not* judge lands in it as
+  # it is said ([10]). There is no workspace to make any more, and the sentence that
+  # stood here — "a `mktemp` name this shell never exports, the same secret as the
+  # ignore pin ([30]) and the tracker register ([40])" — is what [96] measured and
+  # took away: `$TMPDIR` enumerates, so the name was never the guard it was cited
+  # as, on this workspace or on that register ([80]). What an iteration's evidence
+  # is now is a variable of *this* shell plus a descriptor on an unlinked file, and
+  # both of those are out of a session's reach for a reason rather than by obscurity
+  # — `claude` is spawned from this very shell, and it inherits an environment, not
+  # a shell.
   #
-  # A workspace that cannot be made costs the receipt and never the iteration: an
+  # A receipt that cannot be opened costs the document and never the iteration: an
   # audit surface is what a human reads afterwards, and refusing to deliver work
   # over it would trade the night for the paperwork.
   receipt_open ||
-    loop_log "$ticket: no audit receipt for this iteration — could not make a workspace for one"
+    loop_log "$ticket: no audit receipt for this iteration — could not open a channel for one"
   receipt_fact iteration "$(cat "$slot/n" 2>/dev/null || printf '?')"
   receipt_fact worktree "$tree"
   receipt_fact provisioned "$provisioned"

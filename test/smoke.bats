@@ -196,7 +196,10 @@ MODULES
   #                       another tree.
   #   RALPH_RETRO_STATE   the directory `retro_guards` composes, where the two
   #                       objects [83] named live.
-  #   RALPH_RECEIPT       where an iteration's evidence accumulates.
+  #   RALPH_RECEIPT       whether a receipt is open. A path to an iteration's
+  #                       evidence until [96] took the path away; still on this
+  #                       list, because a name the pack assigns is a name a
+  #                       developer's shell can still arrive carrying.
   #
   # Asserting on what changed, not on the run's exit code: a run pointed at
   # another tree can still exit 0.

@@ -368,8 +368,11 @@ mutation "03 sessions are resumed instead of fresh" "$SESSION" \
 
 # ── [04] the smart-zone net ──────────────────────────────────────────────────
 
+# Re-aimed by [96]: the spawn now goes through `receipt_shut_exec`, so the old
+# anchor `DISABLE_AUTO_COMPACT=1 claude` matches nothing and this entry reported
+# DRIFTED rather than covering anything.
 mutation "04 auto-compact is not turned off for the session" "$SESSION" \
-  's/DISABLE_AUTO_COMPACT=1 claude/claude/' \
+  's/DISABLE_AUTO_COMPACT=1 receipt_shut_exec claude/receipt_shut_exec claude/' \
   test/smart-zone.bats "auto-compact is off"
 
 # Aimed at the whole termination and not at the TERM inside it, since [23]: the
@@ -2737,12 +2740,15 @@ mutation "10 a red branch's output dies with the gate" "$GATE" \
   's/^    receipt_keep_branch "\$name" "\$dir\/\$name.out"\n//m' \
   test/receipt.bats "survive the gate"
 
+# Re-aimed by [96]: the branch's output is read into records rather than into a
+# file of its own, so the `tail` moved inside a heredoc substitution.
 mutation "10 the receipt keeps only what already scrolled past" "$RECEIPT" \
-  's/^    tail -"\$RECEIPT_MAX_LINES" "\$file"$/    tail -20 "\$file"/m' \
+  's/\$\(tail -"\$RECEIPT_MAX_LINES" "\$file"\)/\$(tail -20 "\$file")/' \
   test/receipt.bats "outlives the gate that collected it"
 
+# Re-aimed by [96]: same guarantee, one indent level up.
 mutation "10 a truncated branch is quoted as if it were whole" "$RECEIPT" \
-  's/^    if \[ "\$total" -gt "\$RECEIPT_MAX_LINES" \]; then$/    if false; then/m' \
+  's/^  if \[ "\$total" -gt "\$RECEIPT_MAX_LINES" \]; then$/  if false; then/m' \
   test/receipt.bats "counted rather than silently cut"
 
 # The zones nothing judged, said out loud during the night and kept only here.
@@ -2787,9 +2793,23 @@ mutation "10 a receipt that keeps no lines is accepted" "$LOOP" \
   's/^  receipt_preflight \|\| rc=1\n//m' \
   test/receipt.bats "keep no lines is refused at the door"
 
-mutation "10 a workspace shared by every iteration in flight" "$RECEIPT" \
-  's/^  dir="\$\(mktemp -d "\$\{TMPDIR:-\/tmp\}\/ralph-receipt.XXXXXX"\)" \|\| return 1$/  dir="\$\{TMPDIR:-\/tmp\}\/ralph-receipt.shared"; mkdir -p "\$dir" || return 1/m' \
-  test/receipt.bats "two receipts, each about its own ticket"
+# Re-aimed by [96]: there is no workspace directory left to share. The channel is
+# what two iterations could share, so the edit gives it a fixed name and leaves it
+# linked — both of them then take each other's records off one inode, and each
+# document carries the other ticket's evidence.
+# **The entry that stood here is gone, and that is a measurement rather than a
+# retirement for convenience.** "A workspace shared by every iteration in flight"
+# was a mutation on the one thing that made two iterations separate: a `mktemp -d`
+# name per iteration. [96] took the workspace away, and what keeps two iterations
+# apart now is that the evidence is a *variable of a process* — two iterations are
+# two processes, and neither can be made to read the other's by editing one file.
+# Both re-aimings were tried and both came back VACUOUS against a healthy test: a
+# fixed channel name alone (each iteration still unlinks and recreates, so each gets
+# its own inode), then a fixed name with the unlink removed (one inode, but each
+# `open` has offsets of its own and each store is its own variable, so the documents
+# still came out right). The test `two receipts, each about its own ticket` stays as
+# the witness that the property holds; there is no edit left that removes it, the
+# way there is none for a termination condition (see the header).
 
 mutation "10 the context figure is presented as a total" "$RECEIPT" \
   's/the peak observed in the session/the total for the session/' \
@@ -2889,7 +2909,7 @@ mutation "45 a branch that left no verdict is stdout only" "$GATE" \
 # missing: a section that vanishes reads as an empty zone on exactly the routes
 # where nobody walked one.
 mutation "45 an unwalked zone is rendered as an empty one" "$RECEIPT" \
-  's/^  if \[ ! -s "\$RALPH_RECEIPT\/notes" \] && \[ -z "\$provisioned" \]; then$/  if false; then/m' \
+  's/^  if \[ -z "\$notes" \] && \[ -z "\$provisioned" \]; then$/  if false; then/m' \
   test/receipt.bats "walked no zone"
 
 # The second channel, from both ends. The producer first — half of failures.sh
@@ -6907,7 +6927,7 @@ mutation "89 a lib keeps the retro state directory a shell exported" "$RETRO" \
   's/^RALPH_RETRO_STATE=\x27\x27$/RALPH_RETRO_STATE="\$\{RALPH_RETRO_STATE:-\}"/m' \
   test/smoke.bats "assigned before it is read"
 
-mutation "89 a lib keeps the receipt directory a shell exported" "$RECEIPT" \
+mutation "89 a lib keeps the receipt flag a shell exported" "$RECEIPT" \
   's/^RALPH_RECEIPT=\x27\x27$/RALPH_RECEIPT="\$\{RALPH_RECEIPT:-\}"/m' \
   test/smoke.bats "assigned before it is read"
 
@@ -7040,8 +7060,12 @@ mutation "94 a refused lens never gets its posture out of its branch" "$LENSES_L
   's/  if posture="\$\(lenses__refused_posture "\$stream" "\$verdict"\)"; then\n    gate_note posture "\$posture" \|\| true\n  fi\n//' \
   test/gate.bats "lens the API really refused still gives the ticket back"
 
+# Re-aimed by [96], which put a second shut in front of this one: the old anchor
+# began at the two spaces before `gate_notes_shut` and stopped matching. It removes
+# the note channel's shut alone, leaving the receipt's — the two are nested, and an
+# entry that took both away would be measuring one guarantee with the other's test.
 mutation "94 the project's test command keeps the channel open" "$GATE" \
-  's/  gate_notes_shut proc_group_fork .. "\$cmd"/  proc_group_fork \x27\x27 "\$cmd"/' \
+  's/receipt_shut gate_notes_shut proc_group_fork/receipt_shut proc_group_fork/' \
   test/gate.bats "test command is not handed the channel"
 
 mutation "94 a lens's session keeps the channel open" "$LENSES_LIB" \
@@ -7055,6 +7079,39 @@ mutation "94 the prompt of a lens keeps its name" "$LENSES_LIB" \
 mutation "94 a lens is spawned with a prompt anything can rewrite" "$LENSES_LIB" \
   's/^lenses__prompt_open\(\) \{/lenses__prompt_open() { return 1;/m' \
   test/lenses.bats "handed the diff, not just the names"
+
+# ── [96] where the audit receipt is assembled ────────────────────────────────
+#
+# The document a human reads *instead of* what happened. Four of these remove a
+# guarantee by putting the evidence back somewhere a process can reach it, and the
+# fifth removes the channel that makes the strong version possible at all: without
+# it eleven of this pack's own sentences — the ones written from a command
+# substitution, measured over the suite as 24 writes of 5952 — never reach a
+# document, which is [45] and [70] undone one layer down.
+
+mutation "96 the evidence is in a place again" "$RECEIPT" \
+  's/^  # Before a byte is written, and that is the order rather than a tidy-up: a record\n  # that reached a named file was reachable, and no later unlink takes that back\.\n  rm -f "\$file"\n//m' \
+  test/receipt.bats "workspace to forge"
+
+mutation "96 the judged session is handed the channel" "$SESSION" \
+  's/DISABLE_AUTO_COMPACT=1 receipt_shut_exec claude/DISABLE_AUTO_COMPACT=1 claude/' \
+  test/receipt.bats "judged session is not handed"
+
+mutation "96 the project's test command is handed it" "$GATE" \
+  's/  receipt_shut gate_notes_shut proc_group_fork/  gate_notes_shut proc_group_fork/' \
+  test/receipt.bats "test command is not handed it either"
+
+mutation "96 a sentence written a level down never arrives" "$RECEIPT" \
+  's/^receipt__put\(\) \{/receipt__put() { [ "\${BASH_SUBSHELL:-0}" = "\${RECEIPT_LEVEL:-}" ] || return 0;/m' \
+  test/capability.bats "under the run is named on the receipt"
+
+mutation "96 the document does not say where it was assembled" "$RECEIPT" \
+  's/Assembled nowhere a name reaches/Assembled by this run/' \
+  test/receipt.bats "says where it was assembled"
+
+mutation "96 the document keeps the claim and drops the reservation" "$RECEIPT" \
+  's/^  printf .One source above is not of that kind.*\n//m' \
+  test/receipt.bats "says where it was assembled"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 
