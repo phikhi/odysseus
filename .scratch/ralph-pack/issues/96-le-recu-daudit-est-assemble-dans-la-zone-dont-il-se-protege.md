@@ -147,3 +147,5 @@
   sur la boucle — ce n'est pas fait ici pour ne pas ajouter un garde qu'aucun test
   ne peut faire rougir, et parce que le geste honnête pour un défaut atteignable
   serait un ticket, pas une ligne muette.
+
+- **Faux vert trouvé le 29/09/2026, en commençant [98] → ticket [101].** Les enveloppes de fermeture (`receipt_shut`, `receipt_shut_exec`, `gate_notes_shut`) ferment par une redirection posée sur un appel de fonction ; bash 3.2 sauvegarde le descripteur sur une copie ≥ 10 sans close-on-exec, et le programme lancé en hérite. Mesuré (`../sondes/ticket-98/`) : `claude` tient le bout écrivain du reçu en fd 10, `TEST_CMD` celui du reçu et celui des notes du gate en fd 10 et 12, et une session jugée qui écrit sur le fd 10 fait apparaître sa ligne dans son propre reçu. Les tests de ce ticket demandent aux deux numéros dérivés du pack et restent verts. Un hook git posé par la session tient aussi le fd 5 de l'itération → [102].

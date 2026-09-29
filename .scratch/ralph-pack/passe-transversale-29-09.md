@@ -300,6 +300,15 @@ frontière élargie »*. Q5b y arrive sans tuer personne, sur un run qui sort en
   qu'aucun appelant de `session_spawn` ne tient 3 pour lui. C'est une contrainte
   latente et pas un défaut : elle est écrite dans [97] et dans [98], qui sont les
   deux tickets susceptibles d'ouvrir un cinquième canal.
+  **Ce que ce paragraphe ne disait pas, et qui était faux au même endroit**
+  (ajouté le 29/09/2026 en commençant [98]) : que ces numéros ne se *marchent pas
+  dessus* est vrai ; qu'ils soient *fermés* pour le programme que le pack lance ne
+  l'est pas. Les enveloppes `*_shut` ferment par une redirection posée sur un appel
+  de fonction, bash en garde une copie ≥ 10 sans close-on-exec, et `claude` comme
+  `TEST_CMD` en héritent — la session jugée forge son propre reçu par le fd 10.
+  La passe a compté les numéros et pas demandé au programme lancé ce qu'il tient.
+  → **[101]**, et **[102]** pour les hooks git qui tiennent les mêmes descripteurs
+  (`../sondes/ticket-98/`).
 - **Le répertoire du rétro lui-même** (`ralph-retro.*`, premier niveau) est tenu
   par [83] : recensement dérivé, fenêtre, fichiers **retirés** et nommés, plus
   `retro_index_note` qui remet l'index. Q4 le confirme (`capability.witness`,
