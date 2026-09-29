@@ -368,11 +368,12 @@ mutation "03 sessions are resumed instead of fresh" "$SESSION" \
 
 # ── [04] the smart-zone net ──────────────────────────────────────────────────
 
-# Re-aimed by [96]: the spawn now goes through `receipt_shut_exec`, so the old
-# anchor `DISABLE_AUTO_COMPACT=1 claude` matches nothing and this entry reported
-# DRIFTED rather than covering anything.
+# Re-aimed by [96]: the spawn went through `receipt_shut_exec`, so the old anchor
+# `DISABLE_AUTO_COMPACT=1 claude` matched nothing and this entry reported DRIFTED
+# rather than covering anything. And again by [101], which replaced that helper by
+# `proc_exec_bare`.
 mutation "04 auto-compact is not turned off for the session" "$SESSION" \
-  's/DISABLE_AUTO_COMPACT=1 receipt_shut_exec claude/receipt_shut_exec claude/' \
+  's/DISABLE_AUTO_COMPACT=1 proc_exec_bare claude/proc_exec_bare claude/' \
   test/smart-zone.bats "auto-compact is off"
 
 # Aimed at the whole termination and not at the TERM inside it, since [23]: the
@@ -7060,16 +7061,21 @@ mutation "94 a refused lens never gets its posture out of its branch" "$LENSES_L
   's/  if posture="\$\(lenses__refused_posture "\$stream" "\$verdict"\)"; then\n    gate_note posture "\$posture" \|\| true\n  fi\n//' \
   test/gate.bats "lens the API really refused still gives the ticket back"
 
-# Re-aimed by [96], which put a second shut in front of this one: the old anchor
-# began at the two spaces before `gate_notes_shut` and stopped matching. It removes
-# the note channel's shut alone, leaving the receipt's — the two are nested, and an
-# entry that took both away would be measuring one guarantee with the other's test.
-mutation "94 the project's test command keeps the channel open" "$GATE" \
-  's/receipt_shut gate_notes_shut proc_group_fork/receipt_shut proc_group_fork/' \
+# Re-aimed by [101], and not for the usual reason. These two removed
+# `gate_notes_shut` from the command branch and from the lens's spawn, and they were
+# `ok` — the tests found 9 and 8 open without it and closed with it — on a pack
+# whose command and lens held the note channel's write end on another number all
+# along: the shut closed by a redirection on a function call, and bash kept a copy.
+# The shut is gone. What holds the guarantee now is the bare `exec` at the two
+# points where a program the pack did not write is started, which closes every
+# channel at once, so these two and [96]'s below share their edits and name
+# different tests: one guarantee per channel, one place that keeps them all.
+mutation "94 the project's test command keeps the channel open" "$PROC" \
+  's/    proc_exec_bare bash -c "\$cmd"/    exec bash -c "\$cmd"/' \
   test/gate.bats "test command is not handed the channel"
 
-mutation "94 a lens's session keeps the channel open" "$LENSES_LIB" \
-  's/  gate_notes_shut session_spawn "\$promptfile"/  session_spawn "\$promptfile"/' \
+mutation "94 a lens's session keeps the channel open" "$SESSION" \
+  's/DISABLE_AUTO_COMPACT=1 proc_exec_bare claude/DISABLE_AUTO_COMPACT=1 claude/' \
   test/gate.bats "review lens's session is not handed"
 
 mutation "94 the prompt of a lens keeps its name" "$LENSES_LIB" \
@@ -7093,12 +7099,13 @@ mutation "96 the evidence is in a place again" "$RECEIPT" \
   's/^  # Before a byte is written, and that is the order rather than a tidy-up: a record\n  # that reached a named file was reachable, and no later unlink takes that back\.\n  rm -f "\$file"\n//m' \
   test/receipt.bats "workspace to forge"
 
+# Re-aimed by [101], for the reason written above the two [94] entries.
 mutation "96 the judged session is handed the channel" "$SESSION" \
-  's/DISABLE_AUTO_COMPACT=1 receipt_shut_exec claude/DISABLE_AUTO_COMPACT=1 claude/' \
+  's/DISABLE_AUTO_COMPACT=1 proc_exec_bare claude/DISABLE_AUTO_COMPACT=1 claude/' \
   test/receipt.bats "judged session is not handed"
 
-mutation "96 the project's test command is handed it" "$GATE" \
-  's/  receipt_shut gate_notes_shut proc_group_fork/  gate_notes_shut proc_group_fork/' \
+mutation "96 the project's test command is handed it" "$PROC" \
+  's/    proc_exec_bare bash -c "\$cmd"/    exec bash -c "\$cmd"/' \
   test/receipt.bats "test command is not handed it either"
 
 mutation "96 a sentence written a level down never arrives" "$RECEIPT" \
@@ -7107,6 +7114,45 @@ mutation "96 a sentence written a level down never arrives" "$RECEIPT" \
 
 mutation "96 the document does not say where it was assembled" "$RECEIPT" \
   's/Assembled nowhere a name reaches/Assembled by this run/' \
+  test/receipt.bats "says where it was assembled"
+
+# ── [101] a program the pack did not write holds nothing above stderr ────────
+#
+# The primitive and its two callers. The first three entries are the hole itself,
+# at each of the places it can come back: the close taken out, the close narrowed to
+# the numbers this pack opens — which is exactly the shape that shipped in [94] and
+# [96], since the copies bash keeps are allocated from 10 up — and the command fork
+# going back to a plain `exec`. The unit tests carry the high channel and the copy
+# on purpose: no descriptor this pack opens today is above 9, so only a test that
+# stages one can tell 255 from 9, and [98] is the ticket that opens one.
+
+mutation "101 a program is exec'd holding everything its caller held" "$PROC" \
+  's/^  eval "exec \$closers"\n//m' \
+  test/proc.bats "bare holds nothing above stderr"
+
+mutation "101 the close stops at the numbers this pack opens" "$PROC" \
+  's/while \[ "\$n" -le 255 \]; do/while [ "\$n" -le 9 ]; do/' \
+  test/proc.bats "bare holds nothing above stderr"
+
+mutation "101 a command line is exec'd holding its caller's descriptors" "$PROC" \
+  's/    proc_exec_bare bash -c "\$cmd"/    exec bash -c "\$cmd"/' \
+  test/proc.bats "holds nothing above stderr either"
+
+# `$!` is what the monitor, the collection and the deadline of a session are aimed
+# at. A primitive that ran the program as a child instead of becoming it would
+# close the descriptors just as well and hand them the pid of a shell.
+mutation "101 the background child runs the program instead of becoming it" "$PROC" \
+  's/^  exec "\$@"\n\}/  "\$@"\n}/m' \
+  test/proc.bats "exec'd bare in the background"
+
+mutation "101 the canary's sessions hold the pack's descriptors" "$SESSION" \
+  's/DISABLE_AUTO_COMPACT=1 proc_exec_bare claude/DISABLE_AUTO_COMPACT=1 claude/' \
+  test/canary.bats "nothing the pack launches"
+
+# The receipt says what it does not hold in the same breath as what it does ([24]),
+# and the sentence that claimed only the strong half is what [96] was opened for.
+mutation "101 the document claims more than was closed" "$RECEIPT" \
+  's/, with three exceptions this run did not close:[^\n]*any process of the same user\./. /' \
   test/receipt.bats "says where it was assembled"
 
 mutation "96 the document keeps the claim and drops the reservation" "$RECEIPT" \

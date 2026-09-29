@@ -428,14 +428,17 @@ lenses_review() {
   # that would otherwise inherit the descriptor.
   eval "exec $LENSES_PROMPT_FD>&-"
 
-  # Through `gate_notes_shut`, because a descriptor survives an `exec`: without it
-  # this session and everything it leaves behind would hold the write end of the
-  # channel the gate reads its branches' second answers on ([94]).
+  # The write end of the channel the gate reads its branches' second answers on
+  # ([94]) is not this session's to hold, nor anything's it leaves behind — and it
+  # is `session_spawn` that sees to it, for every descriptor above 2 at once
+  # ([101]). What stood here was a shut of its own around the call, and it was the
+  # leak: a redirection on a function call makes bash keep a copy of what it closes,
+  # and the session inherited the copy.
   #
   # Unquoted on purpose: the posture is several flags, and one string is what keeps
   # them in one definition a test can read.
   # shellcheck disable=SC2046
-  gate_notes_shut session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
+  session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
   lenses__prompt_close
 
   verdict="$(lenses__verdict "$stream")"

@@ -78,14 +78,20 @@ session_spawn() {
   # handle — the one that outlives the process at the top of it — and since [95]
   # they have it, armed one level further down by `proc_group_fork`, around the
   # command line the project wrote rather than around the subshell this pack forks.
-  # Through `receipt_shut_exec`, because a descriptor survives an `exec` and this is
-  # the one place in the pack that runs `claude`: without it the evidence an audit
-  # receipt is assembled from is writable by the very session it is about ([96] —
-  # measured, an inherited write end forges a record with one `printf`). The `exec`
-  # variant and not the plain one: `$!` below has to be the session's own pid, and a
-  # function called with `&` would put a subshell there instead.
+  # Through `proc_exec_bare`, because a descriptor survives an `exec` and this is the
+  # one place in the pack that runs `claude`: the session holds its stdin, its
+  # stream and its stderr, and nothing else of the shell that spawned it. Without
+  # that, the evidence an audit receipt is assembled from ([96]) and the notes a
+  # lens's branch answers on ([94]) are writable by the very session they are about
+  # — measured, an inherited write end forges a record with one `printf`. It is
+  # *everything* above 2 and not the numbers those modules opened since [101]: the
+  # two shuts that stood here closed by a redirection on a function call, bash kept a
+  # copy of each descriptor it closed that way, and the session inherited the copy.
+  # Called with `&`, and `$!` is still the session's own pid: the function ends in an
+  # `exec`, so the background child it runs in *becomes* `claude` ([96] measured
+  # that shape for the helper this replaces; [101] measured it again for this one).
   set -m
-  DISABLE_AUTO_COMPACT=1 receipt_shut_exec claude -p \
+  DISABLE_AUTO_COMPACT=1 proc_exec_bare claude -p \
     --model "$MODEL" \
     --output-format stream-json \
     --verbose \

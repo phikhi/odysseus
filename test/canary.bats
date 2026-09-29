@@ -517,7 +517,77 @@ FAKE
   assert_output_contains "CONTEXT.md"
 }
 
+@test "the canary: nothing the pack launches can write a line of its own receipt" {
+  # [101], at the value a project installs: review lenses and the retro on, so
+  # every kind of `claude` this pack spawns in an iteration runs — delivery, each
+  # lens, the retro — and the project's own suite runs beside them. Each of them
+  # tries to write a receipt record on every descriptor from 3 to 255 it holds.
+  #
+  # Until [101] the delivery session found the receipt's write end on fd 10 and its
+  # line landed in the document, under a sentence saying nothing it left running
+  # could reach it; the suite and each lens found the two write ends of the gate's
+  # channels on 12 and 14. The pack closed the numbers it had opened and asked the
+  # programs about those numbers — the copies bash kept on the way down were asked
+  # about by nobody.
+  use_tickets 01-alpha
+  fd_forger
+  cat >"$SHIM_STATE/suite.sh" <<'SUITE'
+#!/usr/bin/env bash
+"$RALPH_SHIM_STATE/fd-forger" "$(printf 'note\tFORGED-BY-THE-SUITE')" "$RALPH_SHIM_STATE/suite.probe"
+exit 0
+SUITE
+  chmod +x "$SHIM_STATE/suite.sh"
+  set_config TEST_CMD "bash '$SHIM_STATE/suite.sh'"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+prompt="$(cat)"
+"$state/fd-forger" "$(printf 'note\tFORGED-BY-A-SESSION')" "$state/claude.probe"
+case "$prompt" in
+  *RALPH-LENS-VERDICT*)
+    printf '{"type":"system","subtype":"init","session_id":"lens","model":"test-model"}\n'
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"nothing to report. RALPH-LENS-VERDICT: pass"}]}}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-LENS-VERDICT: pass","num_turns":1,"total_cost_usd":0.001}\n'
+    exit 0
+    ;;
+  *RALPH-RETRO-NOTHING*)
+    printf '{"type":"system","subtype":"init","session_id":"retro","model":"test-model"}\n'
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"nothing worth carrying. RALPH-RETRO-NOTHING"}]}}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-RETRO-NOTHING","num_turns":1,"total_cost_usd":0.001}\n'
+    exit 0
+    ;;
+esac
+: >"$state/delivery.ran"
+surface="$(printf '%s' "$prompt" |
+  sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")"
+  printf 'written by the session\n' >"$target"
+done
+printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":1,"total_cost_usd":0.01}\n'
+FAKE
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  # Every kind ran and tried, or the rest is true for the wrong reason ([80]).
+  assert_file_exists "$SHIM_STATE/delivery.ran"
+  [ "$(grep -c '^probed$' "$SHIM_STATE/claude.probe")" -ge 3 ] ||
+    fail "fewer than three sessions (delivery, a lens, the retro) ran the forger: $(cat "$SHIM_STATE/claude.probe")"
+  assert_forger_found_nothing "$SHIM_STATE/claude.probe" "a session the pack spawned"
+  assert_forger_found_nothing "$SHIM_STATE/suite.probe" "the project's suite"
+
+  assert_file_exists "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/01-alpha.md"
+  refute_file_contains "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/01-alpha.md" "FORGED"
+}
+
 # ── the known hole, waiting for its ticket ───────────────────────────────────
+
+@test "the canary: a process the judged session left behind cannot open a channel in the instant it has a name" {
+  skip "known hole, ticket [103]: the four channels this pack keeps out of reach by unlinking their file — the receipt's ([96]), the gate's notes ([94]), a lens's prompt ([94]) and, once it lands, the slot ([98]) — each have a name from their mktemp to their rm -f, and that rm is an external program: a millisecond or two. A process the judged session left behind, polling \$TMPDIR in a loop without sleeping, opens the file in that instant every time and keeps the descriptor after the name is gone. Measured on 29/09/2026 against the code [96] shipped: twelve openings won out of twelve, and 270 forged lines in one receipt. No name and no file mode keeps a process of the same user out of it; raising this skip is an acceptance criterion of [103]."
+}
 
 @test "the canary: a process the judged session left behind cannot forge a lens verdict" {
   skip "known hole, ticket [97]: the verdict of a review lens is the last RALPH-LENS-VERDICT line of its stream, and that stream is a named file under \$TMPDIR for as long as the session is writing into it. [94] moved every answer the *gate* read out of its own directory onto a descriptor no stranger can find, and moved the lens's own read back inside the branch that owns the stream — which leaves one window: between the session's last write and the branch's read. A process the judged session left behind, polling for the verdict line and truncating the file, wins it. Nothing above session_spawn can close it: the stream needs a name because claude is given it on a redirection and monitor_watch follows it through a descriptor of its own, opened by path. Raising this skip is an acceptance criterion of [97]."

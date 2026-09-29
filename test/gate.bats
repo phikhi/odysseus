@@ -3783,24 +3783,20 @@ FAKE
 @test "the project's test command is not handed the channel its branch answers on" {
   # The one thing a descriptor does that a variable does not: it survives an
   # `exec`. Two branches of this fan run a command line the *project* wrote, and
-  # `gate__command_branch` hands it to `bash -c` — so without `gate_notes_shut`
-  # the write end of this channel reaches the project's suite and everything it
-  # leaves behind, which is the most ordinary carrier of all ([95]).
+  # `gate__command_branch` hands it to `bash -c` — so the write end of this channel
+  # must not reach the project's suite nor anything it leaves behind, which is the
+  # most ordinary carrier of all ([95]).
   #
-  # Derived rather than retyped: the two numbers come out of the pack, and what is
-  # asserted is that neither of them is among the descriptors the command holds.
+  # Every descriptor and not the two this module opened, since [101]. This test
+  # used to derive `GATE_NOTES_FD` and `GATE_NOTES_BACK` from the pack and find them
+  # closed, and it was green while the command held the write end on another
+  # number: the shut closed 9 and 8 by a redirection on a function call, and bash
+  # kept a copy of each. `fd_forger` writes a note on every number from 3 to 255.
   use_tickets 01-alpha
-  pack_run 'printf "%s %s\n" "$GATE_NOTES_FD" "$GATE_NOTES_BACK"'
-  assert_success
-  local fds="$output"
-  [ -n "$fds" ] || fail "the pack does not say which descriptors the channel uses"
-
+  fd_forger
   cat >"$SHIM_STATE/probe.sh" <<'PROBE'
 #!/usr/bin/env bash
-ls /dev/fd >"$RALPH_SHIM_STATE/testcmd.fds" 2>/dev/null
-while read -r fd; do
-  printf 'scope class contract\n' 2>/dev/null >&"$fd" || true
-done <"$RALPH_SHIM_STATE/testcmd.fds"
+"$RALPH_SHIM_STATE/fd-forger" 'scope class contract' "$RALPH_SHIM_STATE/testcmd.probe"
 exit 0
 PROBE
   chmod +x "$SHIM_STATE/probe.sh"
@@ -3809,14 +3805,8 @@ PROBE
   run_loop
   local out="$output"
 
-  assert_file_exists "$SHIM_STATE/testcmd.fds"
-  local fd
-  for fd in $fds; do
-    if grep -qxF -- "$fd" "$SHIM_STATE/testcmd.fds"; then
-      fail "the project's test command holds descriptor $fd: $(cat "$SHIM_STATE/testcmd.fds" | tr '\n' ' ')"
-    fi
-  done
-  # And the forge it tried on every descriptor it did hold bought nothing.
+  assert_forger_found_nothing "$SHIM_STATE/testcmd.probe" "the project's test command"
+  # And the forge it tried on every descriptor bought nothing.
   printf '%s\n' "$out" | grep -q "scope overflow" &&
     fail "a note written by the project's test command was read as the scope-guard's: $out"
   assert_ticket_status 01-alpha resolved
@@ -3825,12 +3815,12 @@ PROBE
 @test "a review lens's session is not handed it either" {
   # The other `exec` inside a branch. A lens is spawned with `--tools` that cannot
   # write ([06]), which says nothing about the descriptors it inherits — and what
-  # a lens leaves running inherits them too.
+  # a lens leaves running inherits them too. [101]: the lens's own shut around
+  # `session_spawn` was the leak, a copy of 9 on 10 and up; it is gone, and
+  # `session_spawn` hands `claude` nothing above stderr.
   set_config LENSES "standards"
   use_tickets 01-alpha
-  pack_run 'printf "%s %s\n" "$GATE_NOTES_FD" "$GATE_NOTES_BACK"'
-  assert_success
-  local fds="$output"
+  fd_forger
 
   # The fake is replaced for this test, so it answers both questions itself: the
   # delivery session writes the ticket's surface, the lens probes its descriptors
@@ -3841,10 +3831,7 @@ state="$RALPH_SHIM_STATE"
 prompt="$(cat)"
 case "$prompt" in
   *RALPH-LENS-VERDICT*)
-    ls /dev/fd >"$state/lens.fds" 2>/dev/null
-    while read -r fd; do
-      printf 'scope class contract\n' 2>/dev/null >&"$fd" || true
-    done <"$state/lens.fds"
+    "$state/fd-forger" 'scope class contract' "$state/lens.probe"
     printf '{"type":"system","subtype":"init","session_id":"lens","model":"m"}\n'
     printf '{"type":"assistant","message":{"content":[{"type":"text","text":"findings: none. RALPH-LENS-VERDICT: pass"}]}}\n'
     printf '{"type":"result","subtype":"success","is_error":false,"result":"RALPH-LENS-VERDICT: pass","num_turns":1,"total_cost_usd":0.01}\n'
@@ -3860,13 +3847,7 @@ FAKE
   run_loop
   local out="$output"
 
-  assert_file_exists "$SHIM_STATE/lens.fds"
-  local fd
-  for fd in $fds; do
-    if grep -qxF -- "$fd" "$SHIM_STATE/lens.fds"; then
-      fail "a lens session holds descriptor $fd: $(cat "$SHIM_STATE/lens.fds" | tr '\n' ' ')"
-    fi
-  done
+  assert_forger_found_nothing "$SHIM_STATE/lens.probe" "a lens session"
   printf '%s\n' "$out" | grep -q "scope overflow" &&
     fail "a note written by a lens session was read as the scope-guard's: $out"
   assert_ticket_status 01-alpha resolved
@@ -4750,7 +4731,11 @@ FAKE
 #          (`at | systemd-run)`) is not a command position; an assignment prefix
 #          is not the command, and that one is not a nicety —
 #          `DISABLE_AUTO_COMPACT=1 claude -p` is how this pack starts every
-#          session it has.
+#          session it has. Nor is a word that launches its argument: `exec`,
+#          `nohup`, `time`, and the pack's own `proc_exec_bare` ([101]), which
+#          ends in an `exec "$@"` and is now how every project command and every
+#          session is started — without it on this list the scan loses `bash`,
+#          whose only bare launch it is.
 #   name   minus the functions this pack defines, and minus whatever `compgen -b`
 #          and `compgen -k` call a builtin or a keyword. That exclusion is asked
 #          of bash rather than typed here, and it is [52]'s own criterion: a
@@ -4860,7 +4845,7 @@ path_bare_names() {
     { LC_ALL=C grep -oE '^[a-z][a-z0-9_]*\(\)' "$f" || true; } | tr -d '()' >>"$out.funcs"
     awk -f "$RALPH_TEST_DIR/code.awk" "$f" |
       LC_ALL=C sed -E 's/^[[:space:]]*[^()|&;]*(\|[^()|&;]*)*\)//' |
-      LC_ALL=C sed -E 's/(^|[[:space:];&|(])(then|else|elif|do|while|until|if|!|exec|nohup|time)[[:space:]]/\1; /g' |
+      LC_ALL=C sed -E 's/(^|[[:space:];&|(])(then|else|elif|do|while|until|if|!|exec|nohup|time|proc_exec_bare)[[:space:]]/\1; /g' |
       LC_ALL=C sed -E 's/(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+/\1 /g' |
       { LC_ALL=C grep -oE '(^|[;&|({]|\$\()[[:space:]]*[a-z][a-z0-9_.+-]*[[:space:]]' || true; } |
       { LC_ALL=C grep -oE '[a-z][a-z0-9_.+-]*' || true; } >>"$out.raw"

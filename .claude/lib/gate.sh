@@ -3463,18 +3463,24 @@ SCOPE
 # survives an `exec`. The two branches that run a command line the *project* wrote
 # and the one that spawns a `claude` would otherwise hand the write end to exactly
 # the population this channel exists to keep out, and to everything those leave
-# behind — so those three calls go through `gate_notes_shut`. That is the whole of
-# the guarantee, and it is asked of the run rather than of the prose: the suite
-# plants a `TEST_CMD` and a lens session that both try to write a note, and asserts
-# that neither of them arrives.
+# behind. That is closed where those programs are exec'd and not here —
+# `proc_group_fork` and `session_spawn` both go through `proc_exec_bare`, which
+# leaves the program nothing above stderr — and this module knowing its own numbers
+# was the defect rather than the guarantee ([101]): the shut that stood here closed
+# them by a redirection on a function call, bash kept a copy of each, and
+# `TEST_CMD` held both write ends, on 12 and 14, while the suite asked it about 9
+# and 8.
+# It is asked of the run now, and of every descriptor: a `TEST_CMD` and a lens
+# session both try to write a note on each number they could hold, and neither
+# may find one that takes it.
 #
 # What did **not** move is `$dir/<branch>.out`. See `gate__report` for the bound
 # that was measured and refused, and the table in docs/frontiere-de-confiance.md
 # for what a process writing there still buys.
 #
 # The numbers are literals because bash 3.2 has no `{var}>`: an `exec` wants a
-# digit. They are spent through `eval` in the three places that open, shut and
-# close them and nowhere else. 3 is not among them, and that is not luck —
+# digit. They are spent through `eval` in the two places that open and close them
+# and nowhere else. 3 is not among them, and that is not luck —
 # `monitor_watch` follows a session's stream through it, one tier down and inside
 # these very branches.
 GATE_NOTES_FD=9
@@ -3584,21 +3590,6 @@ NOTES
   return 0
 }
 
-# Run something with both ends of the channel closed.
-#
-# Three calls, one reason: a descriptor survives an `exec`, so `bash -c
-# "$TEST_CMD"` and a review lens's `claude` would hand the write end to their own
-# descendance — and a process the project's suite or the judged session left
-# behind is precisely the writer this channel is built to keep out. Public because
-# the third call is in lenses.sh.
-#
-# It closes the read end too, which buys nothing against a forger and is there for
-# the reader of the next ticket: a descendant that can read the notes of the fan
-# judging it learns which branch said what, and there is no reason to hand it that.
-gate_notes_shut() {
-  eval "\"\$@\" $GATE_NOTES_FD>&- $GATE_NOTES_BACK<&-"
-}
-
 # ── running the branches ─────────────────────────────────────────────────────
 
 # One branch, in its own process: output to a file, verdict in its own exit
@@ -3685,14 +3676,16 @@ gate__start() {
 gate__command_branch() {
   local subject="$1" cmd="$2" rc=0
   local PROC_GROUP_PID=''
-  # Through both shuts, because this is the one line in the pack where a command
-  # the *project* wrote is handed this shell's descriptors ([94]). Without them the
-  # write end of the note channel and of the receipt's channel ([96]) reach `bash -c
-  # "$TEST_CMD"` and everything it leaves behind, which is the population both exist
-  # to keep out — measured on the 23/09 pass as the most ordinary carrier of all.
-  # Nested rather than merged: each module closes what it opened, and neither has to
-  # know the other's numbers.
-  receipt_shut gate_notes_shut proc_group_fork '' "$cmd"
+  # This is the one line in the pack where a command the *project* wrote is handed
+  # this shell's descriptors ([94]), and the write ends of the note channel and of
+  # the receipt's ([96]) are exactly what `bash -c "$TEST_CMD"` and everything it
+  # leaves behind must not hold — measured on the 23/09 pass as the most ordinary
+  # carrier of all. They are closed inside `proc_group_fork`, in the child and after
+  # the fork, and that placement is [101]'s rather than a style: the two shuts that
+  # were nested here closed by a redirection on a function call, bash kept a copy of
+  # each descriptor it closed that way, and the command inherited the copies — the
+  # two write ends, on 12 and 14, under numbers nobody was asking about.
+  proc_group_fork '' "$cmd"
   GATE_BRANCH_LEADER="$PROC_GROUP_PID"
   GATE_BRANCH_SUBJECT="$subject"
   proc_collect "$PROC_GROUP_PID" || rc=$?
