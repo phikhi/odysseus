@@ -322,3 +322,78 @@ teardown() {
     "$SHIM_STATE/said" ||
     fail "nothing named what the command left behind: $(cat "$SHIM_STATE/said")"
 }
+
+# ── what a program the pack did not write is handed ([101]) ──────────────────
+#
+# The shape that leaked, reproduced around the primitive that replaces it. A caller
+# that holds a channel on a low number and another on a high one, and closes the
+# low one the way `receipt_shut`, `receipt_shut_exec` and `gate_notes_shut` did: a
+# redirection written on a *function call*. Bash applies that by saving the
+# descriptor first, onto the lowest free number from 10 up, so that it can give it
+# back when the call returns — and on the bash 3.2 this pack runs under, the copy is
+# not close-on-exec. The program at the bottom of the call held the copy.
+
+channels_and_the_old_shut='
+  work="$(mktemp -d "$RALPH_SHIM_STATE/chan.XXXXXX")"
+  exec 5>"$work/low" 4<"$work/low" 11>"$work/high"
+  rm -f "$work/low" "$work/high"
+  shut() { eval "\"\$@\" 5>&- 4<&-"; }
+'
+
+@test "a program exec'd bare holds nothing above stderr, however its caller closed what it held" {
+  fd_forger
+  pack_run "$channels_and_the_old_shut"'
+    shut proc_exec_bare "$RALPH_SHIM_STATE/fd-forger" program "$RALPH_SHIM_STATE/bare.log" &
+    wait "$!"
+  '
+  assert_success
+  assert_forger_found_nothing "$SHIM_STATE/bare.log" "a program exec'd bare"
+}
+
+@test "the paired witness: the same caller and the same close, without it" {
+  # The half that says the probe sees what it is asked about, and that the leak the
+  # primitive exists for is real on this bash rather than remembered. Two things are
+  # held here, and they are not the same finding: the high channel, which nobody
+  # closed, and a copy of the low one, which the call *did* close.
+  fd_forger
+  pack_run "$channels_and_the_old_shut"'
+    run_forger() { "$RALPH_SHIM_STATE/fd-forger" program "$RALPH_SHIM_STATE/plain.log"; }
+    shut run_forger &
+    wait "$!"
+  '
+  assert_success
+  grep -q '^probed$' "$SHIM_STATE/plain.log" || fail "the forger never ran"
+  grep -q '^OPEN 11$' "$SHIM_STATE/plain.log" ||
+    fail "the probe did not see a channel nobody closed: $(cat "$SHIM_STATE/plain.log")"
+  local held
+  held="$(grep '^OPEN ' "$SHIM_STATE/plain.log" | grep -vc '^OPEN 11$' || true)"
+  [ "$held" -ge 1 ] ||
+    fail "no copy of the closed channel reached the program — the premise of [101] no longer holds on this bash: $(cat "$SHIM_STATE/plain.log")"
+}
+
+@test "a program exec'd bare in the background is what \$! names" {
+  # `session_spawn` hands `$!` to the monitor, the collection and the deadline, so
+  # the number has to be the program's own and not a shell's around it ([96]
+  # measured this for the helper [101] replaced). The function ends in an `exec`,
+  # so the background child it runs in *becomes* the program.
+  pack_run '
+    proc_exec_bare sh -c "echo \$\$ >\"\$RALPH_SHIM_STATE/self.pid\"" &
+    printf "%s\n" "$!" >"$RALPH_SHIM_STATE/bang.pid"
+    wait "$!"
+  '
+  assert_success
+  assert_equal "$(cat "$SHIM_STATE/self.pid")" "$(cat "$SHIM_STATE/bang.pid")"
+}
+
+@test "a command line the pack was handed holds nothing above stderr either" {
+  # The other of the two points, reached the way `gate__command_branch` reached it
+  # until [101]: through a shut written on the call.
+  fd_forger
+  pack_run_bg "$channels_and_the_old_shut"'
+    shut proc_group_fork "" "$RALPH_SHIM_STATE/fd-forger command $RALPH_SHIM_STATE/group.log"
+    proc_collect "$PROC_GROUP_PID" || true
+    : >"$RALPH_SHIM_STATE/collected"
+  '
+  wait_for_file "$SHIM_STATE/collected" 400 || fail "the command was never collected"
+  assert_forger_found_nothing "$SHIM_STATE/group.log" "a command line the pack was handed"
+}

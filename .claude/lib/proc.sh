@@ -282,17 +282,73 @@ proc_sweep() {
 # SIGTTIN instead of being served, and a stopped `TEST_CMD` would hang its branch
 # until the gate's deadline — half an hour at the shipped value. EOF is what the
 # same command gets from every CI that ever ran it.
+#
+# And what the command holds is nothing but that stdin, its stdout and its stderr:
+# it is exec'd through `proc_exec_bare`, below, for the reason written there.
 proc_group_fork() {
   local cwd="$1" cmd="$2"
   PROC_GROUP_PID=''
   set -m
   (
     [ -z "$cwd" ] || cd "$cwd"
-    exec bash -c "$cmd"
+    proc_exec_bare bash -c "$cmd"
   ) </dev/null &
   PROC_GROUP_PID=$!
   set +m
   return 0
+}
+
+# Replace this shell by a program that holds nothing but stdin, stdout and stderr
+# ([101]). The last thing a forked child does, and nothing else: called from a shell
+# that means to go on, it would close that shell's own channels and then replace it.
+#
+# There are exactly two callers, and they are the two points where this pack hands
+# a program it did not write the descriptors of the shell that forks it: the
+# background child of `session_spawn`, which is every `claude` the pack runs, and
+# the child of `proc_group_fork` above, which is every command line a project
+# wrote — `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`, `VISUAL_CMD` ([95]'s census).
+# What is *not* here is written down so that it reads as a decision: the
+# `*_TOKEN_CMD` lines and the scheduler's submission are commands the operator
+# wrote, not the project and not the session; and a program git runs for the pack
+# — a hook in the common git directory — is exec'd by git and never passes through
+# here, which is [102].
+#
+# **Why everything above 2 and not the numbers this pack opened, which is how it
+# was done until this ticket and what made [94] and [96] green on a hole.** Each
+# channel used to be closed by its own module, by a redirection written on a
+# *function call* — `receipt_shut` was `eval "\"\$@\" 5>&- 4<&-"`, and
+# `gate_notes_shut` and `receipt_shut_exec` were the same shape. Bash applies a
+# redirection on a function call, or on an `exec` that carries a command, by first
+# *saving* the descriptor, so that it can give it back when the call returns: it
+# duplicates it onto the lowest free number from 10 up, and on the bash 3.2 this
+# pack runs under that copy is not close-on-exec. So the program launched inside
+# the call inherited the very descriptor the call was closing, under another
+# number. Measured on 29/09/2026 in the pack: the judged session held the
+# receipt's write end on fd 10 and put one line of its own in its own receipt
+# through it, and the project's test command and every review lens held two write
+# ends, on 12 and 14. Reproduced outside the pack with `lsof`, the copies are the
+# closed descriptors themselves under new numbers, write ends included. The tests
+# asked the programs about 5, 4, 9 and 8 — the numbers the pack derived — and those
+# were closed.
+#
+# An `exec` with no command makes its redirections permanent and saves nothing, so
+# this closes the numbers this pack opened *and* every copy bash made on the way
+# down, in the child and after the fork, where nothing is left to give them back
+# to. And it closes everything rather than a list, because the list is exactly what
+# lied: a program the pack did not write has no business with any descriptor but
+# the three it is handed, and a module that opens a channel tomorrow is covered
+# without having to know that this line exists. Up to 255 because that is where
+# bash keeps the script it is reading, and the copies it makes are allocated from
+# 10 upwards at the lowest free number; nothing in this pack holds a descriptor
+# above that. Measured at 0.8 ms a fork for the whole list.
+proc_exec_bare() {
+  local closers='' n=3
+  while [ "$n" -le 255 ]; do
+    closers="$closers $n>&-"
+    n=$((n + 1))
+  done
+  eval "exec $closers"
+  exec "$@"
 }
 
 # The pid of the shell running this, which bash 3.2 has no variable for — there is

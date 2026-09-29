@@ -14,6 +14,26 @@ load ../../../../test/helpers/harness
 load ../../../../test/helpers/assert
 setup() { harness_setup; }
 teardown() { harness_teardown; }
+
+# La sonde de descripteurs, en perl et pas en bash : un `printf` builtin vers
+# `>&10` réussit même fd 10 fermé, parce que bash sauvegarde d'abord fd 1 sur le
+# plus petit numéro libre >= 10 puis fait `dup2(10, 1)` sur sa propre copie.
+# `open ">&="` + `syswrite` ne redirige rien et n'a pas cet artefact (mesuré).
+write_forger() {
+  cat >"$SHIM_STATE/fd-forger" <<'PERL'
+#!/usr/bin/env perl
+my ($rec, $log) = @ARGV; my @open;
+for my $n (3 .. 255) {
+  open(my $fh, ">&=", $n) or next;
+  push @open, $n if defined syswrite($fh, "$rec\n");
+}
+open(my $out, ">>", $log) or die "no log: $!";
+print $out "OPEN $_\n" for @open;
+print $out "probed\n";
+PERL
+  chmod +x "$SHIM_STATE/fd-forger"
+}
+
 receipt_path() { printf "%s/receipts/%s/%s.md\n" "$PROJECT_DIR" "$RALPH_TEST_FEATURE" "$1"; }
 
 @test "L1 the judged session writes a receipt record on every fd it holds above 2" {
@@ -22,15 +42,11 @@ receipt_path() { printf "%s/receipts/%s/%s.md\n" "$PROJECT_DIR" "$RALPH_TEST_FEA
   set_config STERILE_K 4
   stub_exit tests 1
   printf 'FAIL: 3 of 12 tests failed in src/alpha\n' >"$SHIM_STATE/stub-tests.out"
+  write_forger
   script_claude <<'FAKE'
 #!/usr/bin/env bash
 state="$RALPH_SHIM_STATE"
-: >"$state/session.probe"
-for fd in 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  if ( printf 'note\tFORGED-BY-THE-SESSION-ON-FD-%s\n' "$fd" >&"$fd" ) 2>/dev/null; then
-    printf 'OPEN %s\n' "$fd" >>"$state/session.probe"
-  fi
-done
+"$state/fd-forger" "$(printf 'note\tFORGED-BY-THE-SESSION')" "$state/session.probe"
 mkdir -p src
 printf 'written\n' >src/alpha.txt
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}\n'
@@ -47,14 +63,11 @@ FAKE
   use_tickets 01-alpha
   set_config RETRY_N 2
   set_config STERILE_K 4
+  write_forger
   cat >"$SHIM_STATE/probe.sh" <<'PROBE'
 #!/usr/bin/env bash
 state="$RALPH_SHIM_STATE"
-for fd in 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  if ( printf 'note\tFORGED-BY-TEST-CMD-ON-FD-%s\n' "$fd" >&"$fd" ) 2>/dev/null; then
-    printf 'OPEN %s\n' "$fd" >>"$state/testcmd.probe"
-  fi
-done
+"$state/fd-forger" "$(printf 'note\tFORGED-BY-TEST-CMD')" "$state/testcmd.probe"
 printf 'FAIL: 3 of 12 tests failed in src/alpha\n'
 exit 1
 PROBE

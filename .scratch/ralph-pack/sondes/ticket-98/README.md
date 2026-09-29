@@ -24,15 +24,19 @@ de [96] demandent. Les copies que bash a faites pour pouvoir les rouvrir au reto
 de la fonction ne le sont pas.
 
 **f2 L1 — la session jugée forge son propre reçu** (→ [101]). Écrivable depuis la
-session : fd 10 et fd 12. Dans le reçu déposé : `- FORGED-BY-THE-SESSION-ON-FD-10`,
+session : **fd 10**, et lui seul. Dans le reçu déposé : `- FORGED-BY-THE-SESSION`,
 sous la section des notes. Le document porte toujours sa phrase de provenance
 (« neither the session this receipt is about nor anything it left running could
 reach it »).
 
 **f2 L2 — la commande de test du projet aussi** (→ [101]). Écrivable depuis
-`TEST_CMD` : fd 10, 12 et 14, à chacun de ses trois passages. Dans le reçu :
-`- FORGED-BY-TEST-CMD-ON-FD-12` sous les notes, et trois lignes forgées citées sous
-les constats.
+`TEST_CMD` : **fd 12 et 14**, à chacun de ses trois passages.
+
+*Les chiffres de L1/L2 écrits d'abord ici (« 10 et 12 », « 10, 12, 14 ») venaient
+d'une sonde en `printf` builtin, qui a un artefact : `printf x >&N` sur un N fermé
+réussit quand N est le plus petit numéro libre ≥ 10, parce que bash sauvegarde
+d'abord fd 1 sur N. La sonde est maintenant en perl (`open ">&="` + `syswrite`) —
+la même que `fd_forger` du harnais — et les chiffres ci-dessus sont les siens.*
 
 **f2 L3 — un hook posé par la session tourne pour le pack** (→ [102]). La session du
 ticket 01 écrit `reference-transaction` et `post-checkout` dans
@@ -56,3 +60,29 @@ celle de **[102]**. Rejouées après la livraison de chacun, elles doivent rendr
 `f1` inchangée (elle rejoue la forme **hors** du pack, c'est un instrument de bash
 et pas du pack) ; `f2` L1/L2 **aucun** descripteur écrivable et aucune ligne forgée
 après [101] ; `f2` L3 aucun hook lancé après [102].
+
+**Rejouées sur la branche de [101]** : `f2` L1 et L2 ne trouvent plus **aucun**
+descripteur écrivable et le reçu n'a plus de ligne forgée ; L3 (hooks) inchangée,
+c'est [102].
+
+
+## f3 — la fenêtre de création (→ [103])
+
+    bash test/run.sh .scratch/ralph-pack/sondes/ticket-98/f3-la-fenetre-de-creation.bats
+
+Trouvée par le **second** `run.sh` complet de [101] : le test de [96] « a process
+the session left behind finds no workspace to forge » a rougi une fois, sur
+`refute_file_exists receipt.saw`, alors que [101] n'avait pas touché
+`receipt_open`. Le nom du fichier du canal existe entre son `mktemp` et son `rm -f`
+(un `rm` externe, une ou deux millisecondes) ; le survivant du test dormait 10 ms
+entre deux regards et tombait de temps en temps dans cet instant.
+
+`f3` pose la question sans hasard : un survivant qui boucle **sans dormir**, ouvre
+le fichier qu'il trouve (`exec 7>>`) et écrit dessus ensuite. Rendu :
+
+    sur les libs de main (b6f9079)   12 fenêtres gagnées, 270 lignes forgées dans le reçu
+    sur la branche de [101]          12 fenêtres gagnées, 341 lignes forgées
+
+Même forme, par construction, pour les notes du gate et le prompt d'une lentille
+(`mktemp` dans `ralph-gate.*`), et pour le canal que [98] prévoyait. File
+revalidée par Philippe le 29/09 : **[101] → [102] → [103] → [98] → [99] → [100]**.

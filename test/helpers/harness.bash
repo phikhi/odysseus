@@ -1163,6 +1163,58 @@ wait_for_file() {
   return 1
 }
 
+# A program that tries to write one record on every descriptor from 3 to 255 it
+# holds, then appends `OPEN n` to a log for each one that took it, and `probed`
+# last ([101]). It lands in `$SHIM_STATE/fd-forger`, where a fake session, a
+# project command or a unit test can run it: `fd-forger RECORD LOG`.
+#
+# Every number and not the pack's own, because asking about the pack's own is what
+# made [94] and [96] green on a hole: the pack closed 5, 4, 9 and 8 by a redirection
+# on a function call, bash kept a copy of each on 10 and up, and the programs held
+# the copies. What a forger needs is not a number anybody derived, it is a
+# descriptor that takes a write.
+#
+# In perl and not in bash, and that is measured rather than taste. A bash builtin
+# redirected at a closed descriptor can succeed: `printf x >&10` first saves fd 1
+# onto the lowest free number from 10 up — which is 10 — and then `dup2(10, 1)` lands
+# on its own copy, so the probe reports 10 as open and writes to its own stdout. And
+# `ls /dev/fd` holds a descriptor of its own while it lists ([96]). `open ">&="` and
+# `syswrite` redirect nothing: probed from a shell that holds nothing above 2 this
+# logs nothing, from one that holds a write end on 12 and a read end on 14 it logs
+# 12 alone.
+#
+# Run it as a program, and with no redirection of its own on the command line: bash
+# applies an external command's redirections in the child it forks, so the forger
+# holds exactly what the shell that runs it holds.
+fd_forger() {
+  cat >"$SHIM_STATE/fd-forger" <<'PERL'
+#!/usr/bin/env perl
+my ($rec, $log) = @ARGV;
+my @open;
+for my $n (3 .. 255) {
+  open(my $fh, ">&=", $n) or next;
+  push @open, $n if defined syswrite($fh, "$rec\n");
+}
+open(my $out, ">>", $log) or die "fd-forger: cannot open $log: $!\n";
+print $out "OPEN $_\n" for @open;
+print $out "probed\n";
+PERL
+  chmod +x "$SHIM_STATE/fd-forger"
+}
+
+# What a forger's log says, as one assertion: it ran at least once and no
+# descriptor it tried took a write. The first half is [80]'s: a probe that never
+# ran makes the second half true for the wrong reason.
+assert_forger_found_nothing() {
+  local log="$1" who="$2"
+  [ -f "$log" ] || fail "$who never ran the forger"
+  grep -q '^probed$' "$log" || fail "$who never finished probing: $(cat "$log")"
+  if grep -q '^OPEN ' "$log"; then
+    fail "$who holds a descriptor that takes a write: $(grep '^OPEN ' "$log" | sort -u | tr '\n' ' ')"
+  fi
+  return 0
+}
+
 # A ticket-open guard nobody can take, which is how a test stages "the tracker
 # refused to open a ticket". It is the cheapest refusal the local backend has:
 # `tracker_local__open_guard_take` waits out its bound and gives up, and nothing

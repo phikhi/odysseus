@@ -71,11 +71,28 @@
 # written a level down is in the store before anything renders.
 #
 # The price of a descriptor is that it survives an `exec`. Measured: an inherited
-# write end forges a record with one `printf`. So the three places where this pack
-# runs a program it did not write ([95]'s census) and every `claude` it spawns go
-# through `receipt_shut`, and the guarantee is asked of the run rather than of this
-# paragraph — the suite makes a `TEST_CMD`, a session and a review lens list their
-# own descriptors and asserts the two numbers, derived from the pack, are not there.
+# write end forges a record with one `printf`. So the programs this pack runs and
+# did not write — every `claude` it spawns and every command line a project wrote
+# ([95]'s census) — are exec'd holding nothing above stderr, by `proc_exec_bare` in
+# the child of the fork. **This paragraph said the opposite from [96] on, and
+# the suite agreed with it** ([101]): these descriptors were closed by `receipt_shut`,
+# a redirection on a function call, and bash keeps a copy of whatever it closes that
+# way — the session held the write end on fd 10, wrote one line there, and the line
+# was in its own receipt, while the tests asked it about 5 and 4. The guarantee is
+# asked of the run and of every descriptor now: a `TEST_CMD`, a session and a review
+# lens each try to write a record on every number they could hold, and none of them
+# may find one that takes it.
+#
+# What this does **not** close, said where it is claimed. The file has a name from
+# its `mktemp` to its `rm -f` below — an external `rm`, a millisecond or two — and
+# a process that polls `$TMPDIR` in a loop opens it in that instant at every
+# opening and keeps the descriptor: measured on 29/09/2026, 270 forged lines in one
+# receipt on the code [96] shipped ([103]). A program git runs *for* this pack — a
+# hook a session wrote into the common git directory — is exec'd by git from this
+# very shell and holds these descriptors ([102]). And on a system that names
+# another process's descriptors by path, Linux's `/proc/<pid>/fd`, an unlinked file
+# can be reopened by any process of the same user. None of the three was measured
+# away here; the first two were measured *in*.
 #
 # What that costs is written down rather than papered over: a ticket delivered on
 # its third attempt has two earlier receipts and this one, and nothing here counts
@@ -92,8 +109,6 @@
 #   receipt_keep_branch NAME FILE   keep a red branch's output while it exists
 #   receipt_branches             the red branches kept, one name per line
 #   receipt_branch_text NAME     what that branch had to say
-#   receipt_shut CMD...          run something with the channel closed
-#   receipt_shut_exec CMD...     the same, replacing this shell (for a `&` spawn)
 #   receipt_render TICKET        the document on stdout
 #   receipt_emit TICKET          render it and hand it to the tracker adapter
 #   receipt_close                close the channel and forget the evidence
@@ -251,28 +266,6 @@ receipt__records() {
 ${RECEIPT_STORE:-}
 RECORDS
   return 0
-}
-
-# Run something with both ends of the channel closed.
-#
-# A descriptor survives an `exec`, so `bash -c "$TEST_CMD"`, a `RUN_CMD` and every
-# `claude` this pack spawns would hand the write end to their own descendance — and
-# a process the project's suite or the judged session leaves behind is exactly the
-# writer this channel exists to keep out. The read end goes too: a descendant that
-# can read an iteration's evidence learns what the document will say about it, and
-# there is no reason to hand it that ([94] made the same two decisions one tier
-# down).
-receipt_shut() {
-  eval "\"\$@\" $RECEIPT_CHANNEL_FD>&- $RECEIPT_CHANNEL_BACK<&-"
-}
-
-# The same, for the one site that spawns into the background: `session_spawn` reads
-# `$!` and hands it to the monitor, the collection and the deadline, so the pid has
-# to be the program's own. A function called with `&` would put a subshell there
-# instead — the seam [95] hit from the other side — and an `exec` inside that
-# subshell is what keeps the number honest.
-receipt_shut_exec() {
-  eval "exec \"\$@\" $RECEIPT_CHANNEL_FD>&- $RECEIPT_CHANNEL_BACK<&-"
 }
 
 # One fact. Appended rather than replaced, and read back as the *last* occurrence:
@@ -636,7 +629,7 @@ receipt_render() {
   # And where it was *assembled*, which until [96] this paragraph did not say and
   # the head of `lib/receipt.sh` got wrong ([24]: named on every iteration, not
   # once in a document somebody has to go and find).
-  printf 'Assembled nowhere a name reaches: the evidence above was held in a variable of the shell that measured this iteration and on a descriptor of a file unlinked before a byte was written to it, so neither the session this receipt is about nor anything it left running could reach it.\n\n'
+  printf 'Assembled nowhere a name reaches: the evidence above was held in a variable of the shell that measured this iteration and on a descriptor of a file unlinked before a byte was written to it, and every program this run launched without having written it — the session, the project'"'"'s commands — was started holding nothing but its stdin, stdout and stderr. So neither the session this receipt is about nor anything it left running could reach it, with three exceptions this run did not close: a process that opens that file in the instant between its creation and its unlink, which one polling `$TMPDIR` in a loop does at every opening and keeps ([103]); a program git itself runs for this run, which is a hook in the common git directory and which a session can write ([102]); and, on a system that names another process'"'"'s descriptors by path such as Linux'"'"'s `/proc`, any process of the same user.\n\n'
   # The half this does not hold, in the same breath as the half it does. A document
   # that claimed both would be back where [96] found it.
   printf 'One source above is not of that kind, and here is where that is said rather than left to be found: the quoted output of a red branch under **Findings** is read from a file in the gate'"'"'s temporary directory, which a process of this run can write to ([94] measured the bound that was refused, and why). Since [92] nothing in that file is a verdict — those come from the branches'"'"' own exit statuses — so what a process writing there buys is the wording of that section, and never a colour.\n'
