@@ -342,10 +342,10 @@ lui ajoute deux faits de mécanique (le niveau du recensement de [83] et la fen�
 de `retro_run` ; les deux façons de lire un flux). **Aucun nouveau ticket pour
 §3.**
 
-### Ordre proposé — **à valider par Philippe**
+### Ordre — **VALIDÉ par Philippe le 29/09/2026**
 
 **[98] → [99] → [100]**, critère habituel : minimiser la reprise, jamais
-l'urgence.
+l'urgence. Validé tel quel.
 
 1. **[98] devant.** Il change la **forme du canal** entre une itération et le
    pilote, exactement comme [95] changeait la forme du fork avant [94]. Et il est
