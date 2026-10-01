@@ -1545,6 +1545,9 @@ FAKE
   # every key in it, and unsetting the include is what takes them away again.
   assert_output_contains 'include\.path'
   assert_output_contains 'extensions\.worktreeconfig'
+  # And the hook a configuration declares, which `core.hooksPath` does not reach
+  # ([102]): `hook.<name>.command`, `.event` and `.enabled`.
+  assert_output_contains 'hook\..*'
 
   # And the bounds, which are the part a list like this gets wrong. `alias.*` is a
   # program git will not run for a built-in name, and this pack calls nothing else
@@ -1741,6 +1744,93 @@ FAKE
   # And what it wrote back is the ticket and not the ticket run through the
   # session's own filter.
   refute_file_contains "$TRACKER_DIR/01-alpha.md" "POISONED"
+}
+
+# ── [102] the hooks git runs for this pack ───────────────────────────────────
+#
+# Git runs programs of its own accord, from `$(git rev-parse --git-common-dir)/
+# hooks/` — a directory every worktree shares and a session writes without
+# anything noticing — and, since git 2.5x, from a `hook.<name>.command` in any
+# configuration source. A hook is a descendant of the shell that ran git: it holds
+# that shell's descriptors, the receipt's write end among them ([96]). Measured in
+# the pack before this ticket: a `reference-transaction` the session of 01 planted
+# wrote six lines into 01's receipt and three into 02's.
+#
+# The two halves are held by two different things. The directory: every git the
+# run starts carries `core.hooksPath=/dev/null` as command-line configuration
+# (`proc_git_hooks_off`), which no file can override. A configured hook: a key of
+# [46]'s list, put back as soon as the session is gone and charged — the token does
+# nothing to it, and git has no switch that turns every name off.
+
+# A hook that writes down who ran it. `PROBE_WHO` is set by a session on its own
+# git, so a line without it is a git the pack ran.
+gate__planted_hook() {
+  cat >"$SHIM_STATE/planted-hook" <<HOOK
+#!/bin/sh
+cat >/dev/null 2>&1
+printf '%s %s\n' "\${PROBE_WHO:-the-pack}" "\$(basename "\$0")" >>"$SHIM_STATE/hooks.ran"
+exit 0
+HOOK
+  chmod +x "$SHIM_STATE/planted-hook"
+}
+
+@test "every git a run starts is told it has no hook directory" {
+  # The guarantee itself rather than one of its consequences: whatever the verb —
+  # including the ones that run no hook today — and whichever process runs it, the
+  # pilot, an iteration, a gate branch. A call site added tomorrow, or a shell that
+  # ran git before the token was set, shows up here as a line without it.
+  use_tickets 01-alpha
+  local recorder calls without
+  recorder="$(harness_git_env_recorder)"
+
+  run env PATH="$recorder:$PATH" bash "$PACK_DIR/loop.sh"
+  assert_success
+  assert_ticket_status 01-alpha resolved
+
+  # The floor, or an empty record would pass the line below by having nothing in it.
+  calls="$(grep -c . "$SHIM_STATE/git.env" | tr -d ' ')"
+  [ "$calls" -ge 20 ] || fail "the recorder saw $calls git calls, fewer than a run makes"
+  without="$(grep -vc "core.hooksPath=/dev/null" "$SHIM_STATE/git.env" || true)"
+  assert_equal "$without" "0"
+}
+
+@test "a hook a session configures is put back before the pack runs a git that would fire it" {
+  # The half the token does not reach. A configured hook fires on every event a
+  # file in the hook directory does — measured on git 2.54 with the token set —
+  # and the session picks its name, so there is no key that turns it off in
+  # advance. What holds it is [46]: `hook.*` is on the list, and the frontier is
+  # put back before the first git of this iteration that writes an index or a ref.
+  #
+  # Above MAX_PARALLEL=1 it does not hold, and that is measured too: a sibling
+  # already past its own put-back runs it, with its descriptors (→ [104], held by a
+  # skip in the canary).
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  gate__planted_hook
+
+  script_claude <<FAKE
+#!/usr/bin/env bash
+cat >/dev/null
+for ev in reference-transaction post-index-change post-checkout; do
+  git config --add hook.planted.event "\$ev"
+done
+git config hook.planted.command '$SHIM_STATE/planted-hook'
+# The window, opened: the session's own git runs it, so the hook is live.
+PROBE_WHO=the-session GIT_INDEX_FILE="$SHIM_STATE/session.index" git read-tree HEAD
+mkdir -p src
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  assert_failure 4
+
+  assert_file_contains "$SHIM_STATE/hooks.ran" "the-session"
+  refute_file_contains "$SHIM_STATE/hooks.ran" "the-pack"
+  assert_output_contains "moved hook.planted.command, which decides what git executes"
+  assert_output_contains "(put back)"
+  refute_file_contains "$PROJECT_DIR/.git/config" "planted"
+  assert_ticket_status 01-alpha ready-for-agent
 }
 
 # ── a list of paths is not a line of words ───────────────────────────────────

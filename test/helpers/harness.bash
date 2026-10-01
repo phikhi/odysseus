@@ -162,6 +162,12 @@ harness__clear_env() {
   # repository by its own settings.json, which is how the auto-compact test came
   # to pass while measuring the environment.
   unset DISABLE_AUTO_COMPACT DISABLE_COMPACT
+  # And the one git reads as command-line configuration ([102]). The pack appends
+  # its own token to whatever value it finds and hands that value back to every
+  # program it launches, so a value the developer's shell exported would be the
+  # baseline of every test that asserts on it — a suite run from inside a
+  # `git -c …` alias would measure that alias.
+  unset GIT_CONFIG_PARAMETERS
 }
 
 # Every shell file in the repository that can be pack source, one path per line.
@@ -1141,6 +1147,25 @@ harness_path_recorders() {
     } >"$dir/$name"
     chmod +x "$dir/$name"
   done
+  printf '%s\n' "$dir"
+}
+
+# A `git` in front of the real one that writes down, for every invocation, the
+# command-line configuration it was started with — `GIT_CONFIG_PARAMETERS`, or
+# `<unset>` — one line per call in `$SHIM_STATE/git.env` ([102]). What it answers
+# is the guarantee itself and not one of its consequences: every git a run starts
+# is told it has no hook directory, whatever verb it runs and whichever process
+# runs it. Put it first on the PATH of the run under test; it passes the call on
+# to whatever the rest of that PATH resolves `git` to.
+harness_git_env_recorder() {
+  local dir="$RALPH_TEST_DIR/git-recorder"
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s\\n" "${GIT_CONFIG_PARAMETERS-<unset>}" >>"%s/git.env"\n' "$SHIM_STATE"
+    printf 'exec "$(PATH="${PATH#*:}" command -v git)" "$@"\n'
+  } >"$dir/git"
+  chmod +x "$dir/git"
   printf '%s\n' "$dir"
 }
 

@@ -1598,13 +1598,22 @@ loop_main() {
   # First, and the position is the guarantee ([52]). `PATH` decides which `git`,
   # which `claude` and which `at` everything below runs, so a PATH this pack
   # cannot witness has to be refused before the pack resolves a single name
-  # through it — `ralph_project_root` on the next line is already a `git`. Nothing
-  # above this point in this file runs a program by name.
+  # through it — the `awk` that takes the journal's base a few lines down is
+  # already one. (Until [102] this said "`ralph_project_root` on the next line is
+  # already a `git`": it is a `cd` and a `pwd`, both builtins, and a mutation that
+  # moved the line below past it is what showed it.) Nothing above this point in
+  # this file runs a program by name.
   #
   # Outside `loop_preflight` and not inside it for that reason, and on the same
   # exit code: the preflight resolves the tracker directory before it decides
   # anything, and a refusal that arrives after the fact is not one.
   gate_path_preflight || exit 2
+  # And second: every git this run starts — this shell's, an iteration's, a gate
+  # branch's, the git that git runs — is told it has no hook directory ([102]).
+  # Before the first `git` for the same reason the line above is first: a hook a
+  # session left in the common git directory last night is a program the next
+  # `git` runs, and the first one is in `loop_preflight`. Builtins only.
+  proc_git_hooks_off
 
   cd "$(ralph_project_root)"
 

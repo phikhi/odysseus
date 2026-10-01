@@ -4226,11 +4226,11 @@ mutation "16 the drain reads its work-list on the human's stdin" "$HUMAN_LOOP" \
 # produces an unsupervised session with write access to the operator's own tree
 # and nothing anywhere to notice.
 mutation "16 the routed session is spawned with permissions bypassed" "$SESSION" \
-  's/    --model "\$MODEL" \\\n    "\$\@" \\\n    "\$prompt"/    --model "\$MODEL" \\\n    --dangerously-skip-permissions \\\n    "\$\@" \\\n    "\$prompt"/' \
+  's/      --model "\$MODEL" \\\n      "\$\@" \\\n      "\$prompt"/      --model "\$MODEL" \\\n      --dangerously-skip-permissions \\\n      "\$\@" \\\n      "\$prompt"/' \
   test/human-loop.bats "conversation, not an unwatched delivery"
 
 mutation "16 the routed session is spawned headless" "$SESSION" \
-  's/    --model "\$MODEL" \\\n    "\$\@" \\\n    "\$prompt"/    -p \\\n    --model "\$MODEL" \\\n    "\$\@" \\\n    "\$prompt"/' \
+  's/      --model "\$MODEL" \\\n      "\$\@" \\\n      "\$prompt"/      -p \\\n      --model "\$MODEL" \\\n      "\$\@" \\\n      "\$prompt"/' \
   test/human-loop.bats "conversation, not an unwatched delivery"
 
 # [17] handed this key to this loop, and a session that is not told it speaks
@@ -7158,6 +7158,69 @@ mutation "101 the document claims more than was closed" "$RECEIPT" \
 mutation "96 the document keeps the claim and drops the reservation" "$RECEIPT" \
   's/^  printf .One source above is not of that kind.*\n//m' \
   test/receipt.bats "says where it was assembled"
+
+# ── [102] the hooks git runs for this pack ───────────────────────────────────
+#
+# Two halves held by two different things: the hook *directory* by a token every
+# git of the run carries in its environment, a *configured* hook by [46]'s list.
+# The token is given back, exactly as the operator had it, to what the pack did not
+# write — three places, one entry each.
+
+# The decisive case: a run whose shells never turned the hooks off.
+mutation "102 the run's git reads the hook directory a session writes" "$LOOP" \
+  's/^  proc_git_hooks_off$/  :/m' \
+  test/canary.bats "common git directory"
+
+# Where it is turned off, which is the guarantee's other half: before the first
+# git of the run, which is in the preflight. (The first version of this entry
+# moved the line past `ralph_project_root` and came back VACUOUS: that function is
+# a `cd` and a `pwd`, and the comment above the line said it was a `git`.)
+mutation "102 the run's first git is started before the hooks are off" "$LOOP" \
+  's/^  proc_git_hooks_off\n(.*?)^  loop_preflight \|\| exit 2\n/\1  loop_preflight || exit 2\n  proc_git_hooks_off\n/ms' \
+  test/gate.bats "told it has no hook directory"
+
+mutation "102 the drain's git reads the hook directory a session writes" "$HUMAN_LOOP" \
+  's/^  proc_git_hooks_off$/  :/m' \
+  test/human-loop.bats "every git the drain runs"
+
+# A token git does not read: the mechanism is in place and turns nothing off.
+mutation "102 the token names a key git ignores" "$PROC" \
+  's/^PROC_GIT_HOOKS_OFF="\x27core\.hooksPath=/PROC_GIT_HOOKS_OFF="\x27core.ralphProbe=/m' \
+  test/proc.bats "runs no hook from the common git directory"
+
+# Set but not exported: a shell variable git never sees, whenever the operator had
+# exported nothing.
+mutation "102 the token never reaches git's environment" "$PROC" \
+  's/^  export GIT_CONFIG_PARAMETERS\n  return 0\n\}/  return 0\n}/m' \
+  test/proc.bats "runs no hook from the common git directory"
+
+mutation "102 the operator's configuration is replaced by the token" "$PROC" \
+  's/GIT_CONFIG_PARAMETERS="\$GIT_CONFIG_PARAMETERS \$PROC_GIT_HOOKS_OFF"/GIT_CONFIG_PARAMETERS="\$PROC_GIT_HOOKS_OFF"/' \
+  test/proc.bats "keeps what the operator had already told git"
+
+mutation "102 a program exec'd bare keeps the run's git environment" "$PROC" \
+  's/^  eval "exec \$closers"\n  proc_git_hooks_given_back\n/  eval "exec \$closers"\n/m' \
+  test/proc.bats "gets the operator's git environment back"
+
+# The third state: a shell that turned nothing off has nothing on record, and
+# "unset" would take away the value it was started with.
+mutation "102 a shell that turned nothing off unsets the operator's value" "$PROC" \
+  's/^    unset\) unset GIT_CONFIG_PARAMETERS ;;$/    *) unset GIT_CONFIG_PARAMETERS ;;/m' \
+  test/proc.bats "turned nothing off gives nothing back"
+
+mutation "102 the drain's session keeps the drain's git environment" "$SESSION" \
+  's/^  \(\n    proc_git_hooks_given_back\n    DISABLE_AUTO_COMPACT=1 exec claude/  (\n    DISABLE_AUTO_COMPACT=1 exec claude/m' \
+  test/human-loop.bats "every git the drain runs"
+
+mutation "102 the successor inherits the run's git environment" "$SCHEDULER_LIB" \
+  's/^        proc_git_hooks_given_back\n        printf/        printf/m' \
+  test/scheduler.bats "operator's git environment"
+
+# One key off [46]'s list, the edit a tidy-up would make: a configured hook is then
+# watched by nothing, and the iteration's own snapshots run it.
+mutation "102 a configured hook is off the watched list" "$GATE" \
+  's/    \x27includeif\\\.\.\*\\\.path\x27 \\\n    \x27hook\\\.\.\*\x27\n/    \x27includeif\\..*\\.path\x27\n/' \
+  test/gate.bats "a hook a session configures"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

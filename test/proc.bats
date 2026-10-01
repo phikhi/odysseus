@@ -397,3 +397,68 @@ channels_and_the_old_shut='
   wait_for_file "$SHIM_STATE/collected" 400 || fail "the command was never collected"
   assert_forger_found_nothing "$SHIM_STATE/group.log" "a command line the pack was handed"
 }
+
+# ── [102] the hooks git runs for this pack ───────────────────────────────────
+
+# A hook in the common git directory that writes down that it ran, and a git that
+# always writes an index — `read-tree` into a scratch index, which fires
+# `post-index-change` whatever the tree holds.
+proc__plant_index_hook() {
+  local hooks
+  hooks="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)/hooks"
+  case "$hooks" in /*) ;; *) hooks="$PROJECT_DIR/$hooks" ;; esac
+  mkdir -p "$hooks"
+  printf '#!/bin/sh\nprintf "ran\\n" >>"%s/hook.ran"\n' "$SHIM_STATE" >"$hooks/post-index-change"
+  chmod +x "$hooks/post-index-change"
+}
+
+@test "a git started once the hooks are off runs no hook from the common git directory" {
+  proc__plant_index_hook
+  pack_run 'proc_git_hooks_off; GIT_INDEX_FILE="$RALPH_SHIM_STATE/idx" git read-tree HEAD'
+  assert_success
+  refute_file_exists "$SHIM_STATE/hook.ran"
+
+  # The paired witness: the same git, the same hook, from a shell that turned
+  # nothing off — or the line above is true because the hook never could run.
+  pack_run 'GIT_INDEX_FILE="$RALPH_SHIM_STATE/idx2" git read-tree HEAD'
+  assert_success
+  assert_file_exists "$SHIM_STATE/hook.ran"
+}
+
+@test "turning the hooks off keeps what the operator had already told git" {
+  # Appended, never substituted: a `GIT_CONFIG_PARAMETERS` the operator exported is
+  # configuration they meant every git to read, the pack's own included.
+  export GIT_CONFIG_PARAMETERS="'ralph.probe=operator'"
+  pack_run 'proc_git_hooks_off
+    printf "probe=%s\n" "$(git config ralph.probe)"
+    printf "hooks=%s\n" "$(git config core.hooksPath)"'
+  assert_success
+  assert_output_contains "probe=operator"
+  assert_output_contains "hooks=/dev/null"
+}
+
+@test "a program exec'd bare gets the operator's git environment back, set or not" {
+  # `proc_exec_bare` is how every session and every project command starts, and
+  # what they run git with is the operator's business: the project's own hooks run
+  # for them as they always did.
+  local show='proc_exec_bare sh -c "printf \"%s\\n\" \"\${GIT_CONFIG_PARAMETERS-<unset>}\""'
+
+  export GIT_CONFIG_PARAMETERS="'ralph.probe=operator'"
+  pack_run "proc_git_hooks_off; ( $show )"
+  assert_success
+  assert_equal "$output" "'ralph.probe=operator'"
+
+  unset GIT_CONFIG_PARAMETERS
+  pack_run "proc_git_hooks_off; ( $show )"
+  assert_success
+  assert_equal "$output" "<unset>"
+}
+
+@test "a shell that turned nothing off gives nothing back" {
+  # A unit test driving a lib, or a fourth entry point: there is no operator value
+  # on record, and "not set" would unset the one this shell was started with.
+  export GIT_CONFIG_PARAMETERS="'ralph.probe=operator'"
+  pack_run '( proc_exec_bare sh -c "printf \"%s\\n\" \"\${GIT_CONFIG_PARAMETERS-<unset>}\"" )'
+  assert_success
+  assert_equal "$output" "'ralph.probe=operator'"
+}

@@ -554,6 +554,14 @@ scheduler__minute_up() {
 
 # Queue the successor with one mechanism. Prints what the mechanism said when it
 # refused, so a fallback down the chain is explicable rather than silent.
+#
+# `at` is handed the operator's git environment and not the run's ([102]): it keeps
+# the environment it is called with for the job, so a successor queued from a shell
+# that had turned git's hooks off would take the token for the operator's own, keep
+# it as such, and hand it to every session it starts — a run inheriting something
+# from the one that armed it, which is the one thing a successor must not do.
+# `systemd-run` needs no such line: a transient unit runs in the service manager's
+# environment and gets nothing of the caller's unless `--setenv` names it.
 scheduler__submit() {
   local mech="$1" epoch="$2" cmd out stamp
   cmd="$(scheduler_command)" || return 1
@@ -561,7 +569,10 @@ scheduler__submit() {
   case "$mech" in
     at)
       stamp="$(scheduler__stamp "$(scheduler__minute_up "$epoch")" '%Y%m%d%H%M')" || return 1
-      out="$(printf '%s\n' "$cmd" | at -t "$stamp" 2>&1)" || {
+      out="$(
+        proc_git_hooks_given_back
+        printf '%s\n' "$cmd" | at -t "$stamp" 2>&1
+      )" || {
         scheduler__log "at would not take the successor: $(printf '%s' "$out" | tr '\n' ' ')"
         return 1
       }

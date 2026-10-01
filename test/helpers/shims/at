@@ -3,6 +3,9 @@
 #
 # Records the schedule expression (argv) and the queued command (stdin) so a
 # test can assert what would have been armed, without touching the real queue.
+# And the one variable of its environment a successor would inherit from the run
+# rather than from the operator if the run let it through ([102]): a real `at`
+# keeps the whole environment it was called with for the job.
 set -uo pipefail
 
 state="${RALPH_SHIM_STATE:?at shim: RALPH_SHIM_STATE is not set}"
@@ -18,6 +21,7 @@ queued=""
   for arg in "$@"; do printf ' %s' "$arg"; done
   printf '\n'
   printf 'command: %s\n' "$queued"
+  printf 'git-config-parameters: %s\n' "${GIT_CONFIG_PARAMETERS-<unset>}"
 } >>"$state/at.calls"
 
 code="$(cat "$state/at.exit" 2>/dev/null || echo 0)"

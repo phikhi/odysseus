@@ -185,13 +185,22 @@ session_spawn() {
 # it cannot check this one — an interactive session needs a terminal and a human.
 # That the real `claude` starts a conversation seeded with a positional prompt is
 # an assumption of this pack, not an assertion about it.
+#
+# In a subshell that gives the operator's git environment back before it becomes
+# `claude` ([102]): the drain tells every git it runs that it has no hook
+# directory, and a session in the operator's own tree runs the project's hooks
+# exactly as the operator's own `git` would. The subshell `exec`s, so the drain
+# still waits on `claude` itself and gets its status.
 session_spawn_interactive() {
   local prompt="${1:?session: a prompt}"
   shift
-  DISABLE_AUTO_COMPACT=1 claude \
-    --model "$MODEL" \
-    "$@" \
-    "$prompt"
+  (
+    proc_git_hooks_given_back
+    DISABLE_AUTO_COMPACT=1 exec claude \
+      --model "$MODEL" \
+      "$@" \
+      "$prompt"
+  )
 }
 
 # Pull one field out of the final `result` event. Deliberately not jq: the pack
