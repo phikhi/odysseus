@@ -1201,15 +1201,29 @@ gate__digest() {
 #                         question, with no owner, and said here rather than left
 #                         to look like an oversight.
 #
-# And two that are here even though the probe of 26/08/2026 measured them *not*
-# firing, which is the same rule read the other way: `core.hooksPath` does nothing
-# today because `failures_make_durable` commits with plumbing on purpose, and
-# `diff.external` does nothing because every diff this pack takes is
-# `--name-only` or `--name-status`. Both of those are facts about this pack's
-# current call sites and not about git, so leaving them out would make the list
-# derived from the code instead of from the criterion — and the ticket that
-# switched one `git commit-tree` for a `git commit` would reopen the hole with
-# nothing to notice it.
+# And two that are here although neither fires for this pack's own git, which is
+# the same rule read the other way. `diff.external` does nothing because every
+# diff this pack takes is `--name-only` or `--name-status` — a fact about this
+# pack's call sites and not about git. `core.hooksPath` does nothing because since
+# [102] every git this run starts is handed `core.hooksPath=/dev/null` on its
+# command line, which no configuration file can override (`proc_git_hooks_off`).
+# The reason written here until then was false, and it is worth keeping why: "it
+# does nothing because `failures_make_durable` commits with plumbing on purpose".
+# Plumbing runs hooks — `update-ref` runs `reference-transaction`, `write-tree`
+# runs `post-index-change` — and [46] looked at the *key* `core.hooksPath` and not
+# at the directory git reads when the key is not set, which needs no key at all.
+# Both stay because the criterion is about what git runs, not about what it runs
+# for this pack: the project's commands and the session's own git read the
+# operator's configuration, and leaving either key out would make the list derived
+# from the code instead of from the criterion.
+#
+# `hook\..*` arrived with [102], and it is the half of hooks the token does not
+# reach. Since git 2.5x a hook can be *configured* — `hook.<name>.command` names
+# the program, `hook.<name>.event` the moments, `hook.<name>.enabled` switches it —
+# and `core.hooksPath` does nothing to one: measured on 2.54, a configured hook
+# fired on every event the hook directory did, with the token set. There is no key
+# that turns them all off, only one per name, and the name is the writer's to
+# choose — so this list is where a configured hook is held, like `core.fsmonitor`.
 gate_config_keys() {
   printf '%s\n' \
     'core\.fsmonitor' \
@@ -1263,7 +1277,8 @@ gate_config_keys() {
     'core\.protecthfs' \
     'extensions\.worktreeconfig' \
     'include\.path' \
-    'includeif\..*\.path'
+    'includeif\..*\.path' \
+    'hook\..*'
   return 0
 }
 

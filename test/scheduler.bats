@@ -392,6 +392,23 @@ systemd-run"
   assert_output_contains "it is a new run and inherits nothing from this one"
 }
 
+@test "the successor is queued with the operator's git environment, not the run's" {
+  # [102]. A run tells every git it starts that it has no hook directory, through
+  # `GIT_CONFIG_PARAMETERS`, and `at` keeps the environment it is called with for
+  # the job. Handed the run's, a successor would read the token as the operator's
+  # own, keep it as such, and give it to every session it starts — a run
+  # inheriting from the one that armed it.
+  export GIT_CONFIG_PARAMETERS="'ralph.probe=operator'"
+  use_tickets 01-alpha
+  usage_respond "$(sched_weekly_wall "$(sched_soon 200000)")"
+
+  run_loop
+  assert_failure 6
+  assert_equal "$(at_call_count)" "1"
+
+  assert_equal "$(at_calls | sed -n 's/^git-config-parameters: //p')" "'ralph.probe=operator'"
+}
+
 @test "the queued job's output lands beside the run journal, not in a mail nobody has" {
   # `at` mails a job's output; a headless box with no MTA loses it silently. This
   # is piège n°4 of the scheduling research, and it costs the whole point of the

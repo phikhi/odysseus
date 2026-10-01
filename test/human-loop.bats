@@ -628,6 +628,33 @@ ANSWERS
   refute_contains "$prompt" "LANG_INTERACT"
 }
 
+@test "every git the drain runs is told it has no hook directory, and its session is handed the operator's" {
+  # [102] at the second entry point, which owes it for the reason it owes [52]: a
+  # hook a session left in the common git directory is a program the next `git`
+  # runs, whichever entry point runs it. And the session this drain opens works in
+  # the operator's own tree, so it gets the operator's git environment back — the
+  # project's hooks run for it exactly as they would for the human beside it.
+  export GIT_CONFIG_PARAMETERS="'ralph.probe=operator'"
+  use_tickets 09-escalated
+  local recorder calls without
+  recorder="$(harness_git_env_recorder)"
+
+  run env PATH="$recorder:$PATH" bash "$PACK_DIR/human-loop.sh" <<ANSWERS
+o
+n
+ANSWERS
+  assert_failure 3
+
+  calls="$(grep -c . "$SHIM_STATE/git.env" | tr -d ' ')"
+  [ "$calls" -ge 3 ] || fail "the recorder saw $calls git calls, fewer than a drain makes"
+  without="$(grep -vxc "'ralph.probe=operator' 'core.hooksPath=/dev/null'" "$SHIM_STATE/git.env" || true)"
+  assert_equal "$without" "0"
+
+  assert_equal "$(claude_call_count)" "1"
+  assert_equal "$(claude_call_env 1 | grep '^GIT_CONFIG_PARAMETERS=')" \
+    "GIT_CONFIG_PARAMETERS='ralph.probe=operator'"
+}
+
 # ── what the two refusals read ───────────────────────────────────────────────
 #
 # [16] put both refusals beside the transition rather than in the menu that

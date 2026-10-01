@@ -566,9 +566,15 @@ human_loop_main() {
   # and which `claude` everything below runs, and this loop runs a `claude` in
   # the operator's own working tree with no gate behind it — so a PATH nothing
   # here can witness is refused before a single name is resolved through it.
-  # `ralph_project_root` on the next line is already a `git`. Nothing above this
-  # point in this file runs a program by name.
+  # The `awk` of `router_journal_base` a few lines down is already one (until
+  # [102] this named `ralph_project_root`, which is a `cd` and a `pwd`). Nothing
+  # above this point in this file runs a program by name.
   gate_path_preflight || exit 2
+  # And no git this drain runs reads a hook directory, for the reason `loop_main`
+  # gives at the same place ([102]); the first one is in `human_loop_preflight`.
+  # The interactive session gets the operator's environment back
+  # (`session_spawn_interactive`).
+  proc_git_hooks_off
 
   cd "$(ralph_project_root)"
 

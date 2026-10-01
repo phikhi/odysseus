@@ -311,7 +311,12 @@ proc_group_fork() {
 # `*_TOKEN_CMD` lines and the scheduler's submission are commands the operator
 # wrote, not the project and not the session; and a program git runs for the pack
 # — a hook in the common git directory — is exec'd by git and never passes through
-# here, which is [102].
+# here, which is why [102] answers it one level up: git is told by the environment
+# of every shell of the run that it has no hook directory (`proc_git_hooks_off`,
+# below). And the program exec'd here is handed that environment back the way the
+# operator had it, which is the second thing this function does — for the same
+# reason as the first: a program the pack did not write has no business with
+# anything the pack set up for itself.
 #
 # **Why everything above 2 and not the numbers this pack opened, which is how it
 # was done until this ticket and what made [94] and [96] green on a hole.** Each
@@ -348,7 +353,103 @@ proc_exec_bare() {
     n=$((n + 1))
   done
   eval "exec $closers"
+  proc_git_hooks_given_back
   exec "$@"
+}
+
+# ── the hooks git runs for this pack ([102]) ─────────────────────────────────
+#
+# Git runs programs on its own, and it looks for them in a directory a session can
+# write: `$(git rev-parse --git-common-dir)/hooks/`, which every worktree of the
+# repository shares and nothing in this pack read. Measured on git 2.54, verb by
+# verb in the shapes this pack writes them ([51]: the verb, not the family —
+# `.scratch/ralph-pack/sondes/ticket-102/h1`):
+#
+#   reference-transaction   every `update-ref` — plumbing, and it runs anyway — so
+#                           the durable commit, the fold and `failed/<id>`; and
+#                           `reset --mixed`, `worktree add`, `push`
+#   post-index-change       every index written, `GIT_INDEX_FILE` or not: `add`,
+#                           `read-tree`, `write-tree`, `update-index`, `reset`,
+#                           `rm --cached`, `worktree add` — every tree snapshot of
+#                           the gate and every guard of the tracker
+#   post-checkout           `worktree add`, which the *pilot* runs for every
+#                           iteration
+#   pre-push                the forge backend's `push`
+#
+# and nothing for the read-only verbs (`rev-parse`, `config`, `ls-tree`,
+# `ls-files`, `diff-tree`, `diff`, `cat-file`, `show-ref`, `for-each-ref`,
+# `symbolic-ref`, `check-ignore`, `commit-tree`, `checkout-index`,
+# `worktree list|prune|remove`, `init`). A hook git runs is a descendant of the
+# shell that ran git: it holds that shell's descriptors — the write end of an
+# iteration's receipt ([96]), a gate's notes ([94]) — and runs at the instant the
+# pack chose. Measured in the pack before this ticket: a hook the session of 01
+# planted wrote six lines into 01's receipt and three into 02's, whose session had
+# planted nothing, and `post-checkout` ran in the pilot.
+#
+# So every git this run starts is told it has no hook directory, through the one
+# channel every git reads and no config file can override: `GIT_CONFIG_PARAMETERS`,
+# which is what `git -c` itself hands down to the git it runs. Command-line scope
+# is read last, so a `core.hooksPath` a session writes in `.git/config` or behind
+# an `include.path` loses to it (measured, `h3`); `/dev/null` is not a directory,
+# so no name resolves under it. In the environment and not as a `-c` on each call,
+# because the guarantee is then a property of the shell and not of a hundred call
+# sites — a git call added tomorrow is covered without knowing this exists, and
+# so is a git that git runs (`worktree add` runs a checkout of its own).
+#
+# The old `'key=value'` form, which every git reads; the `'key'='value'` form
+# needs 2.31. Appended to whatever the operator exported, and that value is kept
+# here, in two variables of this shell that a session cannot reach — it inherits
+# an environment, never a shell ([81]). `PROC__GIT_PARAMS_HELD` says which of the
+# three it was: `set`, `unset`, or empty when nothing was turned off at all.
+#
+# What this does **not** turn off, and it is the half that is not a directory:
+# since git 2.5x a hook can also be *configured* — `hook.<name>.command` and
+# `hook.<name>.event` — and `core.hooksPath` does nothing to it (measured: every
+# event above fired a configured hook under the token). There is no switch that
+# turns them all off, only one per name, and the name is the session's to choose.
+# So a configured hook is a key of [46]'s list (`gate_config_keys`), watched,
+# removed and charged like `core.fsmonitor`; what that leaves is written there.
+PROC_GIT_HOOKS_OFF="'core.hooksPath=/dev/null'"
+PROC__GIT_PARAMS_HELD=''
+PROC__GIT_PARAMS=''
+
+# Called once by each entry point, before the first git it runs. Builtins only, so
+# it can stand anywhere in a preamble that refuses to resolve a name ([52]).
+proc_git_hooks_off() {
+  if [ -n "${GIT_CONFIG_PARAMETERS+set}" ]; then
+    PROC__GIT_PARAMS_HELD=set
+    PROC__GIT_PARAMS="$GIT_CONFIG_PARAMETERS"
+    GIT_CONFIG_PARAMETERS="$GIT_CONFIG_PARAMETERS $PROC_GIT_HOOKS_OFF"
+  else
+    PROC__GIT_PARAMS_HELD=unset
+    PROC__GIT_PARAMS=''
+    GIT_CONFIG_PARAMETERS="$PROC_GIT_HOOKS_OFF"
+  fi
+  export GIT_CONFIG_PARAMETERS
+  return 0
+}
+
+# The operator's `GIT_CONFIG_PARAMETERS`, exactly as `proc_git_hooks_off` found it
+# — set to the same value, or not set at all. For a shell about to become, or to
+# hand its environment to, a program this pack did not write: the session's git
+# then runs the project's hooks as it always did, and a project command that tests
+# a hook of its own still sees it. Three callers: `proc_exec_bare` above, the
+# drain's interactive session, and the scheduler's submission — `at` keeps the
+# environment it was called with for the job, and a successor that inherited the
+# token would take it for the operator's and hand it to its own sessions.
+#
+# Three states and not two: in a shell that never turned the hooks off — a unit
+# test driving a lib, a fourth entry point — there is nothing to give back, and
+# "not set" would then unset a value the operator exported.
+proc_git_hooks_given_back() {
+  case "$PROC__GIT_PARAMS_HELD" in
+    set)
+      GIT_CONFIG_PARAMETERS="$PROC__GIT_PARAMS"
+      export GIT_CONFIG_PARAMETERS
+      ;;
+    unset) unset GIT_CONFIG_PARAMETERS ;;
+  esac
+  return 0
 }
 
 # The pid of the shell running this, which bash 3.2 has no variable for — there is

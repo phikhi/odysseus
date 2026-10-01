@@ -972,7 +972,7 @@ PROBE
   # And the three things that sentence does not hold, in the same breath ([101]):
   # two are measured, the third is a property of another platform.
   assert_file_contains "$(receipt_path 01-alpha)" "the instant between its creation and its unlink"
-  assert_file_contains "$(receipt_path 01-alpha)" "a hook in the common git directory"
+  assert_file_contains "$(receipt_path 01-alpha)" "a program git runs for this run out of configuration a session wrote"
   assert_file_contains "$(receipt_path 01-alpha)" "any process of the same user"
   # The half it does not hold, named in the same breath.
   assert_file_contains "$(receipt_path 01-alpha)" "One source above is not of that kind"
