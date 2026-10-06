@@ -1803,8 +1803,8 @@ HOOK
   # put back before the first git of this iteration that writes an index or a ref.
   #
   # Above MAX_PARALLEL=1 it does not hold, and that is measured too: a sibling
-  # already past its own put-back runs it, with its descriptors (→ [104], held by a
-  # skip in the canary).
+  # already past its own put-back runs it. Until [104] it ran with the sibling's
+  # descriptors; it holds nothing now, which the canary asserts.
   use_tickets 01-alpha
   set_config STERILE_K 1
   gate__planted_hook
@@ -4833,7 +4833,15 @@ FAKE
 #          "$f" .sh)"` nests them), heredoc bodies, comments, `${…}` and `$((…))`
 #          are all removed. Prose is where nearly every word in this pack lives,
 #          and a scan that reads it comes back with `who`, `yes`, `open` and
-#          `install` — programs this machine really has.
+#          `install` — programs this machine really has. **Except what an
+#          unquoted heredoc runs**: its body is text, but a `$( … )` in it is a
+#          command the shell starts while it builds that text, and until [104]
+#          this lexer dropped it with the prose around it. Five `git` calls lived
+#          there, invisible to every census written on this lexer — and measured
+#          live, a `core.fsmonitor` run by one of them still held an iteration's
+#          receipt once every other git of the pack had stopped holding anything.
+#          A quoted heredoc (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) runs nothing and is
+#          still dropped whole.
 #   line   a backslash at end of line **joins**; it does not break. Without that,
 #          `printf '%s\n' \` followed by one name per line reads every name as a
 #          command, `router_reasons` contributes `failed-impl` and `too-big`, and
@@ -4877,8 +4885,10 @@ BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; state = "C"; top = 0; here
   if (heredoc) {
     t = line
     sub(/^[ \t]+/, "", t)
-    if (line == hterm || (hdash && t == hterm)) heredoc = 0
-    next
+    if (line == hterm || (hdash && t == hterm)) { heredoc = 0; next }
+    if (hquoted) next
+    line = bodysubs(line)
+    if (line == "") next
   }
   out = ""
   cont = 0
@@ -4912,8 +4922,9 @@ BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; state = "C"; top = 0; here
       if (substr(rest, 1, 1) == "-") { hdash = 1; rest = substr(rest, 2) }
       sub(/^[ \t]*/, "", rest)
       q = substr(rest, 1, 1)
-      if (q == SQ || q == DQ) rest = substr(rest, 2)
-      if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) { hterm = substr(rest, RSTART, RLENGTH); heredoc = 1 }
+      hquoted = (q == SQ || q == DQ || q == BS)
+      if (hquoted) rest = substr(rest, 2)
+      if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) { hterm = substr(rest, RSTART, RLENGTH); heredoc = 1; hd = 0 }
       out = out " "
       i += 2
       continue
@@ -4926,6 +4937,45 @@ BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; state = "C"; top = 0; here
   held = ""
 }
 END { if (held != "") print held }
+# What one line of an unquoted heredoc body runs: each `$( … )` in it, kept as
+# written and closed by `;`, and everything around it dropped as the text it is.
+# The depth and the quoting inside a substitution carry over to the next line
+# (`hd`, `hq[]`), because a substitution in a body can span several. Inside one,
+# only what decides where it ends is tracked; the line it hands back goes through
+# the lexer proper, which does the rest.
+function bodysubs(s,   n, i, c, two, r, j) {
+  n = length(s)
+  i = 1
+  r = ""
+  while (i <= n) {
+    c = substr(s, i, 1)
+    two = substr(s, i, 2)
+    if (hd == 0) {
+      if (c == BS) { i += 2; continue }
+      if (substr(s, i, 3) == "$((") { i = skiparith(s, i, n); continue }
+      if (two == "$(") { hd = 1; hq[1] = ""; r = r " $("; i += 2; continue }
+      i++
+      continue
+    }
+    if (hq[hd] == SQ) { if (c == SQ) { hq[hd] = "" }; r = r c; i++; continue }
+    if (c == BS) { r = r two; i += 2; continue }
+    if (substr(s, i, 3) == "$((") { j = skiparith(s, i, n); r = r substr(s, i, j - i); i = j; continue }
+    if (two == "$(") { hd++; hq[hd] = ""; r = r two; i += 2; continue }
+    if (hq[hd] == DQ) { if (c == DQ) { hq[hd] = "" }; r = r c; i++; continue }
+    if (c == SQ || c == DQ) { hq[hd] = c; r = r c; i++; continue }
+    if (c == "(") { hd++; hq[hd] = ""; r = r c; i++; continue }
+    if (c == ")") {
+      hd--
+      r = r c
+      i++
+      if (hd == 0) r = r " ;"
+      continue
+    }
+    r = r c
+    i++
+  }
+  return r
+}
 function skiparith(s, i, n,   d, c) {
   d = 0
   while (i <= n) {
@@ -5018,6 +5068,48 @@ $(cat "$scanned")"
 (- on the list and launched by nothing, + launched and on no list):
 $(cat "$report")"
   fi
+}
+
+@test "the lexer reads what an unquoted heredoc runs, and nothing of a quoted one" {
+  # [104]. A heredoc body is text and the lexer drops text — but an unquoted body
+  # runs every `$( … )` in it while the shell builds that text, and five `git` calls
+  # of this pack lived there, out of sight of every census written on this lexer.
+  # A quoted body runs nothing, whichever of the three ways it is quoted.
+  path_scan_lexer
+  cat >"$RALPH_TEST_DIR/sample.sh" <<'SAMPLE'
+f() {
+  while read -r x; do :; done <<UNQUOTED
+the word ran-in-prose is text, and so is $x
+$(ran-in-a-body --flag "$x" 2>/dev/null |
+  ran-on-the-next-line)
+UNQUOTED
+  cat <<'QUOTED'
+$(never-ran-single)
+QUOTED
+  cat <<"DOUBLE"
+$(never-ran-double)
+DOUBLE
+  cat <<\ESCAPED
+$(never-ran-escaped)
+ESCAPED
+  ran-after-the-bodies
+}
+SAMPLE
+  local lexed word
+  lexed="$(awk -f "$RALPH_TEST_DIR/code.awk" "$RALPH_TEST_DIR/sample.sh")"
+  for word in ran-in-a-body ran-on-the-next-line ran-after-the-bodies; do
+    case "$lexed" in
+      *"$word"*) ;;
+      *) fail "the lexer does not hand over $word, which a shell runs:
+$lexed" ;;
+    esac
+  done
+  for word in ran-in-prose never-ran-single never-ran-double never-ran-escaped; do
+    case "$lexed" in
+      *"$word"*) fail "the lexer hands over $word, which a shell never runs:
+$lexed" ;;
+    esac
+  done
 }
 
 @test "the shell that carries every verdict is one of the names the run pins" {
@@ -5240,4 +5332,59 @@ $found"
 (expected on the left, found on the right):
 $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
   fi
+}
+
+# ── [104] every git this pack runs, run holding nothing ──────────────────────
+#
+# A program git runs out of configuration — a configured hook, a `core.fsmonitor`,
+# anything the operator's `~/.gitconfig` names — is a descendant of the shell that
+# ran git, so what it holds is what git held. `proc_git` starts git holding nothing
+# above stderr, and that is a property of each call site, so it is a census like the
+# two above: the criterion asked of the source rather than a list of the sites it
+# had on the day.
+#
+#   zone   `harness_pack_sources`, minus one file and its reason, below.
+#   code   [91]'s lexer, so `git` in a comment, a message or a heredoc is not a call.
+#   shape  `git` in a command position: the start of a line, or after `;`, `&`,
+#          `|`, `(`, `{`, `!`, `$(`, a keyword or a word that launches its
+#          argument (`exec`), behind any number of assignments — which is how
+#          the pack writes a third of them (`GIT_INDEX_FILE="$idx" git …`).
+#   home   one: `proc.sh:proc_git`, whose `exec git` is the only bare git left.
+#
+# The file outside the zone is `init.sh`, and the exclusion is a decision: the
+# installer is run by a human, outside any run ([19]), and its sweep sources the
+# pack *installed in the target* — a pack of another version, possibly one with no
+# `proc_git` at all, where a call to it would be a command not found under a
+# `|| true`. What keeps that zone is that it holds nothing for a program to inherit:
+# its own code opens no descriptor, and that is asserted here rather than said.
+git_command_position='(^|[;&|({!]|(^|[ \t])(then|else|elif|do|if|while|until|exec|nohup|time))[ \t]*([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*'
+
+@test "every git this pack runs goes through the one function that hands it nothing" {
+  local found callers
+
+  found="$(pack_code_homes "$RALPH_PACK_ROOT" "${git_command_position}git([ \t]|\$)" |
+    grep -v '^init\.sh:' || true)"
+  callers="$(pack_code_homes "$RALPH_PACK_ROOT" "${git_command_position}proc_git([ \t]|\$)")"
+
+  # The floor, on the side that cannot be empty for the right reason: eighty-five
+  # call sites in some forty functions on the day this was written. A scan that read
+  # nothing would find no bare git either, and pass.
+  [ "$(printf '%s\n' "$callers" | grep -c .)" -ge 30 ] ||
+    fail "the scan found $(printf '%s\n' "$callers" | grep -c .) functions calling proc_git, so it is reading the wrong thing:
+$callers"
+
+  if [ "$found" != 'proc.sh:proc_git' ]; then
+    fail "git is run bare somewhere in the pack, so whatever configuration makes it run holds that shell's descriptors
+(expected only proc.sh:proc_git, found):
+$found"
+  fi
+
+  # The zone left out, and what keeps it: the installer opens no descriptor of its
+  # own, so a program its git runs inherits the operator's three and nothing else.
+  local opened
+  opened="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[;&|({!])[ \t]*exec[ \t]+[0-9]*[<>]' |
+    grep '^init\.sh:' || true)"
+  [ -z "$opened" ] ||
+    fail "init.sh opens a descriptor of its own, so the reason it may run git bare no longer holds:
+$opened"
 }

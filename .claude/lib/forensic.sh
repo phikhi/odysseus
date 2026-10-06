@@ -122,7 +122,7 @@
 # and a second copy of the same `for-each-ref` would be a second place for the
 # refusal clause above to be forgotten in.
 forensic_failed_refs() {
-  git for-each-ref --format='%(objectname)%09%(refname)' \
+  proc_git for-each-ref --format='%(objectname)%09%(refname)' \
     refs/heads/failed/ 2>/dev/null
 }
 

@@ -312,13 +312,15 @@ proc_group_fork() {
 # What is *not* here is written down so that it reads as a decision: the
 # `*_TOKEN_CMD` lines and the scheduler's submission are commands the operator
 # wrote, not the project and not the session; and a program git runs for the pack
-# — a hook in the common git directory — is exec'd by git and never passes through
-# here, which is why [102] answers it one level up: git is told by the environment
-# of every shell of the run that it has no hook directory (`proc_git_hooks_off`,
-# below). And the program exec'd here is handed that environment back the way the
-# operator had it, which is the second thing this function does — for the same
-# reason as the first: a program the pack did not write has no business with
-# anything the pack set up for itself.
+# — a hook, a `core.fsmonitor` — is exec'd by git and never passes through here.
+# That one is answered twice, one level up: git is told by the environment of every
+# shell of the run that it has no hook directory (`proc_git_hooks_off`, [102]), and
+# git itself is started holding nothing above stderr (`proc_git`, [104]), so
+# whatever configuration makes it run has nothing of the pack's to hand down. And
+# the program exec'd here is handed that environment back the way the operator had
+# it, which is the second thing this function does — for the same reason as the
+# first: a program the pack did not write has no business with anything the pack
+# set up for itself.
 #
 # **Why everything above 2 and not the numbers this pack opened, which is how it
 # was done until this ticket and what made [94] and [96] green on a hole.** Each
@@ -347,16 +349,87 @@ proc_group_fork() {
 # without having to know that this line exists. Up to 255 because that is where
 # bash keeps the script it is reading, and the copies it makes are allocated from
 # 10 upwards at the lowest free number; nothing in this pack holds a descriptor
-# above that. Measured at 0.8 ms a fork for the whole list.
+# above that. Measured at 0.8 ms a fork for the whole list when each call built it;
+# since [104] it is built once (`PROC__ABOVE_STDERR`, below), because `proc_git`
+# hands the same list to every git of a run.
 proc_exec_bare() {
-  local closers='' n=3
-  while [ "$n" -le 255 ]; do
-    closers="$closers $n>&-"
-    n=$((n + 1))
-  done
-  eval "exec $closers"
+  eval "exec $PROC__ABOVE_STDERR"
   proc_git_hooks_given_back
   exec "$@"
+}
+
+# Every descriptor above stderr, as the redirections that close it: `3>&- 4>&- …
+# 255>&-`. Built once, when this module is sourced, by builtins alone — `printf -v`
+# and a brace range, no fork and no name resolved ([52]) — for the two functions
+# that hand it to an `exec`: `proc_exec_bare` above, and `proc_git` below, which runs
+# on every git of a run. One definition and not two loops, because the list is the
+# thing that lied before [101], and a third caller should find it rather than retype
+# it.
+printf -v PROC__ABOVE_STDERR '%s>&- ' {3..255}
+
+# Run git holding nothing above stderr of the shell that runs it ([104]). Every git
+# this pack starts goes through here, and a census in `test/gate.bats` refuses a
+# bare one anywhere else in the pack's code — a `$( … )` in an unquoted heredoc
+# included, where five of them were — with one zone left out and its reason written
+# there: `init.sh`, which a human runs outside any run and which may be driving a
+# pack of another version, holds no descriptor of its own to hand down.
+#
+# **Why git, when it is not one of the programs above.** Git runs programs on its
+# own, out of configuration, and every one of them is a descendant of the shell that
+# ran git: until this function it held that shell's descriptors — an iteration's
+# receipt ([96]), a gate's notes ([94]), the read end of a lens's prompt, the
+# monitor's stream. [102] took away the hook *directory*. What was left is everything
+# else configuration can name, and a session writes configuration: a hook it
+# configures (`hook.<name>.command` and `.event`, git 2.5x), which [46] removes once
+# the session is gone — too late for a sibling iteration already past its own
+# put-back — and any key of the operator's `~/.gitconfig` that names a program,
+# `core.fsmonitor` first, which no unset of this repository reaches. Measured on
+# 01/10/2026 with a forger as each program (`.scratch/ralph-pack/sondes/ticket-102/h4`):
+# a configured hook planted while a sibling was held in its gate put fourteen lines
+# into the sibling's receipt; from `~/.gitconfig` at MAX_PARALLEL=1, a configured
+# hook put twenty-four into its own iteration's, and a `core.fsmonitor` — 978 runs
+# over two iterations — two hundred and four, through descriptors 3, 5, 6 and 9.
+#
+# So the property moved from what git runs, which configuration decides and a
+# session writes, to what git holds, which this shell decides: nothing a program git
+# starts could inherit, whatever named it, wherever the name came from, at any
+# MAX_PARALLEL. Not a list of the verbs that launch something: `core.fsmonitor` runs
+# on index refreshes no hook census sees ([51], `h1`), and a list is a thing that
+# has to be right again tomorrow.
+#
+# The shape of `proc_exec_bare`, with one difference that is the point: the
+# environment is **not** handed back — git keeps [102]'s token, or the hook directory
+# would be read again. A subshell and an `exec` with no command rather than a
+# redirection on the call, for the reason [101] measured: bash *saves* a descriptor
+# it is asked to close on a function call, onto a number from 10 up, and the program
+# inherits the copy. Closing everything in the subshell also closes the copies bash
+# made for whatever the caller wrote on this very call, `2>/dev/null` included.
+#
+# What a caller writes keeps its meaning, measured on bash 3.2.57: the status is
+# git's; stdin, stdout and stderr are the caller's; and an assignment in front —
+# `GIT_INDEX_FILE="$idx" proc_git read-tree …` — is exported to git for that call
+# and gone after it, as it was in front of git itself. The cost is no fork the bare
+# call did not make already, and 253 closes: 0.3 to 0.7 ms on a 12 ms `rev-parse`.
+#
+# **What this does not take away**, written where it is claimed. A program git runs
+# still gets the environment the pack exported, still runs at the instant the pack
+# chose, and still answers what git asks it — a `core.fsmonitor` says which files
+# changed, a filter hands back a content: [46] watches the keys that name one and
+# charges whoever moved them, and that is where those are held. It can still make a
+# transaction fail: a `reference-transaction` that exits non-zero on `prepared`
+# aborts the `update-ref` (measured, status 128), which a session can already do with
+# a `.lock` file beside the ref (measured, the same 128), and every caller here reads
+# a refused `update-ref` as a refusal. What it writes goes where git's stderr goes —
+# nowhere on every call but the three `git add` of the gate's index builds, where it
+# can add words to the `git said:` of a refusal and make `gate__walk_incomplete`
+# answer yes: a red, never a green. And on a system that names another process's
+# descriptors by path, Linux's `/proc/<pid>/fd`, it can walk up to the shell that ran
+# git and reopen what that shell holds — `proc_channel_open`'s bound, unchanged.
+proc_git() {
+  (
+    eval "exec $PROC__ABOVE_STDERR"
+    exec git "$@"
+  )
 }
 
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────
@@ -419,8 +492,8 @@ proc_exec_bare() {
 # which reopens an unlinked file for any process of this user *after* the listing:
 # there, this stops the process that polls `$TMPDIR` and not one that knows this
 # pack. The zone it excludes — the two descriptors of the shell that opened the
-# channel — is kept by that shell, and from what it forks by `proc_exec_bare`
-# ([101]); what git runs from it is [104]'s.
+# channel — is kept by that shell, from what it forks by `proc_exec_bare` ([101]),
+# and from whatever git runs for it by `proc_git` ([104]).
 
 # Where `lsof` is, resolved once by the pilot and never by its bare name at the
 # moment of a check. A check runs inside an iteration, a gate branch or a lens:
@@ -596,11 +669,11 @@ VERDICT
 # `ls-files`, `diff-tree`, `diff`, `cat-file`, `show-ref`, `for-each-ref`,
 # `symbolic-ref`, `check-ignore`, `commit-tree`, `checkout-index`,
 # `worktree list|prune|remove`, `init`). A hook git runs is a descendant of the
-# shell that ran git: it holds that shell's descriptors — the write end of an
-# iteration's receipt ([96]), a gate's notes ([94]) — and runs at the instant the
-# pack chose. Measured in the pack before this ticket: a hook the session of 01
-# planted wrote six lines into 01's receipt and three into 02's, whose session had
-# planted nothing, and `post-checkout` ran in the pilot.
+# shell that ran git: until [104] it held that shell's descriptors — the write end
+# of an iteration's receipt ([96]), a gate's notes ([94]) — and it still runs at the
+# instant the pack chose. Measured in the pack before this ticket: a hook the
+# session of 01 planted wrote six lines into 01's receipt and three into 02's, whose
+# session had planted nothing, and `post-checkout` ran in the pilot.
 #
 # So every git this run starts is told it has no hook directory, through the one
 # channel every git reads and no config file can override: `GIT_CONFIG_PARAMETERS`,
@@ -624,7 +697,26 @@ VERDICT
 # event above fired a configured hook under the token). There is no switch that
 # turns them all off, only one per name, and the name is the session's to choose.
 # So a configured hook is a key of [46]'s list (`gate_config_keys`), watched,
-# removed and charged like `core.fsmonitor`; what that leaves is written there.
+# removed and charged like `core.fsmonitor` — which holds at MAX_PARALLEL=1 and not
+# for a sibling iteration already past its own put-back, nor for a key of the
+# operator's `~/.gitconfig`, which no unset of this repository reaches. What those
+# still run holds nothing of the shell that ran git since [104] (`proc_git`, above):
+# the answer to them is about descriptors, not about whether they run.
+#
+# **Why the token stays now that nothing git runs holds anything** — [104] asked it,
+# and it is a decision and not inertia. A hook without a descriptor still buys
+# something: the instant the pack chose — `post-checkout` in the pilot,
+# `reference-transaction` between a commit and the ref that will name it — and a
+# process that is a child of the pilot or of an iteration rather than of the
+# session, so outside the group `session_spawn` sweeps when the session returns. It
+# also buys the power to fail a transaction, which a `.lock` file buys as well. None
+# of it forges a line, and a session reaches most of it by other routes; but the
+# hook directory is a door no key names, which every worktree reaches without trying
+# and which outlives the run, and shutting it costs this line. What the operator
+# pays is that their own hooks do not run for the pack's git: on a forge backend
+# git-lfs's `pre-push` is one of them, so the receipt branch is pushed without its
+# LFS objects, and nothing says so at the push. Kept, and the cost written here
+# rather than found.
 PROC_GIT_HOOKS_OFF="'core.hooksPath=/dev/null'"
 PROC__GIT_PARAMS_HELD=''
 PROC__GIT_PARAMS=''

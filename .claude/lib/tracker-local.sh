@@ -879,7 +879,7 @@ tracker_local_snapshot_moved() {
   after="$(tracker_local_snapshot)" || return 2
   [ "$after" != "$before" ] || return 0
   root="$(ralph_project_root)"
-  diff="$(git -C "$root" -c core.quotePath=false diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)" || return 2
+  diff="$(proc_git -C "$root" -c core.quotePath=false diff-tree -r --name-status "$before" "$after" -- "$dir" 2>/dev/null)" || return 2
 
   # Staged is not work in progress either, and the tracker has no business in the
   # target project's index. Here rather than in the guard because an index is this
@@ -887,7 +887,7 @@ tracker_local_snapshot_moved() {
   # snapshot because this is the one where a session has just been able to stage:
   # a human who had staged a tracker edit before the run loses that much. Scoped
   # to the tickets, so nothing staged elsewhere moves.
-  git -C "$root" reset -q -- "$dir" 2>/dev/null || true
+  proc_git -C "$root" reset -q -- "$dir" 2>/dev/null || true
 
   while IFS="$(printf '\t')" read -r status path; do
     [ -n "$path" ] || continue
@@ -930,11 +930,11 @@ tracker_local_snapshot_restore() {
   root="$(ralph_project_root)"
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-tracker.XXXXXX")" || return 1
   rm -f "$idx"
-  if ! GIT_INDEX_FILE="$idx" git -C "$root" read-tree "$before" 2>/dev/null; then
+  if ! GIT_INDEX_FILE="$idx" proc_git -C "$root" read-tree "$before" 2>/dev/null; then
     rm -f "$idx"
     return 1
   fi
-  GIT_INDEX_FILE="$idx" git -C "$root" checkout-index -f -- "$dir/$id.md" 2>/dev/null || rc=1
+  GIT_INDEX_FILE="$idx" proc_git -C "$root" checkout-index -f -- "$dir/$id.md" 2>/dev/null || rc=1
   rm -f "$idx"
   return "$rc"
 }

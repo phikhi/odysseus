@@ -728,11 +728,88 @@ SCRIPT
     fail "no refusal the run said names a writer the survivor started ($(tr '\n' ' ' <"$SHIM_STATE/window.held")): $(printf '%s\n' "$run_said" | grep -i 'channel' || true)"
 }
 
-# ── the known hole, waiting for its ticket ───────────────────────────────────
+@test "the canary: a hook a session configures holds nothing of a sibling iteration in flight" {
+  # [104], and the name changed with the ticket: it said "never runs", and that is
+  # not what was delivered — on purpose. Git has no switch that turns every
+  # configured hook off, only one per name, and the name is the session's; [46]
+  # removes the key once the session is gone, which is too late for a sibling
+  # already past its own put-back. So the hook the session of 01 configures while 02
+  # is held in its gate *runs* for 02, and that is asserted first: it is the window,
+  # and without it everything after would be true for the wrong reason ([80]).
+  #
+  # What it no longer gets is anything of 02. Every git the pack runs is started
+  # holding nothing above stderr (`proc_git`), so whatever configuration makes it
+  # run has nothing to hand down. Until then this hook put fourteen lines into 02's
+  # receipt, through 02's receipt channel and its gate's notes.
+  #
+  # 02's test command is the latch: it waits in 02's gate until 01's session has
+  # planted, so what 02's gate runs after that is git under a hook it never saw
+  # put back.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  set_config STERILE_K 5
+  fd_forger
+  cat >"$SHIM_STATE/planted-hook" <<HOOK
+#!/bin/sh
+cat >/dev/null 2>&1
+printf 'ran %s\n' "\$1" >>"$SHIM_STATE/hook.ran"
+"$SHIM_STATE/fd-forger" "\$(printf 'note\tFORGED-BY-A-CONFIGURED-HOOK')" "$SHIM_STATE/hook.probe"
+exit 0
+HOOK
+  chmod +x "$SHIM_STATE/planted-hook"
+  cat >"$SHIM_STATE/gate-test.sh" <<'TESTCMD'
+#!/usr/bin/env bash
+s="$RALPH_SHIM_STATE"
+if [ ! -e "$s/planted" ]; then
+  : >"$s/sibling-in-gate"
+  for i in $(seq 1 300); do [ -e "$s/planted" ] && break; sleep 0.1; done
+fi
+exit 0
+TESTCMD
+  chmod +x "$SHIM_STATE/gate-test.sh"
+  set_config TEST_CMD "bash '$SHIM_STATE/gate-test.sh'"
 
-@test "the canary: a hook a session configures never runs for a sibling iteration in flight" {
-  skip "known hole, ticket [104]: since git 2.5x a hook can be configured — hook.<name>.command and hook.<name>.event — and core.hooksPath, which [102] hands every git of a run, does nothing to it; git has no switch that turns every name off, and the name is the session's. [46]'s put-back removes the key as soon as the session is gone, which holds at MAX_PARALLEL=1 and nowhere above it: a sibling already past its own put-back runs it with its descriptors. Measured on 01/10/2026 at MAX_PARALLEL=2: fourteen forged lines in the sibling's receipt, its gate notes' write end open. The same descriptors reach anything git runs for the pack from the operator's ~/.gitconfig, which no unset of this repository reaches — 24 forged lines from a configured hook, 204 from a core.fsmonitor, at MAX_PARALLEL=1. Raising this skip is an acceptance criterion of [104]."
+  script_claude <<FAKE
+#!/usr/bin/env bash
+prompt="\$(cat)"
+case "\$prompt" in
+  *"## The lens you are"*|*RALPH-LENS-VERDICT*) ;;
+  *01-alpha*)
+    if [ ! -e "$SHIM_STATE/planted" ]; then
+      for i in \$(seq 1 300); do [ -e "$SHIM_STATE/sibling-in-gate" ] && break; sleep 0.1; done
+      for ev in reference-transaction post-index-change post-checkout; do
+        git config --add hook.planted.event \$ev
+      done
+      git config hook.planted.command '$SHIM_STATE/planted-hook'
+      : >"$SHIM_STATE/planted"
+      sleep 6
+    fi
+    ;;
+esac
+chmod -x "$SHIM_STATE/claude.script"
+printf '%s' "\$prompt" | claude "\$@"
+status=\$?
+chmod +x "$SHIM_STATE/claude.script"
+exit \$status
+FAKE
+  chmod +x "$SHIM_STATE/claude.script"
+
+  run_loop
+  local status_of_run="$status" run_said="$output"
+  [ "$status_of_run" = 0 ] || fail "the run itself failed ($status_of_run): $run_said"
+
+  # The latch held, and the hook ran for the pack while the sibling was in flight —
+  # the session's own `git config` runs no hook, so every line here is the pack's.
+  assert_file_exists "$SHIM_STATE/sibling-in-gate"
+  assert_file_exists "$SHIM_STATE/hook.ran"
+
+  # And it held nothing: no descriptor took a write, and no receipt carries a line.
+  assert_forger_found_nothing "$SHIM_STATE/hook.probe" "a hook the session of 01 configured, run for 02"
+  refute_file_contains "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/01-alpha.md" "FORGED"
+  refute_file_contains "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/02-beta.md" "FORGED"
 }
+
+# ── the known hole, waiting for its ticket ───────────────────────────────────
 
 @test "the canary: a process the judged session left behind cannot forge a lens verdict" {
   skip "known hole, ticket [97]: the verdict of a review lens is the last RALPH-LENS-VERDICT line of its stream, and that stream is a named file under \$TMPDIR for as long as the session is writing into it. [94] moved every answer the *gate* read out of its own directory onto a descriptor no stranger can find, and moved the lens's own read back inside the branch that owns the stream — which leaves one window: between the session's last write and the branch's read. A process the judged session left behind, polling for the verdict line and truncating the file, wins it. Nothing above session_spawn can close it: the stream needs a name because claude is given it on a redirection and monitor_watch follows it through a descriptor of its own, opened by path. Raising this skip is an acceptance criterion of [97]."

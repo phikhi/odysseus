@@ -686,7 +686,7 @@ loop__iterate() {
   # against. The commit is where the rollback puts HEAD back: a tree object is
   # not a commit, and a session that commits its work moves the branch.
   base="$(gate_tree_snapshot)" || base=""
-  pre="$(git rev-parse HEAD 2>/dev/null)" || pre=""
+  pre="$(proc_git rev-parse HEAD 2>/dev/null)" || pre=""
   # Where the loop's own register of tracker writes stands, taken *before* both
   # snapshots below and not after: anything the pilot appends between them is then
   # excluded from the guards rather than missed, and over-excluding costs a ticket
@@ -878,7 +878,7 @@ WITNESSES
       changed="$(gate_changed_files "$base" "${RALPH_GATE_TREE:-}")" || changed=""
       commit=""
       if failures_make_durable "$ticket" "$pre" "$base" "${RALPH_GATE_TREE:-}"; then
-        commit="$(git rev-parse HEAD 2>/dev/null)" || commit=""
+        commit="$(proc_git rev-parse HEAD 2>/dev/null)" || commit=""
       fi
       if [ -n "$commit" ] &&
         concurrency_integrate "$ticket" "$start" "$commit" "$changed"; then
