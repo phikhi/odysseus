@@ -138,7 +138,7 @@ gate_preflight() {
     rc=1
   fi
 
-  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  if ! proc_git rev-parse --git-dir >/dev/null 2>&1; then
     printf 'ralph: not a git repository — the scope-guard has nothing to diff against\n' >&2
     rc=1
   fi
@@ -1016,7 +1016,7 @@ gate_frontier_pin() {
   # An empty template: the machine's git templates must not leave an
   # `info/exclude` of their own in the witness, and its hooks have no business
   # running for a repository that exists to answer one question.
-  if ! git init -q --template="$pin/empty" "$rules" >/dev/null 2>&1; then
+  if ! proc_git init -q --template="$pin/empty" "$rules" >/dev/null 2>&1; then
     rm -rf "$pin"
     return 1
   fi
@@ -1056,7 +1056,7 @@ RULES
   # Set locally, so the machine's own `core.excludesFile` — from the user's global
   # config or from the default `~/.config/git/ignore` — cannot leak into the
   # witness's answers. What the project's rules said about it is pinned above.
-  git -C "$rules" config core.excludesFile "$pin/global" >/dev/null 2>&1 || true
+  proc_git -C "$rules" config core.excludesFile "$pin/global" >/dev/null 2>&1 || true
 
   if ! gate__frontier_pin_manifest >"$pin/manifest"; then
     rm -rf "$pin"
@@ -1073,7 +1073,7 @@ RULES
 # ignored directory is deliberately absent: git never reads one either, because it
 # never walks into the directory that holds it.
 gate__ignore_tree_rules() {
-  git ls-files --cached --others --exclude-standard -- '*.gitignore' 2>/dev/null || true
+  proc_git ls-files --cached --others --exclude-standard -- '*.gitignore' 2>/dev/null || true
 }
 
 # One file under the git directory's `info/`, by name — the **common** git
@@ -1095,7 +1095,7 @@ gate__ignore_tree_rules() {
 # copies of this would be two chances to make it.
 gate__frontier_info_path() {
   local gitdir
-  gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
+  gitdir="$(proc_git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
   [ -n "$gitdir" ] || return 0
   printf '%s/info/%s\n' "$gitdir" "$1"
 }
@@ -1113,7 +1113,7 @@ gate__config_attributes_path() {
 # what a human reading a finding needs to go and look at.
 gate__ignore_global_path() {
   local value
-  value="$(git config --get core.excludesFile 2>/dev/null)" || value=""
+  value="$(proc_git config --get core.excludesFile 2>/dev/null)" || value=""
   [ -n "$value" ] || value="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
   case "$value" in
     '~/'*) value="$HOME/${value#\~/}" ;;
@@ -1157,7 +1157,7 @@ gate__ignore_shared_manifest() {
   printf 'dir\t%s\t%s\n' '.git/info/exclude' \
     "$(gate__digest "$(gate__ignore_exclude_path)")"
   printf 'dir\t%s\t%s\n' 'core.excludesFile' \
-    "$(git config --get core.excludesFile 2>/dev/null || printf -- '-')"
+    "$(proc_git config --get core.excludesFile 2>/dev/null || printf -- '-')"
   file="$(gate__ignore_global_path)"
   printf 'host\t%s\t%s\n' "$file" "$(gate__digest "$file")"
   return 0
@@ -1224,6 +1224,10 @@ gate__digest() {
 # fired on every event the hook directory did, with the token set. There is no key
 # that turns them all off, only one per name, and the name is the writer's to
 # choose — so this list is where a configured hook is held, like `core.fsmonitor`.
+# Held as far as an `unset` of this repository reaches, which is not a sibling
+# iteration already past its own put-back, nor the operator's `~/.gitconfig`; what
+# runs there holds nothing of the pack since [104] (`proc_git`), and that is the
+# answer to those two, not this list.
 gate_config_keys() {
   printf '%s\n' \
     'core\.fsmonitor' \
@@ -1296,7 +1300,7 @@ gate__config_names() {
   re="$(gate_config_keys |
     awk 'NR == 1 { printf "%s", $0; next } { printf "|%s", $0 } END { printf "\n" }')"
   [ -n "$re" ] || return 0
-  names="$({ git config --list --name-only 2>/dev/null || true; } |
+  names="$({ proc_git config --list --name-only 2>/dev/null || true; } |
     LC_ALL=C grep -E "^($re)\$" || true)"
   [ -n "$names" ] || return 0
   printf '%s\n' "$names" | LC_ALL=C sort -u
@@ -1308,7 +1312,7 @@ gate__config_names() {
 # has moved the frontier whatever the first one says.
 gate__config_digest() {
   local value
-  value="$({ git config --get-all "$1" 2>/dev/null || true; })"
+  value="$({ proc_git config --get-all "$1" 2>/dev/null || true; })"
   printf '%s' "$value" | cksum | awk '{ print $1 "." $2 }'
 }
 
@@ -1331,7 +1335,7 @@ gate__config_manifest() {
     [ -n "$name" ] || continue
     case "$name" in
       *"$tab"* | *"$cr"*)
-        odd="$odd$name=$({ git config --get-all "$name" 2>/dev/null || true; })
+        odd="$odd$name=$({ proc_git config --get-all "$name" 2>/dev/null || true; })
 "
         continue
         ;;
@@ -1391,7 +1395,7 @@ gate__config_restore() {
         [ -n "$key" ] || continue
         case "$key" in
           *"$tab"* | *"$cr"*)
-            git config --unset-all "$key" >/dev/null 2>&1 || true
+            proc_git config --unset-all "$key" >/dev/null 2>&1 || true
             ;;
         esac
       done <<NAMES
@@ -1401,7 +1405,7 @@ NAMES
       return
       ;;
   esac
-  git config --unset-all "$name" >/dev/null 2>&1 || true
+  proc_git config --unset-all "$name" >/dev/null 2>&1 || true
   [ "$(gate__frontier_current "$name")" = "$pinned" ]
 }
 
@@ -1764,9 +1768,9 @@ gate__frontier_restore() {
   case "$name" in
     'core.excludesFile')
       if [ "$pinned" = '-' ]; then
-        git config --unset-all core.excludesFile >/dev/null 2>&1 || true
+        proc_git config --unset-all core.excludesFile >/dev/null 2>&1 || true
       else
-        git config core.excludesFile "$pinned" >/dev/null 2>&1 || true
+        proc_git config core.excludesFile "$pinned" >/dev/null 2>&1 || true
       fi
       ;;
     '.git/info/exclude')
@@ -1850,8 +1854,14 @@ gate__frontier_restore() {
 #         **this repository's** config, so a value that came from the operator's
 #         `~/.gitconfig`, from the machine's, or from a key a session *removed* is
 #         named as one this run could not put back — and the iteration, and every
-#         iteration of this run after it, stays red over it. Fail-closed and loud,
-#         which is the same residue `host` has one line up.
+#         iteration of this run after it, stays red over it. Fail-closed and loud
+#         **about the verdict**, which is the same residue `host` has one line up —
+#         and silent, until [104], about what the program did in the meantime: it
+#         goes on running for every git of this run that refreshes an index or
+#         fires a hook, and it held the descriptors of whichever shell ran that
+#         git — 204 forged lines in a receipt from a `core.fsmonitor` in
+#         `~/.gitconfig`, at MAX_PARALLEL=1, while every finding said red. It still
+#         runs; it holds nothing now, because no git of the pack does (`proc_git`).
 #
 # In two passes, and that is the lesson of [29] rather than a shape: a finding has
 # to be net of what the run *did* put back. `core.excludesFile` names the file the
@@ -2583,11 +2593,11 @@ gate_newly_hidden() {
   if gate__frontier_pin_broken; then return 1; fi
   gate_frontier_moved >/dev/null || return 0
 
-  listing="$(git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
+  listing="$(proc_git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
     listing=""
   [ -n "$listing" ] || return 0
   hidden="$( (cd "$pin/rules" 2>/dev/null &&
-    printf '%s\n' "$listing" | git check-ignore --stdin 2>/dev/null) || true)"
+    printf '%s\n' "$listing" | proc_git check-ignore --stdin 2>/dev/null) || true)"
 
   fence="
 $hidden
@@ -2615,7 +2625,7 @@ LISTING
 # see gate__ignored_walk.
 gate_unguarded_ignored() {
   local listing guarded hidden file
-  listing="$(git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
+  listing="$(proc_git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
     listing=""
   guarded="$(gate_guarded_paths)"
   hidden="$(gate_newly_hidden)" || hidden=""
@@ -2754,7 +2764,7 @@ gate_unjudged_changes() {
   [ -n "$judged" ] || return 1
   now="$(gate_tree_snapshot)" || return 1
   [ "$now" != "$judged" ] || return 0
-  git -c core.quotePath=false diff-tree -r --name-only "$judged" "$now" 2>/dev/null |
+  proc_git -c core.quotePath=false diff-tree -r --name-only "$judged" "$now" 2>/dev/null |
     gate__drop_bookkeeping
 }
 
@@ -2926,7 +2936,7 @@ gate_tree_snapshot() {
     # `:(literal)` here too, for the reason the branch below carries at length.
     for path in "$@"; do
       rc=0
-      diag="$(LC_ALL=C GIT_INDEX_FILE="$index" git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
+      diag="$(LC_ALL=C GIT_INDEX_FILE="$index" proc_git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
       # `1` is a path git could not read; `128` is a pathspec that matched nothing,
       # which is a fact about the repository and not a failure to measure it.
       if [ "$rc" = 1 ] || gate__walk_incomplete "$diag"; then
@@ -2958,7 +2968,7 @@ gate_tree_snapshot() {
     # before it, this failure left the index empty, `write-tree` handed back the
     # empty tree, and the judged tree held nothing but the forced paths below.
     rc=0
-    diag="$(LC_ALL=C GIT_INDEX_FILE="$index" git add -A --ignore-errors 2>&1 >/dev/null)" || rc=$?
+    diag="$(LC_ALL=C GIT_INDEX_FILE="$index" proc_git add -A --ignore-errors 2>&1 >/dev/null)" || rc=$?
     if [ "$rc" != 0 ] || gate__walk_incomplete "$diag"; then
       rm -f "$index"
       gate__gap "cannot snapshot the working tree — $(gate__git_said "$diag"), so there is no tree to hand back: the one this would have built is short of whatever git could not read, and every guard handed it would read the hole as paths the session deleted" >&2
@@ -2985,7 +2995,7 @@ gate_tree_snapshot() {
     while IFS= read -r path; do
       [ -n "$path" ] || continue
       rc=0
-      diag="$(LC_ALL=C GIT_INDEX_FILE="$index" git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
+      diag="$(LC_ALL=C GIT_INDEX_FILE="$index" proc_git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
       # `1` is a path git could not read, `128` is a pathspec that matched
       # nothing — the tolerated case this loop was written for, and the only
       # thing the `|| true` here ever meant to swallow. They were both `128`
@@ -3000,7 +3010,7 @@ $(gate_guarded_paths)
 $hidden
 FORCED
   fi
-  tree="$(GIT_INDEX_FILE="$index" git write-tree 2>/dev/null)" || tree=""
+  tree="$(GIT_INDEX_FILE="$index" proc_git write-tree 2>/dev/null)" || tree=""
   rm -f "$index"
   [ -n "$tree" ] || return 1
   printf '%s\n' "$tree"
@@ -3027,7 +3037,7 @@ gate_changed_files() {
   local base="$1" now="${2:-}"
   [ -n "$now" ] || now="$(gate_tree_snapshot)" || now=""
   [ -n "$base" ] && [ -n "$now" ] || return 1
-  git -c core.quotePath=false diff-tree -r --name-only "$base" "$now" 2>/dev/null |
+  proc_git -c core.quotePath=false diff-tree -r --name-only "$base" "$now" 2>/dev/null |
     gate__drop_bookkeeping
 }
 
@@ -3111,7 +3121,7 @@ gate_restore_tree() {
 
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-restore.XXXXXX")" || return 1
   rm -f "$idx"
-  if ! GIT_INDEX_FILE="$idx" git read-tree "$base" 2>/dev/null; then
+  if ! GIT_INDEX_FILE="$idx" proc_git read-tree "$base" 2>/dev/null; then
     rm -f "$idx"
     return 1
   fi
@@ -3148,7 +3158,7 @@ gate_restore_tree() {
         # No `:(literal)` here, unlike everywhere else a path is handed to git:
         # `checkout-index` takes file names and not pathspecs, and answers
         # `:(literal)docs/x.md is not in the cache` to the magic (probed).
-        if ! GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null; then
+        if ! GIT_INDEX_FILE="$idx" proc_git checkout-index -f -- "$path" 2>/dev/null; then
           gate__gap "could not restore $path" >&2
           continue
         fi
@@ -3156,7 +3166,7 @@ gate_restore_tree() {
     esac
     printf '%s\n' "$path"
   done <<RESTORE
-$(git -c core.quotePath=false diff-tree -r --name-status "$base" "$now" 2>/dev/null)
+$(proc_git -c core.quotePath=false diff-tree -r --name-status "$base" "$now" 2>/dev/null)
 RESTORE
 
   rm -f "$idx"

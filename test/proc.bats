@@ -463,6 +463,89 @@ proc__plant_index_hook() {
   assert_equal "$output" "'ralph.probe=operator'"
 }
 
+# ── [104] what git runs for this pack holds nothing of it ────────────────────
+#
+# The two doors [102]'s token leaves, from the two places a session can write and
+# no unset of the run reaches in time: a hook configured in the repository, which a
+# sibling iteration runs before its own put-back, and a key of the operator's
+# `~/.gitconfig`, here `core.fsmonitor`. Each program is the forger, so what it could
+# reach is what it writes down, and each writes to a log of its own so that "it
+# never ran" cannot pass for "it found nothing" ([80]).
+
+proc__plant_git_programs() {
+  fd_forger
+  printf '#!/bin/sh\ncat >/dev/null 2>&1\n"%s/fd-forger" forged "%s/hook.log"\nexit 0\n' \
+    "$SHIM_STATE" "$SHIM_STATE" >"$SHIM_STATE/configured-hook"
+  printf '#!/bin/sh\n"%s/fd-forger" forged "%s/fsmonitor.log"\nexit 1\n' \
+    "$SHIM_STATE" "$SHIM_STATE" >"$SHIM_STATE/fsmonitor"
+  chmod +x "$SHIM_STATE/configured-hook" "$SHIM_STATE/fsmonitor"
+  git -C "$PROJECT_DIR" config hook.planted.command "$SHIM_STATE/configured-hook"
+  git -C "$PROJECT_DIR" config --add hook.planted.event post-index-change
+  git -C "$PROJECT_DIR" config --add hook.planted.event reference-transaction
+  git config --global core.fsmonitor "$SHIM_STATE/fsmonitor"
+}
+
+# The three gestures a run makes most — an index refresh, an index written into a
+# scratch file, a ref moved — each written with a redirection on the call, which is
+# how the pack writes them and what makes bash save a copy of fd 2 ([101]). `$1` is
+# the word that runs git.
+proc__git_gestures() {
+  printf '%s\n' "$channels_and_the_old_shut"'
+    proc_git_hooks_off
+    '"$1"' status --porcelain >/dev/null 2>&1
+    GIT_INDEX_FILE="$RALPH_SHIM_STATE/gesture.idx" '"$1"' read-tree HEAD 2>/dev/null
+    '"$1"' update-ref refs/heads/ralph-probe HEAD 2>/dev/null
+  '
+}
+
+@test "a program git runs out of configuration holds nothing of the shell that ran it" {
+  proc__plant_git_programs
+  pack_run "$(proc__git_gestures proc_git)"
+  assert_success
+  assert_forger_found_nothing "$SHIM_STATE/hook.log" "a hook configured in the repository"
+  assert_forger_found_nothing "$SHIM_STATE/fsmonitor.log" "a core.fsmonitor of the operator's ~/.gitconfig"
+}
+
+@test "the paired witness: the same programs under a bare git hold the shell's channels" {
+  # The token is on in both, so this is not the hook directory: it is the half
+  # [102] could not reach, and the reason [104] exists. The channels the caller
+  # holds on 5, 4 and 11 are what each program finds.
+  proc__plant_git_programs
+  pack_run "$(proc__git_gestures git)"
+  assert_success
+  local who
+  for who in hook fsmonitor; do
+    grep -q '^probed$' "$SHIM_STATE/$who.log" || fail "the $who never ran: the witness proves nothing"
+    grep -q '^OPEN 5$' "$SHIM_STATE/$who.log" ||
+      fail "the $who under a bare git did not hold the caller's channel: $(cat "$SHIM_STATE/$who.log")"
+  done
+}
+
+@test "a git run that way keeps the token, its status, its streams and the assignment in front of it" {
+  # What a caller writes around a git call is what it wrote around git itself, or
+  # eighty-five call sites changed meaning when they changed name. And the one thing
+  # `proc_exec_bare` does that this must not: hand the operator's environment back,
+  # which would hand git the hook directory again.
+  pack_run '
+    proc_git_hooks_off
+    printf "hooks=%s\n" "$(proc_git config core.hooksPath)"
+    rc=0
+    proc_git rev-parse --verify --quiet refs/heads/ralph-no-such >/dev/null || rc=$?
+    printf "status=%s\n" "$rc"
+    printf "stderr=%s\n" "$(proc_git rev-parse --verify refs/heads/ralph-no-such 2>&1 >/dev/null || true)"
+    printf "stdin=%s\n" "$(printf "HEAD\n" | proc_git cat-file --batch-check | cut -d" " -f2)"
+    GIT_INDEX_FILE="$RALPH_SHIM_STATE/own.idx" proc_git read-tree HEAD
+    printf "after=[%s]\n" "${GIT_INDEX_FILE-unset}"
+  '
+  assert_success
+  assert_output_contains "hooks=/dev/null"
+  assert_output_contains "status=1"
+  assert_output_contains "stderr=fatal: Needed a single revision"
+  assert_output_contains "stdin=commit"
+  assert_output_contains "after=[unset]"
+  assert_file_exists "$SHIM_STATE/own.idx"
+}
+
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────
 #
 # The instant a channel's file has a name — from the module's `mktemp` to the

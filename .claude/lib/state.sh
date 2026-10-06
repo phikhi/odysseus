@@ -257,7 +257,7 @@ run_lock_is_ours() {
 ralph_tree_lock_path() {
   local root gitdir
   root="$(ralph_project_root)"
-  gitdir="$(cd "$root" 2>/dev/null && git rev-parse --git-dir 2>/dev/null)" || return 1
+  gitdir="$(cd "$root" 2>/dev/null && proc_git rev-parse --git-dir 2>/dev/null)" || return 1
   [ -n "$gitdir" ] || return 1
   # Relative to the directory we asked from when the run is at the top of a
   # repository, absolute inside a linked worktree.

@@ -831,6 +831,76 @@ PROBE
   refute_file_contains "$(receipt_path 01-alpha)" "01-alpha — resolved"
 }
 
+@test "a program the operator's git configuration names holds nothing of the iteration it runs for" {
+  # [104], the half no unset of this repository reaches. The session writes two keys
+  # into the operator's `~/.gitconfig` — a configured hook, and a `core.fsmonitor`,
+  # which git runs on every index refresh — and [46] names both as moved and beyond
+  # its reach, and the run stops on it. Until then git ran them for the pack in
+  # between, at MAX_PARALLEL=1, holding the iteration's descriptors: twenty-four
+  # forged lines from the hook and two hundred and four from the fsmonitor, through
+  # the receipt, the monitor's stream, a lens's prompt and a gate's notes. They still
+  # run — nothing in a run stops git from reading a file outside the repository —
+  # and they hold nothing, because every git the pack starts holds nothing above
+  # stderr (`proc_git`).
+  use_tickets 01-alpha
+  set_config STERILE_K 5
+  fd_forger
+  cat >"$SHIM_STATE/configured-hook" <<HOOK
+#!/bin/sh
+cat >/dev/null 2>&1
+"$SHIM_STATE/fd-forger" "\$(printf 'note\tFORGED-BY-A-CONFIGURED-HOOK')" "$SHIM_STATE/hook.probe"
+exit 0
+HOOK
+  cat >"$SHIM_STATE/fsmonitor" <<HOOK
+#!/bin/sh
+"$SHIM_STATE/fd-forger" "\$(printf 'note\tFORGED-BY-AN-FSMONITOR')" "$SHIM_STATE/fsmonitor.probe"
+exit 1
+HOOK
+  chmod +x "$SHIM_STATE/configured-hook" "$SHIM_STATE/fsmonitor"
+
+  script_claude <<FAKE
+#!/usr/bin/env bash
+prompt="\$(cat)"
+if [ ! -e "$SHIM_STATE/planted" ]; then
+  : >"$SHIM_STATE/planted"
+  for ev in reference-transaction post-index-change post-checkout; do
+    git config --global --add hook.planted.event \$ev
+  done
+  git config --global hook.planted.command '$SHIM_STATE/configured-hook'
+  git config --global core.fsmonitor '$SHIM_STATE/fsmonitor'
+fi
+chmod -x "$SHIM_STATE/claude.script"
+printf '%s' "\$prompt" | claude "\$@"
+status=\$?
+chmod +x "$SHIM_STATE/claude.script"
+exit \$status
+FAKE
+  chmod +x "$SHIM_STATE/claude.script"
+
+  run_loop
+  local run_said="$output" who
+  # Kept before anything else here can run git: this test's own shell holds the
+  # harness's descriptors, and a git it ran would run the same two programs.
+  for who in hook fsmonitor; do
+    cp "$SHIM_STATE/$who.probe" "$SHIM_STATE/$who.kept" 2>/dev/null || true
+  done
+
+  # [46] saw the keys and could not put them back, and said so: every attempt red,
+  # the ticket at the human sink.
+  case "$run_said" in
+    *"moved core.fsmonitor"*"could not put it back"*) ;;
+    *) fail "the run did not name core.fsmonitor as moved and out of its reach: $run_said" ;;
+  esac
+
+  # Both ran for the pack — the session's `git config` runs neither — and neither
+  # found a descriptor that took a write.
+  assert_forger_found_nothing "$SHIM_STATE/hook.kept" "a hook configured in the operator's ~/.gitconfig"
+  assert_forger_found_nothing "$SHIM_STATE/fsmonitor.kept" "a core.fsmonitor of the operator's ~/.gitconfig"
+  if grep -rq 'FORGED' "$PROJECT_DIR/receipts" 2>/dev/null; then
+    fail "a line a program git ran is in a receipt: $(grep -rl FORGED "$PROJECT_DIR/receipts")"
+  fi
+}
+
 @test "a process the session left behind finds no workspace to forge" {
   # The measurement of the 23/09 pass, rerun as a test. The survivor is what a
   # session leaves in the most ordinary way — a `nohup` with a `trap "" TERM` — and
@@ -975,10 +1045,12 @@ PROBE
   # as what nobody could do.
   assert_file_contains "$(receipt_path 01-alpha)" "nothing but that shell held it"
   refute_file_contains "$(receipt_path 01-alpha)" "does at every opening and keeps"
+  # A program git runs for the run was the first exception of that sentence until
+  # [104], measured in; it is part of the claim now, and the exception is gone.
+  assert_file_contains "$(receipt_path 01-alpha)" "and git, with whatever its configuration makes it run"
+  refute_file_contains "$(receipt_path 01-alpha)" "a program git runs for this run out of configuration a session wrote"
   # And the things that sentence does not hold, in the same breath ([101]): one is
-  # measured, one is what the check of [103] cannot see, and one is a property of
-  # another platform.
-  assert_file_contains "$(receipt_path 01-alpha)" "a program git runs for this run out of configuration a session wrote"
+  # what the check of [103] cannot see, and one is a property of another platform.
   assert_file_contains "$(receipt_path 01-alpha)" "a descriptor in flight between two processes"
   assert_file_contains "$(receipt_path 01-alpha)" "any process of the same user, after that check as before it"
   # The half it does not hold, named in the same breath.

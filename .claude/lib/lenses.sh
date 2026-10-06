@@ -685,7 +685,7 @@ lenses__patch() {
       printf '%s\n' "$line"
       written=$((written + 1))
     done <<PATCH
-$(git diff-tree -p --no-color "$base" "$tree" -- ":(literal)$file" 2>/dev/null)
+$(proc_git diff-tree -p --no-color "$base" "$tree" -- ":(literal)$file" 2>/dev/null)
 PATCH
   done <<FILES
 $(gate_changed_files "$base" "$tree")

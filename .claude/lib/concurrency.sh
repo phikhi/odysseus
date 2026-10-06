@@ -64,7 +64,7 @@ concurrency__log() {
 concurrency_preflight() {
   local root rc=0
   root="$(ralph_project_root)"
-  if ! (cd "$root" 2>/dev/null && git rev-parse HEAD >/dev/null 2>&1); then
+  if ! (cd "$root" 2>/dev/null && proc_git rev-parse HEAD >/dev/null 2>&1); then
     printf 'ralph: this repository has no commit yet — every iteration runs in a worktree of its own, and git cannot make one out of nothing\n' >&2
     rc=1
   fi
@@ -252,7 +252,7 @@ SURFACE
 concurrency__common_dir() {
   local root dir
   root="$(ralph_project_root)"
-  dir="$(cd "$root" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null)" || return 1
+  dir="$(cd "$root" 2>/dev/null && proc_git rev-parse --git-common-dir 2>/dev/null)" || return 1
   [ -n "$dir" ] || return 1
   case "$dir" in
     /*) ;;
@@ -276,12 +276,12 @@ concurrency__common_dir() {
 concurrency_worktree_add() {
   local dir="$1" root tip
   root="$(ralph_project_root)"
-  tip="$(cd "$root" 2>/dev/null && git rev-parse HEAD 2>/dev/null)" || tip=""
+  tip="$(cd "$root" 2>/dev/null && proc_git rev-parse HEAD 2>/dev/null)" || tip=""
   if [ -z "$tip" ]; then
     concurrency__log "this repository has no commit yet — an isolated worktree cannot be made out of nothing"
     return 1
   fi
-  if ! (cd "$root" && git worktree add -q --detach "$dir" "$tip" >/dev/null 2>&1); then
+  if ! (cd "$root" && proc_git worktree add -q --detach "$dir" "$tip" >/dev/null 2>&1); then
     concurrency__log "could not create a worktree at $dir — refusing to run an iteration in the tree the run was started in"
     return 1
   fi
@@ -298,13 +298,13 @@ concurrency_worktree_drop() {
   local dir="$1" root
   [ -n "$dir" ] || return 0
   root="$(ralph_project_root)"
-  (cd "$root" && git worktree remove --force "$dir" >/dev/null 2>&1) && return 0
+  (cd "$root" && proc_git worktree remove --force "$dir" >/dev/null 2>&1) && return 0
   # A worktree git will not let go of still must not be left registered: the
   # administrative entry outlives the directory and every later `git worktree`
   # call carries it. `prune` is the one that reads the registration rather than
   # the tree, so it is what can clean up after a removal that failed.
   rm -rf "$dir" 2>/dev/null || true
-  (cd "$root" && git worktree prune >/dev/null 2>&1) || true
+  (cd "$root" && proc_git worktree prune >/dev/null 2>&1) || true
   return 0
 }
 
@@ -319,7 +319,7 @@ concurrency_worktree_drop() {
 concurrency_leftovers() {
   local root n
   root="$(ralph_project_root)"
-  n="$(cd "$root" 2>/dev/null && git worktree list --porcelain 2>/dev/null |
+  n="$(cd "$root" 2>/dev/null && proc_git worktree list --porcelain 2>/dev/null |
     awk -v pfx="$(concurrency__prefix)" '
       $1 == "worktree" && index($2, pfx) == 1 { n++ }
       END { print n + 0 }')" || n=0
@@ -513,7 +513,7 @@ concurrency_integrate() {
     return 1
   }
 
-  tip="$(cd "$root" && git rev-parse HEAD 2>/dev/null)" || tip=""
+  tip="$(cd "$root" && proc_git rev-parse HEAD 2>/dev/null)" || tip=""
   if [ -z "$tip" ]; then
     concurrency__log "$ticket: could not read the branch this run was started on — this iteration is not on the branch"
     state_guard_release "$guard"
@@ -521,7 +521,7 @@ concurrency_integrate() {
   fi
 
   if [ "$tip" = "$start" ]; then
-    if (cd "$root" && git update-ref -m "ralph: $ticket" HEAD "$commit" "$tip" 2>/dev/null); then
+    if (cd "$root" && proc_git update-ref -m "ralph: $ticket" HEAD "$commit" "$tip" 2>/dev/null); then
       concurrency__log "$ticket: folded onto the branch"
     else
       concurrency__log "$ticket: could not move the branch — this iteration is not on it"
@@ -591,7 +591,7 @@ concurrency__replay() {
   root="$(ralph_project_root)"
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-fold.XXXXXX")" || return 1
   rm -f "$idx"
-  if ! (cd "$root" && GIT_INDEX_FILE="$idx" git read-tree "$tip^{tree}" 2>/dev/null); then
+  if ! (cd "$root" && GIT_INDEX_FILE="$idx" proc_git read-tree "$tip^{tree}" 2>/dev/null); then
     rm -f "$idx"
     concurrency__log "$ticket: could not read the branch tip — this iteration is not on the branch"
     return 1
@@ -618,13 +618,13 @@ concurrency__replay() {
     # is why they were right all along and why `:(literal)` would *break* them —
     # measured: `git update-index --force-remove -- ':odd.txt'` removes `:odd.txt`,
     # and the same call with `:(literal):odd.txt` removes nothing at all.
-    if ! line="$(cd "$root" && git ls-tree "$commit^{tree}" -- ":(literal)$path" 2>/dev/null)"; then
+    if ! line="$(cd "$root" && proc_git ls-tree "$commit^{tree}" -- ":(literal)$path" 2>/dev/null)"; then
       rm -f "$idx"
       concurrency__log "$ticket: git would not say whether $path is in this iteration's commit — this iteration is not on the branch"
       return 1
     fi
     if [ -n "$line" ]; then
-      (cd "$root" && GIT_INDEX_FILE="$idx" git update-index --add --cacheinfo \
+      (cd "$root" && GIT_INDEX_FILE="$idx" proc_git update-index --add --cacheinfo \
         "$(printf '%s' "$line" | awk '{ print $1 }'),$(printf '%s' "$line" | awk '{ print $3 }'),$path" 2>/dev/null) || true
       wrote=$((wrote + 1))
       continue
@@ -634,7 +634,7 @@ concurrency__replay() {
     # did took it off: whatever sits at that name on the tip was put there by
     # somebody else while this iteration ran, and the fold has no verdict to pass
     # on it.
-    if ! base="$(cd "$root" && git ls-tree "$start^{tree}" -- ":(literal)$path" 2>/dev/null)"; then
+    if ! base="$(cd "$root" && proc_git ls-tree "$start^{tree}" -- ":(literal)$path" 2>/dev/null)"; then
       rm -f "$idx"
       concurrency__log "$ticket: git would not say whether $path was on the branch this iteration started from — this iteration is not on the branch"
       return 1
@@ -644,26 +644,26 @@ concurrency__replay() {
       kept=$((kept + 1))
       continue
     fi
-    (cd "$root" && GIT_INDEX_FILE="$idx" git update-index --force-remove -- "$path" 2>/dev/null) || true
+    (cd "$root" && GIT_INDEX_FILE="$idx" proc_git update-index --force-remove -- "$path" 2>/dev/null) || true
     removed=$((removed + 1))
   done <<PATHS
 $changed
 PATHS
 
-  newtree="$(cd "$root" && GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || newtree=""
+  newtree="$(cd "$root" && GIT_INDEX_FILE="$idx" proc_git write-tree 2>/dev/null)" || newtree=""
   rm -f "$idx"
   if [ -z "$newtree" ]; then
     concurrency__log "$ticket: could not build the folded tree — this iteration is not on the branch"
     return 1
   fi
-  if [ "$newtree" = "$(cd "$root" && git rev-parse "$tip^{tree}" 2>/dev/null)" ]; then
+  if [ "$newtree" = "$(cd "$root" && proc_git rev-parse "$tip^{tree}" 2>/dev/null)" ]; then
     return 0
   fi
 
-  new="$(cd "$root" && git commit-tree "$newtree" -p "$tip" \
+  new="$(cd "$root" && proc_git commit-tree "$newtree" -p "$tip" \
     -m "$ticket: iteration delivered (gate green)" 2>/dev/null)" || new=""
   if [ -z "$new" ] ||
-    ! (cd "$root" && git update-ref -m "ralph: $ticket" HEAD "$new" "$tip" 2>/dev/null); then
+    ! (cd "$root" && proc_git update-ref -m "ralph: $ticket" HEAD "$new" "$tip" 2>/dev/null); then
     concurrency__log "$ticket: could not move the branch — this iteration is not on it"
     return 1
   fi
@@ -710,7 +710,7 @@ concurrency__refresh() {
 
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-refresh.XXXXXX")" || return 0
   rm -f "$idx"
-  (cd "$root" && GIT_INDEX_FILE="$idx" git read-tree HEAD 2>/dev/null) || {
+  (cd "$root" && GIT_INDEX_FILE="$idx" proc_git read-tree HEAD 2>/dev/null) || {
     rm -f "$idx"
     return 0
   }
@@ -719,19 +719,19 @@ concurrency__refresh() {
     [ -n "$path" ] || continue
     # `:(literal)`, because a path is not a pattern: a delivered `src/zone[1].txt`
     # asked about `src/zone1.txt` and got an answer about a file that is not it.
-    line="$(cd "$root" && git ls-tree HEAD -- ":(literal)$path" 2>/dev/null)" || line=""
+    line="$(cd "$root" && proc_git ls-tree HEAD -- ":(literal)$path" 2>/dev/null)" || line=""
     if [ -z "$line" ]; then
       # Not on the branch now. Only a deletion if it was on the branch before the
       # fold — otherwise nothing this run committed put it there or took it away,
       # and the file sitting at that name belongs to whoever wrote it ([50]).
       if [ -z "$tip" ] ||
-        [ -z "$(cd "$root" && git ls-tree "$tip" -- ":(literal)$path" 2>/dev/null)" ]; then
+        [ -z "$(cd "$root" && proc_git ls-tree "$tip" -- ":(literal)$path" 2>/dev/null)" ]; then
         continue
       fi
       rm -f "$root/$path" 2>/dev/null || true
       rmdir -p "$root/$(dirname "$path")" 2>/dev/null || true
     else
-      (cd "$root" && GIT_INDEX_FILE="$idx" git checkout-index -f -- "$path" 2>/dev/null) || true
+      (cd "$root" && GIT_INDEX_FILE="$idx" proc_git checkout-index -f -- "$path" 2>/dev/null) || true
     fi
     acted="$acted$path
 "
@@ -759,7 +759,7 @@ PATHS
   # just declined to commit. Same rule at both ends of the function.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    (cd "$root" && git reset -q -- ":(literal)$path" 2>/dev/null) || true
+    (cd "$root" && proc_git reset -q -- ":(literal)$path" 2>/dev/null) || true
   done <<PATHS
 $acted
 PATHS

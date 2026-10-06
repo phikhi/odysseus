@@ -842,9 +842,9 @@ failures_rollback() {
     return 1
   fi
 
-  head="$(git rev-parse HEAD 2>/dev/null)" || head=""
+  head="$(proc_git rev-parse HEAD 2>/dev/null)" || head=""
   if [ -n "$pre" ] && [ -n "$head" ] && [ "$head" != "$pre" ]; then
-    if git reset -q --mixed "$pre" 2>/dev/null; then
+    if proc_git reset -q --mixed "$pre" 2>/dev/null; then
       failures__log "rolled back the commit the session made"
     else
       failures__gap "could not move HEAD back to $pre"
@@ -884,7 +884,7 @@ failures_rollback() {
     # call, while `git reset` leaves that one alone and does the rest. So the
     # defect here was local — `src/my file.txt` stayed staged and its neighbours
     # did not — and the one in the durable commit was total.
-    git reset -q -- ":(literal)$path" 2>/dev/null || true
+    proc_git reset -q -- ":(literal)$path" 2>/dev/null || true
     undone=$((undone + 1))
   done <<ROLLBACK
 $restored
@@ -978,7 +978,7 @@ failures_preserve_attempt() {
 
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-failed.XXXXXX")" || return 1
   rm -f "$idx"
-  if ! GIT_INDEX_FILE="$idx" git read-tree "$tree" 2>/dev/null; then
+  if ! GIT_INDEX_FILE="$idx" proc_git read-tree "$tree" 2>/dev/null; then
     rm -f "$idx"
     failures__gap "$ticket: could not read the attempt — $branch not written"
     return 1
@@ -986,9 +986,9 @@ failures_preserve_attempt() {
   # -f because the tracker on disk has moved on since this tree was taken — the
   # retry counter was just written. Nothing is at risk: --cached only ever edits
   # the throwaway index.
-  GIT_INDEX_FILE="$idx" git rm -r -f -q --cached --ignore-unmatch -- \
+  GIT_INDEX_FILE="$idx" proc_git rm -r -f -q --cached --ignore-unmatch -- \
     ".scratch/${FEATURE}" >/dev/null 2>&1 || true
-  clean="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || clean=""
+  clean="$(GIT_INDEX_FILE="$idx" proc_git write-tree 2>/dev/null)" || clean=""
   rm -f "$idx"
   [ -n "$clean" ] || {
     failures__gap "$ticket: could not write the attempt — $branch not written"
@@ -996,10 +996,10 @@ failures_preserve_attempt() {
   }
 
   if [ -n "$pre" ]; then
-    commit="$(git commit-tree "$clean" -p "$pre" \
+    commit="$(proc_git commit-tree "$clean" -p "$pre" \
       -m "ralph: failed attempt on $ticket" 2>/dev/null)" || commit=""
   else
-    commit="$(git commit-tree "$clean" \
+    commit="$(proc_git commit-tree "$clean" \
       -m "ralph: failed attempt on $ticket" 2>/dev/null)" || commit=""
   fi
   [ -n "$commit" ] || {
@@ -1007,7 +1007,7 @@ failures_preserve_attempt() {
     return 1
   }
 
-  if git update-ref "refs/heads/$branch" "$commit" 2>/dev/null; then
+  if proc_git update-ref "refs/heads/$branch" "$commit" 2>/dev/null; then
     failures__log "$ticket: the attempt is kept on branch $branch"
   else
     failures__gap "$ticket: could not write branch $branch"
@@ -1049,9 +1049,9 @@ failures_make_durable() {
   # the session staged would still be sitting there waiting for the next commit.
   # Same assumed loss as the rollback — an index a human had prepared on one of
   # these paths goes, the content of their working tree does not.
-  head="$(git rev-parse HEAD 2>/dev/null)" || head=""
+  head="$(proc_git rev-parse HEAD 2>/dev/null)" || head=""
   if [ -n "$pre" ] && [ -n "$head" ] && [ "$head" != "$pre" ]; then
-    if git reset -q --mixed "$pre" 2>/dev/null; then
+    if proc_git reset -q --mixed "$pre" 2>/dev/null; then
       failures__log "$ticket: the session committed its own work — rebuilding it from what the gate approved"
       head="$pre"
     else
@@ -1062,7 +1062,7 @@ failures_make_durable() {
   idx="$(mktemp "${TMPDIR:-/tmp}/ralph-durable.XXXXXX")" || return 1
   rm -f "$idx"
   if [ -n "$head" ]; then
-    GIT_INDEX_FILE="$idx" git read-tree "$head" >/dev/null 2>&1 || true
+    GIT_INDEX_FILE="$idx" proc_git read-tree "$head" >/dev/null 2>&1 || true
   fi
   # One path per line and one `git add` per path, for the three reasons the
   # snapshot carries at length ([33], then [39]). `git add -A -- $changed` word-split
@@ -1093,14 +1093,14 @@ failures_make_durable() {
   # the body stays one anchorable shape for `test/mutate.sh`.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    if ! GIT_INDEX_FILE="$idx" git add -A --force -- ":(literal)$path" >/dev/null 2>&1; then
+    if ! GIT_INDEX_FILE="$idx" proc_git add -A --force -- ":(literal)$path" >/dev/null 2>&1; then
       refused="$refused$path
 "
     fi
   done <<CHANGED
 $changed
 CHANGED
-  newtree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || newtree=""
+  newtree="$(GIT_INDEX_FILE="$idx" proc_git write-tree 2>/dev/null)" || newtree=""
   rm -f "$idx"
 
   if [ -z "$newtree" ]; then
@@ -1135,21 +1135,21 @@ CHANGED
     failures__in_list "$path" "$refused" || continue
     failures__gap "$ticket: $path was approved by the gate and could not be staged — it is not in this commit"
   done <<MISSED
-$(git -c core.quotePath=false diff-tree -r --name-only "$newtree" "$tree" 2>/dev/null)
+$(proc_git -c core.quotePath=false diff-tree -r --name-only "$newtree" "$tree" 2>/dev/null)
 MISSED
 
   # Nothing to record: everything the gate approved is already in HEAD. Reached
   # when a session committed its work and HEAD could not be moved back, and when
   # the paths it touched came back to the contents they already had.
-  if [ -n "$head" ] && [ "$newtree" = "$(git rev-parse "$head^{tree}" 2>/dev/null)" ]; then
+  if [ -n "$head" ] && [ "$newtree" = "$(proc_git rev-parse "$head^{tree}" 2>/dev/null)" ]; then
     return 0
   fi
 
   if [ -n "$head" ]; then
-    commit="$(git commit-tree "$newtree" -p "$head" \
+    commit="$(proc_git commit-tree "$newtree" -p "$head" \
       -m "$ticket: iteration delivered (gate green)" 2>/dev/null)" || commit=""
   else
-    commit="$(git commit-tree "$newtree" \
+    commit="$(proc_git commit-tree "$newtree" \
       -m "$ticket: iteration delivered (gate green)" 2>/dev/null)" || commit=""
   fi
   # The old value is passed, so this is a compare-and-swap rather than a write:
@@ -1161,7 +1161,7 @@ MISSED
   # the work is in the tree, and this run is not the one that should decide what
   # to do about a HEAD it does not recognise.
   if [ -z "$commit" ] ||
-    ! git update-ref -m "ralph: $ticket" HEAD "$commit" "$head" 2>/dev/null; then
+    ! proc_git update-ref -m "ralph: $ticket" HEAD "$commit" "$head" 2>/dev/null; then
     failures__gap "$ticket: could not commit the iteration — it is not durable"
     return 1
   fi
@@ -1178,7 +1178,7 @@ MISSED
   # so the index still ends up agreeing with the commit either way.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    git add -A --force -- ":(literal)$path" >/dev/null 2>&1 || true
+    proc_git add -A --force -- ":(literal)$path" >/dev/null 2>&1 || true
   done <<CHANGED
 $changed
 CHANGED
@@ -1218,7 +1218,7 @@ failures_reslice() {
   : >"$plan"
 
   base="$(gate_tree_snapshot)" || base=""
-  head="$(git rev-parse HEAD 2>/dev/null)" || head=""
+  head="$(proc_git rev-parse HEAD 2>/dev/null)" || head=""
   # Where the loop's own register stands, taken *before* both snapshots below
   # ([42]). A planning session is a session and this window is a sibling's window
   # too: what the loop writes in `issues/` while the planner thinks — a claim, a

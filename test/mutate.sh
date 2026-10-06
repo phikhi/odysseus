@@ -430,7 +430,7 @@ mutation "05 an empty TYPECHECK_CMD is accepted" "$GATE" \
   test/gate.bats "empty TYPECHECK_CMD"
 
 mutation "05 a project outside git is accepted" "$GATE" \
-  's/  if ! git rev-parse --git-dir/  if false \&\& ! git rev-parse --git-dir/' \
+  's/  if ! proc_git rev-parse --git-dir/  if false \&\& ! proc_git rev-parse --git-dir/' \
   test/gate.bats "no git repository"
 
 mutation "05 'none' is treated as a command to run" "$GATE" \
@@ -488,7 +488,7 @@ mutation "05 the tree is not re-read after the session" "$GATE" \
 # both, and a mutation that left them unset would break the file under `set -u`
 # instead of removing the guarantee.
 mutation "05 the snapshot ignores untracked files" "$GATE" \
-  's/    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?/    GIT_INDEX_FILE="\$index" git read-tree HEAD >\/dev\/null 2>\&1\n    diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -u --ignore-errors 2>\&1 >\/dev\/null)" || rc=\$?/' \
+  's/    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?/    GIT_INDEX_FILE="\$index" proc_git read-tree HEAD >\/dev\/null 2>\&1\n    diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -u --ignore-errors 2>\&1 >\/dev\/null)" || rc=\$?/' \
   test/gate.bats "new file outside"
 
 # Same story as the entry above: `-r` appears twice since [29], and the first
@@ -543,7 +543,7 @@ mutation "07 a file the session added is not removed" "$GATE" \
   test/failures.bats "removes what the session added"
 
 mutation "07 a file the session deleted is not restored" "$GATE" \
-  's/        if ! GIT_INDEX_FILE="\$idx" git checkout-index -f -- "\$path" 2>\/dev\/null; then\n          gate__gap "could not restore \$path" >&2\n          continue\n        fi/        :/' \
+  's/        if ! GIT_INDEX_FILE="\$idx" proc_git checkout-index -f -- "\$path" 2>\/dev\/null; then\n          gate__gap "could not restore \$path" >&2\n          continue\n        fi/        :/' \
   test/failures.bats "brings back what it deleted"
 
 # The seam [06] introduced between the two: the rollback learns what it undid from
@@ -555,11 +555,11 @@ mutation "06 the rollback never learns what it put back" "$FAILURES" \
   test/failures.bats "stray write is undone"
 
 mutation "07 what the session staged stays staged" "$FAILURES" \
-  's/    git reset -q -- ":\(literal\)\$path" 2>\/dev\/null \|\| true/    :/' \
+  's/    proc_git reset -q -- ":\(literal\)\$path" 2>\/dev\/null \|\| true/    :/' \
   test/failures.bats "unstages what it put back"
 
 mutation "07 the commit a session made is left in the history" "$FAILURES" \
-  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if false; then/' \
+  's/    if proc_git reset -q --mixed "\$pre" 2>\/dev\/null; then/    if false; then/' \
   test/failures.bats "commit the session made"
 
 # Aimed at the *restore* and no longer at the commit half: the collateral a
@@ -587,7 +587,7 @@ mutation "07 the attempt is not kept before the rollback undoes it" "$FAILURES" 
   test/failures.bats "keeps the attempt"
 
 mutation "07 the failed branch carries the loop's own bookkeeping" "$FAILURES" \
-  's/  GIT_INDEX_FILE="\$idx" git rm -r -f -q --cached --ignore-unmatch -- \\\n    "\.scratch\/\$\{FEATURE\}" >\/dev\/null 2>&1 \|\| true\n//' \
+  's/  GIT_INDEX_FILE="\$idx" proc_git rm -r -f -q --cached --ignore-unmatch -- \\\n    "\.scratch\/\$\{FEATURE\}" >\/dev\/null 2>&1 \|\| true\n//' \
   test/failures.bats "keeps the attempt"
 
 mutation "07 a slice too big is retried instead of re-sliced" "$FAILURES" \
@@ -618,11 +618,11 @@ mutation "07 a green iteration is not made durable" "$LOOP" \
 # guarantee is unchanged and still carried here: the commit is built path by path
 # out of the approved list, never from the tree as a whole.
 mutation "07 the durable commit takes the whole tree, not what the gate approved" "$FAILURES" \
-  's/    if ! GIT_INDEX_FILE="\$idx" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then/    if ! GIT_INDEX_FILE="\$idx" git add -A >\/dev\/null 2>\&1; then/' \
+  's/    if ! GIT_INDEX_FILE="\$idx" proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then/    if ! GIT_INDEX_FILE="\$idx" proc_git add -A >\/dev\/null 2>\&1; then/' \
   test/failures.bats "nothing else is"
 
 mutation "07 the durable commit does not move the branch" "$FAILURES" \
-  's/ \|\|\n    ! git update-ref -m "ralph: \$ticket" HEAD "\$commit" "\$head" 2>\/dev\/null//' \
+  's/ \|\|\n    ! proc_git update-ref -m "ralph: \$ticket" HEAD "\$commit" "\$head" 2>\/dev\/null//' \
   test/failures.bats "nothing else is"
 
 mutation "07 the durable commit is a write, not a compare-and-swap" "$FAILURES" \
@@ -706,7 +706,7 @@ mutation "21 the tracker is only watched through its ids" "$LOOP" \
 # guarantee — what a session edited is put back — is unchanged and still carried by
 # the same canary.
 mutation "21 an edit to a ticket is not put back" "$TRACKER" \
-  's/  GIT_INDEX_FILE="\$idx" git -C "\$root" checkout-index -f -- "\$dir\/\$id.md" 2>\/dev\/null \|\| rc=1/  :/' \
+  's/  GIT_INDEX_FILE="\$idx" proc_git -C "\$root" checkout-index -f -- "\$dir\/\$id.md" 2>\/dev\/null \|\| rc=1/  :/' \
   test/canary.bats "widen its own write-surface"
 # Re-anchored by [81], which put `retro_hold_index` between the snapshot and the
 # spawn: the edit is the same move — read the tracker *after* the session — split
@@ -744,7 +744,7 @@ mutation "21 a ticket the session deleted counts as one it created" "$TRACKER" \
 # being retired. Anchored on `for path in "$@"` so it cannot match the forcing
 # loop, whose head reads a heredoc.
 mutation "21 the tracker snapshot obeys the project's ignore rules" "$GATE" \
-  's/    for path in "\$\@"; do\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors/    for path in "\$\@"; do\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors/' \
+  's/    for path in "\$\@"; do\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --force --ignore-errors/    for path in "\$\@"; do\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors/' \
   test/failures.bats "scratch out of git"
 
 mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
@@ -752,7 +752,7 @@ mutation "21 a tracker nothing can vouch for passes" "$FAILURES" \
   test/failures.bats "vouch for"
 
 mutation "21 the tracker the session staged stays staged" "$TRACKER" \
-  's/  git -C "\$root" reset -q -- "\$dir" 2>\/dev\/null \|\| true\n//' \
+  's/  proc_git -C "\$root" reset -q -- "\$dir" 2>\/dev\/null \|\| true\n//' \
   test/failures.bats "stay staged"
 
 mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" \
@@ -760,7 +760,7 @@ mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" 
   test/failures.bats "edits the tracker has its whole plan"
 
 mutation "21 a session's own commit survives its green gate" "$FAILURES" \
-  's/    if git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "\$ticket: the session committed/' \
+  's/    if proc_git reset -q --mixed "\$pre" 2>\/dev\/null; then\n      failures__log "\$ticket: the session committed/    if false; then\n      failures__log "\$ticket: the session committed/' \
   test/failures.bats "green gate either"
 
 # ── [73] what a session writes in the tracker of a remote backend ────────────
@@ -1201,7 +1201,7 @@ mutation "26 the escalated ticket does not say no verdict was involved" "$FAILUR
 # than nothing at all, for the reason the [05] entry above carries: the two lines
 # below read `rc` and `diag`.
 mutation "24 the snapshot obeys the ignore rules on a guarded path" "$GATE" \
-  's/      \[ -n "\$path" \] \|\| continue\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- ":\(literal\)\$path" 2>&1 >\/dev\/null\)" \|\| rc=\$\?/      [ -n "\$path" ] || continue\n      rc=0\n      diag=""/' \
+  's/      \[ -n "\$path" \] \|\| continue\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --force --ignore-errors -- ":\(literal\)\$path" 2>&1 >\/dev\/null\)" \|\| rc=\$\?/      [ -n "\$path" ] || continue\n      rc=0\n      diag=""/' \
   test/gate.bats "guarded path is caught"
 
 mutation "24 the guarded paths are a constant, not the configured ones" "$GATE" \
@@ -1384,7 +1384,7 @@ mutation "33 the same, on a path a rule hid during the iteration" "$GATE" \
 # `|| true` that used to make this line unique is gone, and the pathspec branch
 # now carries the identical add.
 mutation "33 the forcing hands git a pattern instead of a path" "$GATE" \
-  's/      \[ -n "\$path" \] \|\| continue\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- ":\(literal\)\$path"/      [ -n "\$path" ] || continue\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- "\$path"/' \
+  's/      \[ -n "\$path" \] \|\| continue\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --force --ignore-errors -- ":\(literal\)\$path"/      [ -n "\$path" ] || continue\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --force --ignore-errors -- "\$path"/' \
   test/gate.bats "written as a glob guards nothing"
 
 # The reading half, which has to agree with the forcing: a list of paths read as a
@@ -1455,7 +1455,7 @@ mutation "34 the loop grinds on after a rollback that could not act" "$LOOP" \
 # own guard is that caller: a feature directory named with a glob character would
 # be snapshotted as a different directory altogether.
 mutation "34 the snapshot's pathspec branch hands git a pattern" "$GATE" \
-  's/    for path in "\$\@"; do\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- ":\(literal\)\$path"/    for path in "\$\@"; do\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --force --ignore-errors -- "\$path"/' \
+  's/    for path in "\$\@"; do\n      rc=0\n      diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --force --ignore-errors -- ":\(literal\)\$path"/    for path in "\$\@"; do\n      rc=0\n      diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --force --ignore-errors -- "\$path"/' \
   test/gate.bats "taken literally, not as a pattern"
 
 # ── [29] the tree the gate judges, taken before the gate runs ────────────────
@@ -1952,13 +1952,13 @@ mutation "17 an edit is judged against LANG_ARTIFACT, not against the file" "$LA
 # time HEAD carries exactly what the base tree does. What the controlled writes is
 # the *working tree*, and that is the only baseline that is not a baseline.
 mutation "17 the language of a file is read after the session, not before" "$LANGLIB" \
-  's/\$\(git cat-file -p "\$base:\$file" 2>\/dev\/null \| lang_measure/\$(cat "\$file" 2>\/dev\/null | lang_measure/' \
+  's/\$\(proc_git cat-file -p "\$base:\$file" 2>\/dev\/null \| lang_measure/\$(cat "\$file" 2>\/dev\/null | lang_measure/' \
   test/lang.bats "read from before the session"
 
 # [29] one branch further along: the suite is writing in the working tree while
 # this runs, so reading a file off disk returns a verdict nobody else is judging.
 mutation "17 the branch reads the working tree instead of the tree it judges" "$LANGLIB" \
-  's/\$\(git cat-file -p "\$now:\$file" 2>\/dev\/null \| lang_measure "\$expected"\)/\$(cat "\$file" 2>\/dev\/null | lang_measure "\$expected")/' \
+  's/\$\(proc_git cat-file -p "\$now:\$file" 2>\/dev\/null \| lang_measure "\$expected"\)/\$(cat "\$file" 2>\/dev\/null | lang_measure "\$expected")/' \
   test/lang.bats "not what the suite writes beside it"
 
 mutation "17 a file with too little prose is judged anyway" "$LANGLIB" \
@@ -2362,7 +2362,7 @@ mutation "13 a MAX_PARALLEL nobody can read is read as one" "$CONCURRENCY" \
   test/concurrency.bats "refused rather than read as 1"
 
 mutation "13 the local excludes are read from the worktree's private git dir" "$GATE" \
-  's/  gitdir="\$\(git rev-parse --git-common-dir 2>\/dev\/null\)" \|\| gitdir=""/  gitdir="$(git rev-parse --git-dir 2>\/dev\/null)" || gitdir=""/' \
+  's/  gitdir="\$\(proc_git rev-parse --git-common-dir 2>\/dev\/null\)" \|\| gitdir=""/  gitdir="$(proc_git rev-parse --git-dir 2>\/dev\/null)" || gitdir=""/' \
   test/gate.bats "widen the blind zone through .git/info/exclude"
 
 mutation "13 the sealed config is resolved against the worktree, not the project" "$GATE" \
@@ -3364,20 +3364,20 @@ mutation "47 an opening that opened nothing is registered all the same" "$TRACKE
 # where the ticket's own exit criterion is asserted: the count [17] posted while
 # waiting for this is zero, and the file is judged under the name it really has.
 mutation "39 the changed-file list keeps git's quoting" "$GATE" \
-  's/  git -c core\.quotePath=false diff-tree -r --name-only "\$base" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/  git diff-tree -r --name-only "\$base" "\$now" 2>\/dev\/null | gate__drop_bookkeeping/' \
+  's/  proc_git -c core\.quotePath=false diff-tree -r --name-only "\$base" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/  proc_git diff-tree -r --name-only "\$base" "\$now" 2>\/dev\/null | gate__drop_bookkeeping/' \
   test/lang.bats "name it really has"
 
 # The third producer, and the one the ticket did not name: the diff between the
 # judged tree and the tree as it is now, which the zone line and the containment of
 # what a review lens wrote both read.
 mutation "39 the gate's own after-diff keeps git's quoting" "$GATE" \
-  's/  git -c core\.quotePath=false diff-tree -r --name-only "\$judged" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/  git diff-tree -r --name-only "\$judged" "\$now" 2>\/dev\/null | gate__drop_bookkeeping/' \
+  's/  proc_git -c core\.quotePath=false diff-tree -r --name-only "\$judged" "\$now" 2>\/dev\/null \|\n    gate__drop_bookkeeping/  proc_git diff-tree -r --name-only "\$judged" "\$now" 2>\/dev\/null | gate__drop_bookkeeping/' \
   test/gate.bats "named readably too"
 
 # The second producer, aimed at its own trees: the restore reads `--name-status`
 # and would otherwise inherit the fix through nothing at all.
 mutation "39 the restore's own list keeps git's quoting" "$GATE" \
-  's/\$\(git -c core\.quotePath=false diff-tree -r --name-status "\$base" "\$now" 2>\/dev\/null\)/$(git diff-tree -r --name-status "\$base" "\$now" 2>\/dev\/null)/' \
+  's/\$\(proc_git -c core\.quotePath=false diff-tree -r --name-status "\$base" "\$now" 2>\/dev\/null\)/$(proc_git diff-tree -r --name-status "\$base" "\$now" 2>\/dev\/null)/' \
   test/failures.bats "removes a name outside pure ASCII"
 
 # What is left quoted whatever that setting says — a tab, a newline, a quote — is
@@ -3417,7 +3417,7 @@ mutation "39 the restore's admissions go into its own return value" "$GATE" \
 # path. The guarantee here is that the list is not word-split, so the mutation has
 # to word-split it.
 mutation "39 the durable commit stages a line of words" "$FAILURES" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    if ! GIT_INDEX_FILE="\$idx" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then\n      refused="\$refused\$path\n"\n    fi\n  done <<CHANGED\n\$changed\nCHANGED/  GIT_INDEX_FILE="\$idx" git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    if ! GIT_INDEX_FILE="\$idx" proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then\n      refused="\$refused\$path\n"\n    fi\n  done <<CHANGED\n\$changed\nCHANGED/  GIT_INDEX_FILE="\$idx" proc_git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
   test/failures.bats "commits a path whose name carries a space"
 
 # Its twin at the other end of the same function: the caller's index is restaged
@@ -3428,7 +3428,7 @@ mutation "39 the durable commit stages a line of words" "$FAILURES" \
 # line. The first draft of this entry named the end-to-end test and came back
 # VACUOUS: it was measuring `concurrency__refresh`, one module over.
 mutation "39 the index is put back from a line of words" "$FAILURES" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  proc_git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
   test/failures.bats "no staged reversal, a name with a space included"
 
 # What that `|| true` costs when it fires, which is the general form of the defect
@@ -3440,7 +3440,7 @@ mutation "39 a path git refused to stage is dropped without a word" "$FAILURES" 
 # The last caller [33] had missed: the rollback rejoined the restored paths into
 # one whitespace word to unstage them.
 mutation "39 the unstaging is handed a line of words" "$FAILURES" \
-  's/    git reset -q -- ":\(literal\)\$path" 2>\/dev\/null \|\| true\n    undone=\$\(\(undone \+ 1\)\)/    undone=\$((undone + 1))/; s/  if \[ "\$undone" -gt 0 \]; then/  if [ -n "\$paths" ]; then\n    git reset -q -- \$paths 2>\/dev\/null || true/' \
+  's/    proc_git reset -q -- ":\(literal\)\$path" 2>\/dev\/null \|\| true\n    undone=\$\(\(undone \+ 1\)\)/    undone=\$((undone + 1))/; s/  if \[ "\$undone" -gt 0 \]; then/  if [ -n "\$paths" ]; then\n    proc_git reset -q -- \$paths 2>\/dev\/null || true/' \
   test/failures.bats "unstaging survives a path"
 
 # The third place the same list was rejoined into a word, one module over: the
@@ -3449,7 +3449,7 @@ mutation "39 the unstaging is handed a line of words" "$FAILURES" \
 # exists to prevent — a delivered path left staged as a deletion in the tree a
 # human looks at in the morning.
 mutation "39 the tree refresh unstages a line of words" "$CONCURRENCY" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done <<PATHS\n\$acted\nPATHS/  (cd "\$root" \&\& git reset -q -- \$(printf \x27%s\x27 "\$acted" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true/' \
+  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && proc_git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done <<PATHS\n\$acted\nPATHS/  (cd "\$root" \&\& proc_git reset -q -- \$(printf \x27%s\x27 "\$acted" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true/' \
   test/failures.bats "commits a path whose name carries a space"
 
 # The residue, at the one consumer that answers about it with a count rather than a
@@ -3581,7 +3581,7 @@ mutation "46 moving what git runs is not a finding" "$GATE" \
 # writes *this* repository's config, so a value in the operator's home survives it
 # untouched and "(put back)" would be false.
 mutation "46 a configuration restore that was only attempted claims success" "$GATE" \
-  's/  git config --unset-all "\$name" >\/dev\/null 2>&1 \|\| true\n  \[ "\$\(gate__frontier_current "\$name"\)" = "\$pinned" \]/  return 0/' \
+  's/  proc_git config --unset-all "\$name" >\/dev\/null 2>&1 \|\| true\n  \[ "\$\(gate__frontier_current "\$name"\)" = "\$pinned" \]/  return 0/' \
   test/gate.bats "cannot put back is named"
 
 # Where the restore falls, which is the question [32] asked once and [46] had to
@@ -4116,7 +4116,7 @@ mutation "95 the sweep speaks whether or not it found anything" "$PROC" \
 # outcome where the work is supposed to survive, committed nothing at all.
 
 mutation "50 the durable commit obeys ignore rules the gate did not" "$FAILURES" \
-  's/    if ! GIT_INDEX_FILE="\$idx" git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then/    if ! GIT_INDEX_FILE="\$idx" git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1; then/' \
+  's/    if ! GIT_INDEX_FILE="\$idx" proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then/    if ! GIT_INDEX_FILE="\$idx" proc_git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1; then/' \
   test/failures.bats "a guarded path the project ignores reaches the history"
 
 # Its twin, and they are one decision: an index that cannot take the path the
@@ -4124,7 +4124,7 @@ mutation "50 the durable commit obeys ignore rules the gate did not" "$FAILURES"
 # the reason [39] found the hard way — since [13] this index goes with the
 # worktree, so no full-loop assertion can see it.
 mutation "50 the index is put back without the force the commit used" "$FAILURES" \
-  's/    git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/    git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1 || true/' \
+  's/    proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true/    proc_git add -A -- ":(literal)\$path" >\/dev\/null 2>\&1 || true/' \
   test/failures.bats "no staged reversal on an ignored guarded path"
 
 # The gap line reads a status *and* a result, and neither answers alone. Drop the
@@ -4139,7 +4139,7 @@ mutation "50 the gap line reads the result without the status" "$FAILURES" \
 # tree that was never committed is accused of not being staged, `git add` having
 # refused a pathspec that matched nothing on either side.
 mutation "50 the gap line reads the status without the result" "$FAILURES" \
-  's/  done <<MISSED\n\$\(git -c core.quotePath=false diff-tree -r --name-only "\$newtree" "\$tree" 2>\/dev\/null\)\nMISSED/  done <<MISSED\n\$refused\nMISSED/' \
+  's/  done <<MISSED\n\$\(proc_git -c core.quotePath=false diff-tree -r --name-only "\$newtree" "\$tree" 2>\/dev\/null\)\nMISSED/  done <<MISSED\n\$refused\nMISSED/' \
   test/failures.bats "deleted is not accused of not being staged"
 
 # The other half of the ticket, one module over: the refresh asked "is this path in
@@ -4147,7 +4147,7 @@ mutation "50 the gap line reads the status without the result" "$FAILURES" \
 # could not stage was deleted out of the tree a human looks at — `rmdir -p` taking
 # the directory with it.
 mutation "50 the tree refresh reads a path it never committed as a deletion" "$CONCURRENCY" \
-  's/      if \[ -z "\$tip" \] \|\|\n        \[ -z "\$\(cd "\$root" && git ls-tree "\$tip" -- ":\(literal\)\$path" 2>\/dev\/null\)" \]; then\n        continue\n      fi\n//' \
+  's/      if \[ -z "\$tip" \] \|\|\n        \[ -z "\$\(cd "\$root" && proc_git ls-tree "\$tip" -- ":\(literal\)\$path" 2>\/dev\/null\)" \]; then\n        continue\n      fi\n//' \
   test/concurrency.bats "never put on the branch"
 
 # Same rule at the other end of the same function: `git reset -- <path>` sets the
@@ -4598,18 +4598,18 @@ mutation "58 a tracker nothing pinned is read as one this drain took" "$ROUTER" 
 # that replaced it.
 
 mutation "59 a whole tree git could not read is handed back anyway" "$GATE" \
-  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
+  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" proc_git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
   test/gate.bats "instead of an amputated tree"
 
 # The same edit, against the two run outcomes it produced. Both are consequences
 # of one line and neither is visible at the module: the amputated tree makes every
 # path the forcing did not cover look deleted by the session.
 mutation "59 an amputated tree convicts the session of a deletion" "$GATE" \
-  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
+  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" proc_git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
   test/gate.bats "stops the run instead of accusing the session"
 
 mutation "59 an amputated tree is delivered under a wide surface" "$GATE" \
-  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
+  's/    rc=0\n    diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors 2>&1 >\/dev\/null\)" \|\| rc=\$\?\n    if \[ "\$rc" != 0 \] \|\| gate__walk_incomplete "\$diag"; then\n/    GIT_INDEX_FILE="\$index" proc_git add -A >\/dev\/null 2>&1 || true\n    if false; then\n/' \
   test/gate.bats "wide write-surface"
 
 # The pathspec branch. Its `if` line is now byte-identical to the forcing loop's,
@@ -4699,11 +4699,11 @@ mutation "60 the fold does not tell the replay where its baseline is" "$CONCURRE
 # nothing with rc=128 for a tree it cannot read; swallowed, the first refusal
 # removes an approved path and the second keeps a deleted one.
 mutation "60 a commit the fold cannot read answers that the session deleted" "$CONCURRENCY" \
-  's/    if ! line="\$\(cd "\$root" && git ls-tree "\$commit\^\{tree\}" -- ":\(literal\)\$path" 2>\/dev\/null\)"; then\n      rm -f "\$idx"\n      concurrency__log "\$ticket: git would not say whether \$path is in this[^\n]*\n      return 1\n    fi\n/    line="\$(cd "\$root" \&\& git ls-tree "\$commit^{tree}" -- ":(literal)\$path" 2>\/dev\/null)" || line=""\n/' \
+  's/    if ! line="\$\(cd "\$root" && proc_git ls-tree "\$commit\^\{tree\}" -- ":\(literal\)\$path" 2>\/dev\/null\)"; then\n      rm -f "\$idx"\n      concurrency__log "\$ticket: git would not say whether \$path is in this[^\n]*\n      return 1\n    fi\n/    line="\$(cd "\$root" \&\& proc_git ls-tree "\$commit^{tree}" -- ":(literal)\$path" 2>\/dev\/null)" || line=""\n/' \
   test/concurrency.bats "refuses the branch instead of removing"
 
 mutation "60 a baseline the fold cannot read answers that it never held the path" "$CONCURRENCY" \
-  's/    if ! base="\$\(cd "\$root" && git ls-tree "\$start\^\{tree\}" -- ":\(literal\)\$path" 2>\/dev\/null\)"; then\n      rm -f "\$idx"\n      concurrency__log "\$ticket: git would not say whether \$path was on the branch[^\n]*\n      return 1\n    fi\n/    base="\$(cd "\$root" \&\& git ls-tree "\$start^{tree}" -- ":(literal)\$path" 2>\/dev\/null)" || base=""\n/' \
+  's/    if ! base="\$\(cd "\$root" && proc_git ls-tree "\$start\^\{tree\}" -- ":\(literal\)\$path" 2>\/dev\/null\)"; then\n      rm -f "\$idx"\n      concurrency__log "\$ticket: git would not say whether \$path was on the branch[^\n]*\n      return 1\n    fi\n/    base="\$(cd "\$root" \&\& proc_git ls-tree "\$start^{tree}" -- ":(literal)\$path" 2>\/dev\/null)" || base=""\n/' \
   test/concurrency.bats "refuses the branch instead of removing"
 
 # The two journal lines. A path the gate approved that is not on the branch is
@@ -5741,7 +5741,7 @@ mutation "18 an unrecognised pipeline status is no pipeline" "$FORGE" \
 # The push is what makes the git references the receipt carries resolve for
 # somebody who does not have this repository ([10] refused inlining the diff).
 mutation "18 the branch the receipt is about is never pushed" "$FORGE" \
-  's#  git push --force "\$\{RECEIPT_REMOTE:-origin\}" "\$src:refs/heads/\$head" >/dev/null 2>&1 \|\| \{#  true \|\| \{#' \
+  's#  proc_git push --force "\$\{RECEIPT_REMOTE:-origin\}" "\$src:refs/heads/\$head" >/dev/null 2>&1 \|\| \{#  true \|\| \{#' \
   test/tracker-remote.bats "request whose branch is pushed"
 
 # An adapter that wrote the ticket while emitting a receipt would owe the register
@@ -6814,7 +6814,7 @@ mutation "88 the loop stops asking for the write-surface rule" "$LOOP" \
 # a derived sentence buys: de-index the feature directory instead of the tickets
 # and the run takes out of the index a path the prompt named as a dead zone.
 mutation "88 the de-index is wider than the name the prompt gives" "$TRACKER" \
-  's!  git -C "\$root" reset -q -- "\$dir" 2>/dev/null!  git -C "\$root" reset -q -- "\$\{dir%/\*\}" 2>/dev/null!' \
+  's!  proc_git -C "\$root" reset -q -- "\$dir" 2>/dev/null!  proc_git -C "\$root" reset -q -- "\$\{dir%/\*\}" 2>/dev/null!' \
   test/loop-happy-path.bats "takes out of the index"
 
 # And the half [24] asks for: a zone that cannot be closed is named at every
@@ -7134,11 +7134,11 @@ mutation "96 the document does not say where it was assembled" "$RECEIPT" \
 # stages one can tell 255 from 9, and [98] is the ticket that opens one.
 
 mutation "101 a program is exec'd holding everything its caller held" "$PROC" \
-  's/^  eval "exec \$closers"\n//m' \
+  's/^  eval "exec \$PROC__ABOVE_STDERR"\n//m' \
   test/proc.bats "bare holds nothing above stderr"
 
 mutation "101 the close stops at the numbers this pack opens" "$PROC" \
-  's/while \[ "\$n" -le 255 \]; do/while [ "\$n" -le 9 ]; do/' \
+  's/\{3\.\.255\}/{3..9}/' \
   test/proc.bats "bare holds nothing above stderr"
 
 mutation "101 a command line is exec'd holding its caller's descriptors" "$PROC" \
@@ -7206,7 +7206,7 @@ mutation "102 the operator's configuration is replaced by the token" "$PROC" \
   test/proc.bats "keeps what the operator had already told git"
 
 mutation "102 a program exec'd bare keeps the run's git environment" "$PROC" \
-  's/^  eval "exec \$closers"\n  proc_git_hooks_given_back\n/  eval "exec \$closers"\n/m' \
+  's/^  eval "exec \$PROC__ABOVE_STDERR"\n  proc_git_hooks_given_back\n/  eval "exec \$PROC__ABOVE_STDERR"\n/m' \
   test/proc.bats "gets the operator's git environment back"
 
 # The third state: a shell that turned nothing off has nothing on record, and
@@ -7322,6 +7322,64 @@ mutation "103 a lens opens its prompt without asking who holds it" "$LENSES_LIB"
 mutation "103 the lister holds the channel it is asked about" "$PROC" \
   's/proc_exec_bare "\$PROC_CHANNEL_LSOF" -w/"\$PROC_CHANNEL_LSOF" -w/' \
   test/proc.bats "nothing else holds is served"
+
+# ── [104] what git runs for this pack holds nothing of it ────────────────────
+#
+# The function left in place and the close taken out of it: git, and whatever its
+# configuration makes it run, holds the shell's descriptors again. Asked of the
+# unit, of a run where the operator's `~/.gitconfig` names the programs, and of the
+# canary's sibling in flight — three populations, one edit, three entries, so that
+# none of the three tests can be a lie the other two cover.
+mutation "104 a git the pack runs holds the shell that ran it" "$PROC" \
+  's/^    eval "exec \$PROC__ABOVE_STDERR"\n    exec git "\$\@"/    exec git "\$\@"/m' \
+  test/proc.bats "out of configuration holds nothing of the shell"
+
+mutation "104 the operator's configuration runs a program holding the iteration" "$PROC" \
+  's/^    eval "exec \$PROC__ABOVE_STDERR"\n    exec git "\$\@"/    exec git "\$\@"/m' \
+  test/receipt.bats "operator's git configuration names holds nothing"
+
+mutation "104 a hook a session configures holds its sibling in flight" "$PROC" \
+  's/^    eval "exec \$PROC__ABOVE_STDERR"\n    exec git "\$\@"/    exec git "\$\@"/m' \
+  test/canary.bats "holds nothing of a sibling iteration in flight"
+
+# The list itself, emptied where it is built: both closers then close nothing.
+mutation "104 the list of what is closed above stderr is empty" "$PROC" \
+  's/^printf -v PROC__ABOVE_STDERR .*$/PROC__ABOVE_STDERR=""/m' \
+  test/proc.bats "out of configuration holds nothing of the shell"
+
+# The one thing `proc_exec_bare` does that this must not.
+mutation "104 git is handed the operator's environment back, hook directory and all" "$PROC" \
+  's/^    exec git "\$\@"/    proc_git_hooks_given_back\n    exec git "\$\@"/m' \
+  test/proc.bats "keeps the token, its status"
+
+# Call sites, each a different reason a census exists: the pilot's own git, a gate
+# snapshot that refreshes an index under the iteration's channels, and a git inside
+# an unquoted heredoc — the shape the lexer could not see until this ticket.
+mutation "104 the pilot makes a worktree with a bare git" "$CONCURRENCY" \
+  's/if ! \(cd "\$root" && proc_git worktree add/if ! (cd "\$root" \&\& git worktree add/' \
+  test/gate.bats "goes through the one function that hands it nothing"
+
+mutation "104 a gate snapshot runs git bare under the iteration's channels" "$GATE" \
+  's/diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors 2>&1/diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>\&1/' \
+  test/receipt.bats "operator's git configuration names holds nothing"
+
+mutation "104 a git inside an unquoted heredoc runs bare" "$GATE" \
+  's/^\$\(proc_git -c core\.quotePath=false diff-tree -r --name-status/\$(git -c core.quotePath=false diff-tree -r --name-status/m' \
+  test/gate.bats "goes through the one function that hands it nothing"
+
+# The lexer the census reads through, and the two halves of what it now reads.
+mutation "104 the lexer drops what an unquoted heredoc runs" "test/gate.bats" \
+  's/    if \(hquoted\) next\n    line = bodysubs\(line\)\n    if \(line == ""\) next\n/    next\n/' \
+  test/gate.bats "the lexer reads what an unquoted heredoc runs"
+
+mutation "104 the lexer reads a quoted heredoc as if it ran" "test/gate.bats" \
+  's/    if \(hquoted\) next\n//' \
+  test/gate.bats "the lexer reads what an unquoted heredoc runs"
+
+# The zone the census leaves out, and what keeps it: the installer opens nothing.
+mutation "104 the installer opens a descriptor of its own" "$INIT" \
+  's/^init_tree_preflight\(\) \{\n/init_tree_preflight() {\n  exec 9>\/dev\/null\n/m' \
+  test/gate.bats "goes through the one function that hands it nothing"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

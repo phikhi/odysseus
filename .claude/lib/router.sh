@@ -440,10 +440,10 @@ router__say_drift() {
 router__tree_dirt() {
   local path
   {
-    if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
-      git -c core.quotePath=false diff --name-only HEAD -- 2>/dev/null
+    if proc_git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+      proc_git -c core.quotePath=false diff --name-only HEAD -- 2>/dev/null
     fi
-    git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null
+    proc_git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null
   } | sort -u | while IFS= read -r path; do
     [ -n "$path" ] || continue
     if gate_is_bookkeeping "$path"; then continue; fi
@@ -1399,7 +1399,7 @@ router_has_branch() {
     router__pinned_ref "$id" >/dev/null || return 1
     return 0
   fi
-  git show-ref --verify --quiet "refs/heads/failed/$id" 2>/dev/null
+  proc_git show-ref --verify --quiet "refs/heads/failed/$id" 2>/dev/null
 }
 
 # This ticket's own lines in the run journal, verbatim.

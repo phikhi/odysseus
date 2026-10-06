@@ -339,9 +339,9 @@ RULES
 lang__expected() {
   local base="$1" file="$2" total hits dominant dhits
 
-  if [ -n "$base" ] && git cat-file -e "$base:$file" 2>/dev/null; then
+  if [ -n "$base" ] && proc_git cat-file -e "$base:$file" 2>/dev/null; then
     read -r total hits dominant dhits <<MEASURE
-$(git cat-file -p "$base:$file" 2>/dev/null | lang_measure '')
+$(proc_git cat-file -p "$base:$file" 2>/dev/null | lang_measure '')
 MEASURE
     if [ "${total:-0}" -ge "$(lang_min_hits)" ] && lang_known "${dominant:-}"; then
       printf '%s file\n' "$dominant"
@@ -420,7 +420,7 @@ lang_check() {
       continue
     fi
     # A deleted prose file has no content to judge and is not a finding.
-    git cat-file -e "$now:$file" 2>/dev/null || continue
+    proc_git cat-file -e "$now:$file" 2>/dev/null || continue
 
     read -r expected why <<EXPECTED
 $(lang__expected "$base" "$file")
@@ -432,7 +432,7 @@ EXPECTED
     # shell's memory to count function words in it. What comes back is four
     # numbers.
     read -r total hits dominant dhits <<MEASURE
-$(git cat-file -p "$now:$file" 2>/dev/null | lang_measure "$expected")
+$(proc_git cat-file -p "$now:$file" 2>/dev/null | lang_measure "$expected")
 MEASURE
 
     if [ "${total:-0}" -lt "$min" ]; then

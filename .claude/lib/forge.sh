@@ -2152,10 +2152,10 @@ forge__request_payload() {
 # the loop's own vocabulary.
 forge__push() {
   local id="$1" head="$2" src='HEAD'
-  if git rev-parse --verify --quiet "refs/heads/failed/$id" >/dev/null 2>&1; then
+  if proc_git rev-parse --verify --quiet "refs/heads/failed/$id" >/dev/null 2>&1; then
     src="refs/heads/failed/$id"
   fi
-  git push --force "${RECEIPT_REMOTE:-origin}" "$src:refs/heads/$head" >/dev/null 2>&1 || {
+  proc_git push --force "${RECEIPT_REMOTE:-origin}" "$src:refs/heads/$head" >/dev/null 2>&1 || {
     printf 'forge: could not push %s to %s — there is no request to write the receipt into\n' \
       "$src" "${RECEIPT_REMOTE:-origin}" >&2
     return 1
@@ -2173,7 +2173,7 @@ forge__base_branch() {
     printf '%s\n' "$RECEIPT_BASE"
     return 0
   fi
-  ref="$(git symbolic-ref --quiet "refs/remotes/${RECEIPT_REMOTE:-origin}/HEAD" 2>/dev/null)" || ref=''
+  ref="$(proc_git symbolic-ref --quiet "refs/remotes/${RECEIPT_REMOTE:-origin}/HEAD" 2>/dev/null)" || ref=''
   if [ -n "$ref" ]; then
     printf '%s\n' "${ref##*/}"
     return 0
