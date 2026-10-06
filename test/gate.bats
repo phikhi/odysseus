@@ -734,6 +734,7 @@ gate_writing_suite() {
     }
     base="$(gate_tree_snapshot)"
     mkdir -p src && printf "written\n" >src/alpha.txt
+    proc_channel_preflight
     gate_run 01-alpha "$base" >/dev/null
     printf "judged=%s\n" "$RALPH_GATE_TREE"'
   assert_success
@@ -3227,6 +3228,7 @@ OUT"
   # impossible — which is exactly the case an eager reading would call empty.
   pack_run '
     mkdir -p src && printf "written\n" >src/alpha.txt
+    proc_channel_preflight
     gate_run 01-alpha "" || true
     printf "verdicts=%s\n" "$RALPH_GATE_VERDICTS"'
   assert_success
@@ -3242,6 +3244,7 @@ OUT"
     mkdir -p src && printf "written\n" >src/alpha.txt
     base="$(gate_tree_snapshot)"
     export RALPH_FRONTIER_PIN=/nonexistent/ralph-pin
+    proc_channel_preflight
     gate_run 01-alpha "$base" || true
     printf "verdicts=%s\n" "$RALPH_GATE_VERDICTS"'
   assert_success
@@ -3954,6 +3957,7 @@ FAKE
   # ([82]), because the scope-guard writes no class at all when what it found has
   # no kind.
   pack_run '
+    proc_channel_preflight
     gate__notes_open "$RALPH_SHIM_STATE"
     rc=0
     gate_note class contract || rc=$?
@@ -3992,6 +3996,7 @@ FAKE
   # whole, and a value over the bound does not arrive at all.
   pack_run '
     d="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    proc_channel_preflight
     gate__notes_open "$d"
     long="$(head -c "$((GATE_NOTE_MAX + 1))" /dev/zero | tr "\0" "x")"
     fits="$(head -c "$GATE_NOTE_MAX" /dev/zero | tr "\0" "x")"
@@ -4035,6 +4040,7 @@ FAKE
   # inherits them where a stranger cannot find them.
   pack_run '
     d="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    proc_channel_preflight
     gate__notes_open "$d"
     printf "left=[%s]\n" "$(ls -A "$d" | tr "\n" " ")"
     GATE_BRANCH_NAME=scope gate_note class internal
@@ -4047,6 +4053,25 @@ FAKE
   # And it really is the channel that carried the answer, not a file read back.
   assert_output_contains "class=[internal]"
   assert_output_contains "still=[]"
+}
+
+@test "a gate whose notes another process opened while they had a name refuses to run" {
+  # [103], at the module: the instant between the notes' `mktemp` and their unlink
+  # is asked about by the shared opener, and a gate whose branches would answer on
+  # a channel a stranger holds does not start them. The refusal says who held it.
+  pack_run 'proc_channel_preflight
+    mkdir -p src && printf "written\n" >src/alpha.txt
+    base="$(gate_tree_snapshot)"
+    '"$(channel_window_held)"'
+    rc=0
+    gate_run 01-alpha "$base" || rc=$?
+    printf "rc=%s\n" "$rc"'
+  kill -KILL "$(cat "$SHIM_STATE/holder.pid" 2>/dev/null)" 2>/dev/null || true
+  assert_success
+  assert_file_exists "$SHIM_STATE/holder.ready"
+  assert_output_contains "rc=1"
+  assert_output_contains "could not open the channel its own branches answer on — it was held by process $(cat "$SHIM_STATE/holder.pid") on its descriptor 7"
+  assert_output_contains "refusing to run it"
 }
 
 @test "a channel that cannot be opened is a gate that refuses to run" {
@@ -4830,6 +4855,12 @@ FAKE
 #          and `compgen -k` call a builtin or a keyword. That exclusion is asked
 #          of bash rather than typed here, and it is [52]'s own criterion: a
 #          builtin is resolved by the shell and never through PATH.
+#   lookup and one place that is not a command position at all: the word handed
+#          literally to `gate_path_where` ([103]). It is resolved through PATH by
+#          name as surely as a command is, and that is the point of it — `lsof`
+#          is resolved that way, once, by the pilot, so that no check ever
+#          launches it by its bare name after a session has had its turn at PATH.
+#          A scan that missed it would call the list one name too wide.
 #
 # It reads `$RALPH_PACK_ROOT` and not the fixture copy, for the reason [62] and
 # [89] both give: the pack's source sits in a tree a judged session writes to, so
@@ -4939,6 +4970,9 @@ path_bare_names() {
       LC_ALL=C sed -E 's/(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+/\1 /g' |
       { LC_ALL=C grep -oE '(^|[;&|({]|\$\()[[:space:]]*[a-z][a-z0-9_.+-]*[[:space:]]' || true; } |
       { LC_ALL=C grep -oE '[a-z][a-z0-9_.+-]*' || true; } >>"$out.raw"
+    awk -f "$RALPH_TEST_DIR/code.awk" "$f" |
+      { LC_ALL=C grep -oE 'gate_path_where[[:space:]]+[a-z][a-z0-9_.+-]*' || true; } |
+      LC_ALL=C sed -E 's/^gate_path_where[[:space:]]+//' >>"$out.raw"
   done <<SOURCES
 $(harness_pack_sources "$root")
 SOURCES

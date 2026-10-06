@@ -360,16 +360,20 @@ LENSES_PROMPT_BACK=6
 # path comes back in a variable instead, the way `proc_group_fork` answers
 # through PROC_GROUP_PID.
 LENSES_PROMPT_PATH=''
+
+# Opened by the shared opener ([103]), which serves the channel only once its name
+# is gone and nothing but this shell holds it. Until then it lived, like the
+# gate's notes and the receipt, on "a stranger cannot find it" — and a process that
+# polls `$TMPDIR` without sleeping finds the name in the instant between the
+# `mktemp` and the unlink every time. A directory this cannot use ends in the
+# opener too, with no file, so that every refusal says its reason the same way.
 lenses__prompt_open() {
-  local dir="$1" file
+  local dir="$1" file=''
   LENSES_PROMPT_PATH=''
-  [ -n "$dir" ] && [ -d "$dir" ] || return 1
-  file="$(mktemp "$dir/prompt.XXXXXX")" || return 1
-  if ! eval "exec $LENSES_PROMPT_FD>\"\$file\" $LENSES_PROMPT_BACK<\"\$file\""; then
-    rm -f "$file"
-    return 1
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    file="$(mktemp "$dir/prompt.XXXXXX")" || file=''
   fi
-  rm -f "$file"
+  proc_channel_open "$LENSES_PROMPT_FD" "$LENSES_PROMPT_BACK" "$file" || return 1
   # The read end named as a path, because `session_spawn` takes a path and opens
   # it: on darwin that is a `dup` of this descriptor, which is what makes it
   # readable at all once the name is gone.
@@ -411,8 +415,8 @@ lenses_review() {
   fi
 
   if ! lenses__prompt_open "$dir"; then
-    printf 'the %s lens could not be handed a prompt no other process can reach — refusing to spend a session on a question this gate cannot vouch for\n' \
-      "$name"
+    printf 'the %s lens could not be handed a prompt no other process can reach — %s — refusing to spend a session on a question this gate cannot vouch for\n' \
+      "$name" "$PROC_CHANNEL_REFUSAL"
     return 1
   fi
   promptfile="$LENSES_PROMPT_PATH"

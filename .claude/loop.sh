@@ -406,6 +406,12 @@ loop_preflight() {
   # preflight is here: a receipt that keeps nothing is the only copy of a review
   # lens's findings, kept at zero.
   receipt_preflight || rc=1
+  # And the one the receipt's channel is served on, with the gate's and every
+  # lens's ([103]): who else holds a channel is asked of `lsof`, resolved here — in
+  # the pilot, before any iteration is forked — so that no check ever looks the
+  # name up after a session has had its turn at the directories on PATH. A machine
+  # without it would refuse every channel, so it is refused here instead.
+  proc_channel_preflight || rc=1
   # And the fourth layer's ([14]). Its keys are the ones that decide whether a
   # night distils anything at all and what a retried session is told — the same
   # reason every other value is refused here rather than clamped.
@@ -661,9 +667,11 @@ loop__iterate() {
   #
   # A receipt that cannot be opened costs the document and never the iteration: an
   # audit surface is what a human reads afterwards, and refusing to deliver work
-  # over it would trade the night for the paperwork.
+  # over it would trade the night for the paperwork. Since [103] a refusal can also
+  # mean that a process opened the channel's file in the instant it had a name, and
+  # then the line says which one.
   receipt_open ||
-    loop_log "$ticket: no audit receipt for this iteration — could not open a channel for one"
+    loop_log "$ticket: no audit receipt for this iteration — could not open a channel for one: $PROC_CHANNEL_REFUSAL"
   receipt_fact iteration "$(cat "$slot/n" 2>/dev/null || printf '?')"
   receipt_fact worktree "$tree"
   receipt_fact provisioned "$provisioned"

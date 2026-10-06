@@ -462,3 +462,180 @@ proc__plant_index_hook() {
   assert_success
   assert_equal "$output" "'ralph.probe=operator'"
 }
+
+# ── a channel nobody else holds ([103]) ──────────────────────────────────────
+#
+# The instant a channel's file has a name — from the module's `mktemp` to the
+# opener's `rm -f` — staged rather than raced. The opener calls `rm` by name, so a
+# function of that name runs in its place, does what a process polling `$TMPDIR`
+# would have done in that instant, and then unlinks the file for real. Every case
+# below is the same staging with one gesture changed, and the first one is the
+# witness that says the staging alone refuses nothing.
+
+channel_staged='
+  proc_channel_preflight
+  work="$(mktemp -d "$RALPH_SHIM_STATE/chan.XXXXXX")"
+  file="$(mktemp "$work/channel.XXXXXX")"
+  last() { local a; for a in "$@"; do :; done; printf "%s\n" "$a"; }
+'
+
+channel_asked='
+  rc=0
+  proc_channel_open 5 4 "$file" || rc=$?
+  printf "rc=%s\n" "$rc"
+  printf "refusal=[%s]\n" "$PROC_CHANNEL_REFUSAL"
+  printf "left=[%s]\n" "$(ls -A "$work" | tr "\n" " ")"
+  if [ -e /dev/fd/5 ]; then printf "write=open\n"; else printf "write=shut\n"; fi
+  if [ -e /dev/fd/4 ]; then printf "read=open\n"; else printf "read=shut\n"; fi
+'
+
+@test "a channel nothing else holds is served, with no name left" {
+  pack_run "$channel_staged"'
+    rm() { command rm "$@"; }
+    '"$channel_asked"'
+    printf "a record\n" >&5
+    IFS= read -r back <&4
+    printf "back=[%s]\n" "$back"'
+  assert_success
+  assert_output_contains "rc=0"
+  assert_output_contains "refusal=[]"
+  assert_output_contains "left=[]"
+  assert_output_contains "write=open"
+  assert_output_contains "read=open"
+  # And it is a channel: what goes in one end comes out of the other.
+  assert_output_contains "back=[a record]"
+}
+
+@test "a channel another process opened in the instant it had a name is refused, and names it" {
+  # The case [103] exists for. The holder is not a descendant of the opener — its
+  # copies of 5 and 4 are closed before it runs, as a process the session left
+  # behind holds nothing of this shell — and it keeps the descriptor it opened by
+  # name once the name is gone, which is what the survivor of `f3` did twelve times
+  # out of twelve.
+  pack_run "$channel_staged
+    $(channel_window_held)
+    $channel_asked"
+  kill -KILL "$(cat "$SHIM_STATE/holder.pid" 2>/dev/null)" 2>/dev/null || true
+  assert_success
+  assert_file_exists "$SHIM_STATE/holder.ready"
+  assert_output_contains "rc=1"
+  assert_output_contains "process $(cat "$SHIM_STATE/holder.pid") on its descriptor 7"
+  assert_output_contains "in the instant between its creation and its unlink"
+  # Refused is both ends closed and no name: nothing of it is left to be used.
+  assert_output_contains "left=[]"
+  assert_output_contains "write=shut"
+  assert_output_contains "read=shut"
+}
+
+@test "a byte written into a channel in that instant is refused, even once its writer let go" {
+  # The holder that does not stay: it opens, writes and closes before anyone looks,
+  # so no listing can find it. What it left is the byte.
+  pack_run "$channel_staged"'
+    rm() {
+      printf "note\tFORGED\n" >>"$(last "$@")"
+      command rm "$@"
+    }
+    '"$channel_asked"
+  assert_success
+  assert_output_contains "rc=1"
+  assert_output_contains "byte(s) were in it before this shell wrote one"
+  assert_output_contains "write=shut"
+  assert_output_contains "read=shut"
+}
+
+@test "a channel whose file kept a name somewhere is refused" {
+  # A second name made in that instant: the unlink takes the one the module chose
+  # and leaves the file reachable by the other, for as long as anybody likes.
+  pack_run "$channel_staged"'
+    rm() {
+      ln "$(last "$@")" "$RALPH_SHIM_STATE/kept"
+      command rm "$@"
+    }
+    '"$channel_asked"
+  assert_success
+  assert_file_exists "$SHIM_STATE/kept"
+  assert_output_contains "rc=1"
+  assert_output_contains "still had a name once it was unlinked"
+  assert_output_contains "write=shut"
+}
+
+@test "a fifo put in place of a channel's name neither hangs the opener nor is served" {
+  # The denial half of the same instant: a write-only open of a fifo nobody reads
+  # never returns. Run in the background with a deadline, because the failure this
+  # covers is a call that does not come back.
+  pack_run_bg "$channel_staged"'
+    command rm -f "$file"
+    mkfifo "$file"
+    rm() { command rm "$@"; }
+    '"$channel_asked"'
+    : >"$RALPH_SHIM_STATE/returned"'
+  wait_for_file "$SHIM_STATE/returned" 200 ||
+    fail "the opener never came back from a fifo: $(cat "$RALPH_TEST_DIR/bg.out")"
+  wait "$PACK_BG_PID" || true
+  local out
+  out="$(cat "$RALPH_TEST_DIR/bg.out")"
+  printf '%s\n' "$out" | grep -q "rc=1" || fail "a fifo was served as a channel: $out"
+  printf '%s\n' "$out" | grep -q "not a regular file but a FIFO" ||
+    fail "the refusal does not say what stood in the file's place: $out"
+}
+
+@test "a check runs the lsof the pilot resolved, never the one PATH answers later" {
+  # What a session can do between two iterations: put an `lsof` of its own in front
+  # of the real one. This one answers nothing — which, read, refuses every channel —
+  # and it leaves a trace if it ever runs.
+  mkdir -p "$SHIM_STATE/planted"
+  cat >"$SHIM_STATE/planted/lsof" <<PLANT
+#!/bin/sh
+: >"$SHIM_STATE/planted.ran"
+PLANT
+  chmod +x "$SHIM_STATE/planted/lsof"
+
+  pack_run "$channel_staged"'
+    PATH="$RALPH_SHIM_STATE/planted:$PATH"
+    printf "resolved=[%s]\n" "$PROC_CHANNEL_LSOF"
+    rm() { command rm "$@"; }
+    '"$channel_asked"
+  assert_success
+  refute_file_exists "$SHIM_STATE/planted.ran"
+  assert_output_contains "rc=0"
+  refute_output_contains "resolved=[$SHIM_STATE/planted/lsof]"
+  refute_output_contains "resolved=[]"
+}
+
+@test "a shell nobody resolved a lister in refuses every channel rather than reads it as checked" {
+  # A unit test driving a lib, or an entry point that skipped the preflight: there
+  # is no answer to who holds the channel, and no answer is not "nobody".
+  pack_run '
+    work="$(mktemp -d "$RALPH_SHIM_STATE/chan.XXXXXX")"
+    file="$(mktemp "$work/channel.XXXXXX")"
+    '"$channel_asked"
+  assert_success
+  assert_output_contains "rc=1"
+  assert_output_contains "answered nothing, so nobody checked"
+  assert_output_contains "left=[]"
+  assert_output_contains "write=shut"
+}
+
+@test "a run on a machine with no lsof is refused before a session is spawned" {
+  # Every channel of such a run would be refused — no receipt, no gate, no lens —
+  # so it is refused at the door instead, where the operator reads why.
+  local entry nolsof='' found=0
+  local IFS=:
+  for entry in $PATH; do
+    if [ -x "$entry/lsof" ]; then
+      found=1
+      continue
+    fi
+    nolsof="${nolsof:+$nolsof:}$entry"
+  done
+  unset IFS
+  [ "$found" = 1 ] || fail "no lsof on this test's PATH, so this test proves nothing: $PATH"
+
+  local saved="$PATH"
+  PATH="$nolsof"
+  run_loop
+  PATH="$saved"
+  assert_failure 2
+  assert_output_contains "lsof is on no PATH directory"
+  assert_equal "$(claude_call_count)" "0"
+}

@@ -973,6 +973,7 @@ DO
     base="$(gate_tree_snapshot)"
     printf "spill\n" >src/eta.txt
     now="$(gate_tree_snapshot)"
+    proc_channel_preflight
     gate__notes_open "$RALPH_SHIM_STATE"
     set +e
     GATE_BRANCH_NAME=scope gate__scope_guard 01-alpha "$base" "$now"
@@ -1002,6 +1003,7 @@ DO
     base="$(gate_tree_snapshot)"
     printf "spill\n" >src/eta.txt
     now="$(gate_tree_snapshot)"
+    proc_channel_preflight
     gate__notes_open "$RALPH_SHIM_STATE"
     set +e
     GATE_BRANCH_NAME=scope gate__scope_guard 01-alpha "$base" "$now"
@@ -2183,6 +2185,7 @@ remote__ceiling_refuses() {
     base="$(gate_tree_snapshot)"
     printf "alpha\n" >src/alpha.txt
     now="$(gate_tree_snapshot)"
+    proc_channel_preflight
     gate__notes_open "$RALPH_SHIM_STATE"
     set +e
     GATE_BRANCH_NAME=scope gate__scope_guard 1-alpha "$base" "$now"
@@ -2213,6 +2216,7 @@ remote__ceiling_refuses() {
     base="$(gate_tree_snapshot)"
     printf "alpha\n" >src/alpha.txt
     now="$(gate_tree_snapshot)"
+    proc_channel_preflight
     gate__notes_open "$RALPH_SHIM_STATE"
     set +e
     GATE_BRANCH_NAME=scope gate__scope_guard 1-alpha "$base" "$now"

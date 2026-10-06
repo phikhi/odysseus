@@ -1240,6 +1240,37 @@ assert_forger_found_nothing() {
   return 0
 }
 
+# The instant a channel's file has a name, staged for `pack_run` rather than raced
+# ([103]): a shell snippet that defines `rm`, which the shared opener calls by name
+# between the module's `mktemp` and the check. In that instant another process
+# opens the file by its name, keeps the descriptor, and only then is the file
+# unlinked for real. The holder is not a descendant in anything but its pid: every
+# descriptor above 2 is closed before it runs, so what it holds is what a process
+# the session left behind would hold — the one it opened. Its pid lands in
+# `$SHIM_STATE/holder.pid`; kill it when the test is done.
+#
+# Once, and then `rm` is `rm` again: the next one a gate makes is a `rm -rf` of a
+# directory, where a holder would wait for a file it can never open.
+channel_window_held() {
+  cat <<'SNIPPET'
+rm() {
+  local a target=''
+  unset -f rm
+  for a in "$@"; do target="$a"; done
+  (
+    n=3
+    c=''
+    while [ "$n" -le 255 ]; do c="$c $n>&-"; n=$((n + 1)); done
+    eval "exec $c"
+    exec bash -c 'exec 7>>"$1"; : >"$2"; exec sleep 30' _ "$target" "$RALPH_SHIM_STATE/holder.ready"
+  ) >/dev/null 2>&1 &
+  printf '%s\n' "$!" >"$RALPH_SHIM_STATE/holder.pid"
+  while [ ! -e "$RALPH_SHIM_STATE/holder.ready" ]; do sleep 0.01; done
+  command rm "$@"
+}
+SNIPPET
+}
+
 # A ticket-open guard nobody can take, which is how a test stages "the tracker
 # refused to open a ticket". It is the cheapest refusal the local backend has:
 # `tracker_local__open_guard_take` waits out its bound and gives up, and nothing

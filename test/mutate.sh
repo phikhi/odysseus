@@ -7020,8 +7020,15 @@ mutation "94 the notes of a fan are never taken" "$GATE" \
   's/^  gate__notes_take\n  return 0\n}/  return 0\n}/m' \
   test/gate.bats "class a branch really measured does arrive"
 
-mutation "94 the file a fan answers on keeps its name" "$GATE" \
-  's/^  rm -f "\$file"\n  return 0\n}/  return 0\n}/m' \
+# Re-aimed by [103], with its two siblings below ("the prompt of a lens", "the
+# evidence is in a place again"): the three channels are opened, unlinked and
+# checked by one function now, so the three entries take the same unlink away and
+# each names its own module's test — one guarantee per channel, one line that
+# carries them all ([101]'s shape). The check of [103] refuses a file that kept its
+# name too, which is why these tests ask for the name and not for the refusal: the
+# channel is refused either way, and what is left in the directory is the finding.
+mutation "94 the file a fan answers on keeps its name" "$PROC" \
+  's/^  rm -f "\$file"\n  if ! proc__channel_alone/  if ! proc__channel_alone/m' \
   test/gate.bats "file a fan answers on has no name"
 
 # Anchored on the function and not on its first guard, and the reason is a VACUOUS
@@ -7078,8 +7085,8 @@ mutation "94 a lens's session keeps the channel open" "$SESSION" \
   's/DISABLE_AUTO_COMPACT=1 proc_exec_bare claude/DISABLE_AUTO_COMPACT=1 claude/' \
   test/gate.bats "review lens's session is not handed"
 
-mutation "94 the prompt of a lens keeps its name" "$LENSES_LIB" \
-  's/^  rm -f "\$file"\n  # The read end named as a path/  # The read end named as a path/m' \
+mutation "94 the prompt of a lens keeps its name" "$PROC" \
+  's/^  rm -f "\$file"\n  if ! proc__channel_alone/  if ! proc__channel_alone/m' \
   test/lenses.bats "no name for another process to rewrite"
 
 mutation "94 a lens is spawned with a prompt anything can rewrite" "$LENSES_LIB" \
@@ -7095,7 +7102,7 @@ mutation "94 a lens is spawned with a prompt anything can rewrite" "$LENSES_LIB"
 # substitution, measured over the suite as 24 writes of 5952 — never reach a
 # document, which is [45] and [70] undone one layer down.
 
-mutation "96 the evidence is in a place again" "$RECEIPT" \
+mutation "96 the evidence is in a place again" "$PROC" \
   's/^  # Before a byte is written, and that is the order rather than a tidy-up: a record\n  # that reached a named file was reachable, and no later unlink takes that back\.\n  rm -f "\$file"\n//m' \
   test/receipt.bats "workspace to forge"
 
@@ -7152,7 +7159,7 @@ mutation "101 the canary's sessions hold the pack's descriptors" "$SESSION" \
 # The receipt says what it does not hold in the same breath as what it does ([24]),
 # and the sentence that claimed only the strong half is what [96] was opened for.
 mutation "101 the document claims more than was closed" "$RECEIPT" \
-  's/, with three exceptions this run did not close:[^\n]*any process of the same user\./. /' \
+  's/, with the exceptions this run did not close:[^\n]*after that check as before it\./. /' \
   test/receipt.bats "says where it was assembled"
 
 mutation "96 the document keeps the claim and drops the reservation" "$RECEIPT" \
@@ -7221,6 +7228,100 @@ mutation "102 the successor inherits the run's git environment" "$SCHEDULER_LIB"
 mutation "102 a configured hook is off the watched list" "$GATE" \
   's/    \x27includeif\\\.\.\*\\\.path\x27 \\\n    \x27hook\\\.\.\*\x27\n/    \x27includeif\\..*\\.path\x27\n/' \
   test/gate.bats "a hook a session configures"
+
+# ── [103] a channel nobody else holds ───────────────────────────────────────
+#
+# One opener for the three channels, and a question asked of `lsof` once the name
+# is gone. The first two entries are the one the ticket asked for by name: the
+# check taken away and the opening left intact, which is the code [96] shipped —
+# the canary has to see it, and so does the unit test that stages a holder.
+
+mutation "103 a channel is served whoever opened it in the instant it had a name" "$PROC" \
+  's/^  if ! proc__channel_alone "\$fd" "\$back"; then\n    eval "exec \$fd>&- \$back<&-"\n    return 1\n  fi\n//m' \
+  test/canary.bats "never served"
+
+mutation "103 the shared opener serves a channel a stranger holds" "$PROC" \
+  's/^  if ! proc__channel_alone "\$fd" "\$back"; then\n    eval "exec \$fd>&- \$back<&-"\n    return 1\n  fi\n//m' \
+  test/proc.bats "opened in the instant it had a name is refused"
+
+# Each answer of the listing, taken away alone. The holder that stays and writes
+# nothing is seen by the `held` line and by nothing else.
+mutation "103 a process holding the channel is not looked for" "$PROC" \
+  's/^      for \(j = 1; j <= n; j\+\+\) if \(K\[j\] == K\[w\] && j != w && j != r\) print "held " P\[j\] " " F\[j\]\n//m' \
+  test/proc.bats "opened in the instant it had a name is refused"
+
+mutation "103 a byte written in that instant is served" "$PROC" \
+  's/^      if \(S\[w\] != "0"\) print "written " S\[w\]\n//m' \
+  test/proc.bats "a byte written into a channel"
+
+mutation "103 a file that kept a name is served" "$PROC" \
+  's/\{ print "unseen"; exit \}/exit/' \
+  test/proc.bats "kept a name somewhere"
+
+mutation "103 a fifo stands in for a channel" "$PROC" \
+  's/^      if \(T\[w\] != "REG"\) \{ print "shape " T\[w\]; exit \}\n//m' \
+  test/proc.bats "fifo put in place"
+
+# A termination condition ([25]'s shape): opened write-only, a fifo nobody reads
+# never lets the opener return. The test carries its own deadline, and its
+# teardown kills what it started.
+mutation "103 a fifo in place of the name hangs the opener" "$PROC" \
+  's/"exec \$fd<>/"exec \$fd>/' \
+  test/proc.bats "fifo put in place"
+
+# Two things in series refuse a listing nobody answered — `silent` when it is
+# empty, `unseen` when this shell is not in it — so this entry takes both: one alone
+# leaves the other refusing, and that redundancy is written in the code rather than
+# found here ([94]).
+mutation "103 a check nobody could make reads as passed" "$PROC" \
+  's/^      if \(n == 0\) \{ print "silent"; exit \}\n//m; s/\{ print "unseen"; exit \}/exit/' \
+  test/proc.bats "nobody resolved a lister in"
+
+mutation "103 a check runs whatever lsof PATH answers now" "$PROC" \
+  's/proc_exec_bare "\$PROC_CHANNEL_LSOF" -w/proc_exec_bare lsof -w/' \
+  test/proc.bats "the lsof the pilot resolved"
+
+# The other direction: a check that refuses what it should serve is a night with
+# no receipt and no gate, on a machine where nothing is wrong.
+mutation "103 every channel is refused" "$PROC" \
+  's/^    \x27\x27\) return 0 ;;\n//m' \
+  test/proc.bats "nothing else holds is served"
+
+mutation "103 a run without lsof starts all the same" "$LOOP" \
+  's/^  proc_channel_preflight \|\| rc=1\n//m' \
+  test/proc.bats "no lsof is refused before a session"
+
+mutation "103 the preflight finds lsof where there is none" "$PROC" \
+  's/^  \[ "\$PROC_CHANNEL_LSOF" = \x27-\x27 \] \|\| return 0\n/  return 0\n/m' \
+  test/proc.bats "no lsof is refused before a session"
+
+mutation "103 lsof is not on the list the witness watches" "$GATE" \
+  's/basename dirname ps sleep uname lsof/basename dirname ps sleep uname/' \
+  test/gate.bats "derived from the pack's source, not retyped"
+
+# Each module going back to opening its own file, unchecked — the shape every one
+# of them had until this ticket. One entry per module, because the guarantee is
+# that each channel is asked about, not that the opener exists.
+mutation "103 the receipt opens its channel without asking who holds it" "$RECEIPT" \
+  's/  proc_channel_open "\$RECEIPT_CHANNEL_FD" "\$RECEIPT_CHANNEL_BACK" "\$file" \|\| return 1/  [ -n "\$file" ] && eval "exec \$RECEIPT_CHANNEL_FD<>\\"\\\$file\\" \$RECEIPT_CHANNEL_BACK<\\"\\\$file\\"" && rm -f "\$file" || return 1/' \
+  test/receipt.bats "while it had a name is not opened"
+
+mutation "103 the gate opens its notes without asking who holds them" "$GATE" \
+  's/  proc_channel_open "\$GATE_NOTES_FD" "\$GATE_NOTES_BACK" "\$file"/  [ -n "\$file" ] && eval "exec \$GATE_NOTES_FD<>\\"\\\$file\\" \$GATE_NOTES_BACK<\\"\\\$file\\"" && rm -f "\$file"/' \
+  test/gate.bats "while they had a name refuses to run"
+
+mutation "103 a lens opens its prompt without asking who holds it" "$LENSES_LIB" \
+  's/  proc_channel_open "\$LENSES_PROMPT_FD" "\$LENSES_PROMPT_BACK" "\$file" \|\| return 1/  [ -n "\$file" ] && eval "exec \$LENSES_PROMPT_FD<>\\"\\\$file\\" \$LENSES_PROMPT_BACK<\\"\\\$file\\"" && rm -f "\$file" || return 1/' \
+  test/lenses.bats "while it had a name is not spawned"
+
+# The lister, launched holding what the shell that asks holds. Written first as a
+# note — "VACUOUS by construction, darwin's lsof closes what it inherits" — and
+# then measured: the honest channel is refused three times out of three, held on
+# 4 and 5 by a process of the listing itself. The bare exec carries the guarantee
+# that nothing but a stranger is ever named.
+mutation "103 the lister holds the channel it is asked about" "$PROC" \
+  's/proc_exec_bare "\$PROC_CHANNEL_LSOF" -w/"\$PROC_CHANNEL_LSOF" -w/' \
+  test/proc.bats "nothing else holds is served"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

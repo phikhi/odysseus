@@ -302,11 +302,13 @@ proc_group_fork() {
 # ([101]). The last thing a forked child does, and nothing else: called from a shell
 # that means to go on, it would close that shell's own channels and then replace it.
 #
-# There are exactly two callers, and they are the two points where this pack hands
-# a program it did not write the descriptors of the shell that forks it: the
-# background child of `session_spawn`, which is every `claude` the pack runs, and
-# the child of `proc_group_fork` above, which is every command line a project
-# wrote — `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`, `VISUAL_CMD` ([95]'s census).
+# There are exactly three callers, and they are the three points where this pack
+# hands a program it did not write the descriptors of the shell that forks it: the
+# background child of `session_spawn`, which is every `claude` the pack runs, the
+# child of `proc_group_fork` above, which is every command line a project wrote —
+# `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`, `VISUAL_CMD` ([95]'s census) — and the
+# `lsof` that `proc__channel_alone` below asks who holds a channel ([103]), which
+# would otherwise be a holder of the very channel it is asked about.
 # What is *not* here is written down so that it reads as a decision: the
 # `*_TOKEN_CMD` lines and the scheduler's submission are commands the operator
 # wrote, not the project and not the session; and a program git runs for the pack
@@ -355,6 +357,220 @@ proc_exec_bare() {
   eval "exec $closers"
   proc_git_hooks_given_back
   exec "$@"
+}
+
+# ── a channel nobody else holds ([103]) ──────────────────────────────────────
+#
+# Three channels of this pack keep what they carry out of a process's reach by
+# having no name: the audit receipt's ([96]), the notes a gate's branches answer on
+# and the prompt a review lens is handed ([94]). Each is a file made by `mktemp`,
+# opened twice — once to write, once to read from offset zero — and unlinked before
+# a byte goes into it, so that the only handles on it are the descriptors of the
+# shell that opened it and of what that shell forks.
+#
+# **Unlinked is not never named, and the difference was measured.** The file has a
+# name from its `mktemp` to its `rm -f`, and that `rm` is an external program: a
+# millisecond or two. A process the judged session left behind, polling `$TMPDIR`
+# in a loop without sleeping, finds the name in that instant, opens it, and keeps
+# the descriptor once the name is gone — on 29/09/2026, twelve openings won out of
+# twelve and 270 forged lines in one receipt, on the code [96] shipped. Nothing
+# about the name closes that. `mktemp` makes it unpredictable, not unlistable; a
+# file mode or an ACL keeps out another user and not this one; a directory made
+# unreadable (`mkdir -m 0300`) stops a process that globs and opens, and not one
+# that knows this pack, which can `chmod u+r` what it owns inside the same window;
+# and a shorter window closes nothing, because a process that loops wins it for as
+# long as it exists. A pipe would have no name at all, and was refused when this
+# was opened: bash 3.2 has neither `coproc` nor `{fd}>`, and a `read` on an empty
+# pipe blocks where every reader of these channels reads to the end of a file.
+#
+# So the channel is asked, once its name is gone, who holds it — and that answer is
+# decisive at that point and at no earlier one. Before the unlink anybody can open
+# the file, on darwin even without its name (`/.vol/<device>/<inode>`, measured).
+# After it, there is no way left to open it — `/.vol` refuses an unlinked inode,
+# measured — so the processes holding it can only become fewer. If this shell is
+# all there is, and the file is still empty, then nothing that used the instant it
+# had a name can reach it, and nothing else ever will. Otherwise both ends are
+# closed, the channel is refused, and the sentence says who held it.
+#
+# **Refused and not reopened**, which is the decision a reader would question
+# first. A process that won the window once wins it every time — it loops, and the
+# window is as wide on the second try — so a retry would only hand it the next file.
+# What a refusal costs is a receipt, a gate or a lens, and the three callers already
+# handle a channel they could not have; what it saves is a forged one.
+#
+# Four ways the window was used, and one listing answers all of them:
+#
+#   held      another process holds the file — the reason this exists
+#   written   it is not empty: something wrote into it while it had a name and let
+#             go of its descriptor before anyone looked
+#   unseen    this shell's two descriptors are not among the files `lsof +L1`
+#             reports, which are the open files with no name left: the file still
+#             has one — linked or renamed while it had one, so the unlink took
+#             nothing back
+#   shape     it is not a regular file: its name was replaced between the `mktemp`
+#             and the open. A fifo, and that is also why the write end is opened
+#             read-write — a write-only open of a fifo nobody reads never returns,
+#             and a denial is a defect too
+#
+# What it cannot see, written where it is claimed. A process of another user,
+# whose descriptors this user cannot list — root, which needs no window. A
+# descriptor in flight in a socket message at the instant of the listing, held by
+# no process until it is received: not measured. And on Linux, `/proc/<pid>/fd/N`,
+# which reopens an unlinked file for any process of this user *after* the listing:
+# there, this stops the process that polls `$TMPDIR` and not one that knows this
+# pack. The zone it excludes — the two descriptors of the shell that opened the
+# channel — is kept by that shell, and from what it forks by `proc_exec_bare`
+# ([101]); what git runs from it is [104]'s.
+
+# Where `lsof` is, resolved once by the pilot and never by its bare name at the
+# moment of a check. A check runs inside an iteration, a gate branch or a lens:
+# shells forked from a pilot that would otherwise never have looked the name up, so
+# each would walk PATH afresh, after a session had had its turn at the directories
+# on it — and a session that put an `lsof` in front of the real one would answer
+# every check after it. A name resolved before the first session exists is one no
+# session can put a program in front of. What a session can still do is rewrite
+# the file the name resolved to, where it can write there, and that is [91]'s
+# witness — `lsof` is on its list — and [91]'s bound: said, and charged to the
+# successor, not undone for the iterations left in this run.
+PROC_CHANNEL_LSOF=''
+
+# Why the last channel was refused, as a clause its caller says where it says
+# things — a receipt's on the run's output, a gate's through `gate__say`, a lens's
+# in its findings. Empty after a channel was served.
+PROC_CHANNEL_REFUSAL=''
+
+# A refusal at the door, on a machine with no `lsof`, rather than channels that are
+# never checked: a check that cannot run must not read as one that passed ([31]).
+# Darwin ships it; a Linux without it is told to install it. Called by
+# `loop_preflight`, in the pilot, before any iteration is forked — which is what
+# makes the resolution the pilot's. A shell that never called it has no lister,
+# and every channel it opens is refused: the lister answers nothing, so nobody
+# checked.
+proc_channel_preflight() {
+  PROC_CHANNEL_LSOF="$(gate_path_where lsof)"
+  [ "$PROC_CHANNEL_LSOF" = '-' ] || return 0
+  PROC_CHANNEL_LSOF=''
+  printf 'ralph: lsof is on no PATH directory — every time this pack opens a channel no other process may hold (an audit receipt, the notes of a gate, the prompt of a review lens), it asks lsof whether anything outside the shell that opened it does, and refuses the channel otherwise. Without lsof every one of them would be refused: install it and start the run again\n' >&2
+  return 1
+}
+
+# Open FILE as a channel — FD to write, BACK to read from offset zero — unlink it,
+# and serve it only if this shell is alone with it. FILE is the module's own
+# `mktemp`, made where that module names its files, so the names stay where [62]'s
+# census reads them; an empty FILE is a `mktemp` that failed, refused here so that
+# every refusal reads the same.
+#
+# Zero only when all of that is true, which is the guarantee a test can hold it to:
+# it never reports a channel it did not open, unlink and find alone. Otherwise both
+# ends are closed, the name is gone, and PROC_CHANNEL_REFUSAL says why.
+#
+# The numbers are literal digits because bash 3.2 has no `{var}>`; they are spent
+# through `eval`, here and in the module that closes them, and checked first
+# because that `eval` is the one place a stray word would become code.
+proc_channel_open() {
+  local fd="${1:-}" back="${2:-}" file="${3:-}"
+  PROC_CHANNEL_REFUSAL=''
+  case "$fd:$back" in
+    *[!0-9:]* | :* | *:)
+      PROC_CHANNEL_REFUSAL="it was asked for on descriptors that are not numbers ($fd, $back)"
+      return 1
+      ;;
+  esac
+  if [ -z "$file" ]; then
+    PROC_CHANNEL_REFUSAL='no file could be made for it'
+    return 1
+  fi
+  if ! eval "exec $fd<>\"\$file\" $back<\"\$file\""; then
+    rm -f "$file"
+    PROC_CHANNEL_REFUSAL='its file could not be opened'
+    return 1
+  fi
+  # Before a byte is written, and that is the order rather than a tidy-up: a record
+  # that reached a named file was reachable, and no later unlink takes that back.
+  rm -f "$file"
+  if ! proc__channel_alone "$fd" "$back"; then
+    eval "exec $fd>&- $back<&-"
+    return 1
+  fi
+  return 0
+}
+
+# Whether this shell is alone with the file it holds on FD and BACK, asked of
+# `lsof +L1` — every open file with no name left — and answered in
+# PROC_CHANNEL_REFUSAL. Zero when the file is a regular one, still empty, and held
+# by nothing but those two descriptors of this shell.
+#
+# The listing is taken with nothing of this shell open but the three standard
+# descriptors, and read only once it is finished, and both are the check rather
+# than hygiene: anything that runs *during* the listing and inherited the channel —
+# the subshell of a command substitution, an `awk` reading a pipe from it — is a
+# second holder of it, measured, and would refuse every channel this pack opens.
+# So `lsof` is exec'd bare in the child, and the `awk` that reads its answer starts
+# after it has returned.
+proc__channel_alone() {
+  local fd="$1" back="$2" listing='' verdict word pid held holders='' written=''
+  proc_self
+  if [ -n "$PROC_CHANNEL_LSOF" ]; then
+    listing="$(proc_exec_bare "$PROC_CHANNEL_LSOF" -w -n -P +L1 -F pftsDi 2>/dev/null)" ||
+      true
+  fi
+  verdict="$(printf '%s\n' "$listing" | awk -v self="$PROC_SELF" -v fd="$fd" -v back="$back" '
+    function flush() {
+      if (f != "") { n++; P[n] = p; F[n] = f; T[n] = t; S[n] = s; K[n] = d ":" i }
+      f = ""; t = ""; s = ""; d = ""; i = ""
+    }
+    /^p/ { flush(); p = substr($0, 2); next }
+    /^f/ { flush(); f = substr($0, 2); next }
+    /^t/ { t = substr($0, 2); next }
+    /^s/ { s = substr($0, 2); next }
+    /^D/ { d = substr($0, 2); next }
+    /^i/ { i = substr($0, 2); next }
+    END {
+      flush()
+      if (n == 0) { print "silent"; exit }
+      for (j = 1; j <= n; j++) {
+        if (P[j] == self && F[j] == fd) w = j
+        if (P[j] == self && F[j] == back) r = j
+      }
+      if (!w || !r || K[w] != K[r]) { print "unseen"; exit }
+      if (T[w] != "REG") { print "shape " T[w]; exit }
+      for (j = 1; j <= n; j++) if (K[j] == K[w] && j != w && j != r) print "held " P[j] " " F[j]
+      if (S[w] != "0") print "written " S[w]
+    }')"
+  case "$verdict" in
+    '') return 0 ;;
+    silent)
+      PROC_CHANNEL_REFUSAL="the lister that says who holds it (${PROC_CHANNEL_LSOF:-none was resolved for this run}) answered nothing, so nobody checked"
+      return 1
+      ;;
+    unseen)
+      PROC_CHANNEL_REFUSAL='its file still had a name once it was unlinked — something linked or renamed it while it had one — so the unlink took nothing back'
+      return 1
+      ;;
+    shape*)
+      PROC_CHANNEL_REFUSAL="it was not a regular file but a ${verdict#shape } — something put that in place of its name before it was opened"
+      return 1
+      ;;
+  esac
+  # Who held it first, when anybody still does: that is the sentence a human can
+  # act on. What was already written is said after it, and alone when its writer
+  # let go before the listing.
+  while read -r word pid held; do
+    case "$word" in
+      held) holders="${holders:+$holders, }process $pid on its descriptor $held" ;;
+      written) written="$pid" ;;
+    esac
+  done <<VERDICT
+$verdict
+VERDICT
+  if [ -n "$holders" ]; then
+    PROC_CHANNEL_REFUSAL="it was held by $holders once its name was gone — opened in the instant between its creation and its unlink, which is what a process polling \$TMPDIR in a loop does"
+    [ -z "$written" ] ||
+      PROC_CHANNEL_REFUSAL="$PROC_CHANNEL_REFUSAL, and $written byte(s) were in it already"
+  else
+    PROC_CHANNEL_REFUSAL="$written byte(s) were in it before this shell wrote one — something wrote into it in the instant it had a name"
+  fi
+  return 1
 }
 
 # ── the hooks git runs for this pack ([102]) ─────────────────────────────────

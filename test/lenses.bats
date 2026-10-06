@@ -193,6 +193,7 @@ FAKE
     lenses_rubric_perf() { printf "**Perf.** Is anything obviously quadratic?\n"; }
     base="$(gate_tree_snapshot)"
     mkdir -p src && printf "written\n" >src/plain.txt
+    proc_channel_preflight
     gate_run 01-plain "$base" >/dev/null
     printf "verdicts=%s\n" "$RALPH_GATE_VERDICTS"'
   assert_success
@@ -363,6 +364,7 @@ lens_diff_headers() {
   # not a directory entry.
   pack_run '
     d="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    proc_channel_preflight
     lenses__prompt_open "$d"
     printf "left=[%s]\n" "$(ls -A "$d" | tr "\n" " ")"
     case "$LENSES_PROMPT_PATH" in
@@ -390,6 +392,24 @@ lens_diff_headers() {
     printf "rc=%s\n" "$?"'
   assert_output_contains "rc=1"
   assert_output_contains "could not be handed a prompt no other process can reach"
+}
+
+@test "a lens whose prompt another process opened while it had a name is not spawned" {
+  # [103], at the module: the prompt is the instruction handed to the judge, and a
+  # process holding its write end could put its own question in front of it. The
+  # shared opener refuses the channel, and the lens refuses with the reason.
+  pack_run 'proc_channel_preflight
+    dir="$(mktemp -d "$RALPH_SHIM_STATE/gate.XXXXXX")"
+    '"$(channel_window_held)"'
+    rc=0
+    lenses_review standards 01-alpha basetree nowtree "$dir" || rc=$?
+    printf "rc=%s\n" "$rc"'
+  kill -KILL "$(cat "$SHIM_STATE/holder.pid" 2>/dev/null)" 2>/dev/null || true
+  assert_success
+  assert_file_exists "$SHIM_STATE/holder.ready"
+  assert_output_contains "rc=1"
+  assert_output_contains "could not be handed a prompt no other process can reach — it was held by process $(cat "$SHIM_STATE/holder.pid") on its descriptor 7"
+  assert_equal "$(claude_call_count)" "0"
 }
 
 @test "an iteration that changed nothing never reaches a lens" {
@@ -422,6 +442,7 @@ lens_diff_headers() {
     mkdir -p src && printf "written\n" >src/plain.txt
     tree="$(gate_tree_snapshot)"
     dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-lens-test.XXXXXX")"
+    proc_channel_preflight
     lenses_review standards 01-plain "$tree" "$tree" "$dir" || printf "rc=%s\n" "$?"
     rm -rf "$dir"'
   assert_success
