@@ -288,6 +288,7 @@ script_session_writing_prose() {
   # call the name a branch would have given it — the two things `gate__branch`
   # does around a callee.
   pack_run '
+    proc_channel_preflight
     gate__notes_open "$RALPH_SHIM_STATE"
     base="$(gate_tree_snapshot)"
     mkdir -p .claude src
@@ -323,7 +324,7 @@ script_session_writing_prose() {
 
   # `rc=0; … || rc=$?` and not a bare call: pack_run runs under `set -e`, so a red
   # branch would take the whole process down before it printed anything.
-  pack_run "gate__notes_open '$SHIM_STATE'; rc=0; GATE_BRANCH_NAME=lang lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" || rc=\$?; printf 'rc=%s\n' \"\$rc\"; gate__notes_take; gate_noted lang zone"
+  pack_run "proc_channel_preflight; gate__notes_open '$SHIM_STATE'; rc=0; GATE_BRANCH_NAME=lang lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\" || rc=\$?; printf 'rc=%s\n' \"\$rc\"; gate__notes_take; gate_noted lang zone"
   assert_success
   assert_output_contains "rc=1"
   # Named readably, which is the half a human acts on: the finding is useless if
@@ -348,7 +349,7 @@ script_session_writing_prose() {
   mkdir -p "$PROJECT_DIR/docs"
   lang_french >"$PROJECT_DIR/$(printf 'docs/a\tb.md')"
 
-  pack_run "gate__notes_open '$SHIM_STATE'; GATE_BRANCH_NAME=lang lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\"; printf 'rc=%s\n' \"\$?\"; gate__notes_take; gate_noted lang zone"
+  pack_run "proc_channel_preflight; gate__notes_open '$SHIM_STATE'; GATE_BRANCH_NAME=lang lang_check 01-alpha '$base' \"\$(gate_tree_snapshot)\"; printf 'rc=%s\n' \"\$?\"; gate__notes_take; gate_noted lang zone"
   assert_success
   assert_output_contains "rc=0"
   assert_output_contains "could not address 1"

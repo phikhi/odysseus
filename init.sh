@@ -275,7 +275,7 @@ init__load_pack() {
 # What `loop.sh` refuses to start on, asked of `loop.sh` rather than retyped.
 #
 # A refusal is a `<name>_preflight` called as a bare command whose failure ends
-# the run — `gate_path_preflight || exit 2` before the locks, the eight inside
+# the run — `gate_path_preflight || exit 2` before the locks, the nine inside
 # `loop_preflight` — and that shape is what this reads. `tracker_preflight` is
 # invoked as a command substitution and is therefore not in the set, which is
 # correct and not luck: it *reports findings* about the tracker's contents and

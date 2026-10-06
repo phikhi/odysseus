@@ -641,11 +641,94 @@ FAKE
   refute_file_contains "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/02-beta.md" "FORGED"
 }
 
-# ── the known hole, waiting for its ticket ───────────────────────────────────
+@test "the canary: a channel a process left behind opened in the instant it had a name is never served" {
+  # [103]. The receipt's channel ([96]) and the notes a gate's branches answer on
+  # ([94]) each have a name from their `mktemp` to their unlink, and that unlink is
+  # an external `rm`: a millisecond or two. The survivor is the one of the probe
+  # that found it — `nohup`, `trap "" TERM`, a loop over `$TMPDIR` with no sleep in
+  # it — and it does what a forger does: opens what it finds, hands the descriptor
+  # to a writer that keeps appending records long after the name is gone. On the
+  # code [96] shipped it won twelve openings out of twelve and put 270 lines in one
+  # receipt.
+  #
+  # It still wins the instant — a name is a name — and that is asserted first, or
+  # everything after it would be true for the wrong reason ([80]). What it no longer
+  # gets is a channel: the opener asks `lsof`, once the name is gone, who else holds
+  # the file, and refuses it. So the iterations it reached have no receipt, or a
+  # gate that would not run, and the run says which writer held it — on its output,
+  # since there is no receipt to say it in.
+  #
+  # Each name is tried once. `exec 7>>` creates what it does not find, so a name
+  # the pack unlinked between the glob and the open comes back as a file of the
+  # survivor's own — and a survivor that tried it again on every turn would start a
+  # writer on every turn, which is a fork bomb and not a forger.
+  use_tickets 01-alpha
+  set_config RETRY_N 2
+  set_config STERILE_K 4
+  stub_exit tests 1
+  printf 'FAIL: 3 of 12 tests failed in src/alpha\n' >"$SHIM_STATE/stub-tests.out"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  end=$((SECONDS + 60))
+  tried=""
+  while [ "$SECONDS" -lt "$end" ]; do
+    for d in "$TMPDIR"/ralph-receipt.* "$TMPDIR"/ralph-gate.*/notes.*; do
+      [ -f "$d" ] || continue
+      case "$tried" in *"<$d>"*) continue ;; esac
+      tried="$tried<$d>"
+      if exec 7>>"$d"; then
+        (
+          k=0
+          while [ "$k" -lt 400 ]; do
+            printf "note\tFORGED-THROUGH-THE-CREATION-WINDOW\n" >&7
+            printf "scope\tclass\tcontract\n" >&7
+            sleep 0.05
+            k=$((k + 1))
+          done
+        ) &
+        printf "%s %s\n" "$!" "$d" >>"$RALPH_SHIM_STATE/window.held"
+        exec 7>&-
+      fi
+    done
+  done
+' >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+SCRIPT
 
-@test "the canary: a process the judged session left behind cannot open a channel in the instant it has a name" {
-  skip "known hole, ticket [103]: the four channels this pack keeps out of reach by unlinking their file — the receipt's ([96]), the gate's notes ([94]), a lens's prompt ([94]) and, once it lands, the slot ([98]) — each have a name from their mktemp to their rm -f, and that rm is an external program: a millisecond or two. A process the judged session left behind, polling \$TMPDIR in a loop without sleeping, opens the file in that instant every time and keeps the descriptor after the name is gone. Measured on 29/09/2026 against the code [96] shipped: twelve openings won out of twelve, and 270 forged lines in one receipt. No name and no file mode keeps a process of the same user out of it; raising this skip is an acceptance criterion of [103]."
+  run_loop_own_tmp
+  local status_of_run="$status" run_said="$output" writer named=0
+  pkill -KILL -f 'FORGED-THROUGH-THE-CREATION-WINDOW' 2>/dev/null || true
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+  [ "$status_of_run" = 0 ] || fail "the run itself failed ($status_of_run): $output"
+
+  # The window was there, and the survivor was in it.
+  assert_file_exists "$SHIM_STATE/window.held"
+
+  # Nothing it wrote reached a document, and nothing it said decided anything.
+  if grep -rq 'FORGED-THROUGH-THE-CREATION-WINDOW' "$PROJECT_DIR/receipts" 2>/dev/null; then
+    fail "a line the survivor wrote through the creation window is in a receipt: $(grep -rl FORGED-THROUGH "$PROJECT_DIR/receipts")"
+  fi
+  assert_ticket_status 01-alpha ready-for-human
+  refute_file_contains "$FEATURE_DIR/run.log" "contract"
+
+  # And the refusal names the process that held the channel: one of the writers
+  # the survivor started, by its pid.
+  while read -r writer _; do
+    [ -n "$writer" ] || continue
+    case "$run_said" in
+      *"process $writer on its descriptor 7"*) named=1 ;;
+    esac
+  done <"$SHIM_STATE/window.held"
+  [ "$named" = 1 ] ||
+    fail "no refusal the run said names a writer the survivor started ($(tr '\n' ' ' <"$SHIM_STATE/window.held")): $(printf '%s\n' "$run_said" | grep -i 'channel' || true)"
 }
+
+# ── the known hole, waiting for its ticket ───────────────────────────────────
 
 @test "the canary: a hook a session configures never runs for a sibling iteration in flight" {
   skip "known hole, ticket [104]: since git 2.5x a hook can be configured — hook.<name>.command and hook.<name>.event — and core.hooksPath, which [102] hands every git of a run, does nothing to it; git has no switch that turns every name off, and the name is the session's. [46]'s put-back removes the key as soon as the session is gone, which holds at MAX_PARALLEL=1 and nowhere above it: a sibling already past its own put-back runs it with its descriptors. Measured on 01/10/2026 at MAX_PARALLEL=2: fourteen forged lines in the sibling's receipt, its gate notes' write end open. The same descriptors reach anything git runs for the pack from the operator's ~/.gitconfig, which no unset of this repository reaches — 24 forged lines from a configured hook, 204 from a core.fsmonitor, at MAX_PARALLEL=1. Raising this skip is an acceptance criterion of [104]."

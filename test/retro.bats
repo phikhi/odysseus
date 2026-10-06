@@ -378,6 +378,7 @@ retro_on() {
 
   printf 'findings from the standards lens on alpha\n' >"$RALPH_TEST_DIR/branch.out"
   pack_run "retro_open
+    proc_channel_preflight
     receipt_open
     receipt_keep_branch standards '$RALPH_TEST_DIR/branch.out'
     retro_keep_brief 01-alpha

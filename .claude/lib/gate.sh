@@ -2156,6 +2156,10 @@ gate_frontier_residue() {
 # carried — `bash`, `sh`, `chmod`, `cmp`, `rmdir` — and two it carried for call
 # sites this pack does not have, `diff` and `touch`. `bash` is the one that
 # mattered: the four commands a project's verdict is made of go through it.
+# [103] widened what the test reads by one shape and not the criterion: a name
+# handed literally to `gate_path_where` is resolved through PATH as surely as one
+# in a command position, and `lsof` is resolved that way so that it never is in
+# one.
 #
 # Bash **builtins are absent, and that is the criterion rather than an omission**:
 # `printf`, `read`, `test`, `[`, `kill`, `cd`, `pwd`, `command` and `wait` are
@@ -2194,6 +2198,13 @@ gate_frontier_residue() {
 #   ps sleep
 #   uname               which chain this platform gets, and therefore whether a
 #                       successor survives a reboot.
+#   lsof                who else holds a channel this pack keeps out of reach
+#                       ([103]) — the one name here that is never launched by
+#                       its bare name: the pilot resolves it once, through
+#                       `gate_path_where`, and every check runs that path.
+#                       Resolved by name all the same, so a plant in front of
+#                       it before the run, or a rewrite of the file it resolved
+#                       to during it, is the same event as for `git`.
 #
 # A call site added to this pack in a program not on this list reopens the hole
 # with nothing to notice it. **That debt is the one [91] paid on this list**: the
@@ -2204,7 +2215,7 @@ gate_path_programs() {
   printf '%s\n' \
     git claude bash sh at systemd-run curl date cksum awk sed grep tr cut sort \
     uniq head tail wc cat find ls cmp mktemp rm rmdir cp mv mkdir chmod \
-    basename dirname ps sleep uname
+    basename dirname ps sleep uname lsof
   return 0
 }
 
@@ -3464,7 +3475,12 @@ SCOPE
 # (once to write, once to read from offset zero) and unlinks it before a byte is
 # written. From then on the only handles on that inode are the two descriptors
 # this shell holds: a branch is a subshell, so it inherits them, and `gate_noted`
-# reads them back out here, in the shell that forked it.
+# reads them back out here, in the shell that forked it. "From then on" is the
+# whole claim, and until [103] it was taken for more: between the `mktemp` and the
+# unlink the file has a name, and a process that polls `$TMPDIR` without sleeping
+# opens it in that instant every time. The channel is served now only once the
+# unlink is done and `lsof` shows nothing but this shell holding it
+# (`proc_channel_open`); otherwise the gate refuses to run, and says who held it.
 #
 # Two ends and not one, because a descriptor cannot be rewound and `/dev/fd/N` is
 # a `dup` on darwin — it shares the offset of whatever it was duplicated from.
@@ -3505,26 +3521,24 @@ GATE_NOTES=''
 gate__notes_open() {
   local dir="$1" file
   GATE_NOTES=''
-  [ -n "$dir" ] && [ -d "$dir" ] || return 1
-  # A `mktemp` name rather than a fixed one, for the few microseconds the name
-  # exists: `$dir` is enumerable, and a fixed `$dir/notes` is a name a watching
-  # process can create first. It would not get to forge anything — it never sees
-  # the descriptors — but a symlink or a fifo planted there would send this
-  # channel somewhere else or block the gate on an open that never returns, and
-  # a denial is still a defect. Not a line in `gate_tmp_names`: it is not at the
-  # top level of `$TMPDIR`, and it is gone before the next statement.
+  # A `mktemp` name rather than a fixed one: `$dir` is enumerable, and a fixed
+  # `$dir/notes` is a name a watching process can create first. What an
+  # unpredictable name does not buy is the instant it exists, which a process
+  # polling `$TMPDIR` sees every time — that is the shared opener's to answer
+  # ([103]). Not a line in `gate_tmp_names`: it is not at the top level of
+  # `$TMPDIR`, and it is gone before the opener returns.
   #
-  # Three things in series refuse a directory this cannot use — the guard above,
-  # this `mktemp`, and the `exec` below — so no single one of them can be mutated
-  # to remove the refusal. The guarantee a test can hold this to is the one at the
-  # end: it never reports success without having opened the channel.
-  file="$(mktemp "$dir/notes.XXXXXX")" || return 1
-  if ! eval "exec $GATE_NOTES_FD>\"\$file\" $GATE_NOTES_BACK<\"\$file\""; then
-    rm -f "$file"
-    return 1
+  # Three things in series refuse a directory this cannot use — the guard below,
+  # this `mktemp`, and the opener's own `exec` — so no single one of them can be
+  # mutated to remove the refusal. Each of them ends in the opener, with no file,
+  # so that its sentence is the one the gate says. The guarantee a test can hold
+  # this to is the opener's: it never reports a channel it did not open, unlink and
+  # find alone.
+  file=''
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    file="$(mktemp "$dir/notes.XXXXXX")" || file=''
   fi
-  rm -f "$file"
-  return 0
+  proc_channel_open "$GATE_NOTES_FD" "$GATE_NOTES_BACK" "$file"
 }
 
 gate__notes_close() {
@@ -4294,7 +4308,7 @@ gate_run() {
   # that decides the retry budget would silently stop deciding it.
   if ! gate__notes_open "$dir"; then
     rm -rf "$dir"
-    gate__say "$ticket: this gate could not open the channel its own branches answer on — refusing to run it"
+    gate__say "$ticket: this gate could not open the channel its own branches answer on — ${PROC_CHANNEL_REFUSAL:-its directory could not hold one} — refusing to run it"
     return 1
   fi
 

@@ -86,3 +86,10 @@ le fichier qu'il trouve (`exec 7>>`) et écrit dessus ensuite. Rendu :
 Même forme, par construction, pour les notes du gate et le prompt d'une lentille
 (`mktemp` dans `ralph-gate.*`), et pour le canal que [98] prévoyait. File
 revalidée par Philippe le 29/09 : **[101] → [102] → [103] → [98] → [99] → [100]**.
+
+**Rejouée sur la branche de [103] (06/10/2026)** : **12 fenêtres gagnées, 0 ligne
+forgée** dans le reçu. Le survivant ouvre toujours le fichier dans l'instant où il a
+un nom ; le canal n'est plus servi — l'ouvreur partagé (`proc_channel_open`) demande
+à `lsof +L1`, après le délien, qui le tient, et refuse. Défaut connu de l'instrument :
+`exec 7>>` recrée un nom délié entre le glob et l'ouverture, et le tour suivant le
+revoit — le canari de [103] n'essaie chaque nom qu'une fois.

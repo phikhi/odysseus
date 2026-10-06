@@ -83,20 +83,26 @@
 # lens each try to write a record on every number they could hold, and none of them
 # may find one that takes it.
 #
-# What this does **not** close, said where it is claimed. The file has a name from
-# its `mktemp` to its `rm -f` below — an external `rm`, a millisecond or two — and
-# a process that polls `$TMPDIR` in a loop opens it in that instant at every
-# opening and keeps the descriptor: measured on 29/09/2026, 270 forged lines in one
-# receipt on the code [96] shipped ([103]). A program git runs *for* this pack is
-# exec'd by git from this very shell and holds these descriptors: since [102] no
-# git of the run reads the hook directory, but a hook a session *configures*
-# (`hook.<name>.command`) is not a directory, and a sibling iteration past its own
-# put-back runs it — fourteen forged lines in a sibling's receipt at
+# The file has a name from its `mktemp` to its unlink — an external `rm`, a
+# millisecond or two — and a process that polls `$TMPDIR` in a loop opens it in
+# that instant at every opening and keeps the descriptor: measured on 29/09/2026,
+# 270 forged lines in one receipt on the code [96] shipped. **This paragraph listed
+# that as a hole until [103]**, and the channel is now served only once `lsof` has
+# shown, after the unlink, that nothing but this shell holds the file and that
+# nothing was written into it while it had a name; otherwise there is no receipt
+# for that iteration, and the run's output says which process held its channel
+# (`proc_channel_open`, where the reasons and the limits are written).
+#
+# What this does **not** close, said where it is claimed. A program git runs *for*
+# this pack is exec'd by git from this very shell and holds these descriptors:
+# since [102] no git of the run reads the hook directory, but a hook a session
+# *configures* (`hook.<name>.command`) is not a directory, and a sibling iteration
+# past its own put-back runs it — fourteen forged lines in a sibling's receipt at
 # MAX_PARALLEL=2 — as git runs anything the operator's `~/.gitconfig` names, which
 # no unset of this repository reaches ([104]). And on a system that names another
 # process's descriptors by path, Linux's `/proc/<pid>/fd`, an unlinked file can be
-# reopened by any process of the same user. None of the three was measured away
-# here; the first two were measured *in*.
+# reopened by any process of the same user, after the check of [103] as before it.
+# Neither was measured away here; the first was measured *in*.
 #
 # What that costs is written down rather than papered over: a ticket delivered on
 # its third attempt has two earlier receipts and this one, and nothing here counts
@@ -179,30 +185,25 @@ receipt_preflight() {
   return 0
 }
 
-# A `mktemp` name rather than a fixed one for the few microseconds the name exists:
-# `$TMPDIR` is enumerable, and a fixed name is one a watching process can create
-# first. It would forge nothing — it never sees the descriptors — but a symlink or a
-# fifo planted there would send the channel elsewhere or hang the open, and a denial
-# is a defect too. Still a line in `gate_tmp_names`, which derives from this very
-# call ([62]): the name is composed at the top level of `$TMPDIR`, and that list is
-# about what a call can compose, not about how long it lasts.
+# A `mktemp` name rather than a fixed one: `$TMPDIR` is enumerable, and a fixed name
+# is one a watching process can create first. What an unpredictable name does not
+# buy is the instant it exists — a process polling `$TMPDIR` without sleeping sees
+# it every time — and that is the shared opener's to answer ([103]): this module
+# makes the name, `proc_channel_open` opens, unlinks and asks who else holds it.
+# Still a line in `gate_tmp_names`, which derives from this very call ([62]): the
+# name is composed at the top level of `$TMPDIR`, and that list is about what a call
+# can compose, not about how long it lasts.
 #
-# Three things in series refuse a channel this cannot have — the `mktemp`, the
-# `exec` and the unlink — and the guarantee a test can hold this to is at the end:
-# it never reports success without a channel open and unlinked.
+# The guarantee a test can hold this to is the opener's: it never reports a
+# receipt whose channel was not opened, unlinked and found alone. Why it was
+# refused is in PROC_CHANNEL_REFUSAL, for the caller to say.
 receipt_open() {
   local file
   RALPH_RECEIPT=''
   RECEIPT_STORE=''
   RECEIPT_LEVEL=''
-  file="$(mktemp "${TMPDIR:-/tmp}/ralph-receipt.XXXXXX")" || return 1
-  if ! eval "exec $RECEIPT_CHANNEL_FD>\"\$file\" $RECEIPT_CHANNEL_BACK<\"\$file\""; then
-    rm -f "$file"
-    return 1
-  fi
-  # Before a byte is written, and that is the order rather than a tidy-up: a record
-  # that reached a named file was reachable, and no later unlink takes that back.
-  rm -f "$file"
+  file="$(mktemp "${TMPDIR:-/tmp}/ralph-receipt.XXXXXX")" || file=''
+  proc_channel_open "$RECEIPT_CHANNEL_FD" "$RECEIPT_CHANNEL_BACK" "$file" || return 1
   RECEIPT_LEVEL="${BASH_SUBSHELL:-0}"
   RALPH_RECEIPT='open'
   return 0
@@ -633,7 +634,7 @@ receipt_render() {
   # And where it was *assembled*, which until [96] this paragraph did not say and
   # the head of `lib/receipt.sh` got wrong ([24]: named on every iteration, not
   # once in a document somebody has to go and find).
-  printf 'Assembled nowhere a name reaches: the evidence above was held in a variable of the shell that measured this iteration and on a descriptor of a file unlinked before a byte was written to it, and every program this run launched without having written it — the session, the project'"'"'s commands — was started holding nothing but its stdin, stdout and stderr. So neither the session this receipt is about nor anything it left running could reach it, with three exceptions this run did not close: a process that opens that file in the instant between its creation and its unlink, which one polling `$TMPDIR` in a loop does at every opening and keeps ([103]); a program git runs for this run out of configuration a session wrote — a configured hook (`hook.<name>.command`), which a sibling iteration still in flight can run before its own put-back, or any key of the operator'"'"'s `~/.gitconfig` that names a program, which no unset in this repository reaches ([104]); the hook *directory* is read by no git of this run ([102]); and, on a system that names another process'"'"'s descriptors by path such as Linux'"'"'s `/proc`, any process of the same user.\n\n'
+  printf 'Assembled nowhere a name reaches: the evidence above was held in a variable of the shell that measured this iteration and on a descriptor of a file unlinked before a byte was written to it — a file used only once `lsof` had shown, after the unlink, that nothing but that shell held it and that nothing had been written into it in the instant it had a name ([103]) — and every program this run launched without having written it — the session, the project'"'"'s commands — was started holding nothing but its stdin, stdout and stderr. So neither the session this receipt is about nor anything it left running could reach it, with the exceptions this run did not close: a program git runs for this run out of configuration a session wrote — a configured hook (`hook.<name>.command`), which a sibling iteration still in flight can run before its own put-back, or any key of the operator'"'"'s `~/.gitconfig` that names a program, which no unset in this repository reaches ([104]); the hook *directory* is read by no git of this run ([102]); a descriptor in flight between two processes in a socket message at the instant of that check, which it cannot see and nobody measured; and, on a system that names another process'"'"'s descriptors by path such as Linux'"'"'s `/proc`, any process of the same user, after that check as before it.\n\n'
   # The half this does not hold, in the same breath as the half it does. A document
   # that claimed both would be back where [96] found it.
   printf 'One source above is not of that kind, and here is where that is said rather than left to be found: the quoted output of a red branch under **Findings** is read from a file in the gate'"'"'s temporary directory, which a process of this run can write to ([94] measured the bound that was refused, and why). Since [92] nothing in that file is a verdict — those come from the branches'"'"' own exit statuses — so what a process writing there buys is the wording of that section, and never a colour.\n'

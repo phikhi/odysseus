@@ -850,8 +850,9 @@ PROBE
   # looked every ten milliseconds landed in that instant now and then: this test was
   # red once in the second full run of [101], on a line [101] had not touched. Measured then with a survivor that polls without sleeping and keeps
   # what it opens: it wins the instant at every opening, and 270 forged lines reach
-  # the receipt on the code [96] shipped. That is a hole of its own, [103], held by a
-  # `skip` in `test/canary.bats` until it is closed. So a name counts here only when
+  # the receipt on the code [96] shipped. That was a hole of its own, [103], and the
+  # canary holds it now: the survivor still wins the instant, and the channel it
+  # opened is refused. So a name counts here only when
   # it is still there on the next look, half a second later — which no creation
   # window is, and which the workspace [96] removed, or a channel whose file was
   # never unlinked, always is.
@@ -969,13 +970,41 @@ PROBE
   assert_file_contains "$(receipt_path 01-alpha)" "Assembled nowhere a name reaches"
   assert_file_contains "$(receipt_path 01-alpha)" "unlinked before a byte was written"
   assert_file_contains "$(receipt_path 01-alpha)" "holding nothing but its stdin, stdout and stderr"
-  # And the three things that sentence does not hold, in the same breath ([101]):
-  # two are measured, the third is a property of another platform.
-  assert_file_contains "$(receipt_path 01-alpha)" "the instant between its creation and its unlink"
+  # The instant the file had a name was the first reservation of that sentence
+  # until [103] closed it, and it is a claim now — said as what was checked, not
+  # as what nobody could do.
+  assert_file_contains "$(receipt_path 01-alpha)" "nothing but that shell held it"
+  refute_file_contains "$(receipt_path 01-alpha)" "does at every opening and keeps"
+  # And the things that sentence does not hold, in the same breath ([101]): one is
+  # measured, one is what the check of [103] cannot see, and one is a property of
+  # another platform.
   assert_file_contains "$(receipt_path 01-alpha)" "a program git runs for this run out of configuration a session wrote"
-  assert_file_contains "$(receipt_path 01-alpha)" "any process of the same user"
+  assert_file_contains "$(receipt_path 01-alpha)" "a descriptor in flight between two processes"
+  assert_file_contains "$(receipt_path 01-alpha)" "any process of the same user, after that check as before it"
   # The half it does not hold, named in the same breath.
   assert_file_contains "$(receipt_path 01-alpha)" "One source above is not of that kind"
   assert_file_contains "$(receipt_path 01-alpha)" "a process of this run can write to"
   assert_file_contains "$(receipt_path 01-alpha)" "never a colour"
+}
+
+@test "a receipt whose channel another process opened while it had a name is not opened" {
+  # [103], at the module: the receipt goes through the shared opener, so the instant
+  # its file has a name is asked about like every channel's, and a receipt that
+  # cannot vouch for its channel is no receipt — every writer below is a no-op.
+  pack_run 'proc_channel_preflight
+    '"$(channel_window_held)"'
+    rc=0
+    receipt_open || rc=$?
+    printf "rc=%s\n" "$rc"
+    printf "open=[%s]\n" "$RALPH_RECEIPT"
+    printf "refusal=[%s]\n" "$PROC_CHANNEL_REFUSAL"
+    receipt_note "a sentence nobody keeps"
+    printf "store=[%s]\n" "$RECEIPT_STORE"'
+  kill -KILL "$(cat "$SHIM_STATE/holder.pid" 2>/dev/null)" 2>/dev/null || true
+  assert_success
+  assert_file_exists "$SHIM_STATE/holder.ready"
+  assert_output_contains "rc=1"
+  assert_output_contains "open=[]"
+  assert_output_contains "process $(cat "$SHIM_STATE/holder.pid") on its descriptor 7"
+  assert_output_contains "store=[]"
 }
