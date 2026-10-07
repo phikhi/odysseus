@@ -93,3 +93,40 @@ un nom ; le canal n'est plus servi — l'ouvreur partagé (`proc_channel_open`) 
 à `lsof +L1`, après le délien, qui le tient, et refuse. Défaut connu de l'instrument :
 `exec 7>>` recrée un nom délié entre le glob et l'ouverture, et le tour suivant le
 revoit — le canari de [103] n'essaie chaque nom qu'une fois.
+
+
+## f4, f5 — la configuration de `curl` (→ [105])
+
+    bash test/run.sh .scratch/ralph-pack/sondes/ticket-98/f4-le-curlrc.bats
+    bash .scratch/ralph-pack/sondes/ticket-98/f5-le-curlrc-hors-du-pack.sh
+
+Ouvertes le 07/10/2026 en recommençant [98], par la question 5 de la DoD posée au
+canal que ce ticket va ouvrir : le pilote tiendra un bout lecteur par itération en
+vol, chaque itération son bout écrivain pendant toute sa vie — qu'est-ce que le pack
+lance pendant ce temps, et qu'est-ce qui le configure ? `git` passe par `proc_git`
+([104]), `claude` et `lsof` par `proc_exec_bare` ([101], [103]). **`curl`, lancé nu
+et sans `-q`, lit `~/.curlrc`**, qu'une session écrit (même `HOME` que l'opérateur).
+
+`f5`, hors du pack, sur le vrai `curl` de la machine (8.7.1, darwin) et un canal
+délié de la forme du pack, la requête de la ligne de commande échouant toujours
+(port 9) :
+
+    (a)   output= vers un bout écrivain hérité, -o sur la ligne   le canal reçoit la ligne forgée
+    (a-q) la même chose, curl -q en premier argument              rien
+    (b)   url= sans output                                        le corps forgé arrive sur stdout (rc=7)
+    (c)   data-binary=@ un bout lecteur                           vidé : le lecteur légitime ne lit plus rien
+    (d)   output= vers un bout lecteur                            curl: (23), rien d'écrit (darwin)
+
+`f4`, dans le vrai pack, backend `github` : le faux `curl` du harnais est enveloppé
+pour lancer aussi le vrai `/usr/bin/curl` à la place exacte où le pack lance `curl`
+(donc avec ses descripteurs et le `HOME` du test), puis rendre la main au faux qui
+sert la forge. La session écrit `~/.curlrc` (`url = "file://…/forged.txt"`,
+`output = "/dev/fd/5"`) :
+
+    C1   ~/.curlrc posé par la session   4 lignes `- FORGED-BY-CURLRC-ON-FD-5` dans le reçu
+                                         (la description de la requête), rc=0, `resolved`
+    C0   témoin appairé, sans ~/.curlrc  aucune
+
+File revalidée par Philippe le 07/10/2026 : **[105] → [98] → [99] → [100]**, arête
+105 → 98. Rejouée après [105], `f4` C1 doit rendre **aucune** ligne forgée ; `f5`
+reste un instrument de `curl` et pas du pack, et ne change pas.
