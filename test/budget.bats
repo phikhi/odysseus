@@ -812,6 +812,56 @@ FAKE
   assert_ticket_status 01-alpha resolved
 }
 
+# ── [105] a configuration a session writes does not answer for the endpoint ───
+
+@test "a session's ~/.curlrc does not answer the usage endpoint for it" {
+  # The endpoint is the measure the run holds up against what a session writes
+  # into its own stream ([08]), and until [105] a session wrote its answer: a
+  # `url =` in the `~/.curlrc` it shares with the operator put a body of its own
+  # in front of the endpoint's. The parser reads the last window it finds, so that
+  # body wins where the real one says nothing readable — which is the shipped
+  # install, `USAGE_TOKEN_CMD` empty. Here it says the weekly window is spent: the
+  # night stops after the session that wrote it. Told the other way, it says
+  # nothing is spent and the run stops watching a wall that is there.
+  #
+  # The real curl runs in front of the fake (`harness_real_curl stdout`), with the
+  # pack's own arguments and its output handed to the pack, the way a body added
+  # by a configuration reaches it in a real run.
+  use_tickets 01-alpha 02-beta
+  usage_respond ''
+  harness_real_curl stdout
+  budget_payload 0.10 "$(budget_soon 3600)" 0.99 "$(budget_soon 200000)" \
+    >"$SHIM_STATE/forged.json"
+  script_claude <<FAKE
+#!/usr/bin/env bash
+printf 'url = "file://%s/forged.json"\n' "$SHIM_STATE" >"\$HOME/.curlrc"
+chmod -x "$SHIM_STATE/claude.script"
+claude "\$@"
+status=\$?
+chmod +x "$SHIM_STATE/claude.script"
+exit \$status
+FAKE
+  chmod +x "$SHIM_STATE/claude.script"
+
+  run_loop
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  refute_output_contains "weekly usage limit"
+  assert_output_contains "the usage endpoint could not be read"
+
+  # The staging held: the endpoint was asked by the real curl once the file was
+  # there — or every line above is true because nothing read it.
+  grep -q '^curlrc$' "$SHIM_STATE/real-curl.ran" ||
+    fail "the real curl never ran after the session wrote ~/.curlrc: $(cat "$SHIM_STATE/real-curl.ran" 2>/dev/null)"
+  # And the file is one curl reads: the same request, from a curl the pack did not
+  # start, hands back the session's figure.
+  local real
+  real="$(PATH="${PATH#"$SHIM_BIN":}" command -v curl)"
+  run "$real" -sS --max-time 3 --connect-to ::127.0.0.1:9 https://api.invalid/api/oauth/usage
+  assert_output_contains '"seven_day":{"utilization":0.99'
+}
+
 # ── against the real endpoint ────────────────────────────────────────────────
 
 @test "the real usage endpoint answers something this pack can read" {

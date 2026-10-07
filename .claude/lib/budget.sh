@@ -199,6 +199,13 @@ budget__now() {
 # differs per platform. `USAGE_TOKEN_CMD` is read out of the sealed config ([24]),
 # so it is exactly as trusted as `TEST_CMD` — which is the only reason evaluating
 # it here is acceptable.
+#
+# Asked through `proc_curl` ([105]), because this answer is the one the run holds
+# up against the `rate_limit_event` a session writes into its own stream ([08]),
+# and until then a session decided it: a `url =` in the `~/.curlrc` it shares with
+# the operator put a body of its own in front of the endpoint's, and on a project
+# with no `USAGE_TOKEN_CMD` — the shipped value, where the endpoint's answer is
+# unreadable — that body was the only one the parser found.
 budget__request() {
   local token=''
   command -v curl >/dev/null 2>&1 || return 1
@@ -206,12 +213,12 @@ budget__request() {
     token="$(eval "${USAGE_TOKEN_CMD}" 2>/dev/null)" || token=''
   fi
   if [ -n "$token" ]; then
-    curl -sS --max-time 10 \
+    proc_curl -sS --max-time 10 \
       -H "User-Agent: ${USAGE_UA:-}" \
       -H "Authorization: Bearer $token" \
       "${USAGE_URL:-}" 2>/dev/null
   else
-    curl -sS --max-time 10 \
+    proc_curl -sS --max-time 10 \
       -H "User-Agent: ${USAGE_UA:-}" \
       "${USAGE_URL:-}" 2>/dev/null
   fi

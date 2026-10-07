@@ -546,6 +546,96 @@ proc__git_gestures() {
   assert_file_exists "$SHIM_STATE/own.idx"
 }
 
+# ── [105] the curl this pack runs holds nothing and reads nothing ────────────
+#
+# Two halves, asked separately because each holds what the other cannot. The
+# descriptors are asked of a forger standing where curl is resolved, so that what it
+# could reach is what it writes down; the configuration is asked of the machine's
+# real curl and a `~/.curlrc` in the test's `$HOME`, because the fake curl of this
+# suite reads no file at all and would be green on both sides.
+
+# A program named `curl`, first on the PATH a snippet sets, that is the forger.
+proc__curl_is_a_forger() {
+  fd_forger
+  mkdir -p "$SHIM_STATE/forger-bin"
+  printf '#!/bin/sh\nexec "%s/fd-forger" curl "%s/%s"\n' "$SHIM_STATE" "$SHIM_STATE" "$1" \
+    >"$SHIM_STATE/forger-bin/curl"
+  chmod +x "$SHIM_STATE/forger-bin/curl"
+}
+
+@test "a curl the pack runs holds nothing above stderr, however its caller wrote the call" {
+  proc__curl_is_a_forger curl.log
+  pack_run "$channels_and_the_old_shut"'
+    PATH="$RALPH_SHIM_STATE/forger-bin:$PATH"
+    shut proc_curl -sS https://endpoint.invalid/ 2>/dev/null
+  '
+  assert_success
+  assert_forger_found_nothing "$SHIM_STATE/curl.log" "a curl the pack runs"
+}
+
+@test "the paired witness: the same call to a bare curl holds the caller's channels" {
+  # What a `~/.curlrc` reached until [105]: the high channel nobody closed, and the
+  # copy bash kept of the low one a shut *did* close.
+  proc__curl_is_a_forger bare.log
+  pack_run "$channels_and_the_old_shut"'
+    PATH="$RALPH_SHIM_STATE/forger-bin:$PATH"
+    shut curl -sS https://endpoint.invalid/ 2>/dev/null
+  '
+  assert_success
+  grep -q '^probed$' "$SHIM_STATE/bare.log" || fail "the forger never ran: the witness proves nothing"
+  grep -q '^OPEN 11$' "$SHIM_STATE/bare.log" ||
+    fail "a bare curl did not hold the caller's channel: $(cat "$SHIM_STATE/bare.log")"
+}
+
+@test "a curl the pack runs reads no configuration a session could have written" {
+  # The real curl of this machine, and a `~/.curlrc` of the shape `f5` measured: a
+  # `url =` with no output, whose body lands in the stdout the caller parses even
+  # though the request on the line fails (every request here is pointed at a
+  # closed port). The paired witness is the same call from the same shell to a
+  # curl started without the pack's function — the file is one curl reads, or the
+  # first line would be empty for the wrong reason.
+  local real
+  real="$(PATH="${PATH#"$SHIM_BIN":}" command -v curl)" || fail "no curl on this machine"
+  mkdir -p "$SHIM_STATE/real-bin"
+  ln -s "$real" "$SHIM_STATE/real-bin/curl"
+  printf 'FORGED-BY-CURLRC\n' >"$SHIM_STATE/forged.txt"
+  printf 'url = "file://%s/forged.txt"\n' "$SHIM_STATE" >"$HOME/.curlrc"
+
+  pack_run '
+    PATH="$RALPH_SHIM_STATE/real-bin:$PATH"
+    ask() { "$@" -sS --max-time 3 --connect-to ::127.0.0.1:9 https://endpoint.invalid/ 2>/dev/null || true; }
+    printf "pack=[%s]\n" "$(ask proc_curl)"
+    printf "bare=[%s]\n" "$(ask curl)"
+  '
+  assert_success
+  assert_output_contains "pack=[]"
+  assert_output_contains "bare=[FORGED-BY-CURLRC]"
+}
+
+@test "a curl run that way keeps its status, its streams and the arguments it was given" {
+  # Two call sites changed name, and what they write around the call has to mean
+  # what it meant around curl: the status is curl's, stdout is the body, stderr goes
+  # where the caller sends it.
+  local real
+  real="$(PATH="${PATH#"$SHIM_BIN":}" command -v curl)" || fail "no curl on this machine"
+  mkdir -p "$SHIM_STATE/real-bin"
+  ln -s "$real" "$SHIM_STATE/real-bin/curl"
+  printf 'the body\n' >"$SHIM_STATE/body.txt"
+
+  pack_run '
+    PATH="$RALPH_SHIM_STATE/real-bin:$PATH"
+    rc=0
+    proc_curl -sS --max-time 3 --connect-to ::127.0.0.1:9 https://endpoint.invalid/ >/dev/null 2>&1 || rc=$?
+    printf "status=%s\n" "$rc"
+    printf "stderr=%s\n" "$(proc_curl -sS --max-time 3 --connect-to ::127.0.0.1:9 https://endpoint.invalid/ 2>&1 >/dev/null || true)"
+    printf "stdout=%s\n" "$(proc_curl -sS "file://$RALPH_SHIM_STATE/body.txt" 2>/dev/null)"
+  '
+  assert_success
+  assert_output_contains "status=7"
+  assert_output_contains "stderr=curl: (7)"
+  assert_output_contains "stdout=the body"
+}
+
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────
 #
 # The instant a channel's file has a name — from the module's `mktemp` to the

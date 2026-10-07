@@ -2103,7 +2103,7 @@ mutation "08 the cached answer survives the pause it preceded" "$BUDGET" \
   test/budget.bats "a spent session window is waited out"
 
 mutation "08 the endpoint is asked without a User-Agent" "$BUDGET" \
-  's/  else\n    curl -sS --max-time 10 \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n/  else\n    curl -sS --max-time 10 \\\n/' \
+  's/  else\n    proc_curl -sS --max-time 10 \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n/  else\n    proc_curl -sS --max-time 10 \\\n/' \
   test/budget.bats "with its User-Agent"
 
 mutation "08 the answer is never cached" "$BUDGET" \
@@ -7380,6 +7380,67 @@ mutation "104 the lexer reads a quoted heredoc as if it ran" "test/gate.bats" \
 mutation "104 the installer opens a descriptor of its own" "$INIT" \
   's/^init_tree_preflight\(\) \{\n/init_tree_preflight() {\n  exec 9>\/dev\/null\n/m' \
   test/gate.bats "goes through the one function that hands it nothing"
+
+# ── [105] the curl this pack runs holds nothing and reads nothing ────────────
+#
+# The two halves of `proc_curl`, each taken out alone. The descriptors, asked of
+# the unit and of a whole remote night; the configuration, asked of the real curl
+# at the unit, of the usage endpoint the pilot reads, and of every first argument
+# a remote night handed curl. One edit, several populations, one entry each, so
+# that no test can be a lie the others cover.
+mutation "105 the pack's curl holds the shell that ran it" "$PROC" \
+  's/\( proc_exec_bare curl -q "\$\@" \)/( exec curl -q "\$\@" )/' \
+  test/proc.bats "a curl the pack runs holds nothing above stderr"
+
+mutation "105 a remote night's curl holds the iteration's channels" "$PROC" \
+  's/\( proc_exec_bare curl -q "\$\@" \)/( exec curl -q "\$\@" )/' \
+  test/tracker-remote.bats "every curl a remote night runs holds nothing above stderr"
+
+mutation "105 the pack's curl reads the configuration a session wrote" "$PROC" \
+  's/proc_exec_bare curl -q "\$\@"/proc_exec_bare curl "\$\@"/' \
+  test/proc.bats "reads no configuration a session could have written"
+
+mutation "105 a session's ~/.curlrc answers the usage endpoint" "$PROC" \
+  's/proc_exec_bare curl -q "\$\@"/proc_exec_bare curl "\$\@"/' \
+  test/budget.bats "does not answer the usage endpoint for it"
+
+mutation "105 a remote night's curl is not told to read nothing" "$PROC" \
+  's/proc_exec_bare curl -q "\$\@"/proc_exec_bare curl "\$\@"/' \
+  test/tracker-remote.bats "is told first to read no configuration"
+
+# `-q` counts only as curl's first argument: written anywhere else it is a flag
+# curl reads after the file it was meant to keep shut.
+mutation "105 the switch is handed to curl where it no longer counts" "$PROC" \
+  's/proc_exec_bare curl -q "\$\@"/proc_exec_bare curl "\$\@" -q/' \
+  test/proc.bats "reads no configuration a session could have written"
+
+# Call sites. The usage endpoint's two branches, each a bare curl again: one is
+# held by the census, the other by the run that reads the endpoint. And the forge
+# twice: through a bare call, which the canary holds end to end with the real curl
+# and a `~/.curlrc` written by the session; and in the shape the site had before
+# this ticket — `set -- curl …` then `"$@"` — which no census of command positions
+# sees, and which is why this one reads the word wherever it is.
+mutation "105 the usage endpoint is asked by a bare curl" "$BUDGET" \
+  's/^    proc_curl -sS --max-time 10 \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n      -H "Authorization/    curl -sS --max-time 10 \\\n      -H "User-Agent: \${USAGE_UA:-}" \\\n      -H "Authorization/m' \
+  test/gate.bats "every curl this pack runs goes through"
+
+mutation "105 the usage endpoint without a token is asked by a bare curl" "$BUDGET" \
+  's/^  else\n    proc_curl -sS --max-time 10/  else\n    curl -sS --max-time 10/m' \
+  test/budget.bats "does not answer the usage endpoint for it"
+
+mutation "105 the forge is asked by a bare curl" "$FORGE" \
+  's/^  proc_curl "\$\@" "\$url" 2>\/dev\/null/  curl "\$\@" "\$url" 2>\/dev\/null/m' \
+  test/canary.bats "a ~/.curlrc the session writes puts no line in a remote receipt"
+
+mutation "105 the forge builds its curl in an argument list again" "$FORGE" \
+  's/^  set -- -sS --max-time "\$\{FORGE_TIMEOUT:-30\}" -X "\$method"/  set -- curl -sS --max-time "\${FORGE_TIMEOUT:-30}" -X "\$method"/m; s/^  proc_curl "\$\@" "\$url" 2>\/dev\/null/  "\$\@" "\$url" 2>\/dev\/null/m' \
+  test/gate.bats "every curl this pack runs goes through"
+
+# The exception the receipt names by name: dropped, the document claims every
+# program again, and the operator's token command was measured writing into it.
+mutation "105 the receipt forgets the operator's token command" "$RECEIPT" \
+  's/on a remote backend, the operator.*?into this document; //' \
+  test/receipt.bats "the document says where it was assembled"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

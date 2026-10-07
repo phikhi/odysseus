@@ -1156,6 +1156,67 @@ DO
   assert_output_contains "0.b.1	2"
 }
 
+# ── [105] the curl a remote night runs ───────────────────────────────────────
+#
+# Every request of this backend is a curl the pack starts, from the pilot (the
+# claim, the listing, the liveness sweep, the usage endpoint) and from inside an
+# iteration (every mark, field read and snapshot, and the receipt's own emission,
+# all while the receipt's channel is open). Asked of a whole night rather than of a
+# call site, so that a site added tomorrow is in the population without anybody
+# naming it. The fake curl serves the forge either way; what is asked is what the
+# pack handed it.
+
+remote__a_night() {
+  use_forge github
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+  remote__alpha
+  forge_remote off
+}
+
+@test "every curl a remote night runs is told first to read no configuration" {
+  # `-q` counts only as curl's first argument, so the census is of first
+  # arguments: one recorded line per call starts with it. (A call carrying `-w`
+  # records over two lines, which is why this counts and does not read every line.)
+  remote__a_night
+
+  run_loop
+  assert_success
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+
+  local calls asked
+  calls="$(curl_call_count)"
+  [ "$calls" -ge 10 ] || fail "the night made $calls requests, so this asks about nothing"
+  asked="$(curl_calls | grep -c '^-q ' || true)"
+  [ "$asked" = "$calls" ] ||
+    fail "$calls requests, $asked of them told first to read no configuration:
+$(curl_calls | grep -v '^-q ' | grep -E '^-' || true)"
+}
+
+@test "every curl a remote night runs holds nothing above stderr" {
+  # The forger stands in front of the fake, at the place the pack resolves curl, so
+  # it holds what each curl of the night would have held — and its record is a
+  # receipt line, so a descriptor that took it is also a line in the document.
+  remote__a_night
+  fd_forger
+  mv "$SHIM_BIN/curl" "$SHIM_BIN/curl.fake"
+  printf '#!/usr/bin/env bash\n"%s/fd-forger" "$(printf '"'"'note\\tFORGED-BY-THE-PACKS-CURL'"'"')" "%s/curl.probe"\nexec "%s/curl.fake" "$@"\n' \
+    "$SHIM_STATE" "$SHIM_STATE" "$SHIM_BIN" >"$SHIM_BIN/curl"
+  chmod +x "$SHIM_BIN/curl"
+
+  run_loop
+  assert_success
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+
+  local probed
+  probed="$(grep -c '^probed$' "$SHIM_STATE/curl.probe" || true)"
+  [ "$probed" -ge 10 ] || fail "the forger ran $probed times, so this asks about nothing"
+  assert_forger_found_nothing "$SHIM_STATE/curl.probe" "a curl of a remote night"
+  case "$(forge_request_body 1)" in
+    *FORGED*) fail "a line of the forger is in the receipt: $(forge_request_body 1 | grep FORGED)" ;;
+  esac
+}
+
 # ── gitlab ───────────────────────────────────────────────────────────────────
 
 @test "gitlab speaks its own dialect and produces the same transitions" {

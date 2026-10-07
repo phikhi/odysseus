@@ -302,13 +302,14 @@ proc_group_fork() {
 # ([101]). The last thing a forked child does, and nothing else: called from a shell
 # that means to go on, it would close that shell's own channels and then replace it.
 #
-# There are exactly three callers, and they are the three points where this pack
+# There are exactly four callers, and they are the four points where this pack
 # hands a program it did not write the descriptors of the shell that forks it: the
 # background child of `session_spawn`, which is every `claude` the pack runs, the
 # child of `proc_group_fork` above, which is every command line a project wrote —
-# `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`, `VISUAL_CMD` ([95]'s census) — and the
+# `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`, `VISUAL_CMD` ([95]'s census) — the
 # `lsof` that `proc__channel_alone` below asks who holds a channel ([103]), which
-# would otherwise be a holder of the very channel it is asked about.
+# would otherwise be a holder of the very channel it is asked about, and the
+# subshell of `proc_curl` below, which is every curl the pack runs ([105]).
 # What is *not* here is written down so that it reads as a decision: the
 # `*_TOKEN_CMD` lines and the scheduler's submission are commands the operator
 # wrote, not the project and not the session; and a program git runs for the pack
@@ -430,6 +431,69 @@ proc_git() {
     eval "exec $PROC__ABOVE_STDERR"
     exec git "$@"
   )
+}
+
+# Run curl holding nothing above stderr, and reading no configuration ([105]).
+# Every curl this pack starts goes through here — the usage endpoint the pilot
+# asks (`budget__request`) and every request a remote tracker backend makes
+# (`forge__http`), from the pilot and from an iteration — and a census of
+# `proc_git`'s shape in `test/gate.bats` refuses a bare one anywhere else in the
+# pack's code.
+#
+# **Why curl.** It is the one program on [91]'s list that reads a file of the
+# user's every time it starts: `~/.curlrc`, `~/.config/curlrc`,
+# `$CURL_HOME/.curlrc`. A session runs with the operator's `HOME` and writes all
+# three, and a line of that file adds a URL and an output of the session's
+# choosing to the pack's own call. Curl needs to launch nothing: it writes there
+# itself, at the instant the pack chose, with the descriptors the pack held, and
+# into the stdout the pack parses. Measured on 07/10/2026, curl 8.7.1 on darwin
+# (`.scratch/ralph-pack/sondes/ticket-98/`, `f4` in the pack and `f5` outside it):
+# `output = "/dev/fd/5"` beside a `file://` URL put four lines into the receipt of
+# a remote backend through the iteration's channel — whatever `-o` the command
+# line carried — run `0`, ticket `resolved`; a `url =` with no output put a body
+# of the session's into what `$( curl … )` hands back, under the real request's
+# own failure (status 7); and `data-binary = "@/dev/fd/N"` emptied a read end
+# before its reader got to it. A file of such pairs over every number from 3 to
+# 255 needs to know none of them: curl refuses the numbers that are not open and
+# goes on to the next URL.
+#
+# So two halves, and each holds what the other cannot:
+#
+#   descriptors     `proc_exec_bare` in a subshell — the shape of `proc_git`, and
+#                   the same list closed: nothing of the pack's to write to or to
+#                   drain, whatever a configuration names. It costs the operator
+#                   nothing.
+#   configuration   `-q`, which curl honours as its **first** argument and only
+#                   there (measured: `-sS -q` reads the file). It is the one half
+#                   that holds the body added to stdout, which needs no
+#                   descriptor at all; that is why it is written here, in the one
+#                   function, and not at each call.
+#
+# **The price is the operator's, and it is written where it is paid.** `-q` turns
+# off the operator's own `~/.curlrc` too: a proxy, a CA bundle, a `--resolve`, a
+# client certificate. What curl takes from the environment it still takes —
+# measured under `-q`: `HTTPS_PROXY` is used and `CURL_CA_BUNDLE` is read — and
+# the environment is the shell that started the run, which no session writes.
+# What only a curlrc can carry is lost, and a request that needed it fails the way
+# any request fails here: a usage endpoint the run says it could not read, a
+# backend operation refused by its return code. `ralph.config.sh.example` says so
+# beside the URLs, where an operator who needs it will look. [102] wrote the price
+# of its own switch the same way: the `pre-push` of git-lfs, which no push says.
+#
+# The environment is handed back by `proc_exec_bare`, as to every program the pack
+# did not write; curl reads nothing of git's, so for it that changes nothing.
+#
+# **What this does not take away.** Curl still asks the URL the sealed
+# configuration named, at the instant the pack chose, and what comes back is what
+# the endpoint or the forge answered — a session that can reach the forge writes
+# the tracker already ("Ce qu'une session écrit dans le tracker d'un backend
+# distant"), and that line holds it. Stdin is the caller's, and curl reads it only
+# when an argument says so (`@-`): no call here does, and every body the adapters
+# send is a JSON object, which starts with `{` and never with the `@` that would
+# make `--data-binary` read a file. And a descriptor above 255, or Linux's
+# `/proc/<pid>/fd`, is the bound of `proc_git` above, unchanged.
+proc_curl() {
+  ( proc_exec_bare curl -q "$@" )
 }
 
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────

@@ -230,6 +230,12 @@ forge__urlenc() {
 # arrangement `USAGE_TOKEN_CMD` already has): a credential store is the user's
 # business, and `TRACKER_TOKEN_CMD` is read out of the sealed config, so it is
 # exactly as trusted as `TEST_CMD`.
+#
+# Asked through `proc_curl` ([105]), never by curl's own name: this runs inside an
+# iteration with the receipt's channel open from `receipt_open` to `receipt_close`
+# — every mark, field read and snapshot, and the receipt's own emission — and a
+# `~/.curlrc` a session wrote made the curl here write four lines of its own into
+# that receipt.
 forge__http() {
   local flavour="$1" method="$2" url="$3" data="${4:-}"
   local token='' header accept
@@ -243,7 +249,7 @@ forge__http() {
   header="$(forge__spec "$flavour" auth-header)" || return 1
   accept="$(forge__spec "$flavour" accept)" || accept='Accept: application/json'
 
-  set -- curl -sS --max-time "${FORGE_TIMEOUT:-30}" -X "$method" \
+  set -- -sS --max-time "${FORGE_TIMEOUT:-30}" -X "$method" \
     -H "$accept" -H 'Content-Type: application/json' \
     -w '
 %{http_code}'
@@ -253,7 +259,7 @@ forge__http() {
   if [ -n "$data" ]; then
     set -- "$@" --data-binary "$data"
   fi
-  "$@" "$url" 2>/dev/null
+  proc_curl "$@" "$url" 2>/dev/null
 }
 
 # The same, with the status read off and judged. The body on stdout, non-zero on
