@@ -130,3 +130,10 @@ sert la forge. La session écrit `~/.curlrc` (`url = "file://…/forged.txt"`,
 File revalidée par Philippe le 07/10/2026 : **[105] → [98] → [99] → [100]**, arête
 105 → 98. Rejouée après [105], `f4` C1 doit rendre **aucune** ligne forgée ; `f5`
 reste un instrument de `curl` et pas du pack, et ne change pas.
+
+**Rejouée sur la branche de [105] (07/10/2026)** : `f4` C1 rend **0 ligne forgée**
+(C0 : 0), `rc=0`, `resolved`. Le wrapper de `f4` lance le vrai curl avec ses propres
+arguments, sans le `-q` du pack : ce rejeu mesure donc la moitié **descripteurs**
+seule (`proc_curl` ferme 3..255 avant l'`exec`). La moitié **configuration** est
+mesurée par la suite : `harness_real_curl` lance le vrai curl **avec les arguments
+du pack**, `-q` compris (`test/budget.bats`, `test/canary.bats`).

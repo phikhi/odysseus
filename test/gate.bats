@@ -5272,16 +5272,22 @@ $output"
 # The function a line sits in is the last `name()` the lexer passed, which is the
 # one shape every function in this pack is declared in — the "enclosing function,
 # derived" of [85], where a census of call sites had the same problem.
+#
+# An optional third argument is a pattern removed from each line before it is
+# matched ([105]): the way to leave out a form that names a program without
+# starting it — `command -v curl` — and only that form, so a call written on the
+# same line is still found.
 pack_code_homes() {
-  local root="$1" pat="$2" f out="$RALPH_TEST_DIR/homes"
+  local root="$1" pat="$2" strip="${3:-}" f out="$RALPH_TEST_DIR/homes"
   path_scan_lexer
   : >"$out"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     awk -f "$RALPH_TEST_DIR/code.awk" "$f" |
-      awk -v file="$(basename "$f")" -v pat="$pat" '
+      awk -v file="$(basename "$f")" -v pat="$pat" -v strip="$strip" '
         /^[a-z_][a-z0-9_]*\(\)/ { fn = $0; sub(/\(\).*/, "", fn) }
-        $0 ~ pat { printf "%s:%s\n", file, (fn == "" ? "(top level)" : fn) }' >>"$out"
+        { line = $0; if (strip != "") gsub(strip, " ", line) }
+        line ~ pat { printf "%s:%s\n", file, (fn == "" ? "(top level)" : fn) }' >>"$out"
   done <<SOURCES
 $(harness_pack_sources "$root")
 SOURCES
@@ -5387,4 +5393,46 @@ $found"
   [ -z "$opened" ] ||
     fail "init.sh opens a descriptor of its own, so the reason it may run git bare no longer holds:
 $opened"
+}
+
+# ── [105] every curl this pack runs, holding nothing and reading nothing ─────
+#
+# Curl reads a file of the user's every time it starts (`~/.curlrc`), a session
+# writes it, and a line of it makes the pack's own curl write wherever the session
+# says, with the descriptors of the shell that ran it. `proc_curl` starts curl
+# holding nothing above stderr and with `-q` first, which is the only place `-q`
+# counts. Both are properties of each call, so a census, of [104]'s shape with one
+# difference:
+#
+#   zone   `harness_pack_sources`, all of it — `init.sh` runs no curl, and the day
+#          it does it is in the census rather than outside it.
+#   code   [91]'s lexer.
+#   shape  the word `curl` anywhere the lexer keeps it, and not only in a command
+#          position: the site this ticket converted was `set -- curl …` and then
+#          `"$@"`, a call no command-position pattern sees, and the census would
+#          have been green on the very line it exists for. Minus `command -v
+#          curl`, which asks the PATH and starts nothing.
+#   homes  two. `proc.sh:proc_curl`, whose `curl` is the only one left;
+#          `gate.sh:gate_path_programs`, [91]'s list of the names this pack
+#          resolves — a list, which starts nothing.
+@test "every curl this pack runs goes through the one function that hands it nothing and lets it read nothing" {
+  local found callers expected
+  found="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_-])curl([^A-Za-z0-9_-]|$)' \
+    'command[ \t]+-v[ \t]+curl')"
+  callers="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_-])proc_curl([^A-Za-z0-9_-]|$)')"
+  expected="$(printf '%s\n' \
+    'gate.sh:gate_path_programs' \
+    'proc.sh:proc_curl' | LC_ALL=C sort)"
+
+  # The floor, on the side that cannot be empty for the right reason: the
+  # function itself and its two callers, the usage endpoint and the forge.
+  [ "$(printf '%s\n' "$callers" | grep -c .)" -ge 3 ] ||
+    fail "the scan found $(printf '%s\n' "$callers" | grep -c .) homes of proc_curl, so it is reading the wrong thing:
+$callers"
+
+  if [ "$found" != "$expected" ]; then
+    fail "curl is named somewhere in the pack outside the one function that starts it bare and reading nothing
+(expected on the left, found on the right — a new line is a curl that holds its shell's descriptors and reads a session's ~/.curlrc):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
 }

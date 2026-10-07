@@ -1049,6 +1049,13 @@ PROBE
   # [104], measured in; it is part of the claim now, and the exception is gone.
   assert_file_contains "$(receipt_path 01-alpha)" "and git, with whatever its configuration makes it run"
   refute_file_contains "$(receipt_path 01-alpha)" "a program git runs for this run out of configuration a session wrote"
+  # Curl joined the claim with [105], measured in: a `~/.curlrc` the session wrote
+  # put four lines into a remote receipt through the iteration's channel. And the
+  # operator's token command, evaluated in the same shell and measured the same day
+  # writing the same four lines, is an exception said by name — the claim was
+  # "every program", and that one was not closed.
+  assert_file_contains "$(receipt_path 01-alpha)" "curl, which reads no configuration file at all"
+  assert_file_contains "$(receipt_path 01-alpha)" "the operator's own \`TRACKER_TOKEN_CMD\`"
   # And the things that sentence does not hold, in the same breath ([101]): one is
   # what the check of [103] cannot see, and one is a property of another platform.
   assert_file_contains "$(receipt_path 01-alpha)" "a descriptor in flight between two processes"

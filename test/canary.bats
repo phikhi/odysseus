@@ -809,6 +809,65 @@ FAKE
   refute_file_contains "$PROJECT_DIR/receipts/$RALPH_TEST_FEATURE/02-beta.md" "FORGED"
 }
 
+@test "the canary: a ~/.curlrc the session writes puts no line in a remote receipt" {
+  # [105], the case that decided it. On a remote backend every request is a curl
+  # the pack starts, and the ones an iteration makes — every mark, field read and
+  # snapshot, and the receipt's own emission — run while the receipt's channel is
+  # open. A session runs with the operator's `HOME`; it writes a `~/.curlrc` whose
+  # every pair names a `file://` URL and an output on one descriptor from 3 to 255,
+  # so it needs to know none of the pack's numbers: curl refuses the ones that are
+  # not open and goes on. Until [105] the curl of the iteration wrote four lines
+  # into the receipt that way, run `0`, ticket `resolved`.
+  #
+  # The machine's real curl runs in front of the fake, with the pack's arguments,
+  # at the place the pack starts curl (`harness_real_curl`); the fake serves the
+  # forge. Every curl of the pack now starts holding nothing above stderr and told
+  # first to read no file of the user's.
+  use_forge github
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+  forge_seed 1 alpha Alpha <<'T'
+# 1 — Alpha
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+  forge_remote off
+  harness_real_curl
+  printf 'note\tFORGED-BY-CURLRC\n' >"$SHIM_STATE/forged.txt"
+
+  script_claude <<FAKE
+#!/usr/bin/env bash
+prompt="\$(cat)"
+for n in \$(seq 3 255); do
+  printf 'url = "file://%s/forged.txt"\noutput = "/dev/fd/%s"\n' "$SHIM_STATE" "\$n"
+done >"\$HOME/.curlrc"
+chmod -x "$SHIM_STATE/claude.script"
+printf '%s' "\$prompt" | claude "\$@"
+status=\$?
+chmod +x "$SHIM_STATE/claude.script"
+exit \$status
+FAKE
+  chmod +x "$SHIM_STATE/claude.script"
+
+  run_loop
+  local status_of_run="$status" run_said="$output"
+  [ "$status_of_run" = 0 ] || fail "the run itself failed ($status_of_run): $run_said"
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+
+  # The file was there when the pack's curl ran, or the rest is true because
+  # nothing read it ([80]).
+  grep -q '^curlrc$' "$SHIM_STATE/real-curl.ran" ||
+    fail "no curl of the pack ran after the session wrote ~/.curlrc: $(cat "$SHIM_STATE/real-curl.ran" 2>/dev/null)"
+  [ -n "$(forge_request_body 1)" ] || fail "no receipt reached the forge"
+  case "$(forge_request_body 1)" in
+    *FORGED*) fail "the session's ~/.curlrc wrote into the receipt: $(forge_request_body 1 | grep FORGED)" ;;
+  esac
+}
+
 # ── the known hole, waiting for its ticket ───────────────────────────────────
 
 @test "the canary: a process the judged session left behind cannot forge a lens verdict" {

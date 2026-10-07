@@ -168,6 +168,11 @@ harness__clear_env() {
   # baseline of every test that asserts on it — a suite run from inside a
   # `git -c …` alias would measure that alias.
   unset GIT_CONFIG_PARAMETERS
+  # And the two that move where curl looks for its configuration ([105]): set in
+  # the developer's shell, they would point the real curl of `harness_real_curl`
+  # past the test's `$HOME`, and a session's `~/.curlrc` would be read by nobody
+  # — a test of `-q` green for that reason alone.
+  unset CURL_HOME XDG_CONFIG_HOME
 }
 
 # Every shell file in the repository that can be pack source, one path per line.
@@ -1238,6 +1243,38 @@ assert_forger_found_nothing() {
     fail "$who holds a descriptor that takes a write: $(grep '^OPEN ' "$log" | sort -u | tr '\n' ' ')"
   fi
   return 0
+}
+
+# The machine's real curl, run in front of the fake one with the pack's own
+# arguments ([105]). The fake reads no configuration, so a test of what a
+# `~/.curlrc` makes the pack's curl do needs the real program at the exact place
+# the pack starts curl — with whatever descriptors that place holds, the test's
+# `$HOME`, and the `-q` the pack put first or did not. Every call it makes is
+# pointed at a closed port (`--connect-to`, any host and port to 127.0.0.1:9),
+# so it reaches no network and its own request always fails; what still happens
+# comes from a configuration. Then the fake runs as it always does and serves the
+# endpoint or the forge.
+#
+# `stdout` hands the real curl's output to the caller, ahead of the fake's — where
+# a body a configuration adds would land in a real run. The default throws it
+# away, which is what a call carrying `-w` needs: the real curl's `000` would
+# otherwise be read as the status. Either way `$SHIM_STATE/real-curl.ran` gets a
+# line per call saying whether `~/.curlrc` was there, so a test can tell "the
+# file was read by nobody" from "nothing ran".
+harness_real_curl() {
+  local mode="${1:-discard}" real out='>/dev/null'
+  real="$(PATH="${PATH#"$SHIM_BIN":}" command -v curl)" ||
+    fail "harness_real_curl: no curl on this machine's PATH"
+  [ "$mode" != stdout ] || out=''
+  mv "$SHIM_BIN/curl" "$SHIM_BIN/curl.fake"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'if [ -f "$HOME/.curlrc" ]; then w=curlrc; else w=none; fi\n'
+    printf 'printf "%%s\\n" "$w" >>"%s/real-curl.ran"\n' "$SHIM_STATE"
+    printf '"%s" "$@" --connect-to ::127.0.0.1:9 --max-time 3 %s 2>/dev/null\n' "$real" "$out"
+    printf 'exec "%s/curl.fake" "$@"\n' "$SHIM_BIN"
+  } >"$SHIM_BIN/curl"
+  chmod +x "$SHIM_BIN/curl"
 }
 
 # The instant a channel's file has a name, staged for `pack_run` rather than raced
