@@ -868,6 +868,65 @@ FAKE
   esac
 }
 
+@test "the canary: a token command whose script the session rewrote puts no line in a remote receipt" {
+  # [106], the case that decided it (`.scratch/ralph-pack/sondes/ticket-105/t1`,
+  # C1). The operator wrote `TRACKER_TOKEN_CMD`, and the line runs a script under
+  # `$HOME` — a file the session it judges runs with and can rewrite. The line is
+  # evaluated inside the iteration at every operation of the backend, the ones made
+  # while the receipt's channel is open included. Until [106] it was evaluated by a
+  # bare `$( eval … )`, which hands the line every descriptor of that shell: the
+  # rewritten script put four lines into the receipt, run `0`, ticket `resolved`.
+  use_forge github
+  set_config STERILE_K 1
+  set_config PLAYTHROUGH off
+  forge_seed 1 alpha Alpha <<'T'
+# 1 — Alpha
+
+**Status:** ready-for-agent
+
+**Blocked by:** None
+
+**Write-surface:** `src/alpha.txt`
+T
+  forge_remote off
+  fd_forger
+  mkdir -p "$HOME/bin"
+  printf '#!/bin/sh\nprintf "tok\\n"\n' >"$HOME/bin/forge-token"
+  set_config TRACKER_TOKEN_CMD 'bash "$HOME/bin/forge-token"'
+
+  # The session rewrites the script, then does its ticket the way the default fake
+  # does — which also answers the review lenses, so the run can go green.
+  script_claude <<FAKE
+#!/usr/bin/env bash
+prompt="\$(cat)"
+cat >"\$HOME/bin/forge-token" <<'TOK'
+#!/bin/sh
+"$SHIM_STATE/fd-forger" "\$(printf 'note\tFORGED-BY-THE-TOKEN-COMMAND')" "$SHIM_STATE/token.probe"
+printf "tok\n"
+TOK
+chmod -x "$SHIM_STATE/claude.script"
+printf '%s' "\$prompt" | claude "\$@"
+status=\$?
+chmod +x "$SHIM_STATE/claude.script"
+exit \$status
+FAKE
+  chmod +x "$SHIM_STATE/claude.script"
+
+  run_loop
+  local status_of_run="$status" run_said="$output"
+  [ "$status_of_run" = 0 ] || fail "the run itself failed ($status_of_run): $run_said"
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+
+  # The rewritten script ran for the pack, or the rest is true because nothing
+  # evaluated it ([80]).
+  grep -q '^probed$' "$SHIM_STATE/token.probe" ||
+    fail "the pack never evaluated the token command after the session rewrote its script"
+  [ -n "$(forge_request_body 1)" ] || fail "no receipt reached the forge"
+  case "$(forge_request_body 1)" in
+    *FORGED*) fail "the token command wrote into the receipt: $(forge_request_body 1 | grep FORGED)" ;;
+  esac
+}
+
 # ── the known hole, waiting for its ticket ───────────────────────────────────
 
 @test "the canary: a process the judged session left behind cannot forge a lens verdict" {

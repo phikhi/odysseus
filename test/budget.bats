@@ -862,6 +862,72 @@ FAKE
   assert_output_contains '"seven_day":{"utilization":0.99'
 }
 
+# ── [106] the usage token command, where it is evaluated ─────────────────────
+#
+# `budget_check` runs in the pilot, before every claim, and evaluates
+# `USAGE_TOKEN_CMD` there — a line the operator wrote, whose script may live under
+# the `HOME` a session shares. Today the pilot holds no channel; [98] makes it hold
+# a read end per iteration in flight, each iteration's answer. So the staging is
+# that shape, built the way [98] builds it — a channel from `proc_channel_open`,
+# a sibling's answer written in, the write end gone, the read end held — plus a
+# write channel on a high number, and the line is asked about every descriptor it
+# holds: the forger for a write, the drainer for a read.
+
+budget__pilot_holding='
+  proc_channel_preflight
+  work="$(mktemp -d "$RALPH_SHIM_STATE/chan.XXXXXX")"
+  proc_channel_open 7 6 "$(mktemp "$work/answer.XXXXXX")"
+  printf "the answer of a sibling\n" >&7
+  exec 7>&-
+  exec 11>"$work/high"
+  rm -f "$work/high"
+  USAGE_TOKEN_CMD="\"\$RALPH_SHIM_STATE/usage-token\""
+'
+
+budget__token_probe() {
+  fd_forger
+  fd_drainer
+  printf '#!/bin/sh\n"%s/fd-forger" usage "%s/usage.forged"\n"%s/fd-drainer" "%s/usage.drained"\nprintf "usage-token\\n"\n' \
+    "$SHIM_STATE" "$SHIM_STATE" "$SHIM_STATE" "$SHIM_STATE" >"$SHIM_STATE/usage-token"
+  chmod +x "$SHIM_STATE/usage-token"
+}
+
+@test "the usage token command holds nothing of the pilot that evaluates it, a sibling's answer included" {
+  budget__token_probe
+  usage_respond "$(budget_payload 0.10 "$(budget_soon 3600)" 0.10 "$(budget_soon 200000)")"
+  pack_run "$budget__pilot_holding"'
+    budget_check || true
+    printf "pilot=[%s]\n" "$(cat <&6)"
+  '
+  assert_success
+  assert_output_contains "pilot=[the answer of a sibling]"
+  assert_forger_found_nothing "$SHIM_STATE/usage.forged" "the usage token command"
+  grep -q '^probed$' "$SHIM_STATE/usage.drained" || fail "the drainer never ran"
+  ! grep -q '^DRAINED ' "$SHIM_STATE/usage.drained" ||
+    fail "the usage token command read what the pilot holds: $(grep '^DRAINED ' "$SHIM_STATE/usage.drained" | tr '\n' ' ')"
+  # And what it prints is still what the endpoint is asked with.
+  grep -q 'Authorization: Bearer usage-token' "$SHIM_STATE/curl.calls" ||
+    fail "the endpoint was not asked with the token the line printed"
+}
+
+@test "the paired witness: the same line under the eval it replaced writes and empties what the pilot holds" {
+  # The probes see what they are asked about: the high channel takes a write, and
+  # the read end gives up the sibling's answer — which the pilot then never reads.
+  budget__token_probe
+  pack_run "$budget__pilot_holding"'
+    token="$(eval "$USAGE_TOKEN_CMD" 2>/dev/null)"
+    printf "token=%s\n" "$token"
+    printf "pilot=[%s]\n" "$(cat <&6)"
+  '
+  assert_success
+  assert_output_contains "token=usage-token"
+  assert_output_contains "pilot=[]"
+  grep -q '^OPEN 11$' "$SHIM_STATE/usage.forged" ||
+    fail "the forger did not find the pilot's write channel: $(cat "$SHIM_STATE/usage.forged")"
+  grep -q '^DRAINED 6$' "$SHIM_STATE/usage.drained" ||
+    fail "the drainer did not empty the pilot's read end: $(cat "$SHIM_STATE/usage.drained")"
+}
+
 # ── against the real endpoint ────────────────────────────────────────────────
 
 @test "the real usage endpoint answers something this pack can read" {

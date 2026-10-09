@@ -636,6 +636,115 @@ proc__curl_is_a_forger() {
   assert_output_contains "stdout=the body"
 }
 
+# ── [106] a line of the configuration the pack evaluates ─────────────────────
+#
+# The two token commands are lines the operator wrote and the pack evaluates; what
+# they run may be a script under a `HOME` the session shares. The line here is the
+# forger, so what it could reach is what it writes down, and it prints a token
+# after, as a token command does.
+
+proc__token_line='
+  line="\"\$RALPH_SHIM_STATE/fd-forger\" line \"\$RALPH_SHIM_STATE/eval.log\"; printf tok"
+'
+
+@test "a line of the configuration the pack evaluates holds nothing above stderr, however its caller wrote the call" {
+  # The shape of the two call sites, and the same call under a shut written on it —
+  # the redirection on a function call that makes bash keep a copy of what it
+  # closes ([101]).
+  fd_forger
+  pack_run "$channels_and_the_old_shut$proc__token_line"'
+    token="$(proc_eval_bare "$line" 2>/dev/null)"
+    printf "token=%s\n" "$token"
+    shut proc_eval_bare "$line" 2>/dev/null >/dev/null
+  '
+  assert_success
+  assert_output_contains "token=tok"
+  [ "$(grep -c '^probed$' "$SHIM_STATE/eval.log")" = 2 ] ||
+    fail "the line did not run once per call: $(cat "$SHIM_STATE/eval.log")"
+  assert_forger_found_nothing "$SHIM_STATE/eval.log" "a line the pack evaluates"
+}
+
+@test "the paired witness: the same line under the eval it replaced holds the caller's channels" {
+  # `$( … )` redirects stdout and nothing else, which is what [105] measured four
+  # lines of a receipt through. Both channels a caller holds open for writing are
+  # found: the low one and the high one.
+  fd_forger
+  pack_run "$channels_and_the_old_shut$proc__token_line"'
+    token="$(eval "$line" 2>/dev/null)"
+    printf "token=%s\n" "$token"
+  '
+  assert_success
+  assert_output_contains "token=tok"
+  grep -q '^probed$' "$SHIM_STATE/eval.log" || fail "the forger never ran: the witness proves nothing"
+  grep -q '^OPEN 5$' "$SHIM_STATE/eval.log" && grep -q '^OPEN 11$' "$SHIM_STATE/eval.log" ||
+    fail "a bare eval did not hold the caller's channels: $(cat "$SHIM_STATE/eval.log")"
+}
+
+@test "a line evaluated that way keeps its status, its streams, the pack's variables and functions, and gets the operator's environment back" {
+  # What an operator may write in the line is what they could write before: a key
+  # of the sealed configuration it was read out of, which the pack does not export
+  # (`bash -c` would hand the forge no token), and a function of the pack. What it
+  # is handed of git's environment is the operator's — `gh auth token` runs git's
+  # credential machinery the way it does from their shell — while the caller keeps
+  # [102]'s token. And an assignment the line makes stays where it was made.
+  export GIT_CONFIG_PARAMETERS="'ralph.probe=operator'"
+  pack_run '
+    proc_git_hooks_off
+    SEALED_KEY=sealed
+    pack_fn() { printf "from-the-pack"; }
+    rc=0
+    proc_eval_bare "exit 3" || rc=$?
+    printf "status=%s\n" "$rc"
+    printf "stdout=%s\n" "$(proc_eval_bare "printf \"%s\" \"\$SEALED_KEY\"")"
+    printf "stderr=%s\n" "$(proc_eval_bare "printf oops >&2" 2>&1 >/dev/null)"
+    printf "function=%s\n" "$(proc_eval_bare pack_fn)"
+    printf "given=%s\n" "$(proc_eval_bare "printf \"%s\" \"\${GIT_CONFIG_PARAMETERS-<unset>}\"")"
+    printf "kept=%s\n" "$GIT_CONFIG_PARAMETERS"
+    proc_eval_bare "LEAKED=yes"
+    printf "after=[%s]\n" "${LEAKED-unset}"
+  '
+  assert_success
+  assert_output_contains "status=3"
+  assert_output_contains "stdout=sealed"
+  assert_output_contains "stderr=oops"
+  assert_output_contains "function=from-the-pack"
+  assert_output_contains "given='ralph.probe=operator'"
+  refute_output_contains "given='ralph.probe=operator' 'core.hooksPath"
+  assert_output_contains "kept='ralph.probe=operator' 'core.hooksPath=/dev/null'"
+  assert_output_contains "after=[unset]"
+}
+
+@test "a line the pack evaluates reads none of its caller's stdin, in the loop that drains a list either" {
+  # The shape of `failures_quarantine_strays` (`.scratch/ralph-pack/sondes/ticket-106/s1`):
+  # a `while read` over a heredoc, one remote request — one evaluation of the token
+  # command — per item. Under the eval it replaced, the line read the rest of the
+  # list, and the loop never saw the second item: on a remote night, a stray the
+  # session gave itself left `ready-for-agent` with no line naming it. The paired
+  # witness is the same loop under that eval. And a pipe, the other stdin a caller
+  # can have.
+  pack_run '
+    while read -r item; do
+      printf "pack %s:[%s]\n" "$item" "$(proc_eval_bare cat)"
+    done <<LIST
+one
+two
+LIST
+    while read -r item; do
+      printf "bare %s:[%s]\n" "$item" "$(eval cat)"
+    done <<LIST
+one
+two
+LIST
+    printf "pipe=[%s]\n" "$(printf "held\n" | proc_eval_bare cat)"
+  '
+  assert_success
+  assert_output_contains "pack one:[]"
+  assert_output_contains "pack two:[]"
+  assert_output_contains "bare one:[two]"
+  refute_output_contains "bare two"
+  assert_output_contains "pipe=[]"
+}
+
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────
 #
 # The instant a channel's file has a name — from the module's `mktemp` to the

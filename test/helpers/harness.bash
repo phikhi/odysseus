@@ -1232,6 +1232,33 @@ PERL
   chmod +x "$SHIM_STATE/fd-forger"
 }
 
+# The reading half of the forger ([106]): a program that reads whatever there is
+# to read from every descriptor above stderr it holds, the way a stranger empties
+# a channel's read end before its reader gets to it — [105]'s (c), and the one the
+# forger cannot see, since a read end takes no write. Regular files only, which is
+# what makes it safe to aim at every number: a pipe or a socket nobody writes
+# would block it, and every channel of this pack is an unlinked regular file
+# (`proc_channel_open`). It logs `DRAINED <n>` per descriptor that gave up a byte,
+# then `probed`.
+fd_drainer() {
+  cat >"$SHIM_STATE/fd-drainer" <<'PERL'
+#!/usr/bin/env perl
+my ($log) = @ARGV;
+my @drained;
+for my $n (3 .. 255) {
+  open(my $fh, "<&=", $n) or next;
+  next unless -f $fh;
+  my $buf;
+  my $got = sysread($fh, $buf, 65536);
+  push @drained, $n if defined $got && $got > 0;
+}
+open(my $out, ">>", $log) or die "fd-drainer: cannot open $log: $!\n";
+print $out "DRAINED $_\n" for @drained;
+print $out "probed\n";
+PERL
+  chmod +x "$SHIM_STATE/fd-drainer"
+}
+
 # What a forger's log says, as one assertion: it ran at least once and no
 # descriptor it tried took a write. The first half is [80]'s: a probe that never
 # ran makes the second half true for the wrong reason.

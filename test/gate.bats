@@ -5436,3 +5436,96 @@ $callers"
 $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
   fi
 }
+
+# ── [106] every line of the configuration this pack evaluates ────────────────
+#
+# Two keys of the configuration are command lines the pack evaluates itself, the
+# token commands, and what they run may be a script under a `HOME` a session
+# writes. `proc_eval_bare` evaluates a line holding nothing above stderr and
+# reading `/dev/null`. A census of [104]'s shape, with one difference it cannot do
+# without:
+#
+#   zone   `harness_pack_sources`, all of it.
+#   code   the raw text, comment lines out — not [91]'s lexer, which empties every
+#          string: `eval "exec $fd>&-"`, which closes a descriptor, and `eval
+#          "${TRACKER_TOKEN_CMD}"`, which runs whatever the line names, are the
+#          same `eval ""` once the lexer is done with them.
+#   shape  the word `eval`. Outside `proc.sh:proc_eval_bare`, every one must be
+#          one of two forms that run nothing a configuration wrote, and name no
+#          key of it — the keys derived from `ralph.config.sh.example` (`^KEY=`),
+#          which is where a key is born. The `exec` of a redirection list, `eval
+#          "exec …`, which is how the pack spends a descriptor number; and a
+#          reference to a variable by name, `\${$name}`, which expands a name and
+#          never evaluates the value it finds — `init.sh` reads the keys a human
+#          gave it that way, before the example assigns them all.
+#   homes  the two keys are evaluated where `proc_eval_bare` is called:
+#          `forge.sh:forge__http` and `budget.sh:budget__request`.
+#
+# What this does not count, said rather than left to be found: a line of the
+# configuration started by `bash -c` is [95]'s census, above; and a key expanded
+# in a command position — `$SOME_CMD` as the first word — is counted nowhere. No
+# line of the pack does that today, and a scan of the raw text reads every
+# continuation line as a command position: eighteen false positives, measured on
+# the other keys on 09/10/2026.
+
+# Every `eval` of the pack's own code, as `file:function<TAB>kind`, where kind is
+# `exec` for the `exec` of a redirection list, `name` for a reference by name,
+# `key <NAME>` for a line naming a key of the configuration, and `other` for
+# anything else. One line per occurrence, not deduplicated: the floor counts them.
+pack_raw_evals() {
+  local root="$1" keys="$2" f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -v file="$(basename "$f")" -v keysfile="$keys" '
+      BEGIN { while ((getline k < keysfile) > 0) if (k != "") K[k] = 1 }
+      /^[a-z_][a-z0-9_]*\(\)/ { fn = $0; sub(/\(\).*/, "", fn) }
+      /^[ \t]*#/ { next }
+      $0 !~ /(^|[^A-Za-z0-9_-])eval([^A-Za-z0-9_-]|$)/ { next }
+      {
+        kind = "other"
+        if ($0 ~ /(^|[^A-Za-z0-9_-])eval[ \t]+"exec[ \t]/) kind = "exec"
+        else if (index($0, "\\${$") > 0) kind = "name"
+        n = split($0, w, /[^A-Za-z0-9_]+/)
+        for (i = 1; i <= n; i++) if (w[i] in K) { kind = "key " w[i]; break }
+        printf "%s:%s\t%s\n", file, (fn == "" ? "(top level)" : fn), kind
+      }' "$f"
+  done <<SOURCES
+$(harness_pack_sources "$root")
+SOURCES
+  return 0
+}
+
+@test "every line of the configuration this pack evaluates goes through the one function that hands it nothing" {
+  local keys="$RALPH_TEST_DIR/config.keys" evals bare execs callers expected
+  sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$RALPH_PACK_ROOT/.claude/ralph.config.sh.example" |
+    LC_ALL=C sort -u >"$keys"
+  # The floors, each on a side that cannot be empty for the right reason: the keys
+  # (sixty-five on the day this was written, the two token commands among them),
+  # and the `exec` evals the pack closes and opens descriptors with — seven, in
+  # `receipt.sh`, `lenses.sh`, `gate.sh` and `proc.sh`. A scan that read nothing
+  # would find no bare eval either, and pass.
+  [ "$(grep -c . "$keys")" -ge 40 ] && grep -qx TRACKER_TOKEN_CMD "$keys" && grep -qx USAGE_TOKEN_CMD "$keys" ||
+    fail "the keys of the configuration were not read: $(tr '\n' ' ' <"$keys")"
+  evals="$(pack_raw_evals "$RALPH_PACK_ROOT" "$keys")"
+  execs="$(printf '%s\n' "$evals" | grep -c '	exec$' || true)"
+  [ "$execs" -ge 7 ] ||
+    fail "the scan found $execs evals of a redirection list, so it is reading the wrong thing:
+$evals"
+
+  bare="$(printf '%s\n' "$evals" | grep -v '^proc\.sh:proc_eval_bare	' | grep -v '	exec$' |
+    grep -v '	name$' | grep . || true)"
+  [ -z "$bare" ] ||
+    fail "an eval of the pack runs something other than a redirection list or a name, or names a key of the configuration, outside the one function that evaluates a line holding nothing (a line is home<TAB>kind):
+$bare"
+
+  callers="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_-])proc_eval_bare([^A-Za-z0-9_-]|$)')"
+  expected="$(printf '%s\n' \
+    'budget.sh:budget__request' \
+    'forge.sh:forge__http' \
+    'proc.sh:proc_eval_bare' | LC_ALL=C sort)"
+  if [ "$callers" != "$expected" ]; then
+    fail "the two token commands are not evaluated where proc_eval_bare is called, or it is called somewhere new
+(expected on the left, found on the right):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$callers") || true)"
+  fi
+}

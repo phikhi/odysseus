@@ -197,8 +197,11 @@ budget__now() {
 # The token comes from a command the project names, never from a file this pack
 # goes looking for: a credential store is the user's business and its shape
 # differs per platform. `USAGE_TOKEN_CMD` is read out of the sealed config ([24]),
-# so it is exactly as trusted as `TEST_CMD` — which is the only reason evaluating
-# it here is acceptable.
+# so the line is the operator's — and what it runs may be a script under the
+# `HOME` the session shares, which is why it is evaluated by `proc_eval_bare`
+# ([106]): holding nothing above stderr and reading `/dev/null`, as `TEST_CMD` is
+# run, without `TEST_CMD`'s deadline ([107]). This runs in the pilot, which holds
+# whatever the run hands the pilot to read its iterations by.
 #
 # Asked through `proc_curl` ([105]), because this answer is the one the run holds
 # up against the `rate_limit_event` a session writes into its own stream ([08]),
@@ -210,7 +213,7 @@ budget__request() {
   local token=''
   command -v curl >/dev/null 2>&1 || return 1
   if [ -n "${USAGE_TOKEN_CMD:-}" ]; then
-    token="$(eval "${USAGE_TOKEN_CMD}" 2>/dev/null)" || token=''
+    token="$(proc_eval_bare "${USAGE_TOKEN_CMD}" 2>/dev/null)" || token=''
   fi
   if [ -n "$token" ]; then
     proc_curl -sS --max-time 10 \

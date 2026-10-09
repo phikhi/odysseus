@@ -191,7 +191,10 @@ USAGE_URL="${USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 # token the endpoint answers nothing this pack can read, the run says so once,
 # and the budget is watched by the in-band signal alone — which only ever
 # arrives after a session has already started.
-# It is evaluated by the loop, so it is exactly as trusted as TEST_CMD.
+# You write the line; what it runs may be a script under your HOME, which a
+# session runs with and can rewrite. So the loop evaluates it holding nothing of
+# its own and reading /dev/null on stdin ([106]): a command that prompts gets EOF,
+# as it would on any AFK night. It can still use the variables of this file.
 USAGE_TOKEN_CMD="${USAGE_TOKEN_CMD:-}"
 
 # Seconds an answer from the endpoint is reused for. Kept in the run's own
@@ -353,8 +356,10 @@ TRACKER_API="${TRACKER_API:-}"
 
 # A command that prints the token, never the token itself. Same arrangement as
 # USAGE_TOKEN_CMD, and for the same reason: a credential store is the user's
-# business and its shape differs per platform. It is read out of this sealed
-# config ([24]), so it is exactly as trusted as TEST_CMD.
+# business and its shape differs per platform. Evaluated the way USAGE_TOKEN_CMD
+# is ([106]). The token is whatever it prints: a script under your HOME that a
+# session rewrote chooses who the pack talks to the forge as — a keychain entry
+# is not a file a session writes.
 #
 #   TRACKER_TOKEN_CMD='security find-generic-password -s ralph-forge -w'
 TRACKER_TOKEN_CMD="${TRACKER_TOKEN_CMD:-}"

@@ -309,11 +309,20 @@ proc_group_fork() {
 # `TEST_CMD`, `TYPECHECK_CMD`, `RUN_CMD`, `VISUAL_CMD` ([95]'s census) — the
 # `lsof` that `proc__channel_alone` below asks who holds a channel ([103]), which
 # would otherwise be a holder of the very channel it is asked about, and the
-# subshell of `proc_curl` below, which is every curl the pack runs ([105]).
-# What is *not* here is written down so that it reads as a decision: the
-# `*_TOKEN_CMD` lines and the scheduler's submission are commands the operator
-# wrote, not the project and not the session; and a program git runs for the pack
-# — a hook, a `core.fsmonitor` — is exec'd by git and never passes through here.
+# subshell of `proc_curl` below, which is every curl the pack runs ([105]). A
+# fifth point reaches the same closing without the `exec`: `proc_eval_bare` below,
+# which evaluates a line of the configuration rather than starting a program.
+#
+# The criterion is not who wrote the line but **who can write what it runs** — the
+# question [101] asked of `TEST_CMD`, and failed to ask of the two token commands,
+# which it left out as "commands the operator wrote". The operator did write them;
+# what they run is a script under a `HOME` the session shares, which [105] measured
+# rewritten by the session it judged writing four lines into a receipt. So they
+# are here too, by `proc_eval_bare` ([106]). What is still *not* here is written
+# down so that it reads as a decision: the scheduler's submission, whose job runs
+# later outside the pilot's tree and inherits nothing of it; and a program git runs
+# for the pack — a hook, a `core.fsmonitor` — is exec'd by git and never passes
+# through here.
 # That one is answered twice, one level up: git is told by the environment of every
 # shell of the run that it has no hook directory (`proc_git_hooks_off`, [102]), and
 # git itself is started holding nothing above stderr (`proc_git`, [104]), so
@@ -494,6 +503,83 @@ proc_git() {
 # `/proc/<pid>/fd`, is the bound of `proc_git` above, unchanged.
 proc_curl() {
   ( proc_exec_bare curl -q "$@" )
+}
+
+# Evaluate a line of the configuration holding nothing but stderr, stdout and
+# `/dev/null` for stdin ([106]). Two lines go through here, and a census in
+# `test/gate.bats` refuses an `eval` anywhere else in the pack's code that is not
+# the `exec` of a descriptor list and names no key of the configuration:
+# `TRACKER_TOKEN_CMD`, evaluated in an iteration at every operation of a remote
+# backend (`forge__http`), and `USAGE_TOKEN_CMD`, in the pilot at every budget
+# check (`budget__request`).
+#
+# **Why, when the operator wrote both.** Because what a line runs is not the line:
+# the shipped example names a keychain, and an installation that names a script
+# under `$HOME` names a file the session it judges can rewrite — it runs with that
+# `HOME`. Until this function both lines were `$(eval …)` in the shell that called
+# them, and a command substitution redirects stdout and nothing else. Measured on
+# 07/10/2026 (`.scratch/ralph-pack/sondes/ticket-105/t1`): a `forge-token` script
+# the session rewrote wrote four lines into the receipt of a remote backend through
+# the iteration's channel, run `0`, ticket `resolved`. And on 09/10/2026, stdin
+# (`.scratch/ralph-pack/sondes/ticket-106/s1`): neither the pilot nor an iteration
+# is handed `/dev/null` when the run starts, so a rewritten script that read stdin
+# held the run for as long as whoever started it kept the terminal open; and run
+# with stdin closed, the quarantine of strays escalates them from a `while read …
+# done <<STRAYS` whose stdin is the rest of the list — the script read it, and the
+# second stray stayed `ready-for-agent` with no line of the run naming it.
+#
+# So three things, each the shape it already has elsewhere in this module:
+#
+#   descriptors   closed from 3 to 255, as `proc_git` does and for its reason —
+#                 in the subshell, after the fork, where no copy bash made for a
+#                 redirection written on this call survives either.
+#   stdin         `/dev/null`, as `proc_group_fork` hands `TEST_CMD`. A token
+#                 command has nothing to read; one that prompts gets EOF, which is
+#                 what it got from an AFK night already. Measured under this
+#                 function on 09/10/2026: `security find-generic-password … -w`
+#                 and `gh auth token` answer as they do from a terminal — the
+#                 keychain and the credential stores answer through their own
+#                 sockets and Mach ports, not on a descriptor of the caller.
+#   environment   handed back, as by `proc_exec_bare`: keeping [102]'s token, as
+#                 `proc_git` does, buys nothing here — a script a session rewrote
+#                 already runs at the instant the pack chose, outside every group
+#                 the run sweeps — and a line the operator wrote runs the way it
+#                 runs from their own shell, `gh` and its git included.
+#
+# **Evaluated in a subshell, not handed to `bash -c`**, and that one is a decision
+# with a price on each side. `bash -c` would see only what is exported, and a line
+# may name the sealed configuration it was read out of — `$TRACKER_REPO`, a key of
+# the operator's own — which the pack does not export: the request would go out
+# without a token and the night would end on a 401. A subshell keeps every
+# variable and every function of the pack, and the price is that a line can call
+# one: nothing known does, and a function called there runs in this subshell,
+# holding what it holds — nothing above stderr.
+#
+# What a caller writes keeps its meaning, measured on bash 3.2.57: the status is
+# the line's, stdout is what `$( … )` reads, stderr goes where the call sends it,
+# and an assignment the line makes stays in the subshell, as it did in the command
+# substitution before.
+#
+# **What this does not take away**, written where it is claimed:
+#   - the token is whatever the line prints. A session that rewrites the script
+#     chooses the identity the pack talks to the forge with. Not a door this opens:
+#     the same session can run that script itself, and what it writes into a
+#     remote tracker is the line "Ce qu'une session écrit dans le tracker d'un
+#     backend distant" of `docs/frontiere-de-confiance.md`, which holds it.
+#   - time. Nothing bounds the line: a script that never returns holds the
+#     iteration or the pilot that evaluated it, the class of a slow
+#     `core.fsmonitor` in the operator's `~/.gitconfig` — [107], not here.
+#   - what it leaves running. A process the line puts in the background survives
+#     the subshell, outside every group the run sweeps, as a session process that
+#     left its own group does.
+#   - a descriptor above 255, or Linux's `/proc/<pid>/fd`: `proc_git`'s bound.
+proc_eval_bare() {
+  (
+    eval "exec $PROC__ABOVE_STDERR"
+    exec </dev/null
+    proc_git_hooks_given_back
+    eval "$1"
+  )
 }
 
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────
@@ -805,8 +891,9 @@ proc_git_hooks_off() {
 # — set to the same value, or not set at all. For a shell about to become, or to
 # hand its environment to, a program this pack did not write: the session's git
 # then runs the project's hooks as it always did, and a project command that tests
-# a hook of its own still sees it. Three callers: `proc_exec_bare` above, the
-# drain's interactive session, and the scheduler's submission — `at` keeps the
+# a hook of its own still sees it. Four callers: `proc_exec_bare` and
+# `proc_eval_bare` above, the drain's interactive session, and the scheduler's
+# submission — `at` keeps the
 # environment it was called with for the job, and a successor that inherited the
 # token would take it for the operator's and hand it to its own sessions.
 #
