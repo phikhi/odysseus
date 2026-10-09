@@ -7159,7 +7159,7 @@ mutation "101 the canary's sessions hold the pack's descriptors" "$SESSION" \
 # The receipt says what it does not hold in the same breath as what it does ([24]),
 # and the sentence that claimed only the strong half is what [96] was opened for.
 mutation "101 the document claims more than was closed" "$RECEIPT" \
-  's/, with the exceptions this run did not close:[^\n]*after that check as before it\./. /' \
+  's/(?:,| —) with the exceptions this run did not close:[^\n]*after that check as before it\./. /' \
   test/receipt.bats "says where it was assembled"
 
 mutation "96 the document keeps the claim and drops the reservation" "$RECEIPT" \
@@ -7436,10 +7436,83 @@ mutation "105 the forge builds its curl in an argument list again" "$FORGE" \
   's/^  set -- -sS --max-time "\$\{FORGE_TIMEOUT:-30\}" -X "\$method"/  set -- curl -sS --max-time "\${FORGE_TIMEOUT:-30}" -X "\$method"/m; s/^  proc_curl "\$\@" "\$url" 2>\/dev\/null/  "\$\@" "\$url" 2>\/dev\/null/m' \
   test/gate.bats "every curl this pack runs goes through"
 
-# The exception the receipt names by name: dropped, the document claims every
-# program again, and the operator's token command was measured writing into it.
-mutation "105 the receipt forgets the operator's token command" "$RECEIPT" \
-  's/on a remote backend, the operator.*?into this document; //' \
+# The exception the receipt named by name until [106] — the operator's token
+# command — was retired with it: [106] closed it, and the document now claims it
+# with its reason, which the `106 …` entry below holds.
+
+# ── [106] a line of the configuration the pack evaluates ─────────────────────
+#
+# The three things `proc_eval_bare` does, each taken out alone, and each asked of
+# every population that sees it: the unit, a remote night (the iteration), the
+# pilot's budget check, the canary. Then the decision that it evaluates in a
+# subshell rather than handing the line to `bash -c`, the two call sites, the
+# census, and the receipt's sentence.
+mutation "106 a line the pack evaluates holds the shell that evaluates it" "$PROC" \
+  's/    eval "exec \$PROC__ABOVE_STDERR"\n    exec <\/dev\/null\n/    exec <\/dev\/null\n/' \
+  test/proc.bats "a line of the configuration the pack evaluates holds nothing above stderr"
+
+mutation "106 a remote night's token command holds the iteration's channels" "$PROC" \
+  's/    eval "exec \$PROC__ABOVE_STDERR"\n    exec <\/dev\/null\n/    exec <\/dev\/null\n/' \
+  test/tracker-remote.bats "a token command whose script the session rewrote holds nothing"
+
+mutation "106 the usage token command holds and empties what the pilot holds" "$PROC" \
+  's/    eval "exec \$PROC__ABOVE_STDERR"\n    exec <\/dev\/null\n/    exec <\/dev\/null\n/' \
+  test/budget.bats "the usage token command holds nothing of the pilot"
+
+mutation "106 a token script the session rewrote writes into a remote receipt" "$PROC" \
+  's/    eval "exec \$PROC__ABOVE_STDERR"\n    exec <\/dev\/null\n/    exec <\/dev\/null\n/' \
+  test/canary.bats "a token command whose script the session rewrote puts no line"
+
+mutation "106 a line the pack evaluates reads its caller's stdin" "$PROC" \
+  's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    proc_git_hooks_given_back\n    eval "\$1"/' \
+  test/proc.bats "reads none of its caller's stdin"
+
+mutation "106 a remote token command drains the quarantine it is evaluated in" "$PROC" \
+  's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    proc_git_hooks_given_back\n    eval "\$1"/' \
+  test/tracker-remote.bats "drains nothing of the quarantine"
+
+mutation "106 a line the pack evaluates is handed the pack's git environment" "$PROC" \
+  's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    exec <\/dev\/null\n    eval "\$1"/' \
+  test/proc.bats "gets the operator's environment back"
+
+# The decision with a price on each side: `bash -c` sees only what is exported,
+# and a line may name the sealed configuration it was read out of.
+mutation "106 a line the pack evaluates loses the configuration it was read out of" "$PROC" \
+  's/    proc_git_hooks_given_back\n    eval "\$1"\n  \)/    proc_git_hooks_given_back\n    exec bash -c "\$1"\n  )/' \
+  test/proc.bats "the pack's variables and functions"
+
+# Call sites. Each back to the bare eval it was, asked of the run that decides
+# (the canary, the drained quarantine, the pilot) and of the census.
+mutation "106 the forge evaluates its token command bare" "$FORGE" \
+  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/canary.bats "a token command whose script the session rewrote puts no line"
+
+mutation "106 the forge's token command drains the quarantine again" "$FORGE" \
+  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/tracker-remote.bats "drains nothing of the quarantine"
+
+mutation "106 a bare eval of the forge's token command goes uncounted" "$FORGE" \
+  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/gate.bats "every line of the configuration this pack evaluates"
+
+mutation "106 the pilot evaluates the usage token command bare" "$BUDGET" \
+  's/token="\$\(proc_eval_bare "\$\{USAGE_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/budget.bats "the usage token command holds nothing of the pilot"
+
+mutation "106 a bare eval of the usage token command goes uncounted" "$BUDGET" \
+  's/token="\$\(proc_eval_bare "\$\{USAGE_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/gate.bats "every line of the configuration this pack evaluates"
+
+# The census's second clause: a line of the configuration hidden behind the
+# `exec` of a redirection list is still the line, evaluated bare.
+mutation "106 a token command hides behind the exec of a redirection list" "$FORGE" \
+  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "exec 3>&-; \${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/gate.bats "every line of the configuration this pack evaluates"
+
+# The receipt claims the token command with its reason; dropped, the document
+# says nothing of the one line of the operator's that a session could rewrite.
+mutation "106 the receipt leaves the operator's token command out of its claim" "$RECEIPT" \
+  's/ — the operator.{1,12}s own token command included, on a remote backend: .*?\(\[106\]\)//' \
   test/receipt.bats "the document says where it was assembled"
 
 # ── the canary ───────────────────────────────────────────────────────────────

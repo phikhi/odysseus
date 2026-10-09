@@ -228,8 +228,12 @@ forge__urlenc() {
 #
 # The token comes from a command the project names ([24]'s criterion, and the same
 # arrangement `USAGE_TOKEN_CMD` already has): a credential store is the user's
-# business, and `TRACKER_TOKEN_CMD` is read out of the sealed config, so it is
-# exactly as trusted as `TEST_CMD`.
+# business, and `TRACKER_TOKEN_CMD` is read out of the sealed config, so the line
+# is the operator's. What it runs is not always: a script under `$HOME` is a file
+# the session shares, and [105] measured one rewritten by the session it judged
+# write four lines into this iteration's receipt. So it is evaluated by
+# `proc_eval_bare` ([106]), holding nothing above stderr and reading `/dev/null` —
+# as `TEST_CMD` is run, without `TEST_CMD`'s deadline ([107]).
 #
 # Asked through `proc_curl` ([105]), never by curl's own name: this runs inside an
 # iteration with the receipt's channel open from `receipt_open` to `receipt_close`
@@ -244,7 +248,7 @@ forge__http() {
     return 1
   }
   if [ -n "${TRACKER_TOKEN_CMD:-}" ]; then
-    token="$(eval "${TRACKER_TOKEN_CMD}" 2>/dev/null)" || token=''
+    token="$(proc_eval_bare "${TRACKER_TOKEN_CMD}" 2>/dev/null)" || token=''
   fi
   header="$(forge__spec "$flavour" auth-header)" || return 1
   accept="$(forge__spec "$flavour" accept)" || accept='Accept: application/json'

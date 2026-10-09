@@ -1052,10 +1052,12 @@ PROBE
   # Curl joined the claim with [105], measured in: a `~/.curlrc` the session wrote
   # put four lines into a remote receipt through the iteration's channel. And the
   # operator's token command, evaluated in the same shell and measured the same day
-  # writing the same four lines, is an exception said by name — the claim was
-  # "every program", and that one was not closed.
+  # writing the same four lines, was an exception said by name until [106] closed
+  # it: part of the claim now, with the reason a line the operator wrote is in it.
   assert_file_contains "$(receipt_path 01-alpha)" "curl, which reads no configuration file at all"
-  assert_file_contains "$(receipt_path 01-alpha)" "the operator's own \`TRACKER_TOKEN_CMD\`"
+  assert_file_contains "$(receipt_path 01-alpha)" "the operator's own token command included"
+  assert_file_contains "$(receipt_path 01-alpha)" "a script under the operator's \`HOME\` is a file a session writes"
+  refute_file_contains "$(receipt_path 01-alpha)" "evaluated as it is written in the shell that measured this iteration"
   # And the things that sentence does not hold, in the same breath ([101]): one is
   # what the check of [103] cannot see, and one is a property of another platform.
   assert_file_contains "$(receipt_path 01-alpha)" "a descriptor in flight between two processes"

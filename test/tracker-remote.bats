@@ -1217,6 +1217,102 @@ $(curl_calls | grep -v '^-q ' | grep -E '^-' || true)"
   esac
 }
 
+# ── [106] the token command a remote night evaluates ─────────────────────────
+#
+# The operator wrote the line, and the line runs a script under `$HOME` — the
+# installation [105] measured (`.scratch/ralph-pack/sondes/ticket-105/t1`), and the
+# one a session can reach: it runs with that `HOME`. Every request of the night
+# evaluates the line, from the pilot and from inside an iteration while the
+# receipt's channel is open.
+
+remote__token_script() {
+  mkdir -p "$HOME/bin"
+  printf '#!/bin/sh\nprintf "tok-of-the-operator\\n"\n' >"$HOME/bin/forge-token"
+  set_config TRACKER_TOKEN_CMD 'bash "$HOME/bin/forge-token"'
+}
+
+@test "a token command whose script the session rewrote holds nothing of the night that evaluates it" {
+  # The script the session leaves is the forger, and its record is a receipt line:
+  # a descriptor that took it is also a line in the document. It then prints the
+  # operator's token, as a session that wants to go unnoticed would.
+  remote__a_night
+  fd_forger
+  remote__token_script
+  remote__editing_session <<DO
+mkdir -p src
+printf 'written by %s\n' "\$\$" >src/a.txt
+cat >"\$HOME/bin/forge-token" <<'TOK'
+#!/bin/sh
+"$SHIM_STATE/fd-forger" "\$(printf 'note\tFORGED-BY-THE-TOKEN-COMMAND')" "$SHIM_STATE/token.probe"
+printf "tok-of-the-operator\n"
+TOK
+DO
+
+  run_loop
+  assert_success
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+
+  local probed
+  probed="$(grep -c '^probed$' "$SHIM_STATE/token.probe" || true)"
+  [ "$probed" -ge 5 ] || fail "the rewritten script ran $probed times, so this asks about nothing"
+  assert_forger_found_nothing "$SHIM_STATE/token.probe" "a token command the session rewrote"
+  [ -n "$(forge_request_body 1)" ] || fail "no receipt reached the forge"
+  case "$(forge_request_body 1)" in
+    *FORGED*) fail "the token command wrote into the receipt: $(forge_request_body 1 | grep FORGED)" ;;
+  esac
+  # And the line is still what the requests carry: closing what it holds took
+  # nothing from what it prints.
+  grep -q 'Authorization: Bearer tok-of-the-operator' "$SHIM_STATE/curl.calls" ||
+    fail "no request carried the token the line printed"
+}
+
+@test "a token command that reads its stdin drains nothing of the quarantine it is evaluated in" {
+  # `.scratch/ralph-pack/sondes/ticket-106/s1`, C1. The session gives itself two
+  # tickets on the forge; the quarantine escalates them one remote request each,
+  # from a `while read … done <<STRAYS`, and each request evaluates the token
+  # command — whose stdin was, until [106], the rest of that list. The rewritten
+  # script read the second stray, which stayed `ready-for-agent` with no line of
+  # the run naming it. The paired witness is the same night with the script
+  # untouched (s1, C0): both strays escalated.
+  #
+  # The run is started with stdin on `/dev/null`, as s1 had to: a script that reads
+  # the stdin of a run started from a terminal waits for the terminal, and a call
+  # made outside that loop would hang the test instead of failing it. So only a
+  # call inside the loop has anything to read. The run ends in 4, the witness's
+  # too: one iteration and two strays is the staging, not the finding.
+  use_forge github
+  forge_seed_many 1 1 bulk
+  set_config ITER_CAP 1
+  remote__token_script
+  remote__editing_session <<DO
+surface="\$(printf '%s' "\$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '\`\r' | tr ',' ' ')"
+for t in \$surface; do mkdir -p "\$(dirname "\$t")"; printf 'written by %s\n' "\$\$" >"\$t"; done
+for n in 9 10; do
+  printf 'a ticket this session gave itself' >"\$d/issue.\$n.title"
+  printf '**Status:** ready-for-agent\n\n**Blocked by:** None\n\n**Write-surface:** \`src/n%s.txt\`\n\n**Slug:** stray-%s\n' "\$n" "\$n" >"\$d/issue.\$n.body"
+  printf 'open\n' >"\$d/issue.\$n.state"
+  : >"\$d/issue.\$n.assignee"
+  printf '%s\n' "\$n" >>"\$d/order"
+done
+cat >"\$HOME/bin/forge-token" <<'TOK'
+#!/bin/sh
+cat >>"$SHIM_STATE/drained"
+printf 'tok-of-the-operator\n'
+TOK
+DO
+
+  run bash "$PACK_DIR/loop.sh" </dev/null
+  assert_equal "$status" 4
+
+  # The script ran after the session rewrote it, or "it drained nothing" would be
+  # true because nothing read anything ([80]).
+  assert_file_exists "$SHIM_STATE/drained"
+  [ ! -s "$SHIM_STATE/drained" ] ||
+    fail "the token command read its caller's stdin: [$(tr '\n' '|' <"$SHIM_STATE/drained")]"
+  assert_equal "$(forge_field 9 Status)" "ready-for-human"
+  assert_equal "$(forge_field 10 Status)" "ready-for-human"
+}
+
 # ── gitlab ───────────────────────────────────────────────────────────────────
 
 @test "gitlab speaks its own dialect and produces the same transitions" {
