@@ -929,6 +929,118 @@ FAKE
 
 # ── the known hole, waiting for its ticket ───────────────────────────────────
 
+# Four tickets nothing will deliver, and a survivor the first session leaves behind
+# that rewrites, in a loop, every answer it can find under `$TMPDIR`: the shape an
+# iteration's answer had until [98] — a directory named `ralph-slot.*`, one file per
+# fact — and a file of that name that persists, which is the shape a channel would
+# have if anything kept its name. Two decoys of those two shapes are planted before
+# the run, so that the survivor is shown doing what it does; the paths of the slot
+# writes register ([80]) are none of this file's business and are left alone.
+#
+# What it writes is the four answers the pass of 29/09/2026 measured
+# (`sondes/passe-29-09/q1`), one per reading the pilot used to take on faith.
+canary__slot_survivor() {
+  local tmp="$RALPH_TEST_DIR/tmp"
+  mkdir -p "$tmp/ralph-slot.decoy"
+  : >"$tmp/ralph-slot.decoyfile"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  tab="$(printf "\t")"
+  end=$((SECONDS + 120))
+  pass=0
+  seen=""
+  : >"$RALPH_SHIM_STATE/slot.looked"
+  while [ "$SECONDS" -lt "$end" ]; do
+    pass=$((pass + 1))
+    for d in "$TMPDIR"/ralph-slot.*; do
+      case "$d" in *ralph-slot.writes.*) continue ;; esac
+      if [ -d "$d" ]; then
+        printf "resolved\n" >"$d/outcome" 2>/dev/null || continue
+        printf "blocked weekly 0\n" >"$d/posture" 2>/dev/null
+        printf "1\n" >"$d/rollback-failed" 2>/dev/null
+        printf "FORGED-BY-A-SURVIVOR%scapability-drift\n" "$tab" >>"$d/drift" 2>/dev/null
+        printf "%s\n" "$d" >>"$RALPH_SHIM_STATE/slot.forged"
+      elif [ -f "$d" ]; then
+        # Only a name that has been there for fifty passes — half a second at least.
+        # A channel has its name for the millisecond between its mktemp and its
+        # unlink, and touching it in that instant is [103]s case, not this one.
+        first="$(printf "%s" "$seen" | awk -v d="$d" "\$2 == d { print \$1; exit }")"
+        if [ -z "$first" ]; then
+          seen="$seen$pass $d
+"
+          continue
+        fi
+        [ "$((pass - first))" -ge 50 ] || continue
+        {
+          printf "posture%sblocked weekly 0\n" "$tab"
+          printf "rollback-failed%s1\n" "$tab"
+          printf "drift%sFORGED-BY-A-SURVIVOR%scapability-drift\n" "$tab" "$tab"
+          printf "outcome%sresolved\n" "$tab"
+        } >>"$d" 2>/dev/null && printf "%s\n" "$d" >>"$RALPH_SHIM_STATE/slot.forged"
+      fi
+    done
+    sleep 0.01
+  done
+' >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+SCRIPT
+}
+
+@test "the canary: a process the session left behind cannot keep a sterile night going" {
+  # [98]. Measured on the code before it, with this very survivor: nine sessions
+  # instead of three, the iteration cap and not `STERILE_K` ending the night, and
+  # seven `resolved` in a journal no session wrote a line of — on a night where every
+  # session delivered nothing. With its posture, the night ended after one ticket on
+  # a weekly wall nobody had hit; with its rollback flag, on a rollback that never
+  # ran; and its witness lines went into `run.log` under subjects it chose. The
+  # answer now crosses on a descriptor no name reaches, so all four are written into
+  # nothing the pilot reads, and the night ends the way an honest one does.
+  local id
+  for id in 01-one 02-two 03-three 04-four; do
+    {
+      printf '# %s\n\n' "$id"
+      printf '**What to build:** A ticket nothing will deliver.\n\n'
+      printf '**Blocked by:** None\n\n'
+      printf '**Write-surface:** src/%s.txt\n\n' "$id"
+      printf '**Status:** ready-for-agent\n\n'
+      printf -- '- [ ] The marker file exists.\n'
+    } >"$TRACKER_DIR/$id.md"
+  done
+  harness__commit "test: four tickets"
+  session_writes_nothing
+  set_config ITER_CAP 8
+  canary__slot_survivor
+
+  run_loop_own_tmp
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+
+  # The survivor ran, and wrote everything it could reach — both decoys, and nothing
+  # of this run's. Without that, the rest would be true for the wrong reason ([80]).
+  assert_file_exists "$SHIM_STATE/slot.looked"
+  assert_file_contains "$SHIM_STATE/slot.forged" "ralph-slot.decoy"
+  assert_file_contains "$SHIM_STATE/slot.forged" "ralph-slot.decoyfile"
+  if grep -v 'ralph-slot\.decoy' "$SHIM_STATE/slot.forged" | grep -q .; then
+    fail "the survivor reached an answer of this run: $(grep -v 'ralph-slot\.decoy' "$SHIM_STATE/slot.forged" | sort -u | tr '\n' ' ')"
+  fi
+
+  # And the night is the honest one: three iterations, then `STERILE_K`. Counted on
+  # the run's own lines and not on `claude_call_count`: the session that plants the
+  # survivor hands over to the fake by running it again, which takes a second slot.
+  assert_equal "$status" 4
+  assert_output_contains "sterile run"
+  assert_equal "$(printf '%s\n' "$output" | grep -c '^ralph: iteration [0-9]*: .* -> ')" "3"
+  refute_output_contains "iteration cap reached"
+  refute_output_contains "the weekly usage limit blocks this run"
+  refute_output_contains "the rollback could not put this iteration's tree back"
+  refute_file_contains "$FEATURE_DIR/run.log" "	resolved	"
+  refute_file_contains "$FEATURE_DIR/run.log" "FORGED-BY-A-SURVIVOR"
+}
+
 @test "the canary: a process the judged session left behind cannot forge a lens verdict" {
   skip "known hole, ticket [97]: the verdict of a review lens is the last RALPH-LENS-VERDICT line of its stream, and that stream is a named file under \$TMPDIR for as long as the session is writing into it. [94] moved every answer the *gate* read out of its own directory onto a descriptor no stranger can find, and moved the lens's own read back inside the branch that owns the stream — which leaves one window: between the session's last write and the branch's read. A process the judged session left behind, polling for the verdict line and truncating the file, wins it. Nothing above session_spawn can close it: the stream needs a name because claude is given it on a redirection and monitor_watch follows it through a descriptor of its own, opened by path. Raising this skip is an acceptance criterion of [97]."
 }

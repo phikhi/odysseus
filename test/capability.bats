@@ -590,7 +590,8 @@ TAIL
   # definitive and not deferred.
   #
   # `run.log` is the other document, and this shell cannot write it: it belongs to
-  # the pilot. The line crosses on the slot and `loop__finish` journals it.
+  # the pilot. The line crosses in the iteration's answer ([98]) and `loop__finish`
+  # journals it.
   use_tickets 01-alpha
   set_config ITER_CAP 1
   set_config RETRY_N 2

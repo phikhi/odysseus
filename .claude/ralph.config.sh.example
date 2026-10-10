@@ -290,7 +290,9 @@ WEEKLY_RESUME="${WEEKLY_RESUME:-schedule}"
 # raising it — it is a trade, written down as one.
 #
 # 0, empty or non-numeric is refused at startup rather than read as 1: a value
-# nobody can read must not be a way to switch a setting off in silence.
+# nobody can read must not be a way to switch a setting off in silence. Above 244
+# is refused too, rather than read as 244: each iteration in flight answers the run
+# on a descriptor of its own, and there are that many to give ([98]).
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 
 # What to copy into each iteration's worktree, **one path per line**, taken
