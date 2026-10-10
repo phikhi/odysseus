@@ -1448,7 +1448,7 @@ mutation "34 a rollback that read no tree does not say so to the loop" "$FAILURE
   test/failures.bats "stops the run instead of laundering"
 
 mutation "34 the loop grinds on after a rollback that could not act" "$LOOP" \
-  's/  if \[ "\$\(cat "\$slot\/rollback-failed" 2>\/dev\/null \|\| echo 0\)" = 1 \]; then/  if false; then/' \
+  's/  if \[ "\$rollback" = 1 \]; then/  if false; then/' \
   test/failures.bats "stops the run instead of laundering"
 
 # The [33] reading, on the branch [33] had no caller to decide for. The tracker's
@@ -2331,7 +2331,7 @@ mutation "13 an iteration that died without a verdict keeps its ticket" "$LOOP" 
   test/concurrency.bats "dies without a verdict"
 
 mutation "13 a child that died hard is waited for for ever" "$LOOP" \
-  's/      if \[ -e "\$slot\/done" \] \|\| ! kill -0 "\$pid" 2>\/dev\/null; then/      if [ -e "\$slot\/done" ]; then/' \
+  's/      if \[ -s "\/dev\/fd\/\$back" \] \|\| ! kill -0 "\$pid" 2>\/dev\/null; then/      if [ -s "\/dev\/fd\/\$back" ]; then/' \
   test/concurrency.bats "dies without a verdict"
 
 # Aimed at the whole block and not at its `break`, and the difference is a lesson
@@ -2492,19 +2492,19 @@ mutation "44 the orphan question always answers yes" "$LOOP" \
 # and report VACUOUS about a test that is fine — the shape this file's header warns
 # about twice.
 mutation "44 nothing is asked between the session and the gate" "$LOOP" \
-  's/  if loop__orphaned "\$ticket" "\$slot"; then\n    return 0\n  fi\n\n  # Before anything below reads/  # Before anything below reads/' \
+  's/  if loop__orphaned "\$ticket"; then\n    return 0\n  fi\n\n  # Before anything below reads/  # Before anything below reads/' \
   test/concurrency.bats "run was killed"
 
 mutation "44 nothing is asked between the gate and the commit" "$LOOP" \
-  's/      if loop__orphaned "\$ticket" "\$slot"; then\n        return 0\n      fi\n      # Durable inside this worktree first/      # Durable inside this worktree first/' \
+  's/      if loop__orphaned "\$ticket"; then\n        return 0\n      fi\n      # Durable inside this worktree first/      # Durable inside this worktree first/' \
   test/concurrency.bats "dies during the gate"
 
 mutation "44 nothing is asked between the gate and the failure policy" "$LOOP" \
-  's/      if loop__orphaned "\$ticket" "\$slot"; then\n        return 0\n      fi\n      # What this policy is about to write/      # What this policy is about to write/' \
+  's/      if loop__orphaned "\$ticket"; then\n        return 0\n      fi\n      # What this policy is about to write/      # What this policy is about to write/' \
   test/concurrency.bats "bills the ticket nothing"
 
 mutation "44 an orphan gives back a claim it no longer owns" "$LOOP" \
-  's/        if loop__orphaned "\$ticket" "\$slot"; then\n          return 0\n        fi\n        tracker_unclaim/        tracker_unclaim/' \
+  's/        if loop__orphaned "\$ticket"; then\n          return 0\n        fi\n        tracker_unclaim/        tracker_unclaim/' \
   test/concurrency.bats "refuses on its own account"
 
 # And the one refusal that is not the caller's to make: the fold waits on a guard
@@ -3231,7 +3231,7 @@ mutation "15 the witness does not follow a symlinked skill" "$CAPABILITY" \
   test/capability.bats "symlinked skill"
 
 mutation "15 nothing measures the surfaces again after the session" "$LOOP" \
-  's/^\$\(capability_drift "\$\{RALPH_RETRO_STATE:-\}"\)$//m' \
+  's/^  drift_lines="\$\(capability_drift "\$\{RALPH_RETRO_STATE:-\}"\)" \|\| true$/  drift_lines=\x27\x27/m' \
   test/capability.bats "operator's home"
 
 # And the values that would switch the tier off without saying so.
@@ -3280,7 +3280,7 @@ mutation "37 a sibling in flight exempts every word of its id" "$CLAIM" \
 # entry above: there the fence answers for a word, here the whole list arrives as
 # one line and exempts nobody at all.
 mutation "37 the ids in flight are handed over as a line of words" "$LOOP" \
-  's/awk -F.\\t. .NF > 1 \{ print \$2 \}./awk -F\x27\\t\x27 \x27NF > 1 { printf "%s ", \$2 }\x27/' \
+  's/awk -F.\\t. .NF > 1 \{ print \$4 \}./awk -F\x27\\t\x27 \x27NF > 1 { printf "%s ", \$4 }\x27/' \
   test/concurrency.bats "does not reclaim a claim this run is holding"
 
 mutation "37 the surface owner is looked up by words" "$GATE" \
@@ -3607,10 +3607,10 @@ mutation "46 the capability witness says nothing a document can keep" "$CAPABILI
   's/    printf \x27%s\\t%s\\t%s\\n\x27 "\$path" capability-drift \\\n      "a capability surface changed under this run: \$path"/    :/' \
   test/capability.bats "iteration a run stops on"
 
-# The pilot's half: the iteration measured it and wrote it to its slot, and
-# nothing carried it to the file a human opens in the morning.
+# The pilot's half: the iteration measured it and handed it over in its answer
+# ([98]), and nothing carried it to the file a human opens in the morning.
 mutation "46 the drift never reaches the run journal" "$LOOP" \
-  's/      loop_journal_append "\$drift_subject" "\$\{drift_outcome:-capability-drift\}" 0 0 0/      :/' \
+  's/    loop_journal_append "\$subject" "\$\{said:-capability-drift\}" 0 0 0/    :/' \
   test/capability.bats "iteration a run stops on"
 
 # ── [09] the one-shot successor ──────────────────────────────────────────────
@@ -7514,6 +7514,89 @@ mutation "106 a token command hides behind the exec of a redirection list" "$FOR
 mutation "106 the receipt leaves the operator's token command out of its claim" "$RECEIPT" \
   's/ — the operator.{1,12}s own token command included, on a remote backend: .*?\(\[106\]\)//' \
   test/receipt.bats "the document says where it was assembled"
+
+# ── [98] the channel an iteration answers the pilot on ──────────────────────
+
+# The pilot closes the write end right after the fork. Kept, the pilot holds the
+# answer of the iteration it just forked, and so does every program it runs by
+# its bare name until the next fork: the pilot's own `sleep` in the test writes an
+# answer of its own into it, and the answer is refused.
+mutation "98 the pilot keeps the write end of the answer it handed over" "$LOOP" \
+  's/  eval "exec \$LOOP_SLOT_FD>&-"\n  LOOP_SLOTS=/  :\n  LOOP_SLOTS=/' \
+  test/concurrency.bats "an answer waiting to be read"
+
+# An iteration closes every read end it inherited before anything runs. Kept, a
+# sibling forked while another is in flight holds that one's answer, and a program
+# it runs by its bare name empties it before the pilot reads it.
+mutation "98 an iteration keeps the read ends it inherited" "$LOOP" \
+  's/  eval "exec \$LOOP__SLOT_BACKS"\n/  :\n/' \
+  test/concurrency.bats "an answer waiting to be read"
+
+# The channel through the shared opener and nothing else. Opened bare, the file
+# keeps its `mktemp` name under `$TMPDIR` for the whole iteration, and the
+# survivor of the canary writes an answer into it.
+mutation "98 the answer is opened bare and keeps its name" "$LOOP" \
+  's/! proc_channel_open "\$LOOP_SLOT_FD" "\$back" "\$file"; then/! eval "exec \$LOOP_SLOT_FD<>\$file \$back<\$file"; then/' \
+  test/canary.bats "cannot keep a sterile night going"
+
+# A refused channel is a refused iteration. Forked anyway, the iteration answers
+# into a descriptor that is closed, a session is spent, and nothing names the
+# process that held the file.
+mutation "98 a refused channel forks the iteration anyway" "$LOOP" \
+  's/! proc_channel_open "\$LOOP_SLOT_FD" "\$back" "\$file"; then/! { proc_channel_open "\$LOOP_SLOT_FD" "\$back" "\$file" || true; }; then/' \
+  test/loop-happy-path.bats "a channel something held in the instant"
+
+# The shape the pilot reads an answer against. Without it a stranger's record is
+# merged into the iteration's own, and the last word wins.
+mutation "98 an answer a stranger wrote into is believed" "$LOOP" \
+  's/  if \[ -n "\$forged" \]; then\n/  if false; then\n/' \
+  test/loop-happy-path.bats "something other than its iteration wrote into"
+
+# One read end per iteration in flight, on numbers that run out.
+mutation "98 MAX_PARALLEL has no bound" "$LOOP" \
+  's/  loop__slot_preflight \|\| rc=1\n/  :\n/' \
+  test/concurrency.bats "MAX_PARALLEL above the read ends"
+
+# What the iteration hands over has to be in the answer: the posture the pilot
+# stops on, and the witness lines the journal carries.
+mutation "98 the posture never reaches the pilot" "$LOOP" \
+  's/  loop__record posture "\$posture" \|\| return 1\n/  :\n/' \
+  test/budget.bats "the in-band signal decides the next spawn"
+
+mutation "98 the witness lines never reach the answer" "$LOOP" \
+  's/    loop__record drift "\$subject" "\$said" \|\| return 1\n/    :\n/' \
+  test/capability.bats "iteration a run stops on"
+
+# And the iteration's own reading of it, which is no longer a file it re-reads.
+mutation "98 the iteration classifies on a posture it never read" "$LOOP" \
+  's/  posture="\$\(budget_stream_posture "\$outfile"\)"\n/  posture=\x27\x27\n/' \
+  test/budget.bats "a session the API refused is not an attempt"
+
+# No entry for two things this ticket was told to cover, and the reason is a
+# measure in each case, not a guess ([103] wrote a "VACUOUS by construction" note
+# before measuring it, and it was wrong):
+#
+#   the flattening in `loop__record` — removed, the drift, journal and in-band
+#   budget tests stay green (measured on four of them, 10/10/2026). No value that
+#   reaches an answer today can carry a tab or a line break: the posture and the
+#   bookkeeping are single fields of one stream line, and a witness line is split
+#   on its tabs and lines before it gets here. Kept as `receipt__put` keeps it,
+#   against tomorrow's producer, and said rather than counted.
+#
+#   [101]'s leftover: "the playthrough's command line holds nothing of the shell
+#   that runs it" with `proc_exec_bare` taken out of `proc_group_fork` stays green
+#   (measured). The pilot holds a read end only while an iteration is in flight,
+#   and the value gate runs at an empty frontier with nothing in flight — so the
+#   pilot holds no channel at that instant, by construction of `loop_main`. What a
+#   program the pilot runs while it does hold one is asked by the test of
+#   `test/concurrency.bats` above, through the pilot's own `sleep`.
+
+# The pilot closes the answer's numbers before anything else: bash 3.2 does not
+# reopen a number from 10 up that is already open, so one the run inherited would
+# refuse every channel.
+mutation "98 the pilot keeps what it inherited on the answer's numbers" "$LOOP" \
+  's/  eval "exec \$LOOP_SLOT_FD>&- \$LOOP__SLOT_BACKS"\n/  :\n/' \
+  test/loop-happy-path.bats "descriptors the run inherited"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

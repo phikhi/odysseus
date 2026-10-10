@@ -137,3 +137,22 @@ arguments, sans le `-q` du pack : ce rejeu mesure donc la moitié **descripteurs
 seule (`proc_curl` ferme 3..255 avant l'`exec`). La moitié **configuration** est
 mesurée par la suite : `harness_real_curl` lance le vrai curl **avec les arguments
 du pack**, `-q` compris (`test/budget.bats`, `test/canary.bats`).
+
+## En livrant [98] (10/10/2026)
+
+**f6 — les heredocs sont des fichiers nommés** (→ [108]). Hors du pack, bash 3.2.57 :
+un heredoc (et un here-string) est créé en `/var/tmp/sh-thd-<n>` — `P_tmpdir`, pas
+`$TMPDIR` — puis délié une fois rouvert en lecture. 3 000 heredocs d'une ligne : un
+espion qui boucle sans dormir voit **40 168** noms ; le même qui écrit dans ce qu'il
+voit (`1<>`) fait lire sa ligne **2 fois sur 3 000**. [98] a sorti le chemin de la
+réponse de tout heredoc ; le reste du pack est [108].
+
+    bash .scratch/ralph-pack/sondes/ticket-98/f6-les-heredocs.sh "$TMPDIR/f6.log"
+
+**La sonde Q1 de la passe du 29/09 rejouée sur la branche de [98]**
+(`../passe-29-09/q1-le-slot-du-pilote.bats`) : Q1a témoin 3 itérations, stérile ;
+Q1b le survivant ne voit **aucun** slot, 3 itérations `nothing-delivered`, stérile
+(sur `main` : 9 sessions, `ITER_CAP`) ; Q1c et Q1d nuits vertes, 4 tickets `resolved`,
+`rc=0` (sur `main` : arrêt 6 après un ticket, arrêt 4) ; Q1e et Q1f `rc=0`, la course du
+`rm -rf "$slot"` n'existe plus — c'est le déclencheur de [99] qui disparaît, pas sa
+classe ; Q1g aucune ligne forgée au journal (sur `main` : deux).

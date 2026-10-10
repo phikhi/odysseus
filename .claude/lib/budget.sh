@@ -11,15 +11,20 @@
 #   the in-band     every session's stream carries a `rate_limit_event` early on,
 #   signal          with the same three facts (window, status, reset). **Free**,
 #                   and under contract against the real binary ([20]). But it
-#                   arrives in `.scratch/<feature>/.session.$$.jsonl`, and that is
-#                   a file the judged session can write — the same boundary that
+#                   arrives in `.scratch/<feature>/.session.$$.<n>.jsonl`, and that
+#                   is a file the judged session can write — the same boundary that
 #                   made [23] pay for a second deadline.
 #
 # So the endpoint decides whenever it answers, and the in-band signal is a
 # corrective that may only ever make this run **more** cautious, never less. What
 # a forged one can buy is bounded twice over, by things no session writes:
 # `BUDGET_MAX_PAUSE` bounds one pause, and the loop's own `STERILE_K` bounds how
-# many unproductive iterations a run will sit through. A pause never touches
+# many unproductive iterations a run will sit through. **That sentence was false of
+# the pack until [98]**, and not of this module: the posture the pilot pauses on and
+# the outcome `STERILE_K` counts were both read out of files in `$TMPDIR/ralph-slot.*`
+# that a session's survivor could rewrite. They now cross from the iteration to the
+# pilot on an unlinked channel (`loop.sh`, "what an iteration hands back"), so the
+# stream is the one thing a session writes here, as this paragraph says. A pause never touches
 # `Failures:` — that field is the ticket's retry budget, and a subscription
 # running out is not an attempt at the ticket ([26] on what a named field owes).
 #

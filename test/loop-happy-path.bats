@@ -977,3 +977,187 @@ $after"
   # The paired witness for the half that *is* kept: the ticket came back.
   assert_equal "$(ticket_status 01-alpha)" "ready-for-agent"
 }
+
+# ── what an iteration hands back ([98]) ──────────────────────────────────────
+
+@test "a session that writes an answer under \$TMPDIR in its own window puts nothing in the journal" {
+  # The one answer of the seven with no race in it (`sondes/passe-29-09/q1`, Q1g).
+  # Until [98] the pack wrote `$slot/drift` only on a capability, PATH or forensic
+  # drift, so a file the session created there was read as it stood, and each of its
+  # lines became a journal line under a subject the session chose — written by the
+  # pilot, so inside the journal's own witness ([10]), which said nothing. Measured
+  # before [98]: two such lines in the morning's `run.log`, run exit 0. The session
+  # here writes into every answer it can find, in both shapes, and two decoys show
+  # it doing so.
+  use_tickets 01-alpha 02-beta
+  mkdir -p "$RALPH_TEST_DIR/tmp/ralph-slot.decoy"
+  : >"$RALPH_TEST_DIR/tmp/ralph-slot.decoyfile"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+tab="$(printf '\t')"
+: >"$state/drift.looked"
+for d in "$TMPDIR"/ralph-slot.*; do
+  case "$d" in *ralph-slot.writes.*) continue ;; esac
+  if [ -d "$d" ]; then
+    printf 'FORGED-SUBJECT%scapability-drift\n' "$tab" >>"$d/drift"
+  elif [ -f "$d" ]; then
+    printf 'drift%sFORGED-SUBJECT%scapability-drift\n' "$tab" "$tab" >>"$d"
+  else
+    continue
+  fi
+  printf '%s\n' "$d" >>"$state/drift.written"
+done
+prompt="$(cat)"
+chmod -x "$state/claude.script"
+printf '%s' "$prompt" | claude "$@"
+st=$?
+chmod +x "$state/claude.script"
+exit "$st"
+SCRIPT
+
+  run_loop_own_tmp
+  assert_success
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+
+  # The session looked, and found the decoys and nothing else.
+  assert_file_exists "$SHIM_STATE/drift.looked"
+  assert_file_contains "$SHIM_STATE/drift.written" "ralph-slot.decoy"
+  if grep -v 'ralph-slot\.decoy' "$SHIM_STATE/drift.written" | grep -q .; then
+    fail "the session reached an answer of this run: $(grep -v 'ralph-slot\.decoy' "$SHIM_STATE/drift.written" | tr '\n' ' ')"
+  fi
+  refute_file_contains "$FEATURE_DIR/run.log" "FORGED-SUBJECT"
+}
+
+# A program the iteration runs by its bare name, standing in for one a session
+# planted on PATH ([52], [91]): the `mktemp` an iteration runs for its receipt —
+# which only an iteration does — writes an answer of its own into every descriptor
+# it can. The forger asks every number, as it always does ([101]); its log says
+# which ones took the write.
+happy__stranger_in_the_answer() {
+  fd_forger
+  export RALPH_SHIM_BIN="$SHIM_BIN"
+  cat >"$SHIM_BIN/mktemp" <<'MKTEMP'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+case "$*" in
+  *ralph-receipt.*)
+    if [ ! -e "$state/stranger.done" ]; then
+      "$state/fd-forger" "$(printf 'outcome\tresolved')" "$state/stranger.log"
+      : >"$state/stranger.done"
+    fi
+    ;;
+esac
+exec env PATH="${PATH#"$RALPH_SHIM_BIN":}" mktemp "$@"
+MKTEMP
+  chmod +x "$SHIM_BIN/mktemp"
+}
+
+@test "an answer something other than its iteration wrote into is refused whole, out loud" {
+  # [98]'s channel has one writer, and its bound is the one every channel of this
+  # pack has: what the pack runs by its bare name holds what the shell that runs it
+  # holds, and that is [52]/[91]'s witness, not this channel's. So the pilot does
+  # not take an answer on trust either. The iteration writes each record once and
+  # its outcome last; a record twice, after the outcome, or that nobody writes is an
+  # answer it did not write, and the pilot reads it as no answer at all and stops —
+  # rather than taking the first word, the last, or a merge of the two. Staged with
+  # the session delivering nothing, so that what the stranger writes is a `resolved`
+  # the iteration never said.
+  use_tickets 01-alpha
+  session_writes_nothing
+  happy__stranger_in_the_answer
+
+  run_loop
+  assert_equal "$status" 4
+
+  # The stranger did write into this iteration's answer: without that line the rest
+  # would be true for the wrong reason.
+  grep -q '^OPEN ' "$SHIM_STATE/stranger.log" ||
+    fail "the stranger found nothing to write into: $(cat "$SHIM_STATE/stranger.log" 2>/dev/null)"
+
+  assert_output_contains "its answer is not the one it wrote"
+  refute_output_contains "01-alpha -> resolved"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_file_contains "$FEATURE_DIR/run.log" "01-alpha	answer-refused"
+  refute_file_contains "$FEATURE_DIR/run.log" "01-alpha	resolved"
+}
+
+@test "the paired witness: the same iteration with no stranger beside it" {
+  use_tickets 01-alpha
+  session_writes_nothing
+  set_config STERILE_K 1
+
+  run_loop
+  assert_equal "$status" 4
+  refute_output_contains "its answer is not the one it wrote"
+  assert_file_contains "$FEATURE_DIR/run.log" "01-alpha	nothing-delivered"
+}
+
+@test "a channel something held in the instant it had a name gives the ticket back and stops the run" {
+  # [103]'s refusal, met by the channel an iteration answers on: the file has a name
+  # between its `mktemp` and its unlink, a process polling `$TMPDIR` wins that
+  # instant every time, and the opener refuses a channel anybody else holds. Staged
+  # deterministically rather than raced: an `rm` in front of the real one opens the
+  # file from a process of its own before unlinking it — `channel_window_held`, at
+  # the scale of a run. Forking the iteration anyway would be the files this channel
+  # replaced; so the ticket goes back, no session is spent, and the run says which
+  # process held it.
+  use_tickets 01-alpha
+  export RALPH_SHIM_BIN="$SHIM_BIN"
+  cat >"$SHIM_BIN/rm" <<'RM'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+for a in "$@"; do
+  case "$a" in
+    */ralph-slot.writes.*) ;;
+    */ralph-slot.*)
+      if [ -f "$a" ] && [ ! -e "$state/holder.pid" ]; then
+        nohup bash -c 'exec 3<"$1"; : >"$2"; exec sleep 60' _ "$a" "$state/holder.ready" \
+          >/dev/null 2>&1 &
+        printf '%s\n' "$!" >"$state/holder.pid"
+        n=0
+        while [ ! -e "$state/holder.ready" ] && [ "$n" -lt 500 ]; do
+          sleep 0.01
+          n=$((n + 1))
+        done
+      fi
+      ;;
+  esac
+done
+exec env PATH="${PATH#"$RALPH_SHIM_BIN":}" rm "$@"
+RM
+  chmod +x "$SHIM_BIN/rm"
+
+  run_loop
+  local holder
+  holder="$(cat "$SHIM_STATE/holder.pid" 2>/dev/null || true)"
+  kill -KILL "$holder" 2>/dev/null || true
+  # The shim stays: this shell has `rm` hashed to it now, and it hands every other
+  # call to the real one — removing it through itself would leave the teardown's
+  # `rm -rf` pointing at a file that is gone.
+
+  [ -n "$holder" ] || fail "nothing held the channel's file: the staging never happened"
+  assert_equal "$status" 4
+  assert_output_contains "no channel for 01-alpha to answer this run on"
+  assert_output_contains "process $holder on its descriptor 3"
+  assert_ticket_status 01-alpha ready-for-agent
+  assert_equal "$(claude_call_count)" "0"
+}
+
+@test "descriptors the run inherited on the numbers an answer uses do not refuse its channels" {
+  # [98], measured while delivering it: on bash 3.2 an `exec` that opens a number
+  # from 10 up which is already open does nothing and returns 0, and the other
+  # redirections of the same `exec` are dropped with it. A run started by a process
+  # that left 10 or 11 open — a wrapper, a scheduler — would have had every channel
+  # refused, with a sentence about a file somebody linked. The pilot closes 10 to
+  # 254 before anything else.
+  use_tickets 01-alpha 02-beta
+  : >"$RALPH_TEST_DIR/inherited"
+  run bash -c 'exec 10<"$1" 11<"$1" 12<"$1"; exec bash "$2"' _ \
+    "$RALPH_TEST_DIR/inherited" "$PACK_DIR/loop.sh"
+  assert_success
+  refute_output_contains "no channel for"
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+}

@@ -3764,7 +3764,7 @@ survivor_stop() {
 
 @test "the refusal posture of a lens is its own branch's answer, not a file reopened after it" {
   # The third, and the expensive one. A posture read out of a lens's stream reaches
-  # the pilot through `$slot/posture`: the run pauses on a subscription it believes
+  # the pilot in the iteration's answer ([98]): the run pauses on a subscription it believes
   # is spent, and if the branch was also red the ticket is given back with no retry
   # consumed and its work rolled back. That answer used to be taken **here**, by
   # the shell that forked the branches, out of the lens's stream in the gate's

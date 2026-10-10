@@ -402,6 +402,9 @@ loop_preflight() {
   # And what an isolated iteration needs before a ticket is claimed ([13]): a
   # commit to make a worktree from, and a MAX_PARALLEL that means something.
   concurrency_preflight || rc=1
+  # And the bound the channel an iteration answers on sets on it ([98]): one read
+  # end per iteration in flight, on numbers that run out.
+  loop__slot_preflight || rc=1
   # And the audit surface's own ([10]), for the reason every value in this
   # preflight is here: a receipt that keeps nothing is the only copy of a review
   # lens's findings, kept at zero.
@@ -497,19 +500,211 @@ $LOOP__FINDINGS
 FINDINGS
 }
 
-# ── one iteration ────────────────────────────────────────────────────────────
+# ── what an iteration hands back ([98]) ──────────────────────────────────────
+#
+# An iteration is a fork, and a fork hands nothing back to the shell it came from
+# but its exit status ([83]). What it has to hand back is more than a status: the
+# outcome, which decides `sterile` — so `STERILE_K` — and whether the ticket is
+# given back; the budget posture the pilot pauses or stops on, `BUDGET_MAX_PAUSE`
+# and a successor armed included; a rollback that could not act, which stops the
+# run; the lines a witness saw moving, which the pilot journals; and the
+# bookkeeping of the morning's journal line.
+#
+# Until [98] all of it crossed as files in a `mktemp -d` under `$TMPDIR`, whose glob
+# this pack publishes itself (`gate_tmp_names`). Measured by the pass of 29/09/2026
+# (`sondes/passe-29-09/q1`), a survivor of a session rewriting one file of it in a
+# loop: `resolved` in the outcome turned a sterile night of three sessions into
+# nine, ended by the iteration cap and not by `STERILE_K`, with seven `resolved` in
+# a journal no session had written a line of; `blocked weekly 0` in the posture
+# ended a green night after one ticket on a wall nobody had hit; `1` in the
+# rollback flag stopped it on a rollback that never ran. And the witness lines
+# needed no race at all: the session wrote the file in its own window and the pilot
+# put its lines in `run.log` itself, so the journal's own witness ([10]) had nothing
+# to say — the pilot had written them. The two bounds the trust table names each
+# time it accepts a signal a session can write were read there.
+#
+# So the answer crosses on a channel of [94]'s and [96]'s shape, the first this pack
+# opens from a pilot towards its own fork: a file the pilot opens twice just before
+# the fork, unlinks and finds alone (`proc_channel_open`, [103]); its write end is
+# handed to the iteration and closed in the pilot right after the fork; its read
+# end is kept by the pilot and read once, after the iteration has exited. Nothing of
+# it has a name a process can reach, and the iteration is its only writer: the
+# pilot holds the write end only between the open and the fork, which run builtins
+# alone, and what an iteration starts that this pack did not write holds nothing
+# above stderr (`proc_exec_bare`, `proc_git`, `proc_curl`, `proc_eval_bare`).
+#
+# **One writer, which is why there is no length bound.** [94] bounds a gate's notes
+# because several branches write one descriptor at once, and a long record is cut
+# and its tail arrives as a line of its own. An iteration writes its answer alone,
+# in sequence, as its last act. What a value still has to lose is its line breaks —
+# the turns, the cost, the tokens and the posture are read out of the session's own
+# stream ([97]), and a witness's subject is a name a session chose — so each value
+# is flattened as it is written, and a line inside one of them never becomes a
+# record.
+#
+# **And nothing on that path is a heredoc**, which is not a style. bash 3.2 makes a
+# heredoc a *named* file, `/var/tmp/sh-thd-<n>`, between its creation and its
+# unlink, and a process of this user polling that directory sees the name and can
+# write into it before the reader reads (measured opening this ticket,
+# `sondes/ticket-98/f6`; the rest of the pack is [108]). So the answer is built,
+# read and journalled by loops over parameter expansions, and the list of
+# iterations in flight is walked the same way: it carries the numbers the pilot
+# hands to `eval`.
+#
+# The write end is at a fixed number, reopened for every iteration since the pilot
+# closes it after every fork; a read end per iteration in flight, at the lowest
+# number of its range that no other one holds — taken from `LOOP_SLOTS`, never
+# probed, since a probe of a descriptor in bash lies ([101]). 3 to 9 are taken —
+# the monitor's stream (3), the receipt (5, 4), a lens's prompt (7, 6), the gate's
+# notes (9, 8) — and 255 is where bash keeps the script it reads. So the write end
+# is 10 and the read ends 11 to 254, which bounds `MAX_PARALLEL` at 244: refused
+# above that rather than read as less ([31]). bash saves a descriptor it redirects
+# onto the lowest free number from 10 up, and none of that can be standing on one
+# of these when it is opened: `loop__start` is called bare from `loop_main`, itself
+# called bare, so no redirection of the pilot is pending at that instant.
+LOOP_SLOT_FD=10
+LOOP_SLOT_BACK_FIRST=11
+LOOP_SLOT_BACK_LAST=254
+
+# Every read end an iteration may inherit, as the redirections that close them —
+# built once, by builtins, the way `PROC__ABOVE_STDERR` is. Literal because a brace
+# range takes no variable; the two constants above say the same numbers.
+printf -v LOOP__SLOT_BACKS '%s<&- ' {11..254}
+
+# The bound those numbers set, at the door ([31]). A value `concurrency_preflight`
+# cannot read is its own to refuse; this one only asks of a number whether it fits.
+loop__slot_preflight() {
+  local want="${MAX_PARALLEL:-1}"
+  case "$want" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  if [ "${#want}" -le 3 ] &&
+    [ "$want" -le $((LOOP_SLOT_BACK_LAST - LOOP_SLOT_BACK_FIRST + 1)) ]; then
+    return 0
+  fi
+  printf 'ralph: MAX_PARALLEL is %s — every iteration in flight answers this run on a descriptor of its own, numbered %s to %s, so at most %s can be in flight; a larger value is refused rather than read as less (see %s)\n' \
+    "$want" "$LOOP_SLOT_BACK_FIRST" "$LOOP_SLOT_BACK_LAST" \
+    "$((LOOP_SLOT_BACK_LAST - LOOP_SLOT_BACK_FIRST + 1))" "$RALPH_CONFIG" >&2
+  return 1
+}
+
+# The lowest read-end number no iteration in flight holds, or nothing. Walked by
+# expansion and not through a heredoc — nor a here-string, which bash 3.2 makes the
+# same named file — for the reason above. A record of `LOOP_SLOTS` is
+# `pid<TAB>back<TAB>n<TAB>ticket<TAB>tree<TAB>pin`, the numbers first so that no
+# name anybody chose stands in front of them.
+loop__slot_back() {
+  local held='' rest line back n
+  rest="${LOOP_SLOTS:-}"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *$'\n'*) line="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+      *) line="$rest" rest='' ;;
+    esac
+    [ -n "$line" ] || continue
+    back="${line#*$'\t'}"
+    back="${back%%$'\t'*}"
+    held="$held $back "
+  done
+  n="$LOOP_SLOT_BACK_FIRST"
+  while [ "$n" -le "$LOOP_SLOT_BACK_LAST" ]; do
+    case "$held" in
+      *" $n "*) n=$((n + 1)) ;;
+      *)
+        printf '%s\n' "$n"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+# One record of an answer: KEY, then each value flattened — tab, carriage return and
+# line feed to a space — so that what a value carries can never become a field or a
+# record of its own.
+loop__record() {
+  local line="$1" value
+  shift
+  for value in "$@"; do
+    value="${value//$'\t'/ }"
+    value="${value//$'\r'/ }"
+    value="${value//$'\n'/ }"
+    line="$line"$'\t'"$value"
+  done
+  printf '%s\n' "$line" >&"$LOOP_SLOT_FD"
+}
+
+# What an iteration hands back to the pilot, written once and last: OUTCOME, then
+# POSTURE TURNS COST TOKENS ACTION ROLLBACK-FAILED and the witness lines, one
+# `subject<TAB>outcome` per line. The outcome is the last record, and that is the
+# order rather than a tidy-up: it is what the pilot reads as an answer at all, so an
+# iteration that dies halfway through writing this leaves no outcome, and the pilot
+# says it died without a verdict and gives the ticket back — the cautious reading,
+# and the one a dead iteration got before this channel existed.
+#
+# Non-zero when a record could not be written, and the rest is not attempted: a
+# half-written answer with an outcome in it would be a verdict nobody vouches for.
+loop__answer() {
+  local outcome="$1" posture="${2:-}" turns="${3:-}" cost="${4:-}" tokens="${5:-}"
+  local action="${6:-}" rollback="${7:-}" rest="${8:-}" line subject said
+  loop__record posture "$posture" || return 1
+  loop__record turns "$turns" || return 1
+  loop__record cost "$cost" || return 1
+  loop__record tokens "$tokens" || return 1
+  loop__record action "$action" || return 1
+  loop__record rollback-failed "$rollback" || return 1
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *$'\n'*) line="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+      *) line="$rest" rest='' ;;
+    esac
+    subject="${line%%$'\t'*}"
+    said=''
+    [ "$subject" = "$line" ] || said="${line#*$'\t'}"
+    [ -n "$subject" ] || continue
+    loop__record drift "$subject" "$said" || return 1
+  done
+  loop__record outcome "$outcome"
+}
+
+# One witness's lines, said and kept for the answer ([98]): each line of LINES is
+# `subject<TAB>outcome<TAB>message`; the message is said on this iteration's output
+# and `subject<TAB>outcome` is appended to `drift`, a local of `loop__iterate` — the
+# arrangement `loop__finish` documents for the run's counters, one frame down. Split
+# by expansion, never through a heredoc ([108]).
+loop__drift_take() {
+  local rest="${1:-}" line subject said message
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *$'\n'*) line="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+      *) line="$rest" rest='' ;;
+    esac
+    subject="${line%%$'\t'*}"
+    [ -n "$subject" ] || continue
+    said='' message=''
+    if [ "$subject" != "$line" ]; then
+      line="${line#*$'\t'}"
+      said="${line%%$'\t'*}"
+      [ "$said" = "$line" ] || message="${line#*$'\t'}"
+    fi
+    loop_log "$message"
+    drift="$drift$subject"$'\t'"$said"$'\n'
+  done
+  return 0
+}
 
 # What an iteration does instead of delivering, once it knows the run it belongs
 # to is gone: it stops, having written nothing that run could not take back.
 #
-# The outcome goes in the slot all the same. When the pilot really is gone nobody
-# will ever read it — that is the point — but the *other* way into this function is
-# a shell that could not tell who forked it at all, and there the pilot is alive
-# and reading. One writer, two readers, and `loop__finish` decides what to do about
-# the second.
+# It answers all the same. When the pilot really is gone nobody will ever read it —
+# that is the point — but the *other* way into this function is a shell that could
+# not tell who forked it at all, and there the pilot is alive and reading. One
+# writer, two readers, and `loop__finish` decides what to do about the second.
+# Nothing but the outcome: the second way in is taken before the session, so there
+# is no posture to hand over, and on the first one nobody reads it.
 loop__stand_down() {
-  local ticket="$1" slot="$2"
-  shift 2
+  local ticket="$1"
+  shift
   loop_log "$ticket: $*"
   # No receipt on this path, and the workspace goes with the iteration. A receipt
   # is a document about a ticket the loop finished with, and standing down is the
@@ -517,8 +712,7 @@ loop__stand_down() {
   # ([44]). Writing one would put an audit artefact in the tree in the name of a
   # run that no longer exists.
   receipt_close
-  printf '%s\n' pilot-gone >"$slot/outcome"
-  : >"$slot/done"
+  loop__answer pilot-gone || true
   return 0
 }
 
@@ -546,9 +740,9 @@ loop__stand_down() {
 # writer in the tracker beside the run that has already reclaimed the ticket, which
 # is the "flaky" half of that very test.
 loop__orphaned() {
-  local ticket="$1" slot="$2"
+  local ticket="$1"
   proc_owner_gone || return 1
-  loop__stand_down "$ticket" "$slot" \
+  loop__stand_down "$ticket" \
     "the run that forked this iteration is gone — stopping here, with nothing committed, nothing folded, nothing marked and nothing given back"
   return 0
 }
@@ -577,21 +771,33 @@ loop__orphaned() {
 # strength of a file would be resolving tickets on a file a concurrent session can
 # write — see the MAX_PARALLEL line in docs/frontiere-de-confiance.md.
 #
-# The pinned ignore rules, the worktree and the slot all belong to the pilot and
-# are handed over: the pin has to be taken before the claim so that a machine which
-# cannot give one refuses with nothing to unwind ([30]), and a worktree the pilot
-# did not create is one it could not clean up after a child that died hard.
+# The pinned ignore rules, the worktree and the channel this answers on all belong
+# to the pilot and are handed over: the pin has to be taken before the claim so that
+# a machine which cannot give one refuses with nothing to unwind ([30]), a worktree
+# the pilot did not create is one it could not clean up after a child that died
+# hard, and a channel opened here would be one the pilot never found alone ([98]).
+# The iteration's number is the pilot's too, handed in rather than read back: the
+# pilot's counter says how many have been *started*, and with more than one in
+# flight that is no longer the number of the one that is running.
 loop__iterate() {
-  local ticket="$1" slot="$2" tree="$3" start="$4" provisioned="${5:-0}"
+  local ticket="$1" n="$2" tree="$3" start="$4" provisioned="${5:-0}"
   local outfile base pre seen tracker_pin rc turns cost tokens outcome tracker_says
-  local tracker_written changed commit mark emit attempt
-  local drift_subject drift_outcome drift_message witness_note
+  local tracker_written changed commit mark emit attempt posture='' drift=''
+  local drift_lines witness_note
   local RALPH_ROLLBACK_FAILED=0
   # Declared here rather than left to the failure policy's own assignment, and the
   # locality is the point: these belong to *this* iteration, and with two in flight
   # a global would be one sibling reading the other's escalation ([10] on [13]).
   local RALPH_FAILURE_ACTION=none RALPH_FAILURE_BRANCH=''
   local RALPH_RECEIPT=''
+
+  # The read ends this iteration inherited, first and before anything can run
+  # ([98]): its own — the pilot opened it before the fork, and an iteration that
+  # held it would share the pilot's offset into its own answer — and those of every
+  # sibling in flight, which are none of its business. The whole range rather than
+  # the numbers `LOOP_SLOTS` names, because a list is the thing that lied ([101]).
+  # The write end, 10, is the one thing of the channel it keeps.
+  eval "exec $LOOP__SLOT_BACKS"
 
   # **An iteration runs with errexit on, and it says so here rather than trusting
   # that it inherited it.** That is the posture the loop had before [13] — every
@@ -628,10 +834,9 @@ loop__iterate() {
   # a trap here the primitive is never the thing holding anything.
   trap 'loop_log "$1: stop requested — finishing this iteration"' TERM INT
 
-  # Not `cd || exit`: this is a subshell, and the pilot reads the outcome file.
+  # Not `cd || exit`: this is a subshell, and the pilot reads its answer.
   cd "$tree" || {
-    printf '%s\n' iteration-lost >"$slot/outcome"
-    : >"$slot/done"
+    loop__answer iteration-lost || true
     return 0
   }
 
@@ -648,7 +853,7 @@ loop__iterate() {
   # which run forked it cannot say either whether that run is still there, and an
   # iteration that cannot tell must not be the one to commit, fold and mark.
   if ! proc_owner_take "$$"; then
-    loop__stand_down "$ticket" "$slot" \
+    loop__stand_down "$ticket" \
       "this iteration cannot tell which run forked it — refusing to spawn a session for a run it cannot see"
     return 0
   fi
@@ -672,15 +877,15 @@ loop__iterate() {
   # then the line says which one.
   receipt_open ||
     loop_log "$ticket: no audit receipt for this iteration — could not open a channel for one: $PROC_CHANNEL_REFUSAL"
-  receipt_fact iteration "$(cat "$slot/n" 2>/dev/null || printf '?')"
+  receipt_fact iteration "$n"
   receipt_fact worktree "$tree"
   receipt_fact provisioned "$provisioned"
 
-  outfile="$(ralph_feature_dir)/.session.$$.$(basename "$slot").jsonl"
+  outfile="$(ralph_feature_dir)/.session.$$.$n.jsonl"
   # `$$` is the pilot in every one of these shells — bash 3.2 has no BASHPID — so
-  # the slot's name is what makes two concurrent streams two files. A single name
-  # would have both sessions writing one stream, and the smart-zone net reading
-  # the other one's tokens.
+  # the iteration's number is what makes two concurrent streams two files. A single
+  # name would have both sessions writing one stream, and the smart-zone net
+  # reading the other one's tokens.
   # Both taken before the spawn, and they are not the same snapshot. The tree
   # is the state this session inherited, and what the scope-guard measures it
   # against. The commit is where the rollback puts HEAD back: a tree object is
@@ -735,10 +940,12 @@ loop__iterate() {
   receipt_fact cost "$cost"
   receipt_fact tokens "$tokens"
   # Read here because the stream is deleted at the end of this iteration, and
-  # kept as three words rather than a file: what this says about the budget is
-  # read twice — once below to classify this iteration, once by the pilot before
-  # it schedules the next one ([08]).
-  budget_stream_posture "$outfile" >"$slot/posture"
+  # kept as three words in this shell: what this says about the budget is read
+  # twice — once below to classify this iteration, once by the pilot before it
+  # schedules the next one ([08]), which it gets in this iteration's answer. Until
+  # [98] it was a file both of them re-read, so a session's survivor could rewrite
+  # the posture between the session and either reading.
+  posture="$(budget_stream_posture "$outfile")"
 
   # **The second guard, and the one the probe of [44] lands on.** A session is the
   # longest thing an iteration waits for, so this is where a killed run is normally
@@ -747,7 +954,7 @@ loop__iterate() {
   # restore and the quarantine write tickets in the tree the run was started in,
   # and the gate spawns lens sessions against a subscription. Everything *above* it
   # is measurement, in a worktree about to be thrown away.
-  if loop__orphaned "$ticket" "$slot"; then
+  if loop__orphaned "$ticket"; then
     return 0
   fi
 
@@ -856,7 +1063,7 @@ WITNESSES
       # times, because the three are contiguous; the fold asks again on its own
       # account, since it is the one that then waits on a guard it does not control
       # (see concurrency_integrate).
-      if loop__orphaned "$ticket" "$slot"; then
+      if loop__orphaned "$ticket"; then
         return 0
       fi
       # Durable inside this worktree first, then folded onto the branch under a
@@ -924,7 +1131,7 @@ WITNESSES
         # case giving the ticket back is itself a write into a tracker somebody
         # else may already be reclaiming from. The claim stays where the kill left
         # it and the sweep of [12] frees it ([44]).
-        if loop__orphaned "$ticket" "$slot"; then
+        if loop__orphaned "$ticket"; then
           return 0
         fi
         tracker_unclaim "$ticket"
@@ -1010,9 +1217,9 @@ WITNESSES
   # answer would have been "the subscription was empty".
   case "$outcome" in
     failed | nothing-delivered)
-      if budget_refused "$(cat "$slot/posture" 2>/dev/null || true)"; then
+      if budget_refused "$posture"; then
         outcome=budget-pause
-        loop_log "$ticket: the session was refused for quota ($(awk '{ print $2 }' "$slot/posture" 2>/dev/null)) — not an attempt at this ticket"
+        loop_log "$ticket: the session was refused for quota ($(printf '%s' "$posture" | awk '{ print $2 }')) — not an attempt at this ticket"
       fi
       ;;
     gate-red)
@@ -1033,9 +1240,8 @@ WITNESSES
   # session's own, this run's first measurement of the wall, and the pilot has an
   # answer for it. The whole direction of this correction is one-way — it can add a
   # reason to be careful and can never take one away.
-  if [ -n "${RALPH_GATE_QUOTA:-}" ] &&
-    ! budget_refused "$(cat "$slot/posture" 2>/dev/null || true)"; then
-    printf '%s\n' "$RALPH_GATE_QUOTA" >"$slot/posture"
+  if [ -n "${RALPH_GATE_QUOTA:-}" ] && ! budget_refused "$posture"; then
+    posture="$RALPH_GATE_QUOTA"
   fi
 
   case "$outcome" in
@@ -1059,7 +1265,7 @@ WITNESSES
       # git directory, and a re-slice creates tickets and spawns a session of its
       # own. It is also the path a killed run actually takes — the session dies
       # with it — which is what made `claim.bats` intermittent.
-      if loop__orphaned "$ticket" "$slot"; then
+      if loop__orphaned "$ticket"; then
         return 0
       fi
       # What this policy is about to write outside every tree anything here judges,
@@ -1087,29 +1293,21 @@ WITNESSES
   # an iteration that ends on a fresh retry produced none — and when the run
   # *stops* there, no later iteration was coming to produce one either. The other
   # end of the channel is the journal, and this shell cannot write it: `run.log`
-  # belongs to the pilot. So the lines cross on the slot, the way the outcome and
-  # the failure action do — bookkeeping and never a decision ([13]) — and
-  # `loop__finish` puts them on the file a human opens in the morning.
-  while IFS="$(printf '\t')" read -r drift_subject drift_outcome drift_message; do
-    [ -n "$drift_subject" ] || continue
-    loop_log "$drift_message"
-    printf '%s\t%s\n' "$drift_subject" "$drift_outcome" >>"$slot/drift"
-  done <<DRIFT
-$(capability_drift "${RALPH_RETRO_STATE:-}")
-DRIFT
+  # belongs to the pilot. So the lines cross in this iteration's answer, the way the
+  # outcome and the failure action do — bookkeeping and never a decision ([13]) —
+  # and `loop__finish` puts them on the file a human opens in the morning. Taken by
+  # a command substitution and never through a heredoc ([98], [108]); a witness
+  # that fails says what it could, as it did inside the heredoc it replaces.
+  drift_lines="$(capability_drift "${RALPH_RETRO_STATE:-}")" || true
+  loop__drift_take "$drift_lines"
 
   # And what a fresh shell would *run*, against the same kind of baseline ([52]).
   # The same two channels for the same reason, and one difference worth the second
   # block: this witness is the run's, not the retro's, so it exists even when the
   # fourth layer could not open a workspace — which is the iteration a lesson was
   # lost on and exactly not the one to go quiet about a planted `git` on.
-  while IFS="$(printf '\t')" read -r drift_subject drift_outcome drift_message; do
-    [ -n "$drift_subject" ] || continue
-    loop_log "$drift_message"
-    printf '%s\t%s\n' "$drift_subject" "$drift_outcome" >>"$slot/drift"
-  done <<PROGRAMS
-$(gate_path_drift "${RALPH_FRONTIER_COMMON:-}")
-PROGRAMS
+  drift_lines="$(gate_path_drift "${RALPH_FRONTIER_COMMON:-}")" || true
+  loop__drift_take "$drift_lines"
 
   # And the third witness of the same shape ([70]): what a human is sent to read
   # about a ticket. The same two channels for the same reason — a receipt reaches
@@ -1119,13 +1317,8 @@ PROGRAMS
   # it, so the order of these two blocks changes nothing, and putting the reading
   # beside the other two keeps one place where an iteration says what moved under
   # this run.
-  while IFS="$(printf '\t')" read -r drift_subject drift_outcome drift_message; do
-    [ -n "$drift_subject" ] || continue
-    loop_log "$drift_message"
-    printf '%s\t%s\n' "$drift_subject" "$drift_outcome" >>"$slot/drift"
-  done <<FORENSIC
-$(forensic_drift "${RALPH_FRONTIER_COMMON:-}")
-FORENSIC
+  drift_lines="$(forensic_drift "${RALPH_FRONTIER_COMMON:-}")" || true
+  loop__drift_take "$drift_lines"
 
   # The audit receipt, on the two iterations that *end* a ticket and on no other.
   #
@@ -1206,9 +1399,8 @@ FORENSIC
     # and it travels the one direction [08] allows. Never over a posture that
     # already says refused: that one is this run's own first measurement of the
     # wall, and the pilot has an answer for it.
-    if [ -n "${RALPH_RETRO_QUOTA:-}" ] &&
-      ! budget_refused "$(cat "$slot/posture" 2>/dev/null || true)"; then
-      printf '%s\n' "$RALPH_RETRO_QUOTA" >"$slot/posture"
+    if [ -n "${RALPH_RETRO_QUOTA:-}" ] && ! budget_refused "$posture"; then
+      posture="$RALPH_RETRO_QUOTA"
     fi
     # Registered before the write, for the reason the ref above is ([70]).
     forensic_expect "${RALPH_FRONTIER_COMMON:-}" receipt "$ticket"
@@ -1223,21 +1415,16 @@ FORENSIC
   receipt_close
 
   rm -f "$outfile" "$outfile.tokens"
-  printf '%s\n' "${turns:-0}" >"$slot/turns"
-  printf '%s\n' "${cost:-0}" >"$slot/cost"
-  printf '%s\n' "${tokens:-0}" >"$slot/tokens"
-  printf '%s\n' "${RALPH_ROLLBACK_FAILED:-0}" >"$slot/rollback-failed"
-  # What the failure policy did about the ticket, for the journal line the pilot
-  # writes. Bookkeeping and not a decision — the decision was taken here, by the
-  # process that measured it, and this only says which one it was ([13]'s rule for
-  # what may cross this channel).
-  printf '%s\n' "${RALPH_FAILURE_ACTION:-none}" >"$slot/action"
-  printf '%s\n' "$outcome" >"$slot/outcome"
-  # Last, and it is the pilot's proof that this iteration answered rather than
-  # died. A pid alone cannot say it: bash reaps a background child on its own, so
-  # the number can be handed to somebody else between the exit and the poll —
-  # which is [36]'s lesson about identities, one layer up.
-  : >"$slot/done"
+  # The answer, last ([98]). What the failure policy did about the ticket rides in
+  # it for the journal line the pilot writes: bookkeeping and not a decision — the
+  # decision was taken here, by the process that measured it, and this only says
+  # which one it was ([13]'s rule for what may cross this channel). Its first byte
+  # is also the pilot's proof that this iteration answered rather than died. A pid
+  # alone cannot say it: bash reaps a background child on its own, so the number
+  # can be handed to somebody else between the exit and the poll — which is [36]'s
+  # lesson about identities, one layer up.
+  loop__answer "$outcome" "$posture" "${turns:-0}" "${cost:-0}" "${tokens:-0}" \
+    "${RALPH_FAILURE_ACTION:-none}" "${RALPH_ROLLBACK_FAILED:-0}" "$drift" || true
   return 0
 }
 
@@ -1280,7 +1467,7 @@ FRONTIER
 # is a file name somebody chose ([37]): joined with spaces, an id carrying one
 # exempted each of its own words from the liveness sweep.
 loop__inflight_ids() {
-  printf '%s' "${LOOP_SLOTS:-}" | awk -F'\t' 'NF > 1 { print $2 }'
+  printf '%s' "${LOOP_SLOTS:-}" | awk -F'\t' 'NF > 1 { print $4 }'
 }
 
 loop__inflight_count() {
@@ -1331,7 +1518,7 @@ loop__claim_refused() {
 # every `|| true` in the failure policy has quietly stopped meaning anything. The
 # ticket is given back here when there is anything to give back.
 loop__start() {
-  local ticket="$1" pin="$2" slot tree tip provisioned
+  local ticket="$1" pin="$2" back file tree tip provisioned
   LOOP_START_REFUSED=0
 
   if ! tracker_claim "$ticket" "pid:$$"; then
@@ -1361,28 +1548,48 @@ loop__start() {
     loop_log "$ticket: $provisioned path(s) provisioned into this iteration's worktree, which nothing here judges and no rollback undoes"
   fi
 
-  slot="$(mktemp -d "${TMPDIR:-/tmp}/ralph-slot.XXXXXX")" || {
-    loop_log "no slot for $ticket — stopping rather than running an iteration whose outcome nothing could read"
+  # The channel this iteration answers on ([98]), last of what it is handed and
+  # immediately before the fork: from the open to the `&` below the pilot holds
+  # the write end, and nothing in between is anything but a builtin — a program
+  # started there would hold it, and so would whatever that program left running.
+  # The number is taken first for the same reason: `$( … )` forks.
+  #
+  # A refusal is the position of the old "no slot" path, and the one [103] said a
+  # survivor polling `$TMPDIR` without sleeping wins every time: the ticket is given
+  # back and the run stops, the process named. Forking the iteration without a
+  # channel would be the files this replaces, and reopening would hand that process
+  # the next one ([103]: refused, not reopened).
+  back="$(loop__slot_back)" || back=''
+  file="$(mktemp "${TMPDIR:-/tmp}/ralph-slot.XXXXXX")" || file=''
+  if [ -z "$back" ] || ! proc_channel_open "$LOOP_SLOT_FD" "$back" "$file"; then
+    [ -n "$back" ] ||
+      PROC_CHANNEL_REFUSAL="every read end this run may hold ($LOOP_SLOT_BACK_FIRST to $LOOP_SLOT_BACK_LAST) is held already"
+    loop_log "no channel for $ticket to answer this run on — stopping rather than running an iteration whose outcome nothing could read: $PROC_CHANNEL_REFUSAL"
+    rm -f "$file"
     concurrency_worktree_drop "$tree"
     tracker_unclaim "$ticket"
     rm -rf "$pin"
     LOOP_START_REFUSED=1
     return 0
-  }
+  fi
 
   iteration=$((iteration + 1))
-  # Kept in the slot rather than read off the counter when the iteration comes
+  # Kept beside the iteration's pid rather than read off the counter when it comes
   # back: the pilot's counter says how many have been *started*, and with more
   # than one in flight that is no longer the number of the one that just
   # finished. A morning log whose "iteration 3 started" and "iteration 3 -> …"
   # named two different tickets would be worse than no number at all.
-  printf '%s\n' "$iteration" >"$slot/n"
   loop_log "iteration $iteration: $ticket"
   # A session is about to run, so the budget's "twice in a row" is over.
   budget_paused=0
   RALPH_FRONTIER_PIN="$pin"
-  loop__iterate "$ticket" "$slot" "$tree" "$tip" "${provisioned:-0}" &
-  LOOP_SLOTS="$LOOP_SLOTS$!	$ticket	$slot	$tree	$pin
+  loop__iterate "$ticket" "$iteration" "$tree" "$tip" "${provisioned:-0}" &
+  # The write end is the iteration's alone from here. Kept, it would also be
+  # in the way of the next one: on bash 3.2 an `exec` onto a number from 10 up that
+  # is still open does nothing, so the next channel would be refused (see the head
+  # of `loop_main`).
+  eval "exec $LOOP_SLOT_FD>&-"
+  LOOP_SLOTS="$LOOP_SLOTS$!	$back	$iteration	$ticket	$tree	$pin
 "
   return 0
 }
@@ -1390,29 +1597,49 @@ loop__start() {
 # Collect whatever has finished. With a 1 it waits until something does, which is
 # what the pilot does when it has no free slot and nothing it may schedule.
 #
-# Finished is two questions and not one, and the second is [36]'s. The marker file
-# is the child's own last act, so it is definitive; `kill -0` covers the child that
-# died before writing one. Neither alone is enough — a pid bash has already reaped
-# can be handed to another process, and a child killed outright never writes a
-# marker.
+# Finished is two questions and not one, and the second is [36]'s. An answer is the
+# child's own last act, so a channel with a byte in it is definitive — and since
+# [98] nothing but the child can put one there; `kill -0` covers the child that
+# died before answering. Neither alone is enough — a pid bash has already reaped
+# can be handed to another process, and a child killed outright never answers.
+#
+# The size is asked of the read end without reading it: `test -s /dev/fd/N` is a
+# builtin, and bash answers it with a `stat` of the descriptor it holds — measured
+# on darwin, bash 3.2.57, on an unlinked file another process writes. A first byte
+# means the answer has *started*; `proc_collect` then waits for the child to exit,
+# so `loop__finish` reads a finished one. Until [98] the marker was a file in the
+# slot, and a survivor that wrote it made the pilot wait on a live iteration — a
+# denial, gone with the name.
+#
+# `LOOP_SLOTS` is walked by expansion rather than through a heredoc ([108]): it
+# carries the read-end numbers `loop__finish` hands to `eval`, and the paths it
+# hands to `rm -rf`.
 loop__reap() {
-  local block="$1" kept found pid ticket slot tree pin
+  local block="$1" kept found rest line pid back n ticket tree pin
   while :; do
     kept=''
     found=0
-    while IFS="$(printf '\t')" read -r pid ticket slot tree pin; do
-      [ -n "$pid" ] || continue
-      if [ -e "$slot/done" ] || ! kill -0 "$pid" 2>/dev/null; then
+    rest="$LOOP_SLOTS"
+    while [ -n "$rest" ]; do
+      case "$rest" in
+        *$'\n'*) line="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+        *) line="$rest" rest='' ;;
+      esac
+      [ -n "$line" ] || continue
+      pid="${line%%$'\t'*}" line="${line#*$'\t'}"
+      back="${line%%$'\t'*}" line="${line#*$'\t'}"
+      n="${line%%$'\t'*}" line="${line#*$'\t'}"
+      ticket="${line%%$'\t'*}" line="${line#*$'\t'}"
+      tree="${line%%$'\t'*}" pin="${line#*$'\t'}"
+      if [ -s "/dev/fd/$back" ] || ! kill -0 "$pid" 2>/dev/null; then
         proc_collect "$pid" || true
-        loop__finish "$ticket" "$slot" "$tree" "$pin"
+        loop__finish "$ticket" "$back" "$n" "$tree" "$pin"
         found=1
         continue
       fi
-      kept="$kept$pid	$ticket	$slot	$tree	$pin
+      kept="$kept$pid	$back	$n	$ticket	$tree	$pin
 "
-    done <<SLOTS
-$LOOP_SLOTS
-SLOTS
+    done
     LOOP_SLOTS="$kept"
     [ "$block" = 1 ] || return 0
     [ "$found" = 0 ] || return 0
@@ -1434,10 +1661,69 @@ SLOTS
 # verdicts, and for the same reason: these have to be the run's counters and not a
 # copy, so this may never be called from a subshell or a pipeline.
 loop__finish() {
-  local ticket="$1" slot="$2" tree="$3" pin="$4" outcome posture
-  local drift_subject drift_outcome
+  local ticket="$1" back="$2" n="$3" tree="$4" pin="$5" outcome='' posture=''
+  local turns='' cost='' tokens='' action='' rollback='' drift='' line key value
+  local rest subject said seen=' ' after=0 forged=''
 
-  outcome="$(cat "$slot/outcome" 2>/dev/null || true)"
+  # The answer, read once and the read end closed at once, before this function
+  # starts a single program ([98]). Complete lines only: a record cut by a child
+  # that died while writing it is not a record, and the outcome — written last — is
+  # then simply not there. The number is checked before it reaches `eval`, which is
+  # where a stray word would become code; it is the pilot's own, and checked anyway.
+  #
+  # And read against the one shape an iteration writes: each record once, a witness
+  # line as often as there are, the outcome last. A record twice, a record after the
+  # outcome, a record no iteration writes — the iteration wrote none of those.
+  case "$back" in
+    '' | *[!0-9]*) ;;
+    *)
+      while IFS= read -r line; do
+        key="${line%%$'\t'*}"
+        value=''
+        [ "$key" = "$line" ] || value="${line#*$'\t'}"
+        [ "$after" = 0 ] || forged='a record after its outcome'
+        case "$key" in
+          drift) ;;
+          posture | turns | cost | tokens | action | rollback-failed | outcome)
+            case "$seen" in
+              *" $key "*) forged="the record $key twice" ;;
+            esac
+            seen="$seen$key "
+            ;;
+          *) forged='a record no iteration writes' ;;
+        esac
+        case "$key" in
+          outcome) outcome="$value" after=1 ;;
+          posture) posture="$value" ;;
+          turns) turns="$value" ;;
+          cost) cost="$value" ;;
+          tokens) tokens="$value" ;;
+          action) action="$value" ;;
+          rollback-failed) rollback="$value" ;;
+          drift) drift="$drift$value"$'\n' ;;
+        esac
+      done <&"$back"
+      eval "exec $back<&-"
+      ;;
+  esac
+
+  # **An answer its iteration did not write is no answer at all**, and the run stops
+  # on it. Nothing but the iteration holds the write end — the pilot closes its own
+  # after the fork, and what the iteration starts that this pack did not write holds
+  # nothing above stderr — so a stranger's record is a program the pack ran by its
+  # bare name, which is [52]/[91]'s witness, or a hole in this channel. Either way
+  # the instrument is closed, and taking the first word, the last or a merge of the
+  # two would be choosing which forgery to believe. Every value goes, the posture
+  # included: a stranger's `blocked` would stop the run on a wall nobody hit.
+  if [ -n "$forged" ]; then
+    loop_log "iteration $n: $ticket — its answer is not the one it wrote ($forged): something other than the iteration held the channel it answers on. Read as no answer at all, given back if it is still claimed, and stopping: an instrument a stranger writes into is already closed"
+    outcome=answer-refused posture='' turns='' cost='' tokens='' action='' rollback='' drift=''
+    if [ "$(tracker_field "$ticket" Status 2>/dev/null || true)" = claimed ]; then
+      tracker_unclaim "$ticket"
+    fi
+    stop_code=4
+  fi
+
   if [ -z "$outcome" ]; then
     # The child died without answering — killed, out of memory, a machine that
     # went away. Nothing judged this ticket and nothing marked it, so it is given
@@ -1464,7 +1750,6 @@ loop__finish() {
     stop_code=4
   fi
 
-  posture="$(cat "$slot/posture" 2>/dev/null || true)"
   [ -z "$posture" ] || budget_posture="$posture"
 
   if [ "$outcome" = resolved ]; then
@@ -1473,12 +1758,8 @@ loop__finish() {
     sterile=$((sterile + 1))
   fi
 
-  loop_journal_append "$ticket" "$outcome" \
-    "$(cat "$slot/turns" 2>/dev/null || true)" \
-    "$(cat "$slot/cost" 2>/dev/null || true)" \
-    "$(cat "$slot/tokens" 2>/dev/null || true)" \
-    "$(cat "$slot/action" 2>/dev/null || true)"
-  loop_log "iteration $(cat "$slot/n" 2>/dev/null || printf '?'): $ticket -> $outcome"
+  loop_journal_append "$ticket" "$outcome" "$turns" "$cost" "$tokens" "$action"
+  loop_log "iteration $n: $ticket -> $outcome"
 
   # And what the iteration's own witness saw ([46] on [15]). Transcribed and never
   # re-measured: the iteration is the process that took the reading, and asking
@@ -1488,16 +1769,30 @@ loop__finish() {
   # surface, the way `loop__report_tracker_findings` carries a duplicate id: the
   # names go where a name fits, and a line naming nothing sends a human nowhere.
   #
-  # A `while` with a redirect and never a pipe, for the reason the reclaim loop
-  # above spells out: `loop_journal_append` keeps the run's own copy of the journal
-  # in a variable of this process, and the right-hand side of a pipeline is a
-  # subshell that would take that copy away with it.
-  if [ -f "$slot/drift" ]; then
-    while IFS="$(printf '\t')" read -r drift_subject drift_outcome; do
-      [ -n "$drift_subject" ] || continue
-      loop_journal_append "$drift_subject" "${drift_outcome:-capability-drift}" 0 0 0
-    done <"$slot/drift"
-  fi
+  # A loop in this shell and never a pipe, for the reason the reclaim loop above
+  # spells out: `loop_journal_append` keeps the run's own copy of the journal in a
+  # variable of this process, and the right-hand side of a pipeline is a subshell
+  # that would take that copy away with it. And by expansion, not through a heredoc
+  # ([108]): these subjects are on their way into `run.log`.
+  #
+  # **These lines are the pilot's own writing, and that is the one thing the
+  # channel changes about them.** Until [98] a session could create the file they
+  # came from in its own window, and every line of it went into `run.log` under a
+  # subject it chose — written by the pilot, so inside the journal's witness ([10]),
+  # which therefore had nothing to say. What reaches here now is what the iteration
+  # wrote on a channel no session holds.
+  rest="$drift"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *$'\n'*) line="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+      *) line="$rest" rest='' ;;
+    esac
+    subject="${line%%$'\t'*}"
+    [ -n "$subject" ] || continue
+    said=''
+    [ "$subject" = "$line" ] || said="${line#*$'\t'}"
+    loop_journal_append "$subject" "${said:-capability-drift}" 0 0 0
+  done
 
   # The pin dies with the iteration: the next one is entitled to the rules it is
   # handed, including a rule this iteration legitimately delivered. Leaked on a
@@ -1516,7 +1811,7 @@ loop__finish() {
   # be true for the sibling running beside it. Stopping costs a run where
   # isolation would have sufficed; carrying on spends a night of sessions on an
   # instrument that is already closed.
-  if [ "$(cat "$slot/rollback-failed" 2>/dev/null || echo 0)" = 1 ]; then
+  if [ "$rollback" = 1 ]; then
     loop_log "the rollback could not put this iteration's tree back — stopping rather than grinding on an instrument that is already closed"
     stop_code=4
   fi
@@ -1527,7 +1822,6 @@ loop__finish() {
     loop_log "$ticket: the gate was green and the work did not reach the branch — stopping"
     stop_code=4
   fi
-  rm -rf "$slot"
   return 0
 }
 
@@ -1622,6 +1916,14 @@ loop_main() {
   # session left in the common git directory last night is a program the next
   # `git` runs, and the first one is in `loop_preflight`. Builtins only.
   proc_git_hooks_off
+  # And third: the numbers an iteration answers this run on ([98]) are closed,
+  # whatever the process that started this one left open on them. Not hygiene: on
+  # bash 3.2 an `exec N<…` onto a number from 10 up that is *already open* does
+  # nothing at all and returns 0 — measured, and the other redirections of the same
+  # `exec` are dropped with it — so an inherited descriptor on 10 or on a read end's
+  # number would have every channel refused, with a sentence about a linked file
+  # that nobody linked. Builtins only.
+  eval "exec $LOOP_SLOT_FD>&- $LOOP__SLOT_BACKS"
 
   cd "$(ralph_project_root)"
 

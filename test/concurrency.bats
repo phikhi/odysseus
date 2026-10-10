@@ -133,15 +133,27 @@ KILL
 }
 
 # Wait for an iteration whose pilot is gone to have finished, whichever way it
-# went. The slot marker and not a log line, because **both** ends of the decision
-# write it: an iteration that stands down and one that goes on to deliver both get
-# there, so removing a refusal fails these tests instead of hanging the mutation
-# gate in them ([25]). Nobody sweeps the slot either — that was the pilot's job.
+# went. Its exit and not a log line, because **both** ends of the decision get
+# there: an iteration that stands down and one that goes on to deliver both end,
+# so removing a refusal fails these tests instead of hanging the mutation gate in
+# them ([25]). Until [98] this waited for the slot's marker file; the answer now
+# crosses on a descriptor nothing outside the run can see, so what is asked is
+# whether any process of this test's pack is still running — the pilot is dead and
+# collected by now, so whatever is left is the orphan and its own subshells. Asked
+# twice in a row, a tenth of a second apart, because one listing of `ps` can miss a
+# process; and through an environment variable, so that the `awk` doing the asking
+# does not carry the pattern on its own command line and find itself.
 concurrency__await_orphan() {
-  local waited=0
-  until ls "$RALPH_TEST_DIR"/tmp/ralph-slot.*/done >/dev/null 2>&1; do
+  local waited=0 clear=0
+  while [ "$clear" -lt 2 ]; do
     [ "$waited" -lt 900 ] || return 1
     waited=$((waited + 1))
+    if ps -axo command= 2>/dev/null |
+      PACK="$PACK_DIR/loop.sh" awk 'index($0, ENVIRON["PACK"]) { n++ } END { exit n > 0 }'; then
+      clear=$((clear + 1))
+    else
+      clear=0
+    fi
     sleep 0.1
   done
   return 0
@@ -1825,4 +1837,144 @@ GITSHIM
   run_loop
   assert_failure 2
   assert_output_contains "MAX_PARALLEL is \"0\""
+}
+
+# ── the channel an iteration answers on ([98]) ───────────────────────────────
+
+# Whether the shell that ran this program is the pilot: a `loop.sh` whose own
+# parent is not one. Written into the shims below rather than shared, the way each
+# file keeps its own fakes.
+concurrency__role_snippet='
+role=other
+case "$(ps -o command= -p "$PPID" 2>/dev/null)" in
+  *loop.sh*)
+    gp="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d " ")"
+    case "$(ps -o command= -p "${gp:-0}" 2>/dev/null)" in
+      *loop.sh*) role=iteration ;;
+      *) role=pilot ;;
+    esac
+    ;;
+esac
+'
+
+@test "an answer waiting to be read is held by the pilot alone — not by a sibling, not by what the pilot runs" {
+  # [98] at MAX_PARALLEL=2, staged so that the answer of 01 sits in its channel for
+  # as long as the test wants: the pilot is held inside its own `sleep` — the one
+  # `loop__reap` waits on — until 02 has run a program after 01 has exited. Two
+  # strangers look while it waits, each standing in for a program a session planted
+  # on PATH ([52], [91]): the pilot's `sleep`, which tries to write an answer into
+  # every descriptor the pilot holds; and 02's `mktemp`, which reads whatever every
+  # descriptor 02 holds gives up. The pilot closes the write end of an iteration
+  # right after forking it, and an iteration closes every read end it inherited
+  # before anything runs: so the first finds nothing to write into, the second
+  # nothing to read, and 01's answer is read whole.
+  use_tickets 01-alpha 02-beta
+  set_config MAX_PARALLEL 2
+  fd_forger
+  fd_drainer
+  export RALPH_SHIM_BIN="$SHIM_BIN"
+  # The project's suite releases the pilot, once a sibling's stranger has looked.
+  printf '#!/usr/bin/env bash\n[ ! -e "%s/drained.done" ] || : >"%s/release"\nexit 0\n' \
+    "$SHIM_STATE" "$SHIM_STATE" >"$SHIM_STATE/release.sh"
+  set_config TEST_CMD "bash $SHIM_STATE/release.sh"
+
+  {
+    printf '#!/usr/bin/env bash\nstate="$RALPH_SHIM_STATE"\n'
+    printf '%s\n' "$concurrency__role_snippet"
+    cat <<'SLEEP'
+if [ "$role" = pilot ] && [ -e "$state/session.02" ] && [ ! -e "$state/release" ] &&
+  [ ! -e "$state/pilot.held" ]; then
+  : >"$state/pilot.held"
+  "$state/fd-forger" "$(printf 'outcome\tresolved')" "$state/pilot.forged"
+  n=0
+  while [ ! -e "$state/release" ] && [ "$n" -lt 1200 ]; do
+    env PATH="${PATH#"$RALPH_SHIM_BIN":}" sleep 0.05
+    n=$((n + 1))
+  done
+fi
+exec env PATH="${PATH#"$RALPH_SHIM_BIN":}" sleep "$@"
+SLEEP
+  } >"$SHIM_BIN/sleep"
+  {
+    printf '#!/usr/bin/env bash\nstate="$RALPH_SHIM_STATE"\n'
+    printf '%s\n' "$concurrency__role_snippet"
+    cat <<'MKTEMP'
+if [ "$role" != pilot ] && [ -e "$state/armed" ] && [ ! -e "$state/drained.done" ]; then
+  "$state/fd-drainer" "$state/sibling.drained"
+  : >"$state/drained.done"
+fi
+exec env PATH="${PATH#"$RALPH_SHIM_BIN":}" mktemp "$@"
+MKTEMP
+  } >"$SHIM_BIN/mktemp"
+  chmod +x "$SHIM_BIN/sleep" "$SHIM_BIN/mktemp"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+prompt="$(cat)"
+case "$prompt" in
+  *"# 02 — Beta"*)
+    : >"$state/session.02"
+    # 01 has answered once its iteration is gone — a zombie counts as gone ([13]).
+    n=0
+    while [ "$n" -lt 1200 ]; do
+      pid="$(cat "$state/iteration.01" 2>/dev/null || true)"
+      if [ -n "$pid" ]; then
+        st="$(ps -o state= -p "$pid" 2>/dev/null | tr -d ' ')"
+        case "$st" in '' | Z*) break ;; esac
+      fi
+      sleep 0.05
+      n=$((n + 1))
+    done
+    : >"$state/armed"
+    ;;
+  *)
+    printf '%s\n' "$PPID" >"$state/iteration.01"
+    ;;
+esac
+surface="$(printf '%s' "$prompt" | sed -n 's/^\*\*Write-surface:\*\* //p' | head -1 | tr -d '`\r' | tr ',' ' ')"
+for target in $surface; do
+  mkdir -p "$(dirname "$target")" && printf 'written\n' >"$target"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop
+  rm -f "$SHIM_BIN/sleep" "$SHIM_BIN/mktemp"
+
+  # The staging happened: the pilot was held while 01's answer waited, and 02 ran
+  # its stranger after 01 had gone. Without those, the rest proves nothing.
+  assert_file_exists "$SHIM_STATE/pilot.held"
+  assert_file_exists "$SHIM_STATE/drained.done"
+
+  assert_forger_found_nothing "$SHIM_STATE/pilot.forged" "what the pilot runs while an answer waits"
+  grep -q '^probed$' "$SHIM_STATE/sibling.drained" || fail "the sibling's stranger never ran"
+
+  # 01's answer was read whole: what the sibling's stranger read, it read of its own
+  # channels — its receipt, its own empty answer — and nothing of 01's.
+  assert_success
+  refute_output_contains "its answer is not the one it wrote"
+  if printf '%s' "$output" | grep -q 'died without a verdict'; then
+    fail "01's answer was gone when the pilot read it — the sibling's stranger drained: $(grep '^DRAINED ' "$SHIM_STATE/sibling.drained" | tr '\n' ' ')"
+  fi
+  assert_ticket_status 01-alpha resolved
+  assert_ticket_status 02-beta resolved
+  assert_file_contains "$FEATURE_DIR/run.log" "01-alpha	resolved"
+}
+
+@test "MAX_PARALLEL above the read ends this run can hold is refused, not read as less" {
+  # One read end per iteration in flight, numbered 11 to 254 ([98]): 244 fits, 245
+  # does not. Refused at the door with the bound in the sentence ([31]), and the
+  # value that fits is not — the frontier is empty, so the run that accepts it ends
+  # at once, on the code that says so.
+  set_config MAX_PARALLEL 245
+  run_loop
+  assert_equal "$status" 2
+  assert_output_contains "MAX_PARALLEL is 245"
+  assert_output_contains "at most 244 can be in flight"
+
+  set_config MAX_PARALLEL 244
+  run_loop
+  refute_output_contains "MAX_PARALLEL is 244"
+  assert_equal "$status" 5
 }
