@@ -5529,3 +5529,59 @@ $bare"
 $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$callers") || true)"
   fi
 }
+
+# ── [99] every exit an entry point decides on is marked as one ────────────────
+#
+# Both entry points end on a guard that converts every number they did not choose
+# — a 7 for `loop.sh`, a 6 for `human-loop.sh` — and "chose" is one line: the mark
+# `loop__leave` and `human_loop__leave` set before they exit. An `exit` written
+# anywhere else in either file, once the guard is armed, is therefore a decision
+# the guard reports as a shell ended under it, and no test of one exit code
+# reaches all of them: the `1` of a run lock refused leaves through the locks' own
+# handler and would stay green bare. So a census, of [104]'s shape:
+#
+#   zone   the two entry points, and only them. A lib that ends the pilot's shell
+#          is the case the guard exists to name — the contract at the top of
+#          `lib/tracker.sh` broken — and not a number anybody chose.
+#   code   [91]'s lexer, so `exit` in a comment, a message or a heredoc is not one.
+#   shape  `exit` in a command position.
+#   homes  three per file: the guard, the function that marks, and the top level
+#          above the first function, where the one refusal that runs before the
+#          guard exists — no config — leaves bare because nothing is there to read
+#          it.
+#
+# And the strings the lexer drops, which are code all the same: a `trap` handler
+# is a line the shell runs, and the drain's two choose a number of their own (130,
+# 143). Asked of the raw lines, since a handler is written on one.
+@test "every exit an entry point decides on goes through the function that marks it decided" {
+  local found expected handlers
+  found="$(pack_code_homes "$RALPH_PACK_ROOT" "${git_command_position}exit([ \t]|\$)" |
+    grep -E '^(loop|human-loop)\.sh:' || true)"
+  expected="$(printf '%s\n' \
+    'human-loop.sh:(top level)' \
+    'human-loop.sh:human_loop__leave' \
+    'human-loop.sh:human_loop__on_exit' \
+    'loop.sh:(top level)' \
+    'loop.sh:loop__leave' \
+    'loop.sh:loop__on_exit' | LC_ALL=C sort)"
+  if [ "$found" != "$expected" ]; then
+    fail "an entry point leaves somewhere other than its guard and the function that marks an exit decided, so its guard reports that exit as a shell ended under it
+(expected on the left, found on the right):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
+
+  handlers="$(grep -hE '^[[:space:]]*trap ' \
+    "$RALPH_PACK_ROOT/.claude/loop.sh" "$RALPH_PACK_ROOT/.claude/human-loop.sh")"
+  # The floor: a handler on INT alone and one on TERM alone, which is the shape of
+  # the drain's two — the ones this half is about. Asked by signal and not by text,
+  # so that a handler rewritten to leave bare is still read here and refused below
+  # rather than missed here. A scan that read neither would find no bare `exit`.
+  printf '%s\n' "$handlers" | grep -qE "^[[:space:]]*trap '[^']*' INT\$" &&
+    printf '%s\n' "$handlers" | grep -qE "^[[:space:]]*trap '[^']*' TERM\$" ||
+    fail "no handler on INT alone and on TERM alone was found, so the check below proves nothing:
+$handlers"
+  if printf '%s\n' "$handlers" | grep -qw exit; then
+    fail "a handler an entry point installs leaves by itself, so the number it chooses comes out as a shell ended under it:
+$(printf '%s\n' "$handlers" | grep -w exit)"
+  fi
+}
