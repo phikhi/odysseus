@@ -1341,8 +1341,11 @@ mutation "30 a folded directory holding a judged path is reported whole" "$GATE"
 
 # The second caller, and the reason it exists: a planning session is never gated,
 # so nothing else on that path would put the rules back.
+#
+# Re-anchored by [100]: the call carries the re-slice's own mark now, taken before
+# its planning session — it is still the line that puts the rules back.
 mutation "30 the re-slice session's frontier is left where it put it" "$FAILURES" \
-  's/moved="\$\(gate_frontier\)"/moved=""/' \
+  's/moved="\$\(gate_frontier "\$frontier_mark"\)"/moved=""/' \
   test/failures.bats "re-slice session cannot leave"
 
 # The fixture's own world: `.git/info/exclude` is created by every real `git init`,
@@ -7690,6 +7693,114 @@ mutation "98 the iteration classifies on a posture it never read" "$LOOP" \
 mutation "98 the pilot keeps what it inherited on the answer's numbers" "$LOOP" \
   's/  eval "exec \$LOOP_SLOT_FD>&- \$LOOP__SLOT_BACKS"\n/  :\n/' \
   test/loop-happy-path.bats "descriptors the run inherited"
+
+# ── [100] the iteration's pin, held by its content ───────────────────────────
+#
+# The pin of [30] was held by a question of existence, and a session that rewrote
+# it instead of destroying it went green with its rule outliving the run. Every
+# entry below takes away one of the things that hold it now: the question, where
+# the census is taken, how far it walks, what it can be fooled by, what a restore
+# reads in place of a spoiled pin, the mark the register is read from, and the name
+# the refusal carries.
+
+# The question itself. Taken and asked by nothing that refuses, the census changes
+# nothing for the tree half of the pin — the copies `git check-ignore` answers from
+# — and no restore ever reads that half.
+mutation "100 the pin is held by its existence alone" "$GATE" \
+  's/  if gate__frontier_pin_moved >\/dev\/null; then return 0; fi\n//' \
+  test/gate.bats "rewritten copy of the tree's rules"
+
+# Where it is taken. A census nobody took is silent everywhere, by design — `gate_*`
+# stays drivable outside a run — so this is the line that keeps that fallback from
+# being the shipped behaviour.
+mutation "100 the pilot takes no census of its pin" "$LOOP" \
+  's/    RALPH_FRONTIER_PIN_SEAL="\$\(gate_frontier_pin_seal "\$pin"\)" \|\| RALPH_FRONTIER_PIN_SEAL=\x27\x27/    RALPH_FRONTIER_PIN_SEAL=\x27\x27/' \
+  test/gate.bats "rewrites its iteration's pin is refused"
+
+# How far it walks. [81]'s walk is one level deep, which is right for a directory
+# of files and wrong for a git repository: the copies that decide are under `rules/`.
+mutation "100 the census stops at the top of the pin" "$GATE" \
+  's/    if \[ "\$what" = dir \]; then gate__frontier_pin_walk "\$entry"; fi\n//' \
+  test/gate.bats "rewritten copy of the tree's rules"
+
+# A file nobody walked at the pin. A census that compared only the files it knew
+# would find every one of them intact.
+mutation "100 a file added to the pin is not a pin that moved" "$GATE" \
+  's/      for \(p in now\) if \(!\(p in held\)\) print p "\\tappeared"\n//' \
+  test/gate.bats "rule file added to the pin"
+
+# What it can be fooled by: a name that prints a line of its own choosing, and
+# stands in for the file it names.
+mutation "100 a name with a tab or a newline prints itself into the census" "$GATE" \
+  's/    case "\$entry" in\n      \*\$\x27\\t\x27\* \| \*\$\x27\\n\x27\*\)\n[^\n]*\n        continue\n        ;;\n    esac\n//' \
+  test/gate.bats "name chosen to print a line"
+
+# What a restore reads when the pin is spoiled. One entry per line that decides it:
+# whether the pin's manifest is asked about, whether the run's witness stands in
+# for it, and whether the copy put back is asked about.
+mutation "100 a rewritten manifest in the pin is what this iteration was handed" "$GATE" \
+  's/  if gate__frontier_pin_held "\$pin\/manifest"; then/  if true; then/' \
+  test/gate.bats "rewrites its iteration's pin is refused"
+
+mutation "100 nothing stands in for a pin whose manifest moved" "$GATE" \
+  's/  if \[ -n "\$common" \] && \[ -f "\$common\/manifest" \] &&\n    gate_witness_intact "\$common\/manifest"; then/  if false; then/' \
+  test/gate.bats "rewrites its iteration's pin is refused"
+
+mutation "100 a rewritten copy in the pin is put back as it stands" "$GATE" \
+  's/  if \[ -f "\$copy" \] && gate__frontier_pin_held "\$copy"; then/  if [ -f "\$copy" ]; then/' \
+  test/gate.bats "rewrites its iteration's pin is refused"
+
+# And the run's witness asked before it stands in. It is in `$TMPDIR` too, and a
+# fallback taken unasked hands the choice of target to a session that forges both.
+mutation "100 the run's manifest stands in without its seal" "$GATE" \
+  's/  if \[ -n "\$common" \] && \[ -f "\$common\/manifest" \] &&\n    gate_witness_intact "\$common\/manifest"; then/  if [ -n "\$common" ] \&\& [ -f "\$common\/manifest" ]; then/' \
+  test/gate.bats "forges both witnesses"
+
+mutation "100 the run's copy is put back without its seal" "$GATE" \
+  's/  if \[ -n "\$common" \] && \[ -f "\$common\/\$slot" \] &&\n    gate_witness_intact "\$common\/\$slot"; then/  if [ -n "\$common" ] \&\& [ -f "\$common\/\$slot" ]; then/' \
+  test/gate.bats "copy in the run's witness"
+
+# A target nothing vouches for, acted on all the same: `core.excludesFile` is set
+# to whatever the manifest it came from names.
+mutation "100 a restore acts on a target nothing vouches for" "$GATE" \
+  's/  pinned="\$\(gate__frontier_pinned "\$name"\)" \|\| return 1/  pinned="\$(gate__frontier_pinned "\$name")" || :/' \
+  test/gate.bats "forges both witnesses"
+
+# The other copy a restore puts back ([46]).
+mutation "100 the attributes are put back from the pin unasked" "$GATE" \
+  's/        copy="\$\(gate__frontier_held_copy attributes \\\n          "\$\{RALPH_FRONTIER_PIN\}\/attributes"\)" \|\| return 1/        copy="\${RALPH_FRONTIER_PIN}\/attributes"/' \
+  test/gate.bats "copy of the attributes was rewritten"
+
+# The mark, read as the session left it.
+mutation "100 a rewritten mark is read as the pin's" "$GATE" \
+  's/    if gate__frontier_pin_held "\$pin\/ledger-seen"; then/    if true; then/' \
+  test/gate.bats "mark rewritten in the pin"
+
+# And the write this ticket took away. Put back, the pack rewrites its own pin
+# under the census on any night the frontier moves, and that night stops at its
+# next snapshot: "the census holds every file of the pin" is derived by this entry
+# and the paired witness, not asserted.
+mutation "100 the share writes its mark back into the pin" "$GATE" \
+  's/  seen="\$\(gate__frontier_mark "\$mark"\)"\n  total="\$\(awk \x27END \{ print NR \+ 0 \}\x27 "\$ledger"\)"\n  \[ "\$total" -gt "\$seen" \] \|\| return 0\n/  seen="\$(gate__frontier_mark "\$mark")"\n  total="\$(awk \x27END { print NR + 0 }\x27 "\$ledger")"\n  [ "\$total" -gt "\$seen" ] || return 0\n  printf "%s\\n" "\$total" >"\$pin\/ledger-seen" 2>\/dev\/null || true\n/' \
+  test/gate.bats "the paired witness: a widening"
+
+# The re-slice's own mark. Without it the second ask reads from the pin's, and
+# the delivery session's movement is charged to the planning session in the log.
+mutation "100 the re-slice reads the frontier from the pin's mark" "$FAILURES" \
+  's/  moved="\$\(gate_frontier "\$frontier_mark"\)"/  moved="\$(gate_frontier)"/' \
+  test/gate.bats "re-slice asks the frontier from its own mark"
+
+# The name in the refusal: a night stopped by a rewritten pin says which file.
+mutation "100 a refused pin is refused without its name" "$GATE" \
+  's/^gate__frontier_pin_clause\(\) \{/gate__frontier_pin_clause() { return 0;/m' \
+  test/gate.bats "rewrites its iteration's pin is refused"
+
+# No entry for the census telling a *gone* entry from the others, and the reason is
+# what a gone file buys, not an omission: the manifest and `rules/.git` gone are the
+# existence question above; `global`, the copy of the exclude or of the attributes
+# gone are a narrower frontier, which forces more into the judged tree, never less,
+# or a restore that falls back to the run's witness; `ledger-seen` gone reads as
+# the start of the run, which bills more. Naming it is the clause's guarantee.
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

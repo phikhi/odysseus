@@ -969,9 +969,15 @@ gate__frontier_pin_manifest() {
   gate__frontier_manifest
 }
 
-# How many movements the run's register held when this pin was taken. What an
-# iteration is charged for is what appears in it after that mark.
-gate__frontier_ledger_len() {
+# How many movements the run's register holds right now. What an iteration is
+# charged for is what appears in it after the mark this gave when its pin was
+# taken.
+#
+# Public since [100], because it has a second caller: `failures_reslice` takes it
+# before the planning session it spawns, and asks the frontier about what landed
+# after that and nothing earlier — a mark held in its own memory, where until this
+# ticket the share advanced one in the pin, a file the session could write.
+gate_frontier_ledger_len() {
   local common="${RALPH_FRONTIER_COMMON:-}"
   if [ -n "$common" ] && [ -f "$common/ledger" ]; then
     awk 'END { print NR + 0 }' "$common/ledger"
@@ -981,12 +987,27 @@ gate__frontier_ledger_len() {
 }
 
 # Where this iteration starts reading the register: the length its pin recorded at
-# spawn. One definition and two readers — the share below, and the fail-closed
-# check that a register never got *shorter* than it — because the same number
-# answers both, and two copies of it would drift the day one of them is corrected.
+# spawn, or the mark a caller hands it. One definition and three readers — the
+# record, the share, and the fail-closed check that a register never got *shorter*
+# than it — because the same number answers all three, and two copies of it would
+# drift the day one of them is corrected.
+#
+# Written once, when the pin is taken, and never again ([100]). Until then the
+# share advanced it as it read, which made it the one file of the pin this pack
+# rewrote under a session — and the one that paid: a session that set it to the
+# length the register would have after the restore erased its own share, so the
+# movement was put back and nobody was billed (probed: one green iteration). A
+# mark that is not the one the pin was taken with reads as the start of the run,
+# so what a session buys by rewriting it is a bill for every movement of the night
+# rather than for none — and the snapshot refuses the pin all the same.
 gate__frontier_mark() {
-  local seen
-  seen="$(cat "${RALPH_FRONTIER_PIN:-}/ledger-seen" 2>/dev/null || printf '0')"
+  local seen="${1:-}" pin="${RALPH_FRONTIER_PIN:-}"
+  if [ -z "$seen" ]; then
+    seen=0
+    if gate__frontier_pin_held "$pin/ledger-seen"; then
+      seen="$(cat "$pin/ledger-seen" 2>/dev/null || printf '0')"
+    fi
+  fi
   case "$seen" in '' | *[!0-9]*) seen=0 ;; esac
   printf '%s\n' "$seen"
 }
@@ -1064,8 +1085,9 @@ RULES
   fi
   # Where this iteration starts reading the run's register of movements. Taken
   # here, in the pilot and before the iteration is forked, so that "recorded after
-  # my mark" is "recorded while I was in flight".
-  gate__frontier_ledger_len >"$pin/ledger-seen"
+  # my mark" is "recorded while I was in flight" — and written here only: nothing
+  # rewrites it afterwards, which is what lets the census below hold it ([100]).
+  gate_frontier_ledger_len >"$pin/ledger-seen"
   printf '%s\n' "$pin"
 }
 
@@ -1367,7 +1389,7 @@ NAMES
 # with the session's value after the unset is named as one this run could not put
 # back, and the iteration stays red for as long as it does.
 gate__config_restore() {
-  local name="$1" pinned="$2" tab cr key target
+  local name="$1" pinned="$2" tab cr key target copy
   case "$name" in
     '.git/info/attributes')
       target="$(gate__config_attributes_path)"
@@ -1375,8 +1397,12 @@ gate__config_restore() {
       if [ "$pinned" = '-' ]; then
         rm -f "$target" 2>/dev/null || true
       else
+        # From a copy something vouches for, for the reason the ignore restore
+        # gives ([100]).
+        copy="$(gate__frontier_held_copy attributes \
+          "${RALPH_FRONTIER_PIN}/attributes")" || return 1
         mkdir -p "$(dirname "$target")" 2>/dev/null || true
-        cp "${RALPH_FRONTIER_PIN}/attributes" "$target" 2>/dev/null || true
+        cp "$copy" "$target" 2>/dev/null || true
       fi
       [ "$(gate__digest "$(gate__config_attributes_path)")" = "$pinned" ]
       return
@@ -1678,9 +1704,173 @@ MOVED
   return 0
 }
 
-# A pin that was set and cannot be read. Refused rather than ignored: the point of
-# the pin is that what the checks can see does not depend on what the session left
-# behind, so a missing one is a control that cannot see.
+# ── the iteration's own witness, held by its content ([100]) ─────────────────
+#
+# Everything above holds the witnesses of the **run**. The pin of [30] is not one
+# of them: the pilot takes it once per iteration, after the seal and outside its
+# three holders, and until this ticket what held it was one question —
+# `[ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ]`. Destroying it closes the
+# control, probed on 03/08/2026. Rewriting it was never asked about, and measured
+# on 13/10/2026 it is the cheaper gesture by a whole night: a session that appended
+# a rule to the shared `.git/info/exclude`, wrote behind it, put the same rule in
+# the pin's copy and set the manifest's line back to the current digest —
+# `gate__digest` is a `cksum` anybody can run — got four greens, one iteration,
+# `resolved`, and **a rule that outlived the run**, at exit 0. The only trace was
+# [24]'s zone line, the one a morning reader learns to skip.
+#
+# So the pin is held the way the run's witnesses are: by a census taken the
+# instant it exists and kept where a session cannot reach it, a shell variable of
+# the pilot (`RALPH_FRONTIER_PIN_SEAL`) set beside `RALPH_FRONTIER_PIN` and
+# inherited by the fork the same way. [83] said an iteration has to answer for
+# what it creates itself, because a fork can put nothing back into the pilot. The
+# pin is the other case — the *pilot* creates it, before the fork — so the pilot
+# can take its census, and nothing downstream of the fork can move that.
+#
+# The census is the whole tree and not the top level, which is all [81]'s walk
+# looks at: `git check-ignore` answers from `rules/.git/info/exclude`, from
+# `rules/.git/config` (which names `global`) and from every `.gitignore` copy under
+# `rules/`, so a rule file *added* two levels down hides a path exactly as well as
+# one rewritten at the top. Directories are entries, and so is a link where a file
+# was: anything that is not what the pilot walked is a pin this iteration was not
+# handed.
+#
+# [83]'s window argument — "nothing in this pack writes there while a session
+# runs" — was checked before it was reused, and it did not hold: the share
+# advanced `ledger-seen` as it read, and that write is gone (see
+# `gate__frontier_mark`). So the census holds every file without exception, and
+# the suite is what derives it: a pack that wrote into its pin after the census
+# would stop every night in which the frontier moves, and the paired witness of
+# this ticket is such a night.
+#
+# What it does not hold, written here rather than discovered. The census is taken
+# a few lines after `mktemp -d`, and a process that loops on
+# `$TMPDIR/ralph-ignore.*` — a survivor of an earlier session, or a sibling's
+# session above `MAX_PARALLEL=1` — can write in that window and have its write
+# sealed: [103]'s creation window, not closed here. And `cksum` is a CRC, so a
+# rewrite crafted to keep the CRC and the length of a file the session can read is
+# out of reach, which is [81]'s admission one directory over.
+
+# What one entry is, as one word: a digest for a regular file, `dir`, `link`,
+# `other`, or `-` when nothing is there. One definition for the walk and for the
+# single-file question below, so the two cannot disagree about what "the same
+# entry" means.
+gate__frontier_pin_entry() {
+  if [ -L "$1" ]; then
+    printf 'link\n'
+  elif [ -d "$1" ]; then
+    printf 'dir\n'
+  elif [ -f "$1" ]; then
+    gate__digest "$1"
+  elif [ -e "$1" ]; then
+    printf 'other\n'
+  else
+    printf -- '-\n'
+  fi
+}
+
+# Every entry under a directory, `path<TAB>what`, depth first.
+#
+# A name carrying a tab or a newline is printed as a fixed line rather than as
+# itself, and that is not tidiness: the census is read line by line and field by
+# field, so such a name could print a line of its own choosing — a held path and
+# the digest it had — and stand in for a file that is no longer what it was. No
+# name this pack writes carries either byte, so the fixed line is in no census and
+# always reads as something that appeared.
+gate__frontier_pin_walk() {
+  local entry what
+  for entry in "$1"/* "$1"/.*; do
+    case "${entry##*/}" in . | ..) continue ;; esac
+    case "$entry" in
+      *$'\t'* | *$'\n'*)
+        printf '%s/(a name with a tab or a newline in it)\todd\n' "$1"
+        continue
+        ;;
+    esac
+    what="$(gate__frontier_pin_entry "$entry")"
+    [ "$what" != '-' ] || continue
+    printf '%s\t%s\n' "$entry" "$what"
+    if [ "$what" = dir ]; then gate__frontier_pin_walk "$entry"; fi
+  done
+  return 0
+}
+
+# The census of one pin, sorted. Taken by the pilot the instant the pin exists.
+gate_frontier_pin_seal() {
+  local pin="${1:-}"
+  [ -n "$pin" ] && [ -d "$pin" ] || return 1
+  gate__frontier_pin_walk "$pin" | LC_ALL=C sort
+}
+
+# The entries of this iteration's pin that are not what the pilot walked,
+# `path<TAB>what`, `what` being `gone`, `rewritten` or `appeared`. Non-zero when
+# none moved, which is every ordinary iteration — and silent with no census, for
+# the reason `gate_witness_moved` gives: `gate_*` stays drivable outside a run,
+# and what keeps that from being the shipped behaviour is `loop.sh` taking the
+# census and the tests that fail if it stops.
+gate__frontier_pin_moved() {
+  local pin="${RALPH_FRONTIER_PIN:-}" held="${RALPH_FRONTIER_PIN_SEAL:-}" moved
+  [ -n "$pin" ] && [ -n "$held" ] || return 1
+  moved="$( {
+    printf '%s\n' "$held" | awk '{ print "held\t" $0 }'
+    gate__frontier_pin_walk "$pin" | awk '{ print "now\t" $0 }'
+  } | awk -F'\t' '
+    $2 == "" { next }
+    $1 == "held" { held[$2] = $3; next }
+    { now[$2] = $3 }
+    END {
+      for (p in held) {
+        if (!(p in now)) print p "\tgone"
+        else if (held[p] != now[p]) print p "\trewritten"
+      }
+      for (p in now) if (!(p in held)) print p "\tappeared"
+    }' | LC_ALL=C sort)"
+  [ -n "$moved" ] || return 1
+  printf '%s\n' "$moved"
+}
+
+# Whether one file of this iteration's pin is still the one the pilot walked. For
+# the readers that take a single file out of the pin and act on it — the manifest
+# a restore reads its target from, the copy it puts back, the mark the register is
+# read from — and that must not act on a file a session wrote. Held with no
+# census, like everything above.
+#
+# Walked by expansion, not through a heredoc: bash 3.2 makes a heredoc a named
+# file under `/var/tmp`, and this is a value something is decided on ([108]).
+gate__frontier_pin_held() {
+  local file="$1" held="${RALPH_FRONTIER_PIN_SEAL:-}" rest line
+  [ -n "$held" ] || return 0
+  rest="$held"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *$'\n'*) line="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+      *) line="$rest" rest='' ;;
+    esac
+    [ "${line%%$'\t'*}" = "$file" ] || continue
+    [ "${line#*$'\t'}" = "$(gate__frontier_pin_entry "$file")" ] && return 0
+    return 1
+  done
+  return 1
+}
+
+# The clause the snapshot's refusal carries for this pin, beside
+# `gate__witness_clause` for the run's: the first entry that moved, by name.
+gate__frontier_pin_clause() {
+  local moved line what
+  moved="$(gate__frontier_pin_moved)" || return 0
+  line="${moved%%$'\n'*}"
+  what="${line#*$'\t'}"
+  case "$what" in
+    appeared) printf ' — %s appeared' "${line%%$'\t'*}" ;;
+    *) printf ' — %s is %s' "${line%%$'\t'*}" "$what" ;;
+  esac
+  return 0
+}
+
+# A pin that was set and cannot be read, or that is not the one this iteration
+# was handed. Refused rather than ignored: the point of the pin is that what the
+# checks can see does not depend on what the session left behind, so a missing
+# one is a control that cannot see, and a rewritten one is a control that sees
+# what the session chose.
 #
 # The run's witness of the shared sources and its register of movements are held to
 # the same standard ([41]), and they have to be: they live in the same `$TMPDIR`
@@ -1704,6 +1894,10 @@ gate__frontier_pin_broken() {
   local pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}" seen total
   [ -n "$pin" ] || return 1
   [ -f "$pin/manifest" ] && [ -d "$pin/rules/.git" ] || return 0
+  # And the question of the content ([100]), after the one of existence and not
+  # in its place: the census is the pilot's, so a `gate_*` driven outside a run has
+  # none and still falls to the line above.
+  if gate__frontier_pin_moved >/dev/null; then return 0; fi
   [ -n "$common" ] || return 1
   # The seal first and the floor second, and the order is what makes a stopped
   # night nameable: a witness the seal covers is refused *by name* here, where
@@ -1734,15 +1928,68 @@ gate_frontier_moved() {
   local pin="${RALPH_FRONTIER_PIN:-}" moved
   [ -n "$pin" ] || return 1
   [ -f "$pin/manifest" ] || return 1
-  moved="$( { gate__frontier_manifest; cat "$pin/manifest"; } |
+  moved="$( { gate__frontier_manifest; gate__frontier_pinned_manifest || true; } |
     LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
   [ -n "$moved" ] || return 1
   printf '%s\n' "$moved"
 }
 
+# What this iteration was handed, as manifest lines, and whether anything vouches
+# for it ([100]). Its own pin's manifest when the census says that is the one the
+# pilot walked; otherwise the tree half of the pin and the shared half from the
+# run's witness, when the run's seal says *that* is the one taken — the pin copied
+# its shared half from there in the first place ([41]), so on every night nobody
+# forged anything the two are the same answer.
+#
+# Non-zero when neither can be vouched for, with the pin's manifest printed all
+# the same: compared against nothing, every shared source would read as moved.
+# What a caller must not do on that answer is *act*. A restore takes its target
+# from here — `core.excludesFile` is set back to the value this names — so a
+# restore that trusted a manifest the session wrote would install the session's
+# frontier and call it put back.
+gate__frontier_pinned_manifest() {
+  local pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}"
+  if gate__frontier_pin_held "$pin/manifest"; then
+    cat "$pin/manifest" 2>/dev/null || true
+    return 0
+  fi
+  if [ -n "$common" ] && [ -f "$common/manifest" ] &&
+    gate_witness_intact "$common/manifest"; then
+    awk -F'\t' '$1 == "tree"' "$pin/manifest" 2>/dev/null || true
+    cat "$common/manifest"
+    return 0
+  fi
+  cat "$pin/manifest" 2>/dev/null || true
+  return 1
+}
+
+# One source's value in what this iteration was handed. Non-zero when nothing
+# vouches for that manifest, and then the value is no target.
 gate__frontier_pinned() {
-  awk -F'\t' -v name="$1" '$2 == name { print $3 }' \
-    "${RALPH_FRONTIER_PIN:-/dev/null}/manifest" 2>/dev/null || true
+  local manifest rc=0
+  manifest="$(gate__frontier_pinned_manifest)" || rc=1
+  printf '%s\n' "$manifest" | awk -F'\t' -v name="$1" '$2 == name { print $3 }'
+  return "$rc"
+}
+
+# The file a restore copies one shared source back from: the pin's copy when the
+# census says it is the one walked, the run's witness when its seal says that one
+# is, and nothing otherwise — in which case the source is named as one this run
+# could not put back, which is then true. Until [100] the copy was the pin's,
+# unasked: a pin rewritten by the session did not put the frontier back, it
+# installed the session's.
+gate__frontier_held_copy() {
+  local slot="$1" copy="$2" common="${RALPH_FRONTIER_COMMON:-}"
+  if [ -f "$copy" ] && gate__frontier_pin_held "$copy"; then
+    printf '%s\n' "$copy"
+    return 0
+  fi
+  if [ -n "$common" ] && [ -f "$common/$slot" ] &&
+    gate_witness_intact "$common/$slot"; then
+    printf '%s\n' "$common/$slot"
+    return 0
+  fi
+  return 1
 }
 
 gate__frontier_current() {
@@ -1759,8 +2006,10 @@ gate__frontier_current() {
 # configuration key whose name a session chooses, so a `case` on the name alone
 # would be a case a session gets to steer.
 gate__frontier_restore() {
-  local kind="$1" name="$2" pinned target
-  pinned="$(gate__frontier_pinned "$name")"
+  local kind="$1" name="$2" pinned target copy
+  # A target nothing vouches for is no target ([100]): see
+  # gate__frontier_pinned_manifest.
+  pinned="$(gate__frontier_pinned "$name")" || return 1
   if [ "$kind" = cfg ]; then
     gate__config_restore "$name" "$pinned"
     return
@@ -1779,11 +2028,13 @@ gate__frontier_restore() {
       if [ "$pinned" = '-' ]; then
         rm -f "$target" 2>/dev/null || true
       else
+        copy="$(gate__frontier_held_copy exclude \
+          "${RALPH_FRONTIER_PIN}/rules/.git/info/exclude")" || return 1
         # The directory too: a session that removed `info/` outright would
         # otherwise leave a restore that reports success and put nothing back —
         # which the verification below would catch, but as a mystery.
         mkdir -p "$(dirname "$target")" 2>/dev/null || true
-        cp "${RALPH_FRONTIER_PIN}/rules/.git/info/exclude" "$target" 2>/dev/null || true
+        cp "$copy" "$target" 2>/dev/null || true
       fi
       ;;
     *) return 1 ;;
@@ -1871,10 +2122,10 @@ gate__frontier_restore() {
 # had brought it into play. Probed on 03/08/2026: the second finding named a file
 # no session had touched.
 gate_frontier() {
-  local mine share
+  local mark="${1:-}" mine share
   [ -n "${RALPH_FRONTIER_PIN:-}" ] || return 0
-  mine="$(gate_frontier_put_back)"
-  share="$(gate__frontier_share "$mine")" || true
+  mine="$(gate_frontier_put_back "$mark")"
+  share="$(gate__frontier_share "$mine" "$mark")" || true
   [ -n "$share" ] || return 0
   printf '%s\n' "$share"
   return 1
@@ -1909,11 +2160,11 @@ gate_frontier() {
 # of the pilot shares with its siblings, so releasing a guard we never held would
 # take it away from the iteration that does.
 gate_frontier_put_back() {
-  local mine took=0
+  local mark="${1:-}" mine took=0
   [ -n "${RALPH_FRONTIER_PIN:-}" ] || return 0
   if concurrency_frontier_take; then took=1; fi
   mine="$(gate__frontier_detect)" || true
-  gate__frontier_record "$mine" || true
+  gate__frontier_record "$mine" "$mark" || true
   if [ "$took" = 1 ]; then concurrency_frontier_release || true; fi
   [ -z "$mine" ] || printf '%s\n' "$mine"
   return 0
@@ -1971,7 +2222,7 @@ EXEC
 # outlives the restore, so a writer that could shorten it would hand a session the
 # eraser this whole section exists to take away.
 gate__frontier_record() {
-  local findings="$1" common="${RALPH_FRONTIER_COMMON:-}" line
+  local findings="$1" mark="${2:-}" common="${RALPH_FRONTIER_COMMON:-}" line
   local tag="${RALPH_FRONTIER_PIN:-}" tab nl seen
   [ -n "$common" ] && [ -f "$common/ledger" ] || return 0
   [ -n "$findings" ] || return 0
@@ -1986,14 +2237,14 @@ gate__frontier_record() {
   #
   # So the rule moves into the thing it is about. A line this pin has already
   # recorded and **not yet read** is not appended again. Scoped to the unread part
-  # on purpose: after `gate_run` has read its share the mark has moved past it, so
-  # the same sentence recorded later is a genuinely new event — which is exactly
-  # the re-slice's planning session moving the same source a second time ([32]),
+  # on purpose: the re-slice asks from the mark it took before its planning
+  # session, so the same sentence recorded after that is a genuinely new event —
+  # which is exactly that session moving the same source a second time ([32]),
   # and dropping that one would under-report a movement nothing else names.
   tab="$(printf '\t')"
   nl='
 '
-  seen="$nl$(tail -n "+$(($(gate__frontier_mark) + 1))" "$common/ledger" 2>/dev/null ||
+  seen="$nl$(tail -n "+$(($(gate__frontier_mark "$mark") + 1))" "$common/ledger" 2>/dev/null ||
     true)$nl"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -2009,15 +2260,22 @@ RECORD
 }
 
 # This iteration's share of the register: every movement recorded since its pin
-# was taken, whoever saw it. The mark is advanced as it reads, because one
-# iteration can ask twice — `gate_run` before the fan, and `failures_reslice`
-# after the planning session it spawns ([32]) — and the second ask is about what
-# moved since the first, not about the whole night.
+# was taken, whoever saw it. One iteration can ask twice — `gate_run` before the
+# fan, and `failures_reslice` after the planning session it spawns ([32]) — and
+# the second ask is about what moved since that session started, not about the
+# whole night. It says so by handing over the mark it took before spawning it.
+#
+# Until [100] the mark was advanced here instead, written back into the pin as
+# this read — so the one file of the pin this pack rewrote under a session was
+# the one that decides what the session is billed for, and a session that wrote
+# it first was billed for nothing (see `gate__frontier_mark`). A mark held in the
+# caller's memory is one no session reaches.
 #
 # With no register — `gate_*` driven outside a run — an iteration is charged for
 # what it saw itself, which is what this did before [41].
 gate__frontier_share() {
-  local mine="$1" pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}"
+  local mine="$1" mark="${2:-}"
+  local pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}"
   local ledger seen total tag finding foreign=0
 
   ledger="$common/ledger"
@@ -2030,10 +2288,9 @@ gate__frontier_share() {
     return 0
   fi
 
-  seen="$(gate__frontier_mark)"
+  seen="$(gate__frontier_mark "$mark")"
   total="$(awk 'END { print NR + 0 }' "$ledger")"
   [ "$total" -gt "$seen" ] || return 0
-  printf '%s\n' "$total" >"$pin/ledger-seen" 2>/dev/null || true
 
   while IFS="$(printf '\t')" read -r tag finding; do
     [ -n "$finding" ] || continue
@@ -2958,7 +3215,9 @@ gate_tree_snapshot() {
       # through a command substitution, so a diagnosis on stdout would be captured
       # into the variable and thrown away with the failed status — leaving the
       # refusal downstream with no cause. Probed by destroying a pin mid-session.
-      gate__log "the pinned ignore rules cannot be read — refusing to snapshot a tree whose visibility nothing vouches for$(gate__witness_clause "${RALPH_FRONTIER_COMMON:-}")" >&2
+      # Both clauses, the run's and the iteration's own, because either can be
+      # the one that stopped the night and the reader is owed its name ([100]).
+      gate__log "the pinned ignore rules cannot be read, or are not the ones this iteration was handed — refusing to snapshot a tree whose visibility nothing vouches for$(gate__witness_clause "${RALPH_FRONTIER_COMMON:-}")$(gate__frontier_pin_clause)" >&2
       return 1
     fi
     # `--ignore-errors` so that this answers `1` with everything readable in the
