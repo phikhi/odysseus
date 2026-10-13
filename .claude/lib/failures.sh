@@ -1201,7 +1201,8 @@ CHANGED
 # Returns 0 when the ticket was re-sliced, non-zero when it needs a human.
 failures_reslice() {
   local ticket="$1"
-  local plan out base head seen tracker_pin mark prev_soft prev_timeout moved rc=0
+  local plan out base head seen tracker_pin mark frontier_mark prev_soft prev_timeout
+  local moved rc=0
   local headers lines start end header slug title body surface children='' child
   local total incomplete=''
 
@@ -1230,6 +1231,12 @@ failures_reslice() {
   mark="$(tracker_write_mark)"
   seen="$(failures_tracker_snapshot)"
   tracker_pin="$(tracker_snapshot)" || tracker_pin=""
+  # And where the run's register of frontier movements stands, for the same
+  # reason one register over: what the planning session moved is what lands after
+  # this. Held here, in this shell, and handed to the frontier below ([100]) —
+  # until then the frontier advanced a mark of its own in the pin as it read, a
+  # file the session it was about to bill could write first.
+  frontier_mark="$(gate_frontier_ledger_len)"
   prev_soft="${RALPH_SOFT_LIMIT_HIT:-0}"
   prev_timeout="${RALPH_SESSION_TIMEOUT:-}"
 
@@ -1272,7 +1279,7 @@ failures_reslice() {
   # the rules back and the *next* iteration would pin the widened ones. Said out
   # loud rather than quietly undone: there is no gate on this path to carry a
   # finding, so the log line is the only trace a human gets.
-  moved="$(gate_frontier)" || failures__say \
+  moved="$(gate_frontier "$frontier_mark")" || failures__say \
     "$ticket: the re-slice session moved the ignore frontier — $(printf '%s' "$moved" | tr '\n' ';')"
 
   # And the plan is refused whole if it wrote the tracker instead of returning

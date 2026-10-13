@@ -2233,7 +2233,7 @@ UNCOVERED
   local iteration=0 sterile=0 ticket frontier_refused=0 reclaimed rid rdisposition
   local budget_posture='' budget_paused=0 span pin
   local stop_code='' playthrough_rc=0
-  local RALPH_FRONTIER_PIN=''
+  local RALPH_FRONTIER_PIN='' RALPH_FRONTIER_PIN_SEAL=''
   LOOP_SLOTS=''
 
   while :; do
@@ -2542,6 +2542,14 @@ RECLAIMED
       continue
     fi
     pin="$RALPH_FRONTIER_PIN"
+    # And what that pin holds, walked by this pilot the instant it exists and
+    # handed down the same way ([100]). The pin is the one witness of an iteration
+    # the pilot makes itself, before the fork, so it is the one whose census can
+    # live where a session cannot reach it — a shell variable nothing exports.
+    # Until then the pin was held by its existence: a session that rewrote it,
+    # rather than destroying it, was judged through the rules it chose. Empty only
+    # when the pin is already gone, which the first snapshot refuses on its own.
+    RALPH_FRONTIER_PIN_SEAL="$(gate_frontier_pin_seal "$pin")" || RALPH_FRONTIER_PIN_SEAL=''
 
     # Not `loop__start … || stop_code=4`: testing the status here would switch
     # errexit off inside the iteration this call forks. See loop__start.

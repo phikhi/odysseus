@@ -2764,6 +2764,348 @@ ASK
   refute_output_contains "not-integrated"
 }
 
+# ── [100] the iteration's pin, held by its content ───────────────────────────
+#
+# The pin of [30] was held by a question of existence, and the 29/09 pass
+# measured what that left: a session that rewrites it — the rule in the pin's copy,
+# the manifest's line set back to the current digest — goes green in one
+# iteration, `resolved`, and its rule outlives the run at exit 0. Every gesture
+# below is made by the session itself, inside its own window, with no survivor:
+# that is the whole of what it takes.
+
+# The widening of the shared exclude, written by the session, and an optional
+# rewrite of its own iteration's pin on top of it. The pin is found the way any
+# session would find it: `ralph-ignore.*` is a glob this pack publishes.
+gate_pin_session() {
+  local forge="$1"
+  script_claude <<SCRIPT
+#!/usr/bin/env bash
+state="\$RALPH_SHIM_STATE"
+main="\$(cat "\$state/project-dir")"
+excl="\$main/.git/info/exclude"
+mkdir -p "\$(dirname "\$excl")" src
+printf 'src/backdoor.txt\n' >>"\$excl"
+printf 'a path no check of this run will see\n' >src/backdoor.txt
+if [ "$forge" = rewrite ]; then
+  digest="\$(cksum <"\$excl" | awk '{ print \$1 "." \$2 }')"
+  for pin in "\$TMPDIR"/ralph-ignore.*; do
+    [ -d "\$pin" ] || continue
+    printf 'src/backdoor.txt\n' >>"\$pin/rules/.git/info/exclude"
+    awk -F'\t' -v OFS='\t' -v d="\$digest" \\
+      '\$1 == "dir" && \$2 == ".git/info/exclude" { \$3 = d } { print }' \\
+      "\$pin/manifest" >"\$pin/manifest.forged" &&
+      mv -f "\$pin/manifest.forged" "\$pin/manifest"
+    printf '%s\n' "\$pin" >>"\$state/pin.forged"
+  done
+fi
+chmod -x "\$state/claude.script"
+exec claude "\$@"
+SCRIPT
+}
+
+@test "the paired witness: a widening with the pin intact is red, put back, and retried" {
+  # Half of the pair, and the half that keeps the other one honest: the same
+  # session without the rewrite. It is also the derivation [100] rests on — the
+  # census holds every file of the pin, so a pack that wrote into its own pin after
+  # the census would stop this night at its first snapshot instead of retrying.
+  use_tickets 01-alpha
+  gate_pin_session plain
+
+  run_loop_own_tmp
+  assert_success
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+  assert_output_contains "wrote src/backdoor.txt, outside the declared write-surface"
+  assert_ticket_status 01-alpha resolved
+  refute_output_contains "are not the ones this iteration was handed"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "src/backdoor.txt"
+}
+
+@test "a session that rewrites its iteration's pin is refused by name, and its rule does not outlive the run" {
+  # The other half, and the measurement of the pass: before [100] this was four
+  # greens, one iteration, `resolved`, and the rule still in `.git/info/exclude`
+  # when the run had gone.
+  use_tickets 01-alpha
+  gate_pin_session rewrite
+
+  run_loop_own_tmp
+  # The staging, asserted: a pin was found and rewritten. Without it everything
+  # below could be the witness above passing for the wrong reason.
+  assert_file_contains "$SHIM_STATE/pin.forged" "ralph-ignore."
+
+  assert_failure 4
+  assert_output_contains "are not the ones this iteration was handed"
+  assert_output_contains "/manifest is rewritten"
+  refute_output_contains "-> resolved"
+  assert_ticket_status 01-alpha ready-for-agent
+  # And the frontier went back all the same: the target of the restore is taken
+  # from a witness something vouches for — here the run's, since the pin's copy
+  # is the one the session wrote.
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "src/backdoor.txt"
+}
+
+@test "a rewritten copy of the tree's rules in the pin does not hide what was written behind them" {
+  # The half of the pin no restore ever reads: a `.gitignore` of the tree is
+  # project work, so what holds it is that the snapshot judges through the rules
+  # the spawn was handed — asked of `git check-ignore` inside the pin. Rewrite the
+  # pin's copy, and the rule written this iteration is one the spawn "already had":
+  # nothing is forced, the file behind it is never judged, and the rule is
+  # committed. No manifest line has to move for that.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  ignore_paths 'cache/'
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `.gitignore`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that may write the ignore rules"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+state="$RALPH_SHIM_STATE"
+printf 'secret/\n' >>.gitignore
+mkdir -p secret src
+printf 'off-surface\n' >secret/payload
+printf 'written\n' >src/alpha.txt
+for pin in "$TMPDIR"/ralph-ignore.*; do
+  [ -f "$pin/rules/.gitignore" ] || continue
+  printf 'secret/\n' >>"$pin/rules/.gitignore"
+  printf '%s\n' "$pin" >>"$state/pin.forged"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_file_contains "$SHIM_STATE/pin.forged" "ralph-ignore."
+  assert_failure 4
+  assert_output_contains "/rules/.gitignore is rewritten"
+  refute_output_contains "-> resolved"
+  refute_file_contains "$PROJECT_DIR/.gitignore" "secret/"
+}
+
+@test "a rule file added to the pin, two levels down, does not hide what was written behind it" {
+  # The same gesture by addition rather than rewrite: a `.gitignore` the spawn
+  # never had, put in the pin where the tree's new one would have been copied. A
+  # census of what the pilot walked that only compared the files it already knew
+  # would find every one of them intact.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `src/.gitignore`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that may write a nested ignore rule"
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+state="$RALPH_SHIM_STATE"
+mkdir -p src
+printf 'secret.txt\n' >src/.gitignore
+printf 'off-surface\n' >src/secret.txt
+printf 'written\n' >src/alpha.txt
+for pin in "$TMPDIR"/ralph-ignore.*; do
+  [ -d "$pin/rules" ] || continue
+  mkdir -p "$pin/rules/src"
+  printf 'secret.txt\n' >"$pin/rules/src/.gitignore"
+  printf '%s\n' "$pin" >>"$state/pin.forged"
+done
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_file_contains "$SHIM_STATE/pin.forged" "ralph-ignore."
+  assert_failure 4
+  assert_output_contains "are not the ones this iteration was handed"
+  assert_output_contains "appeared"
+  refute_output_contains "-> resolved"
+}
+
+@test "a mark rewritten in the pin bills the iteration for the whole night, not for nothing" {
+  # The one file of the pin this pack used to rewrite under a session. Set to the
+  # length the register would have after the restore, it erased the session's own
+  # share: the movement was put back and nobody was billed (probed, one green
+  # iteration). Asked here on the path no gate judges — a crashed session — where
+  # nothing after the share refuses the pin before it is read: the movement has to
+  # be named by the share itself.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+state="$RALPH_SHIM_STATE"
+printf 'nothing-behind-this-rule.txt\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
+for common in "$TMPDIR"/ralph-frontier.*; do
+  [ -f "$common/ledger" ] || continue
+  n="$(awk 'END { print NR + 0 }' "$common/ledger")"
+  for pin in "$TMPDIR"/ralph-ignore.*; do
+    [ -f "$pin/ledger-seen" ] || continue
+    printf '%s\n' "$((n + 1))" >"$pin/ledger-seen"
+    printf '%s\n' "$pin" >>"$state/pin.forged"
+  done
+done
+exit 1
+FAKE
+
+  run_loop_own_tmp
+  assert_file_contains "$SHIM_STATE/pin.forged" "ralph-ignore."
+  assert_output_contains "01-alpha: moved the ignore frontier in .git/info/exclude"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "nothing-behind-this-rule.txt"
+}
+
+@test "the re-slice asks the frontier from its own mark, not from the pin's" {
+  # The second ask of an iteration used to read from a mark the first ask wrote
+  # back into the pin. That write is gone ([100]), and what replaces it is the mark
+  # `failures_reslice` takes before its planning session: what the *delivery*
+  # session moved is not the planning session's doing, and a log line that said so
+  # would be the misattribution [41] is built to refuse. The positive half is in
+  # `failures.bats` — "the re-slice session cannot leave the ignore frontier
+  # widened".
+  use_tickets 07-overlaps-alpha
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 1
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+n="$(cat "$RALPH_SHIM_STATE/seq" 2>/dev/null || echo 0)"
+n=$((n + 1)); printf '%s\n' "$n" >"$RALPH_SHIM_STATE/seq"
+if [ "$n" = 1 ]; then
+  printf 'rogue/\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
+  echo '{"type":"system","subtype":"init","session_id":"s"}'
+  echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_read_input_tokens":9000,"output_tokens":5}}}'
+  i=0
+  while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+  exit 0
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}'
+FAKE
+
+  run_loop
+  # The re-slice ran — a planning session was spawned after the delivery one.
+  [ "$(cat "$SHIM_STATE/seq")" -ge 2 ] || fail "no planning session was spawned"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "rogue/"
+  refute_output_contains "the re-slice session moved the ignore frontier"
+}
+
+# One run's witnesses and one iteration's pin, staged the way `loop.sh` takes
+# them, as a script each test below sources and then forges against.
+gate_pin_setup() {
+  cat <<'SETUP'
+RALPH_FRONTIER_COMMON="$(gate_frontier_common)"
+RALPH_WITNESS_SEAL="$(gate_witness_seal "$RALPH_FRONTIER_COMMON")"
+RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+RALPH_FRONTIER_PIN_SEAL="$(gate_frontier_pin_seal "$RALPH_FRONTIER_PIN")"
+exclude="$(git rev-parse --git-common-dir)/info/exclude"
+SETUP
+}
+
+@test "a name chosen to print a line of the census does not stand in for the file it names" {
+  # The census is read line by line and field by field, and a session chooses the
+  # names in the pin. A file called `global<TAB><the digest global had><NL>` would
+  # print exactly the line the real `global` printed at the pin — and the real one
+  # can then be anything. No name the pack writes carries either byte.
+  use_tickets 01-alpha
+  local script="$RALPH_TEST_DIR/pin-decoy.sh"
+  {
+    gate_pin_setup
+    cat <<'FORGE'
+was="$(gate__digest "$RALPH_FRONTIER_PIN/global")"
+printf 'secret/\n' >>"$RALPH_FRONTIER_PIN/global"
+: >"$RALPH_FRONTIER_PIN/global"$'\t'"$was"$'\n'
+gate_tree_snapshot >/dev/null || printf 'refused\n'
+rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"
+FORGE
+  } >"$script"
+  pack_run ". '$script'"
+  assert_output_contains "refused"
+  assert_output_contains "are not the ones this iteration was handed"
+}
+
+@test "a session that forges both witnesses does not choose which one a restore reads" {
+  # The fallback is the run's witness, and that witness is in `$TMPDIR` too. A
+  # restore takes its target from the manifest — `core.excludesFile` is set back
+  # to the value it names — so a session that wrote its own value into the pin's
+  # manifest and into the run's would have the restore *install* that value and
+  # call it put back, whichever of the two it read. Asked, the run's witness is refused like the pin, nothing
+  # vouches for a target, and the restore says it could not put the source back,
+  # which is then the truth.
+  use_tickets 01-alpha
+  local script="$RALPH_TEST_DIR/pin-both.sh"
+  {
+    gate_pin_setup
+    cat <<'FORGE'
+git config core.excludesFile "$PWD/the-session-s-rules"
+for manifest in "$RALPH_FRONTIER_PIN/manifest" "$RALPH_FRONTIER_COMMON/manifest"; do
+  awk -F'\t' -v OFS='\t' -v d="$PWD/rules-the-session-chose" \
+    '$1 == "dir" && $2 == "core.excludesFile" { $3 = d } { print }' \
+    "$manifest" >"$manifest.forged"
+  mv -f "$manifest.forged" "$manifest"
+done
+gate_frontier_put_back
+printf 'now: %s\n' "$(git config --get core.excludesFile)"
+git config --unset-all core.excludesFile || true
+rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"
+FORGE
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "moved the ignore frontier in core.excludesFile"
+  assert_output_contains "this run could not put it back"
+  refute_output_contains "rules-the-session-chose"
+}
+
+@test "a copy in the run's witness that is not the one taken is not put back either" {
+  # The same question of the copy a restore reads when the pin's is spoiled: the
+  # run's witness is the fallback, and a session reaches it as easily. Put back
+  # unasked it would install whatever the session left there, and say it could not
+  # put the source back — while having written the session's rules itself.
+  use_tickets 01-alpha
+  local script="$RALPH_TEST_DIR/pin-common-copy.sh"
+  {
+    gate_pin_setup
+    cat <<'FORGE'
+printf 'rule-a/\n' >>"$exclude"
+printf 'spoiled\n' >>"$RALPH_FRONTIER_PIN/rules/.git/info/exclude"
+printf 'rule-b/\n' >>"$RALPH_FRONTIER_COMMON/exclude"
+gate_frontier_put_back
+printf 'b: %s\n' "$(grep -c 'rule-b/' "$exclude" || true)"
+rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"
+FORGE
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "this run could not put it back"
+  assert_output_contains "b: 0"
+}
+
+@test "a pin whose copy of the attributes was rewritten does not arm what it names" {
+  # The other copy a restore reads ([46]): `.git/info/attributes` arms a filter
+  # or a driver on a path, and it is put back from the pin. A session that wrote
+  # its filter there and the same line into the pin's copy would have the restore
+  # install it and verify it against itself.
+  use_tickets 01-alpha
+  local script="$RALPH_TEST_DIR/pin-attributes.sh"
+  # Something there before the pin, or the restore would put the file back by
+  # removing it and never read a copy at all.
+  mkdir -p "$PROJECT_DIR/.git/info"
+  printf '*.bin binary\n' >"$PROJECT_DIR/.git/info/attributes"
+  {
+    gate_pin_setup
+    cat <<'FORGE'
+attributes="$(git rev-parse --git-common-dir)/info/attributes"
+printf '* filter=forged\n' >>"$attributes"
+printf '* filter=forged\n' >>"$RALPH_FRONTIER_PIN/attributes"
+gate_frontier_put_back
+printf 'left: %s\n' "$(grep -c 'filter=forged' "$attributes" 2>/dev/null || echo 0)"
+rm -rf "$RALPH_FRONTIER_PIN" "$RALPH_FRONTIER_COMMON"
+FORGE
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "moved .git/info/attributes"
+  assert_output_contains "(put back)"
+  assert_output_contains "left: 0"
+}
+
 # ── [85] the census is held to its criterion by the calls that take a guard ──
 #
 # `gate__guard_paths` names three zones, and until this ticket the only thing
