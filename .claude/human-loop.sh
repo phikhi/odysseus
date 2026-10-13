@@ -28,7 +28,9 @@
 # Exit codes
 #   0  the sink is empty: everything in it was drained
 #   1  could not start — a run, or another human, holds this feature's tracker or
-#      this working tree
+#      this working tree. That and nothing else since [99]: a shell ended under
+#      `errexit` leaves with the status of the command that failed, which is 1
+#      for nearly anything a shell runs, and that is a 6 below
 #   2  cannot run: no config, a PATH nothing here can witness, or no tracker
 #   3  stopped with tickets still in the sink — the human quit, or stdin ended
 #   4  stopped by a guard: one of the two locks this drain took is gone, or is
@@ -36,7 +38,14 @@
 #   5  nothing to drain: the sink was empty when this started
 #   6  ended in the middle, where nothing here decided to stop: something below
 #      this loop ended this shell. The sink is not empty, no tally was printed,
-#      and the ticket it stopped on is the one it was last talking about ([71])
+#      and the ticket it stopped on is the one it was last talking about ([71]).
+#      Whatever status that shell was ending with is printed on the line above
+#      and never passed on as one of the numbers in this list ([99])
+#   130, 143  stopped by an INT (outside a routed session, which keeps Ctrl-C for
+#      itself) or a TERM, once this drain held its locks: whoever sent it decided,
+#      and the drain released what it held. Written here since [99], because a
+#      guard that converts every number nothing here chose has to be told about
+#      the two its own handlers choose
 #
 # 0 and 5 are different for the reason they are different in `loop.sh`: a drain
 # that found nothing because `FEATURE` points at the wrong tracker must not be
@@ -52,7 +61,9 @@
 # 6 is the only code here that is not this loop's own decision, and 4 was the
 # near miss: 4 is a *guard* stopping a drain that is otherwise fine, so telling an
 # operator "a lock is gone" about a shell that was ended under them would send
-# them to look at the one thing that is not the matter.
+# them to look at the one thing that is not the matter. Every other number here
+# leaves through `human_loop__leave`, and that is how the guard tells the two
+# kinds apart ([99]).
 #
 # Kept bash 3.2 compatible, like the rest of the pack.
 set -euo pipefail
@@ -121,7 +132,21 @@ human_loop_log() {
 #
 # It converts, it does not rescue: the drain is over either way, and what it buys
 # is that the number an operator reads is not the one that means the opposite.
-# Only a `0` is touched, so no other exit of this file passes through anything.
+#
+# **And it converts every number this drain did not choose, not only a `0`
+# ([99]).** Until then it touched a `0` alone — "no other exit of this file passes
+# through anything" — and the other side was never reasoned: a shell ended under
+# `errexit` leaves with the status of the command that failed, which is `1` for
+# nearly anything a shell runs, and `1` is this file's word for "a run, or another
+# human, holds this feature's tracker". A drain that held both locks and died on
+# its first journal line said exactly that, and sent its operator to look for the
+# other human. So the question is **who chose the number**: every exit this drain
+# decides on goes through `human_loop__leave`, which marks it before leaving — the
+# two signal handlers below included, which is what keeps a Ctrl-C a 130 — and
+# anything else is a 6, with the status it was ending with printed beside it.
+# `test/gate.bats` holds the half a comment cannot: no `exit` in this file outside
+# this guard, `human_loop__leave` and the refusal that runs before the guard
+# exists, and no handler string that leaves by itself.
 #
 # **It releases the locks, and that is not a courtesy — it is how it survives.**
 # `run_lock_acquire` and `tree_lock_acquire` each install `trap
@@ -130,7 +155,7 @@ human_loop_log() {
 # So the release moves *into* this handler and `human_loop__arm_signals` puts the
 # handler back — at the two places the locks are taken and after every session,
 # which is where that function is already called for the same kind of reason.
-HUMAN_LOOP__REACHED_THE_END=0
+HUMAN_LOOP__DECIDED=0
 
 # This drain's own directory in `$TMPDIR`, when it could make one ([75]). A
 # `mktemp` name this shell never exports — the same secret as every other
@@ -147,14 +172,19 @@ human_loop__on_exit() {
   local rc=$?
   state_locks_release
   [ -z "$HUMAN_LOOP__STATE" ] || rm -rf "$HUMAN_LOOP__STATE"
-  [ "$rc" = 0 ] || exit "$rc"
-  if [ "${HUMAN_LOOP__REACHED_THE_END:-0}" != 1 ]; then
-    printf 'ralph: this drain ended in the middle, where nothing in it decided to stop — something below it ended this shell. What was still in the sink is still in it, and the last ticket named above is where to start again. This is not an emptied sink: an operation of the tracker adapter that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' >&2
-    exit 6
-  fi
-  exit 0
+  [ "${HUMAN_LOOP__DECIDED:-0}" != 1 ] || exit "$rc"
+  printf 'ralph: this drain ended in the middle, where nothing in it decided to stop — something below it ended this shell (status %s). What was still in the sink is still in it, and the last ticket named above is where to start again. This is not an emptied sink: an operation of the tracker adapter that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' "$rc" >&2
+  exit 6
 }
 trap human_loop__on_exit EXIT
+
+# Every exit this drain decides on, once the guard above is armed ([99]). The mark
+# before the `exit` is what the guard reads, so a number that leaves without it is
+# one this drain never chose — a 6, whatever it was.
+human_loop__leave() {
+  HUMAN_LOOP__DECIDED=1
+  exit "$1"
+}
 
 # ── signals ──────────────────────────────────────────────────────────────────
 #
@@ -175,9 +205,16 @@ trap human_loop__on_exit EXIT
 # both `*_lock_acquire` install an EXIT trap of their own, so the guard set at the
 # top of this file stops existing the moment either lock is taken ([71]). This
 # function is called right after both, and again after every session.
+#
+# **And the two handlers leave through `human_loop__leave`, which is not the shape
+# the locks give theirs** ([99]). A Ctrl-C is a human deciding to stop, so its 130
+# is a number this drain chose — and the guard now converts every number nothing
+# here chose, so a handler that left bare would turn the human's own stop into
+# "ended in the middle". They release nothing themselves: the guard they leave
+# through does, and it is installed on the line below them.
 human_loop__arm_signals() {
-  trap 'state_locks_release; exit 130' INT
-  trap 'state_locks_release; exit 143' TERM
+  trap 'human_loop__leave 130' INT
+  trap 'human_loop__leave 143' TERM
   trap human_loop__on_exit EXIT
 }
 
@@ -328,7 +365,7 @@ human_loop__stop_lost_lock() {
   # is the one exit where what was already decided matters most, and it is the one
   # a `while` loop's `break` does not reach.
   router_journal_verify || true
-  exit 4
+  human_loop__leave 4
 }
 
 # ── one ticket ───────────────────────────────────────────────────────────────
@@ -569,7 +606,7 @@ human_loop_main() {
   # The `awk` of `router_journal_base` a few lines down is already one (until
   # [102] this named `ralph_project_root`, which is a `cd` and a `pwd`). Nothing
   # above this point in this file runs a program by name.
-  gate_path_preflight || exit 2
+  gate_path_preflight || human_loop__leave 2
   # And no git this drain runs reads a hook directory, for the reason `loop_main`
   # gives at the same place ([102]); the first one is in `human_loop_preflight`.
   # The interactive session gets the operator's environment back
@@ -591,7 +628,7 @@ human_loop_main() {
   # inside it would be the first step of turning it into one.
   router_journal_base
 
-  human_loop_preflight || exit 2
+  human_loop_preflight || human_loop__leave 2
 
   # Both locks, and the coarser one first, exactly as `loop_main` takes them.
   #
@@ -610,8 +647,8 @@ human_loop_main() {
   # door the per-feature lock never closed — and the price is deliberate: a
   # successor that wakes up mid-drain is refused, which is precisely what [09]
   # wants to happen.
-  tree_lock_acquire || exit 1
-  run_lock_acquire "a human draining this feature's sink" || exit 1
+  tree_lock_acquire || human_loop__leave 1
+  run_lock_acquire "a human draining this feature's sink" || human_loop__leave 1
   human_loop__arm_signals
 
   # The first thing this drain writes anywhere, and "first" is the whole of [72]:
@@ -705,7 +742,7 @@ LEFTOVERS
     # findings ([64]) are written once both locks are held ([72]), which is well
     # before the sink is read.
     router_journal_verify || true
-    exit 5
+    human_loop__leave 5
   fi
 
   # The order is taken once, before anything moves, and that is correct rather
@@ -794,16 +831,16 @@ SINK
 
   if ! sink="$(router_sink)" || [ -z "$sink" ]; then
     human_loop_log "the human sink is empty"
-    # The one place this loop is entitled to say it. Read by the trap installed at
-    # the top of this file, which turns every other `0` into a 6 ([71]).
-    HUMAN_LOOP__REACHED_THE_END=1
-    exit 0
+    # The one place this loop is entitled to say it, and the guard installed at
+    # the top of this file passes it on because it came through here: every other
+    # `0` is a 6 ([71], [99]).
+    human_loop__leave 0
   fi
   if [ "$quit" = 1 ]; then
     human_loop_log "stopped before the end of the sink"
   fi
   human_loop_log "still waiting for a human: $(printf '%s' "$sink" | awk 'length { n++ } END { print n + 0 }') ticket(s)"
-  exit 3
+  human_loop__leave 3
 }
 
 human_loop_main "$@"

@@ -780,6 +780,40 @@ OP
   assert_ticket_status 01-alpha ready-for-agent
 }
 
+@test "a run something ended in the middle with a failing status does not report a refused start" {
+  # [99], the other side of the same guard. A shell ended under `errexit` leaves
+  # with the status of the command that failed, which is `1` for nearly anything a
+  # shell runs — and `1` is this file's word for "could not start: another run
+  # holds this feature's tracker, or this working tree". The run below held both.
+  #
+  # The shortest stage there is, and the one [98] left this ticket once the
+  # `rm -rf` of the slot was gone: an operation the pilot calls bare, after both
+  # locks, refusing with a status instead of a value. `concurrency_cap` for the
+  # reason the test above the last one gives — no subshell absorbs it.
+  #
+  # Measured without the conversion: `1`, the operator sent to look for a lock
+  # nobody holds, over a frontier still holding its ticket.
+  hostile_adapter_op concurrency_cap <<'OP'
+  return 1
+OP
+  use_tickets 01-alpha
+
+  run_loop
+  assert_failure 7
+  assert_output_contains "ended in the middle"
+  # And the number it was ending with, which the conversion would otherwise lose.
+  assert_output_contains "ended this shell (status 1)"
+  refute_output_contains "already holds"
+  # It had started: the conversion is about a run that died, not one refused.
+  assert_output_contains "run start"
+  refute_output_contains "frontier empty"
+  assert_ticket_status 01-alpha ready-for-agent
+  # And the guard let go of what the run had taken, on the path nothing decided
+  # as on every other: the locks' own trap is the one this guard replaced.
+  [ ! -d "$(run_lock_dir)" ] || fail "the run died holding its run lock"
+  [ ! -d "$(tree_lock_dir)" ] || fail "the run died holding the working-tree lock"
+}
+
 @test "the paired witness: the same run with no second entry point beside it" {
   # What the test above is worth: the same tracker, the same finding, the same
   # journal — and nothing else running. A run that never accused anybody would

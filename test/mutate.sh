@@ -901,7 +901,7 @@ mutation "12 a lock that was deleted still counts as ours" "$STATE" \
 # ── [22] one run per working tree ────────────────────────────────────────────
 
 mutation "22 the loop takes no lock on the tree it grinds" "$LOOP" \
-  's/  tree_lock_acquire \|\| exit 1\n//' \
+  's/  tree_lock_acquire \|\| loop__leave 1\n//' \
   test/state.bats "refuses the second run anyway"
 
 mutation "22 the tree lock is per feature after all" "$STATE" \
@@ -948,7 +948,7 @@ mutation "22 a tree lock that was deleted still counts as ours" "$STATE" \
 # for the per-feature one in almost every test, and then nothing notices if the
 # tracker's own lock stops being taken. Both statements have to keep a test.
 mutation "22 the tree lock stands in for the feature lock" "$LOOP" \
-  's/  run_lock_acquire \|\| exit 1\n//' \
+  's/  run_lock_acquire \|\| loop__leave 1\n//' \
   test/loop-happy-path.bats "refuses to start while another run holds the lock"
 
 # ── [20] the contract against the real binary ────────────────────────────────
@@ -3885,7 +3885,7 @@ mutation "52 the pilot never asks what its programs are before arming" "$LOOP" \
 # The PATH entry no witness can cover, because it is a different directory in
 # every shell this pack starts.
 mutation "52 the PATH nothing can witness is not refused" "$LOOP" \
-  's#  gate_path_preflight \|\| exit 2#  :#' \
+  's#  gate_path_preflight \|\| loop__leave 2#  :#' \
   test/gate.bats "not an absolute directory"
 
 # And *when* it is refused, which is the whole of the guarantee: `dirname` here
@@ -4250,19 +4250,19 @@ mutation "16 the ticket is handed to the routed session as instructions" "$ROUTE
 # per feature; a run grinding another feature of this repository folds its
 # commits into *this* tree while a human works in it.
 mutation "16 a drain leaves the working tree to whatever else is grinding it" "$HUMAN_LOOP" \
-  's/  tree_lock_acquire \|\| exit 1\n//' \
+  's/  tree_lock_acquire \|\| human_loop__leave 1\n//' \
   test/human-loop.bats "keeps a human out of the sink"
 
 # And the one they do: you grind or you drain. It is also what settles the 06/08
 # pass's question — this loop writes in `issues/` from outside any iteration,
 # where the two guards over that directory cannot tell it from a session.
 mutation "16 a drain writes the tracker beside a run that is grinding it" "$HUMAN_LOOP" \
-  's/  run_lock_acquire "a human draining this feature\x27s sink" \|\| exit 1\n//' \
+  's/  run_lock_acquire "a human draining this feature\x27s sink" \|\| human_loop__leave 1\n//' \
   test/human-loop.bats "keeps a human out of the sink"
 
 # [52] asked of the second entry point, both halves. The refusal itself…
 mutation "16 the drain does not refuse a PATH it cannot witness" "$HUMAN_LOOP" \
-  's/  gate_path_preflight \|\| exit 2/  :/' \
+  's/  gate_path_preflight \|\| human_loop__leave 2/  :/' \
   test/human-loop.bats "refused before this drain runs a program"
 
 # …and *when* it arrives, which is the whole of the guarantee. A `dirname` in
@@ -4367,7 +4367,7 @@ mutation "57 the drain asks at the ticket and not after each decision" "$HUMAN_L
 # is the only one in this file: [67] put the journal witness between it and the
 # tally, and an anchor spanning the two would have to move again next time.
 mutation "57 a lock the drain no longer holds is said and not acted on" "$HUMAN_LOOP" \
-  's/^  exit 4\n\}/}/m' \
+  's/^  human_loop__leave 4\n\}/}/m' \
   test/human-loop.bats "took the run lock away"
 
 # And the line that carries the refusal out of one ticket into the drain. Without
@@ -5268,7 +5268,7 @@ mutation "67 the drain's own lines are counted in a subshell" "$HUMAN_LOOP" \
   test/human-loop.bats "does not accuse itself"
 
 mutation "67 the drain's block is measured from the top of the file" "$HUMAN_LOOP" \
-  's/  router_journal_base\n\n  human_loop_preflight \|\| exit 2\n/  human_loop_preflight || exit 2\n/' \
+  's/  router_journal_base\n\n  human_loop_preflight \|\| human_loop__leave 2\n/  human_loop_preflight || human_loop__leave 2\n/' \
   test/human-loop.bats "does not accuse itself"
 
 # ── [66] the ref that chooses the desk ───────────────────────────────────────
@@ -5447,7 +5447,7 @@ mutation "71 the reason a neighbour carried is dropped when it is put back" "$RO
 # where they are taken — that is the line, and taking it out is how the defect
 # comes back with the locks held.
 mutation "71 the locks take the drain's exit guard away with them" "$HUMAN_LOOP" \
-  's/  trap \x27state_locks_release; exit 143\x27 TERM\n  trap human_loop__on_exit EXIT\n/  trap \x27state_locks_release; exit 143\x27 TERM\n/' \
+  's/  trap \x27human_loop__leave 143\x27 TERM\n  trap human_loop__on_exit EXIT\n/  trap \x27human_loop__leave 143\x27 TERM\n/' \
   test/human-loop.bats "ended in the middle"
 
 mutation "71 the guard is armed only once the locks are taken" "$HUMAN_LOOP" \
@@ -5455,15 +5455,17 @@ mutation "71 the guard is armed only once the locks are taken" "$HUMAN_LOOP" \
   test/human-loop.bats "ended before it took its locks"
 
 # The paired witness: a guard that never saw its own end would call every emptied
-# sink a drain that stopped in the middle.
+# sink a drain that stopped in the middle. Since [99] the end is marked by
+# `human_loop__leave`, so the zero that leaves bare is the mutation.
 mutation "71 a drain that reached its own end is called one that ended in the middle" "$HUMAN_LOOP" \
-  's/    HUMAN_LOOP__REACHED_THE_END=1\n//' \
+  's/    human_loop__leave 0\n/    exit 0\n/' \
   test/human-loop.bats "sign-off is the one escalation"
 
-# And the other end of the same witness: only a `0` is converted, so every exit
-# this loop decided on passes through untouched.
+# And the other end of the same witness: every exit this loop decided on passes
+# through untouched — since [99], because it was marked, and not because it was
+# not a zero.
 mutation "71 the guard rewrites every exit and not only a zero" "$HUMAN_LOOP" \
-  's/  \[ "\$rc" = 0 \] \|\| exit "\$rc"\n//' \
+  's/  \[ "\$\{HUMAN_LOOP__DECIDED:-0\}" != 1 \] \|\| exit "\$rc"\n//' \
   test/human-loop.bats "drained to the end"
 
 # ── [72] what a preamble may write before it holds the locks ─────────────────
@@ -5508,20 +5510,111 @@ mutation "72 the run's guard is armed only once the locks are taken" "$LOOP" \
   test/loop-happy-path.bats "ended before it took its locks"
 
 # The paired witness: a guard that never saw its own end would call every drained
-# frontier a run that stopped in the middle.
+# frontier a run that stopped in the middle. Since [99] the end is marked by
+# `loop__leave`, so the zero that leaves bare is the mutation.
 mutation "72 a run that reached its own end is called one that ended in the middle" "$LOOP" \
-  's/      LOOP__REACHED_THE_END=1\n      exit 0\n/      exit 0\n/' \
+  's/      loop__leave 0\n/      exit 0\n/' \
   test/loop-happy-path.bats "grinds the whole frontier"
 
-# And the other end of it: only a `0` is converted, so every exit this run decided
-# on passes through untouched. Aimed at the `5`, and that is not interchangeable
-# with the `1` of a lock: `run_lock_acquire` fails with the *locks'* own EXIT trap
-# installed over this guard, so a run refused there never reaches it at all. The
-# empty frontier is the shortest path that exits non-zero with the guard back in
-# place.
+# And the other end of it: every exit this run decided on passes through untouched
+# — since [99], because it was marked, and not because it was not a zero. Aimed at
+# the `5`, and that is not interchangeable with the `1` of a lock: `run_lock_acquire`
+# fails with the *locks'* own EXIT trap installed over this guard, so a run refused
+# there never reaches it at all. The empty frontier is the shortest path that exits
+# non-zero with the guard back in place.
 mutation "72 the run's guard rewrites every exit and not only a zero" "$LOOP" \
-  's/  \[ "\$rc" = 0 \] \|\| exit "\$rc"\n//' \
+  's/  \[ "\$\{LOOP__DECIDED:-0\}" != 1 \] \|\| exit "\$rc"\n//' \
   test/loop-happy-path.bats "empty from the start is not reported as work done"
+
+# ── [99] a number the entry point did not choose ─────────────────────────────
+#
+# The guard of [71] and [72] touched a `0` alone, and a shell ended under `errexit`
+# leaves with the status of the command that failed — `1`, for nearly anything,
+# which both entry points spell "could not start: somebody holds the lock". Since
+# [99] the discriminant is the mark `loop__leave` and `human_loop__leave` set
+# before they exit, and every entry below takes away one half of that: the
+# conversion of a non-zero, a mark on an exit the loop did decide, the census
+# that holds the rest, the two handlers the drain chooses a number in, the
+# release on the path nobody decided, and the status the conversion would
+# otherwise lose.
+
+# The conversion itself: the guard as it was, a non-zero passed on whoever chose it.
+mutation "99 a run that died under errexit leaves with the status it died with" "$LOOP" \
+  's/  \[ "\$\{LOOP__DECIDED:-0\}" != 1 \] \|\| exit "\$rc"\n/  [ "\${LOOP__DECIDED:-0}" != 1 ] \&\& [ "\$rc" = 0 ] || exit "\$rc"\n/' \
+  test/loop-happy-path.bats "with a failing status does not report a refused start"
+
+mutation "99 a drain that died under errexit leaves with the status it died with" "$HUMAN_LOOP" \
+  's/  \[ "\$\{HUMAN_LOOP__DECIDED:-0\}" != 1 \] \|\| exit "\$rc"\n/  [ "\${HUMAN_LOOP__DECIDED:-0}" != 1 ] \&\& [ "\$rc" = 0 ] || exit "\$rc"\n/' \
+  test/human-loop.bats "with a failing status does not report a refused start"
+
+# The paired witnesses, and the case that tells a repair from a renaming: a `1`
+# the loop really decided stays a `1`. The working-tree lock is the refusal that
+# reaches the guard — it installs nothing when it refuses — so its exit is the one
+# whose mark is load-bearing.
+mutation "99 the run's working-tree refusal is not marked as decided" "$LOOP" \
+  's/  tree_lock_acquire \|\| loop__leave 1\n/  tree_lock_acquire || exit 1\n/' \
+  test/state.bats "refuses the second run anyway"
+
+mutation "99 the drain's working-tree refusal is not marked as decided" "$HUMAN_LOOP" \
+  's/  tree_lock_acquire \|\| human_loop__leave 1\n/  tree_lock_acquire || exit 1\n/' \
+  test/human-loop.bats "a run grinding this working tree keeps a human out of the sink"
+
+# The census, on the one exit of each file no behaviour test can see: a run lock
+# refused leaves through the handler the working-tree lock installed, which
+# converts nothing, so a bare `exit 1` there is green everywhere but here.
+mutation "99 the run's run-lock refusal leaves bare" "$LOOP" \
+  's/  run_lock_acquire \|\| loop__leave 1\n/  run_lock_acquire || exit 1\n/' \
+  test/gate.bats "every exit an entry point decides on"
+
+mutation "99 the drain's run-lock refusal leaves bare" "$HUMAN_LOOP" \
+  's/ \|\| human_loop__leave 1\n  human_loop__arm_signals\n/ || exit 1\n  human_loop__arm_signals\n/' \
+  test/gate.bats "every exit an entry point decides on"
+
+# The two numbers the drain chooses in a handler and in no line of its main
+# function. A handler that leaves bare turns a stop somebody asked for into a
+# drain ended under its operator.
+mutation "99 the drain's TERM handler leaves bare" "$HUMAN_LOOP" \
+  's/  trap \x27human_loop__leave 143\x27 TERM\n/  trap \x27state_locks_release; exit 143\x27 TERM\n/' \
+  test/human-loop.bats "a TERM to a drain holding its locks"
+
+mutation "99 the drain's INT handler leaves bare" "$HUMAN_LOOP" \
+  's/  trap \x27human_loop__leave 130\x27 INT\n/  trap \x27state_locks_release; exit 130\x27 INT\n/' \
+  test/human-loop.bats "an INT to a drain holding its locks"
+
+# And the half of the census that reads them, which the lexer cannot: a handler is
+# a string.
+mutation "99 the census reads no handler string" "$HUMAN_LOOP" \
+  's/  trap \x27human_loop__leave 130\x27 INT\n/  trap \x27state_locks_release; exit 130\x27 INT\n/' \
+  test/gate.bats "every exit an entry point decides on"
+
+# The mark itself, in the one function that sets it: without it every exit the run
+# decided on is a 7.
+mutation "99 an exit the run decided on is not marked" "$LOOP" \
+  's/  LOOP__DECIDED=1\n  exit "\$1"\n/  exit "\$1"\n/' \
+  test/loop-happy-path.bats "empty from the start is not reported as work done"
+
+mutation "99 an exit the drain decided on is not marked" "$HUMAN_LOOP" \
+  's/  HUMAN_LOOP__DECIDED=1\n  exit "\$1"\n/  exit "\$1"\n/' \
+  test/human-loop.bats "drained to the end"
+
+# The release, on the path nobody decided as on every other: the locks' own handler
+# is the one this guard replaced, so it is the only thing that lets them go.
+mutation "99 the run's guard releases nothing on its way out" "$LOOP" \
+  's/  local rc=\$\?\n  state_locks_release\n  \[ "\$\{LOOP__DECIDED/  local rc=\$?\n  [ "\${LOOP__DECIDED/' \
+  test/loop-happy-path.bats "with a failing status does not report a refused start"
+
+mutation "99 the drain's guard releases nothing on its way out" "$HUMAN_LOOP" \
+  's/  local rc=\$\?\n  state_locks_release\n  \[ -z "\$HUMAN_LOOP__STATE" \]/  local rc=\$?\n  [ -z "\$HUMAN_LOOP__STATE" ]/' \
+  test/human-loop.bats "with a failing status does not report a refused start"
+
+# And the number the conversion replaces, which nothing else keeps.
+mutation "99 the status a run was ending with is not said" "$LOOP" \
+  's/ended this shell \(status %s\)\. The frontier/ended this shell. The frontier/' \
+  test/loop-happy-path.bats "with a failing status does not report a refused start"
+
+mutation "99 the status a drain was ending with is not said" "$HUMAN_LOOP" \
+  's/ended this shell \(status %s\)\. What was still/ended this shell. What was still/' \
+  test/human-loop.bats "with a failing status does not report a refused start"
 
 # ── [70] the record a human is sent to read ──────────────────────────────────
 
@@ -7183,7 +7276,7 @@ mutation "102 the run's git reads the hook directory a session writes" "$LOOP" \
 # moved the line past `ralph_project_root` and came back VACUOUS: that function is
 # a `cd` and a `pwd`, and the comment above the line said it was a `git`.)
 mutation "102 the run's first git is started before the hooks are off" "$LOOP" \
-  's/^  proc_git_hooks_off\n(.*?)^  loop_preflight \|\| exit 2\n/\1  loop_preflight || exit 2\n  proc_git_hooks_off\n/ms' \
+  's/^  proc_git_hooks_off\n(.*?)^  loop_preflight \|\| loop__leave 2\n/\1  loop_preflight || loop__leave 2\n  proc_git_hooks_off\n/ms' \
   test/gate.bats "told it has no hook directory"
 
 mutation "102 the drain's git reads the hook directory a session writes" "$HUMAN_LOOP" \

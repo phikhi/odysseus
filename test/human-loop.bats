@@ -1182,6 +1182,109 @@ ANSWERS
   refute_output_contains "draining ready-for-human"
 }
 
+@test "a drain something ended in the middle with a failing status does not report a refused start" {
+  # [99], the other side of the same guard. A shell ended under `errexit` leaves
+  # with the status of the command that failed, which is `1` for nearly anything a
+  # shell runs — and `1` is this file's word for "could not start: a run, or
+  # another human, holds this feature's tracker". The drain below held both locks.
+  #
+  # `router_journal` because it is the first thing this drain writes once it holds
+  # them ([72]), called bare from `human_loop_main` with no subshell to absorb a
+  # status; two tickets carrying the same `NN` are what gives it a finding to
+  # write.
+  hostile_adapter_op router_journal <<'OP'
+  return 1
+OP
+  mk_ticket 20-a Status ready-for-human Escalation decision 'Blocked by' None
+  mk_ticket 20-b Status ready-for-human Escalation decision 'Blocked by' None
+
+  drain <<ANSWERS
+q
+ANSWERS
+  assert_failure 6
+
+  assert_output_contains "this drain ended in the middle"
+  # And the number it was ending with, which the conversion would otherwise lose.
+  assert_output_contains "ended this shell (status 1)"
+  refute_output_contains "already holds"
+  refute_output_contains "draining ready-for-human"
+  # And the guard let go of what the drain had taken, on the path nothing decided
+  # as on every other.
+  [ ! -d "$(run_lock_dir)" ] || fail "the drain died holding the run lock"
+  [ ! -d "$(tree_lock_dir)" ] || fail "the drain died holding the working-tree lock"
+}
+
+# The drain, as a process in the background, put in front of its first question
+# and left there: its answers come from a pipe this test holds open and never
+# writes, so it is waiting on a human when a signal lands. Pid in $DRAIN_PID,
+# output in `$RALPH_TEST_DIR/drain.out`.
+#
+# INT is put back to its default on the way in, and that is not decoration: an
+# asynchronous command of a shell without job control starts with INT ignored,
+# and a non-interactive bash cannot trap a signal it was started ignoring ([95]) —
+# without the reset, the INT below would be a no-op and the test would measure
+# nothing.
+drain_waiting() {
+  local fifo="$RALPH_TEST_DIR/answers" tries=600
+  mkfifo "$fifo"
+  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV' bash "$PACK_DIR/human-loop.sh" \
+    <"$fifo" >"$RALPH_TEST_DIR/drain.out" 2>&1 &
+  DRAIN_PID=$!
+  exec 9>"$fifo"
+  until grep -q '\[q\]uit > ' "$RALPH_TEST_DIR/drain.out" 2>/dev/null; do
+    tries=$((tries - 1))
+    if [ "$tries" -le 0 ]; then
+      exec 9>&-
+      fail "the drain never asked its first question
+--- output ---
+$(cat "$RALPH_TEST_DIR/drain.out")"
+    fi
+    sleep 0.05
+  done
+}
+
+# Sends <signal> to the drain `drain_waiting` started and waits for it; the status
+# it left with in $DRAIN_RC.
+drain_signalled() {
+  kill -"$1" "$DRAIN_PID"
+  DRAIN_RC=0
+  wait "$DRAIN_PID" || DRAIN_RC=$?
+  exec 9>&-
+}
+
+@test "a TERM to a drain holding its locks leaves with 143 and not as a drain that ended in the middle" {
+  # [99]'s paired witness on the drain's own handlers. They are the two numbers
+  # this file chooses that no line of `human_loop_main` spells, and a guard that
+  # converts every number nothing here chose turns them into a 6 the moment a
+  # handler leaves without saying it decided — a stop somebody asked for, reported
+  # as a shell that was ended under them.
+  mk_ticket 20-first Status ready-for-human Escalation decision 'Blocked by' None
+
+  drain_waiting
+  drain_signalled TERM
+
+  assert_equal "$DRAIN_RC" "143"
+  refute_file_contains "$RALPH_TEST_DIR/drain.out" "ended in the middle"
+  [ ! -d "$(run_lock_dir)" ] || fail "the drain left the run lock behind"
+  [ ! -d "$(tree_lock_dir)" ] || fail "the drain left the working-tree lock behind"
+  assert_ticket_status 20-first ready-for-human
+}
+
+@test "an INT to a drain holding its locks leaves with 130 and not as a drain that ended in the middle" {
+  # The same witness for the other handler, and the one a human actually sends:
+  # Ctrl-C at the question, outside any session.
+  mk_ticket 20-first Status ready-for-human Escalation decision 'Blocked by' None
+
+  drain_waiting
+  drain_signalled INT
+
+  assert_equal "$DRAIN_RC" "130"
+  refute_file_contains "$RALPH_TEST_DIR/drain.out" "ended in the middle"
+  [ ! -d "$(run_lock_dir)" ] || fail "the drain left the run lock behind"
+  [ ! -d "$(tree_lock_dir)" ] || fail "the drain left the working-tree lock behind"
+  assert_ticket_status 20-first ready-for-human
+}
+
 @test "the ticket a human is deciding on is named and left exactly as the session wrote it" {
   # [55]'s decision, and this is where it is held rather than restated: a
   # correction made during the conversation may be the human's own, and the next

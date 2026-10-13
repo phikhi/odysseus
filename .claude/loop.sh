@@ -9,7 +9,9 @@
 # Exit codes
 #   0  the frontier was drained: this run ground everything it could
 #   1  could not start — another run holds this feature's tracker, or this
-#      working tree
+#      working tree. That and nothing else since [99]: a shell ended under
+#      `errexit` leaves with the status of the command that failed, which is 1
+#      for nearly anything a shell runs, and that is a 7 below
 #   2  cannot run: no config, or a config that would make the gate meaningless
 #   4  stopped by a guard: stop requested, iteration cap, sterile run, a lock
 #      this run no longer holds, a rollback that could not put the tree back, a
@@ -21,7 +23,10 @@
 #   6  the usage budget blocks this run: a weekly limit, or a session window
 #      whose reset this run must not sleep to ([08])
 #   7  ended in the middle, where nothing in this run decided to stop: something
-#      below it ended this shell. The frontier was not drained ([72])
+#      below it ended this shell. The frontier was not drained ([72]). Whatever
+#      status that shell was ending with — a 0, the 1 of a command `errexit`
+#      caught, the 127 of one that was not found — is printed on the line above
+#      and never passed on as one of the numbers in this list ([99])
 #
 # 6 is deliberately not 4. Every other guard is a decision this run took about
 # itself; this one is a wall that lifts on its own at a known instant, which is
@@ -38,6 +43,8 @@
 # reasoning in ended under it. It is the number `human-loop.sh` spells 6 ([71]),
 # which cannot be borrowed here — 6 is the budget wall — and the two loops give
 # the same event different numbers rather than give one number two meanings.
+# Every other number in this list leaves through `loop__leave`, and that is how
+# the guard tells the two kinds apart ([99]).
 #
 # 0 and 5 are deliberately different. An AFK run that ground nothing because
 # FEATURE points at the wrong tracker, or because every ticket is still in
@@ -116,21 +123,50 @@ loop_log() {
 #
 # It converts, it does not rescue: the run is over either way, and what it buys is
 # that the number an operator reads in the morning is not the one that means the
-# opposite. Only a `0` is touched, so every exit this loop decided on — 1, 2, 4, 5
-# and 6 — passes through untouched.
-LOOP__REACHED_THE_END=0
+# opposite.
+#
+# **And it converts every number this run did not choose, not only a `0` ([99]).**
+# Until then it touched a `0` alone, on the reasoning that every exit this loop
+# decided on — 1, 2, 4, 5 and 6 — would pass through untouched, which was never
+# reasoned from the other side: a shell ended under `errexit` leaves with the status
+# of the command that failed, and that is `1` for nearly anything a shell runs —
+# this file's word for "another run holds the lock". Measured by the 29/09/2026
+# pass: a night that ended after its first ticket on a `1` and nothing else, with
+# no journal check, no retro and no value gate behind it, the operator sent to look
+# for a lock nobody held. The `rm -rf` that staged it went with [98]; the class
+# did not, and any operation the pilot calls bare reaches it.
+#
+# So the question is no longer which number, it is **who chose it**. Every exit
+# this run decides on goes through `loop__leave`, which marks it before leaving,
+# and the guard passes on exactly those; anything else is a 7, with the status it
+# was ending with printed beside it — the one thing the conversion would otherwise
+# lose. What holds the half a comment cannot is in `test/gate.bats`: no `exit` in
+# this file outside this guard, `loop__leave`, and the refusal above that runs
+# before the guard exists.
+#
+# What it does not reach, measured on bash 3.2.57 rather than assumed: a TERM or a
+# HUP before the locks, while nothing traps them, runs this handler and still ends
+# the process with the signal (143, 129) whatever the handler exits with — the
+# caller reads a signal and not a number of this list. An INT there arrives as a
+# `0`, and was a 7 before this ticket as after it.
+LOOP__DECIDED=0
 
 loop__on_exit() {
   local rc=$?
   state_locks_release
-  [ "$rc" = 0 ] || exit "$rc"
-  if [ "${LOOP__REACHED_THE_END:-0}" != 1 ]; then
-    printf 'ralph: this run ended in the middle, where nothing in it decided to stop — something below it ended this shell. The frontier was not drained: whatever this run had not ground is still on it, and the last line above is where it stopped. An operation that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' >&2
-    exit 7
-  fi
-  exit 0
+  [ "${LOOP__DECIDED:-0}" != 1 ] || exit "$rc"
+  printf 'ralph: this run ended in the middle, where nothing in it decided to stop — something below it ended this shell (status %s). The frontier was not drained: whatever this run had not ground is still on it, and the last line above is where it stopped. An operation that refuses must return a status and never end its caller (see the contract at the top of lib/tracker.sh).\n' "$rc" >&2
+  exit 7
 }
 trap loop__on_exit EXIT
+
+# Every exit this run decides on, once the guard above is armed ([99]). The mark
+# before the `exit` is what the guard reads, so a number that leaves without it is
+# one this run never chose — a 7, whatever it was.
+loop__leave() {
+  LOOP__DECIDED=1
+  exit "$1"
+}
 
 # ── graceful stop ────────────────────────────────────────────────────────────
 #
@@ -1909,7 +1945,7 @@ loop_main() {
   # Outside `loop_preflight` and not inside it for that reason, and on the same
   # exit code: the preflight resolves the tracker directory before it decides
   # anything, and a refusal that arrives after the fact is not one.
-  gate_path_preflight || exit 2
+  gate_path_preflight || loop__leave 2
   # And second: every git this run starts — this shell's, an iteration's, a gate
   # branch's, the git that git runs — is told it has no hook directory ([102]).
   # Before the first `git` for the same reason the line above is first: a hook a
@@ -1938,21 +1974,28 @@ loop_main() {
       "$(ralph_feature_dir)/run.log" 2>/dev/null || printf 0)"
   fi
 
-  loop_preflight || exit 2
+  loop_preflight || loop__leave 2
 
   # The coarser lock first: this run is refused whatever feature it was pointed
   # at, because what a second run destroys here is not the tracker but the tree.
   # Taken after the preflight, which is what guarantees there is a git directory
   # to put it in.
-  tree_lock_acquire || exit 1
-  run_lock_acquire || exit 1
+  #
+  # The two `1`s this file means, and the first is the one the guard sees: a
+  # working-tree lock refused installs nothing, so its `1` reaches this run's
+  # guard and has to be marked to come out a `1` ([99]). The second leaves through
+  # the handler the first lock installed, which converts nothing — marked all the
+  # same, because which handler is installed there is a fact of `state.sh` and not
+  # of this line.
+  tree_lock_acquire || loop__leave 1
+  run_lock_acquire || loop__leave 1
   # Replaces the locks' own signal traps: stopping is a decision the loop
   # makes between iterations, not an immediate teardown.
   trap 'loop_request_stop' TERM INT
   # And their EXIT trap, which released both locks and decided nothing. Since [72]
   # this run's guard does the release itself, which is what earns it the right to
-  # be the one handler that says what a `0` leaving this shell means — the locks
-  # overwrote it when they took it, so it is put back exactly here.
+  # be the one handler that says what a number leaving this shell means ([99]) —
+  # the locks overwrote it when they took it, so it is put back exactly here.
   #
   # What that leaves open, named rather than closed: between `tree_lock_acquire`
   # and this line the locks' own handler is the one installed, so a shell ended in
@@ -2061,7 +2104,7 @@ LEFTOVERS
   if ! RALPH_FRONTIER_COMMON="$(gate_frontier_common)"; then
     loop_log "cannot witness this repository's shared frontier — the ignore rules every check sees through, and the configuration that decides what git runs — refusing to grind a frontier whose movements nothing could attribute"
     rm -f "${RALPH_TRACKER_LOG:-}"
-    exit 4
+    loop__leave 4
   fi
 
   # The record a human is sent to read about a ticket, witnessed at the level it
@@ -2464,14 +2507,13 @@ RECLAIMED
       loop_journal_verify || true
       if [ "$iteration" -eq 0 ]; then
         loop_log "nothing to grind: the frontier was empty from the start (feature=$FEATURE backend=$TRACKER_BACKEND)"
-        exit 5
+        loop__leave 5
       fi
       loop_log "frontier empty after $iteration iterations"
-      # One of the two places this loop is entitled to leave with a zero. Read by
-      # the guard installed at the top of this file, which turns every other `0`
-      # into a 7 ([72]).
-      LOOP__REACHED_THE_END=1
-      exit 0
+      # One of the two places this loop is entitled to leave with a zero, and the
+      # guard installed at the top of this file passes it on because it came
+      # through here: every other `0` is a 7 ([72], [99]).
+      loop__leave 0
     fi
 
     # The project's ignore rules as they stand, pinned for the length of this
@@ -2527,15 +2569,15 @@ RECLAIMED
   # a rewritten one costs a reader and not a decision ([10] on [21]). Turning it
   # into a stop would hand a session a one-line way to end the night.
   loop_journal_verify || true
-  # And the other one, which no path reaches with an empty `stop_code` today —
-  # written down rather than left to be rediscovered ([72]): the `while` above only
-  # leaves by `break`, the one `break` is behind `[ -n "$stop_code" ]`, and every
-  # exit here is therefore a 4 or a 6 the guard passes through untouched. Set all
-  # the same, so that the day a stop meaning "nothing left to do" is added its `0`
-  # is one this loop decided on rather than one the guard has to guess about. No
-  # mutation aims at this line: no test could go red for it.
-  LOOP__REACHED_THE_END=1
-  exit "${stop_code:-0}"
+  # And the other way out, which no path reaches with an empty `stop_code` today
+  # ([72]): the `while` above only leaves by `break`, the one `break` is behind
+  # `[ -n "$stop_code" ]`, so what leaves here is a 4 or a 6. Through `loop__leave`
+  # like every exit this run decides on, and since [99] that is load-bearing rather
+  # than a precaution — a 4 or a 6 leaving bare would be read as a 7, and the
+  # night that stopped on the budget wall would arm a successor and then say it
+  # had been ended from underneath. The day a stop meaning "nothing left to do" is
+  # added, its `0` is one this loop decided on.
+  loop__leave "${stop_code:-0}"
 }
 
 loop_main "$@"
