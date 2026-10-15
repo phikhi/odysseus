@@ -205,8 +205,18 @@ budget__now() {
 # so the line is the operator's — and what it runs may be a script under the
 # `HOME` the session shares, which is why it is evaluated by `proc_eval_bare`
 # ([106]): holding nothing above stderr and reading `/dev/null`, as `TEST_CMD` is
-# run, without `TEST_CMD`'s deadline ([107]). This runs in the pilot, which holds
-# whatever the run hands the pilot to read its iterations by.
+# run. This runs in the pilot, which holds whatever the run hands the pilot to
+# read its iterations by.
+#
+# And for at most BUDGET__REQUEST_SECONDS, by `proc_eval_bounded` ([107]): the
+# seconds curl is given below, because the token is the first half of the same
+# request and until [107] nothing bounded it — a script the session rewrote into a
+# `sleep` held the pilot, before a claim, for as long as it slept. Not a key of
+# its own, and that is the price: a usage line slower than this — a credential
+# store waiting for a human to unlock it — is taken down at every check, the
+# request goes out without a token as after any failure of the line, and the run
+# says once that it is flying on the in-band signal alone (`budget_check`). Every
+# check that asks the endpoint is then this many seconds longer.
 #
 # Asked through `proc_curl` ([105]), because this answer is the one the run holds
 # up against the `rate_limit_event` a session writes into its own stream ([08]),
@@ -214,19 +224,20 @@ budget__now() {
 # the operator put a body of its own in front of the endpoint's, and on a project
 # with no `USAGE_TOKEN_CMD` — the shipped value, where the endpoint's answer is
 # unreadable — that body was the only one the parser found.
+BUDGET__REQUEST_SECONDS=10
 budget__request() {
   local token=''
   command -v curl >/dev/null 2>&1 || return 1
   if [ -n "${USAGE_TOKEN_CMD:-}" ]; then
-    token="$(proc_eval_bare "${USAGE_TOKEN_CMD}" 2>/dev/null)" || token=''
+    token="$(proc_eval_bounded "$BUDGET__REQUEST_SECONDS" USAGE_TOKEN_CMD "${USAGE_TOKEN_CMD}")" || token=''
   fi
   if [ -n "$token" ]; then
-    proc_curl -sS --max-time 10 \
+    proc_curl -sS --max-time "$BUDGET__REQUEST_SECONDS" \
       -H "User-Agent: ${USAGE_UA:-}" \
       -H "Authorization: Bearer $token" \
       "${USAGE_URL:-}" 2>/dev/null
   else
-    proc_curl -sS --max-time 10 \
+    proc_curl -sS --max-time "$BUDGET__REQUEST_SECONDS" \
       -H "User-Agent: ${USAGE_UA:-}" \
       "${USAGE_URL:-}" 2>/dev/null
   fi

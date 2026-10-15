@@ -233,7 +233,20 @@ forge__urlenc() {
 # the session shares, and [105] measured one rewritten by the session it judged
 # write four lines into this iteration's receipt. So it is evaluated by
 # `proc_eval_bare` ([106]), holding nothing above stderr and reading `/dev/null` —
-# as `TEST_CMD` is run, without `TEST_CMD`'s deadline ([107]).
+# as `TEST_CMD` is run — and for at most `FORGE_TIMEOUT` seconds, by
+# `proc_eval_bounded` ([107]). The bound is the request's own: the token is the
+# first half of a request, and until [107] the `--max-time` below bounded the
+# second half only, so a script the session rewrote into a `sleep` held the
+# iteration — or the pilot, at a claim or a listing — for as long as it slept.
+# The price is written where the key is read: a request is now bounded by twice
+# `FORGE_TIMEOUT`, the line's seconds and then curl's, each in full — a share of
+# one bound would make a credential store that unlocks slowly cost curl its time,
+# and fail the requests it was slow on. A read, which `forge__api` asks up to
+# `FORGE_READ_TRIES` times, evaluates the line at each try, so a line that never
+# answers costs a read that many bounds. A line that does not answer in time is a
+# line that failed, so the request goes out without a token, as it always did
+# after a failure, and the forge's 401 — or 404, on a private repository — is
+# said by `forge__api` under the sentence that names the line.
 #
 # Asked through `proc_curl` ([105]), never by curl's own name: this runs inside an
 # iteration with the receipt's channel open from `receipt_open` to `receipt_close`
@@ -248,7 +261,7 @@ forge__http() {
     return 1
   }
   if [ -n "${TRACKER_TOKEN_CMD:-}" ]; then
-    token="$(proc_eval_bare "${TRACKER_TOKEN_CMD}" 2>/dev/null)" || token=''
+    token="$(proc_eval_bounded "${FORGE_TIMEOUT:-30}" TRACKER_TOKEN_CMD "${TRACKER_TOKEN_CMD}")" || token=''
   fi
   header="$(forge__spec "$flavour" auth-header)" || return 1
   accept="$(forge__spec "$flavour" accept)" || accept='Accept: application/json'

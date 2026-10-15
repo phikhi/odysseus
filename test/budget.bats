@@ -928,6 +928,62 @@ budget__token_probe() {
     fail "the drainer did not empty the pilot's read end: $(cat "$SHIM_STATE/usage.drained")"
 }
 
+# ── [107] how long the usage token command may hold the pilot ─────────────────
+#
+# `budget_check` runs in the pilot before every claim, and the line it evaluates is
+# given the seconds the endpoint's own curl is given: the token is the first half
+# of the same request. The script sleeps far longer than that once, writing the
+# sleep's pid down, so "taken down" is asked of the process.
+
+# $1 = how long the script sleeps before it prints the token.
+budget__sleeping_token() {
+  printf '#!/bin/sh\nsleep %s &\nprintf "%%s\\n" "$!" >"%s/usage.sleeper"\nwait\nprintf "usage-token\\n"\n' \
+    "$1" "$SHIM_STATE" >"$SHIM_STATE/usage-token"
+  chmod +x "$SHIM_STATE/usage-token"
+}
+
+@test "the usage token command holds the pilot for the endpoint's seconds, then is taken down" {
+  budget__sleeping_token 30
+  usage_respond "$(budget_payload 0.10 "$(budget_soon 3600)" 0.10 "$(budget_soon 200000)")"
+  pack_run '
+    USAGE_TOKEN_CMD="\"\$RALPH_SHIM_STATE/usage-token\""
+    s=$SECONDS
+    budget_check || true
+    printf "elapsed=%s bound=%s\n" "$((SECONDS - s))" "$BUDGET__REQUEST_SECONDS"
+  '
+  assert_success
+  assert_output_contains "bound=10"
+  assert_output_contains "USAGE_TOKEN_CMD did not answer within 10s: taken down"
+  local elapsed
+  elapsed="$(printf '%s\n' "$output" | sed -n 's/^elapsed=\([0-9]*\) .*/\1/p')"
+  [ "$elapsed" -ge 10 ] && [ "$elapsed" -le 15 ] ||
+    fail "the budget check held the pilot ${elapsed}s for a bound of 10s: $output"
+  local sleeper
+  sleeper="$(cat "$SHIM_STATE/usage.sleeper")"
+  if kill -0 "$sleeper" 2>/dev/null; then
+    kill -9 "$sleeper" 2>/dev/null || true
+    fail "the sleep the usage token command started outlived the check"
+  fi
+  # The request went out all the same, without a token, as after any failure of
+  # the line.
+  [ "$(curl_call_count)" -ge 1 ] || fail "the endpoint was never asked"
+  ! grep -q 'Authorization:' "$SHIM_STATE/curl.calls" ||
+    fail "the endpoint was asked with a token the line never printed: $(grep 'Authorization:' "$SHIM_STATE/curl.calls")"
+}
+
+@test "the paired witness: a slow usage token command within the endpoint's seconds is waited for" {
+  budget__sleeping_token 2
+  usage_respond "$(budget_payload 0.10 "$(budget_soon 3600)" 0.10 "$(budget_soon 200000)")"
+  pack_run '
+    USAGE_TOKEN_CMD="\"\$RALPH_SHIM_STATE/usage-token\""
+    budget_check || true
+  '
+  assert_success
+  refute_output_contains "did not answer"
+  grep -q 'Authorization: Bearer usage-token' "$SHIM_STATE/curl.calls" ||
+    fail "the endpoint was not asked with the token the slow line printed"
+}
+
 # ── against the real endpoint ────────────────────────────────────────────────
 
 @test "the real usage endpoint answers something this pack can read" {

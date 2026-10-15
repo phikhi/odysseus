@@ -1313,6 +1313,97 @@ DO
   assert_equal "$(forge_field 10 Status)" "ready-for-human"
 }
 
+# ── [107] how long the token command a remote night evaluates may take ───────
+#
+# `.scratch/ralph-pack/sondes/ticket-106/s1`, C3: the session rewrites the script
+# the operator's line runs so that, once, it sleeps before it prints the token —
+# twenty seconds turned a night of eight into one of twenty-nine. Here the sleep is
+# thirty seconds and `FORGE_TIMEOUT` two, so a night that waits it out cannot be
+# mistaken for one that did not. The script writes the sleep's pid down and marks
+# whether it ever woke, so "taken down" is asked of the process.
+
+# $1 = how long the script sleeps, the one time it does.
+remote__sleeping_token() {
+  remote__editing_session <<DO
+mkdir -p src
+printf 'written by %s\n' "\$\$" >src/a.txt
+cat >"\$HOME/bin/forge-token" <<'TOK'
+#!/bin/sh
+if [ ! -e "$SHIM_STATE/slept" ]; then
+  : >"$SHIM_STATE/slept"
+  sleep $1 &
+  printf '%s\n' "\$!" >"$SHIM_STATE/sleeper.pid"
+  wait
+  : >"$SHIM_STATE/woke"
+fi
+printf "tok-of-the-operator\n"
+TOK
+DO
+}
+
+# How many forge requests the night made, and how many of them carried the token:
+# a call records its arguments over two lines (`-w` holds a newline), the method on
+# the first and the header on the second.
+remote__forge_requests() { curl_calls | grep -c '^-q -sS --max-time [0-9]* -X ' || true; }
+remote__requests_with_token() { curl_calls | grep -c 'Authorization: Bearer tok-of-the-operator' || true; }
+
+@test "a token command that sleeps holds a remote night no longer than FORGE_TIMEOUT" {
+  remote__a_night
+  remote__token_script
+  set_config FORGE_TIMEOUT 2
+  remote__sleeping_token 30
+
+  local t0 elapsed
+  t0="$SECONDS"
+  run bash "$PACK_DIR/loop.sh" </dev/null
+  elapsed=$((SECONDS - t0))
+  assert_success
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+
+  # The script ran after the session rewrote it and went to sleep, or none of what
+  # follows is about anything. The sentence that names the line is not asked for
+  # here, and that is the finding written in `proc_eval_bounded`: the request that
+  # slept is the iteration's first, `tracker_cache_prime`, whose caller discards its
+  # stderr along with the forge's own refusals. The unit tests and the pilot's
+  # budget check ask for it where it is said.
+  assert_file_exists "$SHIM_STATE/slept"
+  [ "$elapsed" -lt 25 ] || fail "the night lasted ${elapsed}s: it waited on the token command"
+  [ ! -e "$SHIM_STATE/woke" ] || fail "the sleep was waited out"
+  local sleeper
+  sleeper="$(cat "$SHIM_STATE/sleeper.pid")"
+  if kill -0 "$sleeper" 2>/dev/null; then
+    kill -9 "$sleeper" 2>/dev/null || true
+    fail "the sleep the token command started outlived the night"
+  fi
+  # The one request the line did not answer for went out without a token, as after
+  # any failure of the line; every other one carried the token.
+  local made carried
+  made="$(remote__forge_requests)"
+  carried="$(remote__requests_with_token)"
+  [ "$made" -ge 5 ] || fail "the night made $made forge requests, so this asks about nothing"
+  assert_equal "$carried" "$((made - 1))"
+}
+
+@test "the paired witness: a token command slower than a request but within FORGE_TIMEOUT is waited for" {
+  # The same night with the sleep inside the bound: the script wakes, no line is
+  # taken down, and every request carries the token. Which is also the price the
+  # bound must not charge — a credential store that unlocks slowly, and answers.
+  remote__a_night
+  remote__token_script
+  set_config FORGE_TIMEOUT 10
+  remote__sleeping_token 3
+
+  run bash "$PACK_DIR/loop.sh" </dev/null
+  assert_success
+  assert_file_contains "$FEATURE_DIR/run.log" "1-alpha	resolved"
+  assert_file_exists "$SHIM_STATE/woke"
+  refute_output_contains "did not answer"
+  local made
+  made="$(remote__forge_requests)"
+  [ "$made" -ge 5 ] || fail "the night made $made forge requests, so this asks about nothing"
+  assert_equal "$(remote__requests_with_token)" "$made"
+}
+
 # ── gitlab ───────────────────────────────────────────────────────────────────
 
 @test "gitlab speaks its own dialect and produces the same transitions" {

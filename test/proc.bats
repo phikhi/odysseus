@@ -745,6 +745,161 @@ LIST
   assert_output_contains "pipe=[]"
 }
 
+# ── [107] how long a line of the configuration the pack evaluates may take ────
+#
+# What a line holds is [106]'s; how long it holds it was nobody's
+# (`.scratch/ralph-pack/sondes/ticket-106/s1`, C3: a script that slept twenty
+# seconds once held a night of eight for twenty-nine). Each line here starts a
+# `sleep` far longer than any of these tests waits and writes its pid down, so that
+# "taken down" is asked of the process and not only of the clock.
+
+proc__held_line='
+  held="sleep 30 & printf \"%s\\n\" \"\$!\" >\"\$RALPH_SHIM_STATE/held.pid\"; wait"
+'
+
+# Gone, or nearly: a TERM is a request, and a process takes a moment to act on it.
+proc__gone() {
+  local pid="$1" tries=40
+  while kill -0 "$pid" 2>/dev/null; do
+    tries=$((tries - 1))
+    [ "$tries" -gt 0 ] || return 1
+    sleep 0.05
+  done
+  return 0
+}
+
+@test "a line the pack evaluates is taken down at its bound, said, and refused" {
+  pack_run "$proc__held_line"'
+    s=$SECONDS
+    rc=0
+    out="$(proc_eval_bounded 2 THE_LINE "printf early; $held; printf late")" || rc=$?
+    printf "status=%s out=[%s] elapsed=%s\n" "$rc" "$out" "$((SECONDS - s))"
+  '
+  # The status is the refusal, not the output: the walk takes the deepest process
+  # first, so the line itself may still print `late` in the instant before its own
+  # turn, and what it printed reaches stdout. Every caller reads a non-zero status
+  # as a line that failed and drops what it printed.
+  assert_success
+  assert_output_contains "status=1 "
+  assert_output_contains "THE_LINE did not answer within 2s: taken down"
+  local elapsed
+  elapsed="$(printf '%s\n' "$output" | sed -n 's/.*elapsed=\([0-9]*\)$/\1/p')"
+  [ "$elapsed" -ge 2 ] && [ "$elapsed" -le 5 ] ||
+    fail "the call lasted ${elapsed}s for a bound of 2s: $output"
+  proc__gone "$(cat "$SHIM_STATE/held.pid")" ||
+    fail "the sleep the line started is still running once the call came back"
+}
+
+@test "the paired witness: the same line, given the time it needs, is waited for and answers" {
+  # The line is the one above with a sleep that fits: what came back empty there is
+  # the bound's doing, not the staging's. And it is the price the bound must not
+  # charge — a credential store that is slow, and answers.
+  pack_run '
+    s=$SECONDS
+    rc=0
+    out="$(proc_eval_bounded 6 THE_LINE "printf early; sleep 2; printf late")" || rc=$?
+    printf "status=%s out=[%s] elapsed=%s\n" "$rc" "$out" "$((SECONDS - s))"
+  '
+  assert_success
+  assert_output_contains "status=0 out=[earlylate]"
+  refute_output_contains "did not answer"
+}
+
+@test "what a line leaves running once it answered is taken back, and named" {
+  pack_run "$proc__held_line"'
+    rc=0
+    out="$(proc_eval_bounded 5 THE_LINE "${held%; wait}; printf tok")" || rc=$?
+    printf "status=%s out=[%s]\n" "$rc" "$out"
+  '
+  assert_success
+  assert_output_contains "status=0 out=[tok]"
+  assert_output_contains "THE_LINE left 1 process(es) of its own running"
+  proc__gone "$(cat "$SHIM_STATE/held.pid")" ||
+    fail "the sleep the line left behind outlived the call"
+}
+
+@test "something a line left holding its output does not hold the call, and is named" {
+  # A process that ignores TERM survives the sweep, and it holds the line's stdout:
+  # under a bare command substitution that is the end of file the caller waits
+  # for. The witness is that wait, measured on the same shape with a shorter
+  # sleep, in the same shell.
+  pack_run '
+    survivor="( trap \"\" TERM; exec sleep 30 ) & printf \"%s\\n\" \"\$!\" >\"\$RALPH_SHIM_STATE/held.pid\"; printf tok"
+    s=$SECONDS
+    rc=0
+    out="$(proc_eval_bounded 5 THE_LINE "$survivor")" || rc=$?
+    printf "status=%s out=[%s] elapsed=%s\n" "$rc" "$out" "$((SECONDS - s))"
+    s=$SECONDS
+    out="$(proc_eval_bare "( trap \"\" TERM; exec sleep 3 ) & printf tok" 2>/dev/null)"
+    printf "bare out=[%s] waited=%s\n" "$out" "$((SECONDS - s))"
+  '
+  local pid
+  pid="$(cat "$SHIM_STATE/held.pid")"
+  kill -9 "$pid" 2>/dev/null || true
+  assert_success
+  assert_output_contains "status=0 out=[tok]"
+  assert_output_contains "something THE_LINE started still held its output"
+  local elapsed waited
+  elapsed="$(printf '%s\n' "$output" | sed -n 's/^status=.* elapsed=\([0-9]*\)$/\1/p')"
+  waited="$(printf '%s\n' "$output" | sed -n 's/^bare .* waited=\([0-9]*\)$/\1/p')"
+  [ "$elapsed" -le 3 ] || fail "the call waited ${elapsed}s on a process it had stopped reading: $output"
+  [ "$waited" -ge 3 ] || fail "the witness did not wait on the survivor (${waited}s), so it proves nothing: $output"
+}
+
+@test "a bound that is not a whole number of seconds is refused, and the line never runs" {
+  pack_run '
+    for bound in "" 0 x 1.5; do
+      rc=0
+      out="$(proc_eval_bounded "$bound" THE_LINE ": >\"\$RALPH_SHIM_STATE/ran\"; printf tok")" || rc=$?
+      printf "bound=[%s] status=%s out=[%s]\n" "$bound" "$rc" "$out"
+    done
+  '
+  assert_success
+  assert_output_contains "bound=[] status=1 out=[]"
+  assert_output_contains "bound=[0] status=1 out=[]"
+  assert_output_contains "bound=[x] status=1 out=[]"
+  assert_output_contains "bound=[1.5] status=1 out=[]"
+  assert_output_contains 'THE_LINE was not evaluated: its bound is "1.5"'
+  [ ! -e "$SHIM_STATE/ran" ] || fail "a line with no usable bound was evaluated anyway"
+}
+
+@test "a line evaluated under a bound keeps its status and its stdout, and its stderr goes nowhere" {
+  # Both callers sent the line's stderr to /dev/null before [107]; it is this
+  # function's to do now, because its own sentences go to the same stderr and a
+  # caller that discarded one would discard the other.
+  pack_run '
+    rc=0
+    proc_eval_bounded 5 THE_LINE "exit 3" || rc=$?
+    printf "status=%s\n" "$rc"
+    printf "streams=[%s]\n" "$(proc_eval_bounded 5 THE_LINE "printf tok; printf noise >&2" 2>&1)"
+  '
+  assert_success
+  assert_output_contains "status=3"
+  assert_output_contains "streams=[tok]"
+}
+
+@test "a deadline told to stop in the middle of its walk still says that it fired" {
+  # The race [92] measured on the gate's watchdog, staged the way it was: a slow
+  # `ps` on the PATH. The line waits on the first of two sleeps; the walk kills that
+  # one, the line returns, and this function TERMs its deadline while the deadline
+  # is still asking `ps` about the second. Without the trap the deadline dies of
+  # that TERM, the sentence is lost, and so is the refusal: the line went on to
+  # print `late` and exit 0, and it would be handed back as an answer.
+  mkdir -p "$SHIM_STATE/slowps"
+  printf '#!/usr/bin/env bash\nsleep 0.5\nexec /bin/ps "$@"\n' >"$SHIM_STATE/slowps/ps"
+  chmod +x "$SHIM_STATE/slowps/ps"
+  pack_run '
+    PATH="$RALPH_SHIM_STATE/slowps:$PATH"
+    rc=0
+    out="$(proc_eval_bounded 1 THE_LINE "sleep 30 & first=\$!; sleep 31 & printf \"%s\\n\" \"\$!\" >\"\$RALPH_SHIM_STATE/held.pid\"; wait \$first; printf late")" || rc=$?
+    printf "status=%s out=[%s]\n" "$rc" "$out"
+  '
+  kill -9 "$(cat "$SHIM_STATE/held.pid")" 2>/dev/null || true
+  assert_success
+  assert_output_contains "status=1 "
+  assert_output_contains "THE_LINE did not answer within 1s: taken down"
+}
+
 # ── a channel nobody else holds ([103]) ──────────────────────────────────────
 #
 # The instant a channel's file has a name — from the module's `mktemp` to the

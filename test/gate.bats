@@ -5664,11 +5664,15 @@ $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
   # The other half of the same census, and it is the half that decides whether a
   # sweep can find anything at all: `proc_group_members` refuses the caller's own
   # group, so a fork made without `set -m` is a fork whose leftovers nothing will
-  # ever enumerate. Two homes, and they are the two kinds of program this pack
-  # starts and does not write.
+  # ever enumerate. Three homes, and they are the three kinds of thing this pack
+  # runs and does not write: `claude`, a project's command line, and since [107] a
+  # line of the configuration it evaluates — which is not handed to `bash -c`, for
+  # [106]'s reason (a line may name a key the pack does not export), so it cannot
+  # borrow `proc_group_fork` and makes its group itself.
   local found expected
   found="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[ \t;&|(])set -m([ \t]|$)')"
   expected="$(printf '%s\n' \
+    'proc.sh:proc_eval_bounded' \
     'proc.sh:proc_group_fork' \
     'session.sh:session_spawn' | LC_ALL=C sort)"
 
@@ -5676,7 +5680,7 @@ $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
     fail "the scan found $(printf '%s\n' "$found" | grep -c .) sites, so it is reading the wrong thing:
 $found"
   if [ "$found" != "$expected" ]; then
-    fail "job control is armed somewhere other than the two forks that are named
+    fail "job control is armed somewhere other than the three forks that are named
 (expected on the left, found on the right):
 $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
   fi
@@ -5800,8 +5804,11 @@ $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
 #          reference to a variable by name, `\${$name}`, which expands a name and
 #          never evaluates the value it finds — `init.sh` reads the keys a human
 #          gave it that way, before the example assigns them all.
-#   homes  the two keys are evaluated where `proc_eval_bare` is called:
-#          `forge.sh:forge__http` and `budget.sh:budget__request`.
+#   homes  the two keys are evaluated where `proc_eval_bounded` is called:
+#          `forge.sh:forge__http` and `budget.sh:budget__request`. And
+#          `proc_eval_bare` is called by `proc_eval_bounded` and by nothing else
+#          ([107]): a line evaluated bare is a line with no deadline, which is the
+#          shape [107] measured holding a night.
 #
 # What this does not count, said rather than left to be found: a line of the
 # configuration started by `bash -c` is [95]'s census, above; and a key expanded
@@ -5860,13 +5867,23 @@ $evals"
     fail "an eval of the pack runs something other than a redirection list or a name, or names a key of the configuration, outside the one function that evaluates a line holding nothing (a line is home<TAB>kind):
 $bare"
 
-  callers="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_-])proc_eval_bare([^A-Za-z0-9_-]|$)')"
+  callers="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_-])proc_eval_bounded([^A-Za-z0-9_-]|$)')"
   expected="$(printf '%s\n' \
     'budget.sh:budget__request' \
     'forge.sh:forge__http' \
-    'proc.sh:proc_eval_bare' | LC_ALL=C sort)"
+    'proc.sh:proc_eval_bounded' | LC_ALL=C sort)"
   if [ "$callers" != "$expected" ]; then
-    fail "the two token commands are not evaluated where proc_eval_bare is called, or it is called somewhere new
+    fail "the two token commands are not evaluated where proc_eval_bounded is called, or it is called somewhere new
+(expected on the left, found on the right):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$callers") || true)"
+  fi
+
+  callers="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_-])proc_eval_bare([^A-Za-z0-9_-]|$)')"
+  expected="$(printf '%s\n' \
+    'proc.sh:proc_eval_bare' \
+    'proc.sh:proc_eval_bounded' | LC_ALL=C sort)"
+  if [ "$callers" != "$expected" ]; then
+    fail "a line of the configuration is evaluated with no deadline: proc_eval_bare is called somewhere other than proc_eval_bounded
 (expected on the left, found on the right):
 $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$callers") || true)"
   fi
