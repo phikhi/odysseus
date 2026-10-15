@@ -195,6 +195,9 @@ USAGE_URL="${USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 # session runs with and can rewrite. So the loop evaluates it holding nothing of
 # its own and reading /dev/null on stdin ([106]): a command that prompts gets EOF,
 # as it would on any AFK night. It can still use the variables of this file.
+# It is given the endpoint's own 10 seconds and taken down past them ([107]): a
+# credential store that waits for someone to unlock it leaves the check without
+# a token rather than holding the night, and the run says so.
 USAGE_TOKEN_CMD="${USAGE_TOKEN_CMD:-}"
 
 # Seconds an answer from the endpoint is reused for. Kept in the run's own
@@ -361,7 +364,9 @@ TRACKER_API="${TRACKER_API:-}"
 # business and its shape differs per platform. Evaluated the way USAGE_TOKEN_CMD
 # is ([106]). The token is whatever it prints: a script under your HOME that a
 # session rewrote chooses who the pack talks to the forge as — a keychain entry
-# is not a file a session writes.
+# is not a file a session writes. It is given FORGE_TIMEOUT seconds (30 unless
+# you set it) and taken down past them ([107]): the request then goes out
+# without a token, as after any failure of the line.
 #
 #   TRACKER_TOKEN_CMD='security find-generic-password -s ralph-forge -w'
 TRACKER_TOKEN_CMD="${TRACKER_TOKEN_CMD:-}"

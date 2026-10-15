@@ -2106,7 +2106,7 @@ mutation "08 the cached answer survives the pause it preceded" "$BUDGET" \
   test/budget.bats "a spent session window is waited out"
 
 mutation "08 the endpoint is asked without a User-Agent" "$BUDGET" \
-  's/  else\n    proc_curl -sS --max-time 10 \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n/  else\n    proc_curl -sS --max-time 10 \\\n/' \
+  's/  else\n    proc_curl -sS --max-time "\$BUDGET__REQUEST_SECONDS" \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n/  else\n    proc_curl -sS --max-time "\$BUDGET__REQUEST_SECONDS" \\\n/' \
   test/budget.bats "with its User-Agent"
 
 mutation "08 the answer is never cached" "$BUDGET" \
@@ -7517,11 +7517,11 @@ mutation "105 the switch is handed to curl where it no longer counts" "$PROC" \
 # this ticket — `set -- curl …` then `"$@"` — which no census of command positions
 # sees, and which is why this one reads the word wherever it is.
 mutation "105 the usage endpoint is asked by a bare curl" "$BUDGET" \
-  's/^    proc_curl -sS --max-time 10 \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n      -H "Authorization/    curl -sS --max-time 10 \\\n      -H "User-Agent: \${USAGE_UA:-}" \\\n      -H "Authorization/m' \
+  's/^    proc_curl -sS --max-time "\$BUDGET__REQUEST_SECONDS" \\\n      -H "User-Agent: \$\{USAGE_UA:-\}" \\\n      -H "Authorization/    curl -sS --max-time "\$BUDGET__REQUEST_SECONDS" \\\n      -H "User-Agent: \${USAGE_UA:-}" \\\n      -H "Authorization/m' \
   test/gate.bats "every curl this pack runs goes through"
 
 mutation "105 the usage endpoint without a token is asked by a bare curl" "$BUDGET" \
-  's/^  else\n    proc_curl -sS --max-time 10/  else\n    curl -sS --max-time 10/m' \
+  's/^  else\n    proc_curl -sS --max-time "\$BUDGET__REQUEST_SECONDS"/  else\n    curl -sS --max-time "\$BUDGET__REQUEST_SECONDS"/m' \
   test/budget.bats "does not answer the usage endpoint for it"
 
 mutation "105 the forge is asked by a bare curl" "$FORGE" \
@@ -7563,8 +7563,13 @@ mutation "106 a line the pack evaluates reads its caller's stdin" "$PROC" \
   's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    proc_git_hooks_given_back\n    eval "\$1"/' \
   test/proc.bats "reads none of its caller's stdin"
 
+# Since [107] the night's line is forked by `proc_eval_bounded`, from a subshell,
+# and bash gives such a fork `/dev/null` for stdin on its own: the closing above is
+# one of two carriers there, and taking it alone left the night green (VACUOUS on
+# the full run of 15/10/2026). So the night is asked with both gone — the closing,
+# and the caller's stdin handed to the fork explicitly.
 mutation "106 a remote token command drains the quarantine it is evaluated in" "$PROC" \
-  's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    proc_git_hooks_given_back\n    eval "\$1"/' \
+  's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    proc_git_hooks_given_back\n    eval "\$1"/; s/      proc_eval_bare "\$line" 2>\/dev\/null\n    \) &\n/      proc_eval_bare "\$line" 2>\/dev\/null\n    ) <&0 &\n/' \
   test/tracker-remote.bats "drains nothing of the quarantine"
 
 mutation "106 a line the pack evaluates is handed the pack's git environment" "$PROC" \
@@ -7580,29 +7585,29 @@ mutation "106 a line the pack evaluates loses the configuration it was read out 
 # Call sites. Each back to the bare eval it was, asked of the run that decides
 # (the canary, the drained quarantine, the pilot) and of the census.
 mutation "106 the forge evaluates its token command bare" "$FORGE" \
-  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  's/token="\$\(proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD "\$\{TRACKER_TOKEN_CMD\}"\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
   test/canary.bats "a token command whose script the session rewrote puts no line"
 
 mutation "106 the forge's token command drains the quarantine again" "$FORGE" \
-  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  's/token="\$\(proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD "\$\{TRACKER_TOKEN_CMD\}"\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
   test/tracker-remote.bats "drains nothing of the quarantine"
 
 mutation "106 a bare eval of the forge's token command goes uncounted" "$FORGE" \
-  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  's/token="\$\(proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD "\$\{TRACKER_TOKEN_CMD\}"\)"/token="\$(eval "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
   test/gate.bats "every line of the configuration this pack evaluates"
 
 mutation "106 the pilot evaluates the usage token command bare" "$BUDGET" \
-  's/token="\$\(proc_eval_bare "\$\{USAGE_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  's/token="\$\(proc_eval_bounded "\$BUDGET__REQUEST_SECONDS" USAGE_TOKEN_CMD "\$\{USAGE_TOKEN_CMD\}"\)"/token="\$(eval "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
   test/budget.bats "the usage token command holds nothing of the pilot"
 
 mutation "106 a bare eval of the usage token command goes uncounted" "$BUDGET" \
-  's/token="\$\(proc_eval_bare "\$\{USAGE_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  's/token="\$\(proc_eval_bounded "\$BUDGET__REQUEST_SECONDS" USAGE_TOKEN_CMD "\$\{USAGE_TOKEN_CMD\}"\)"/token="\$(eval "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
   test/gate.bats "every line of the configuration this pack evaluates"
 
 # The census's second clause: a line of the configuration hidden behind the
 # `exec` of a redirection list is still the line, evaluated bare.
 mutation "106 a token command hides behind the exec of a redirection list" "$FORGE" \
-  's/token="\$\(proc_eval_bare "\$\{TRACKER_TOKEN_CMD\}" 2>\/dev\/null\)"/token="\$(eval "exec 3>&-; \${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  's/token="\$\(proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD "\$\{TRACKER_TOKEN_CMD\}"\)"/token="\$(eval "exec 3>&-; \${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
   test/gate.bats "every line of the configuration this pack evaluates"
 
 # The receipt claims the token command with its reason; dropped, the document
@@ -7801,6 +7806,100 @@ mutation "100 a refused pin is refused without its name" "$GATE" \
 # gone are a narrower frontier, which forces more into the judged tree, never less,
 # or a restore that falls back to the run's witness; `ledger-seen` gone reads as
 # the start of the run, which bills more. Naming it is the clause's guarantee.
+
+# ── [107] how long a line of the configuration the pack evaluates may take ────
+#
+# The deadline, asked of the three populations that see it: the unit, a remote
+# night (an iteration's first request) and the pilot's budget check. Then each
+# call site back to the unbounded evaluation, asked of the run that waits and of
+# the census; each bound replaced by one a slow credential store does not fit in,
+# asked of the witness that is waited for; and the four things the function does
+# besides the deadline — the sweep, the reader between the line and the caller,
+# the refusal of a bound it cannot read, the line's stderr — plus the trap that
+# keeps the deadline's answer and the refusal that answer turns into.
+mutation "107 a line the pack evaluates is never taken down at its bound" "$PROC" \
+  's/      proc_countdown "\$limit" "\$pid" \|\| exit 0\n/      exit 0\n/' \
+  test/proc.bats "taken down at its bound, said, and refused"
+
+mutation "107 a remote night waits out a token command that sleeps" "$PROC" \
+  's/      proc_countdown "\$limit" "\$pid" \|\| exit 0\n/      exit 0\n/' \
+  test/tracker-remote.bats "a token command that sleeps holds a remote night"
+
+mutation "107 the pilot waits out a usage token command that sleeps" "$PROC" \
+  's/      proc_countdown "\$limit" "\$pid" \|\| exit 0\n/      exit 0\n/' \
+  test/budget.bats "holds the pilot for the endpoint's seconds"
+
+mutation "107 the forge evaluates its token command with no deadline" "$FORGE" \
+  's/token="\$\(proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD "\$\{TRACKER_TOKEN_CMD\}"\)"/token="\$(proc_eval_bare "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/tracker-remote.bats "a token command that sleeps holds a remote night"
+
+mutation "107 an unbounded evaluation of the forge's token command goes uncounted" "$FORGE" \
+  's/token="\$\(proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD "\$\{TRACKER_TOKEN_CMD\}"\)"/token="\$(proc_eval_bare "\${TRACKER_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/gate.bats "every line of the configuration this pack evaluates"
+
+mutation "107 the pilot evaluates the usage token command with no deadline" "$BUDGET" \
+  's/token="\$\(proc_eval_bounded "\$BUDGET__REQUEST_SECONDS" USAGE_TOKEN_CMD "\$\{USAGE_TOKEN_CMD\}"\)"/token="\$(proc_eval_bare "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/budget.bats "holds the pilot for the endpoint's seconds"
+
+mutation "107 an unbounded evaluation of the usage token command goes uncounted" "$BUDGET" \
+  's/token="\$\(proc_eval_bounded "\$BUDGET__REQUEST_SECONDS" USAGE_TOKEN_CMD "\$\{USAGE_TOKEN_CMD\}"\)"/token="\$(proc_eval_bare "\${USAGE_TOKEN_CMD}" 2>\/dev\/null)"/' \
+  test/gate.bats "every line of the configuration this pack evaluates"
+
+# The price the bound must not charge: a credential store that is slow, and
+# answers. Each bound shrunk to a second fails the request it was slow on.
+mutation "107 a slow credential store fails the forge's requests" "$FORGE" \
+  's/proc_eval_bounded "\$\{FORGE_TIMEOUT:-30\}" TRACKER_TOKEN_CMD/proc_eval_bounded 1 TRACKER_TOKEN_CMD/' \
+  test/tracker-remote.bats "within FORGE_TIMEOUT is waited for"
+
+mutation "107 a slow credential store leaves every budget check unmeasured" "$BUDGET" \
+  's/proc_eval_bounded "\$BUDGET__REQUEST_SECONDS" USAGE_TOKEN_CMD/proc_eval_bounded 1 USAGE_TOKEN_CMD/' \
+  test/budget.bats "a slow usage token command within the endpoint's seconds is waited for"
+
+# The group the sweep reads: forked without job control, the line is in its
+# caller's group, which `proc_group_members` refuses by design — so the sweep finds
+# nothing, and the census is told of one home fewer.
+mutation "107 the line is forked in its caller's group" "$PROC" \
+  's/    set -m\n    \(\n      exec >&9 9>&-\n/    (\n      exec >&9 9>&-\n/' \
+  test/proc.bats "what a line leaves running once it answered is taken back"
+
+mutation "107 a fork with no group of its own goes uncounted" "$PROC" \
+  's/    set -m\n    \(\n      exec >&9 9>&-\n/    (\n      exec >&9 9>&-\n/' \
+  test/gate.bats "the pack takes job control for exactly the forks it has to name"
+
+mutation "107 what a line leaves running once it answered is left running" "$PROC" \
+  's/    proc_sweep "\$pid" "\$subject"\n//' \
+  test/proc.bats "what a line leaves running once it answered is taken back"
+
+# The reader is the design's reason, not decoration: without it the line writes
+# straight into the caller's substitution, and a survivor that ignores TERM holds
+# the end of file the caller waits for.
+mutation "107 a line writes straight into its caller's substitution" "$PROC" \
+  's/    exec 9> >\(\n      eval "exec \$PROC__ABOVE_STDERR"\n      exec cat\n    \)\n    reader=\$!\n/    exec 9>&1\n    reader=\n/' \
+  test/proc.bats "something a line left holding its output does not hold the call"
+
+# And the reader kept, but waited on for as long as it lives: the survivor's
+# sleep, not the second of grace.
+mutation "107 the reader is waited on for as long as something holds the line's output" "$PROC" \
+  's/      if \[ "\$waited" -ge 1 \]; then\n/      if false; then\n/' \
+  test/proc.bats "something a line left holding its output does not hold the call"
+
+mutation "107 a bound that cannot be read leaves the line unbounded" "$PROC" \
+  's/        "\$subject" "\$limit" >&2\n      return 1\n/        "\$subject" "\$limit" >&2\n/' \
+  test/proc.bats "a bound that is not a whole number of seconds is refused"
+
+mutation "107 a line's chatter reaches its caller's stderr" "$PROC" \
+  's/      proc_eval_bare "\$line" 2>\/dev\/null\n/      proc_eval_bare "\$line"\n/' \
+  test/proc.bats "its stderr goes nowhere"
+
+# [92]'s race, on this deadline: TERMed in the middle of its walk, it dies with
+# its answer, and the line it cut went on to print and exit 0.
+mutation "107 a deadline told to stop in its walk loses its answer" "$PROC" \
+  's/      trap "exit \$PROC__EVAL_FIRED" TERM\n//' \
+  test/proc.bats "a deadline told to stop in the middle of its walk"
+
+mutation "107 a line cut at its bound is handed back as an answer" "$PROC" \
+  's/    if \[ "\$fired" = "\$PROC__EVAL_FIRED" \]; then\n.*?\n      exit 1\n    fi\n//s' \
+  test/proc.bats "taken down at its bound, said, and refused"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

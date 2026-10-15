@@ -542,9 +542,9 @@ proc_curl() {
 #                 sockets and Mach ports, not on a descriptor of the caller.
 #   environment   handed back, as by `proc_exec_bare`: keeping [102]'s token, as
 #                 `proc_git` does, buys nothing here — a script a session rewrote
-#                 already runs at the instant the pack chose, outside every group
-#                 the run sweeps — and a line the operator wrote runs the way it
-#                 runs from their own shell, `gh` and its git included.
+#                 already runs at the instant the pack chose — and a line the
+#                 operator wrote runs the way it runs from their own shell, `gh`
+#                 and its git included.
 #
 # **Evaluated in a subshell, not handed to `bash -c`**, and that one is a decision
 # with a price on each side. `bash -c` would see only what is exported, and a line
@@ -566,12 +566,9 @@ proc_curl() {
 #     the same session can run that script itself, and what it writes into a
 #     remote tracker is the line "Ce qu'une session écrit dans le tracker d'un
 #     backend distant" of `docs/frontiere-de-confiance.md`, which holds it.
-#   - time. Nothing bounds the line: a script that never returns holds the
-#     iteration or the pilot that evaluated it, the class of a slow
-#     `core.fsmonitor` in the operator's `~/.gitconfig` — [107], not here.
-#   - what it leaves running. A process the line puts in the background survives
-#     the subshell, outside every group the run sweeps, as a session process that
-#     left its own group does.
+#   - time, and what the line leaves running. Neither is this function's: it is
+#     called by `proc_eval_bounded`, below, and by nothing else, and that one
+#     bounds the line and sweeps its group ([107]).
 #   - a descriptor above 255, or Linux's `/proc/<pid>/fd`: `proc_git`'s bound.
 proc_eval_bare() {
   (
@@ -579,6 +576,171 @@ proc_eval_bare() {
     exec </dev/null
     proc_git_hooks_given_back
     eval "$1"
+  )
+}
+
+# Evaluate a line of the configuration by `proc_eval_bare`, for at most <seconds>,
+# and hand back on stdout what it printed ([107]). Both token commands come through
+# here: `TRACKER_TOKEN_CMD` at every request of a remote backend (`forge__http`,
+# under `FORGE_TIMEOUT`) and `USAGE_TOKEN_CMD` at every budget check
+# (`budget__request`, under the seconds its own curl is given). <subject> is the
+# name the morning log reads the line under.
+#
+# **Why a bound, when [106] already closed what the line holds.** What it holds is
+# not how long it holds it. The line is the operator's; what it runs may be a
+# script under the `HOME` the judged session shares, and a session that rewrites it
+# into a `sleep` holds the iteration — or the pilot, for the usage line — as surely
+# as a `cat` on stdin did before [106]. Measured on [106]'s branch on 09/10/2026
+# (`.scratch/ralph-pack/sondes/ticket-106/s1`, C3): a script that slept twenty
+# seconds once turned a night of eight seconds into one of twenty-nine. Every other
+# program this pack waits on has a deadline — a session, a gate, a playthrough, a
+# curl — and the `--max-time` of the request bounded nothing here: the wait was in
+# front of the request.
+#
+# **Three processes, each for a reason measured on bash 3.2.57:**
+#
+#   the line      forked into a process group of its own, as `proc_group_fork`
+#                 does for a project's command, so that what it leaves running can
+#                 be found once it returns. Its stderr goes nowhere, as both
+#                 callers had it: a credential helper's chatter is not the morning
+#                 log's, and the sentences of this function are.
+#   a deadline    `proc_countdown`, then the tree walk, aimed only at a line that
+#                 still answers to the shell that started it ([36]) — the shape of
+#                 `playthrough__bounded` — and its answer is an exit status
+#                 protected by a trap armed before the first signal, as the gate's
+#                 watchdog's is ([92]).
+#   a reader      `cat`, between the line's stdout and this call's. Not decoration:
+#                 a command substitution returns at end of file, and end of file
+#                 comes when the *last* process holding the write end lets go.
+#                 Taking the line down does not take that from what it started: a
+#                 process that ignores TERM, or one that left the group, would hold
+#                 `$( … )` open for as long as it lived, and the bound would have
+#                 been one `trap '' TERM` away from nothing. So the reader is the
+#                 only holder of this call's stdout; once the line is collected and
+#                 swept it is given a second to see the end of file, then taken
+#                 down. What it copied is kept, and whatever a survivor writes
+#                 after that goes nowhere.
+#
+# The reader is a process substitution because that is the one pipe bash 3.2 makes
+# whose reader is neither the caller nor a pipeline it would wait on, with a pid:
+# `$!` answers it (measured), `wait` refuses it as "not a child of this shell", and
+# bash reaps it on its own — so it is asked with `kill -0`, and a number reissued
+# in between costs this call its second of grace and nothing else, the walk being
+# aimed at it only while it answers to this shell. The reader and the deadline
+# close everything above stderr, having no use for any of it; the shell between
+# them keeps the caller's, which is the line's to close (`proc_eval_bare`) and not
+# this function's — a second closing here would hold the property twice, and the
+# first one could be lost without a test seeing it ([92]).
+#
+# Stdin is held twice on this path all the same, and only one of the two is
+# written here. `proc_eval_bare` hands the line `/dev/null`, and so does bash: an
+# asynchronous command forked from a subshell — the line, forked from the subshell
+# below — is given `/dev/null` for stdin. Measured on 3.2.57, five shapes: from
+# inside a subshell, with or without `set -m`, with or without the reader, the
+# fork reads nothing of a `while read … done <<LIST` around the call; from the
+# shell of a `$( … )` itself under `set -m`, it reads the rest of the list. The
+# unit tests ask `proc_eval_bare` alone; a remote night ([106]'s quarantine) is
+# asked with both taken away, since it would stay green with either one left.
+#
+# **What a line that does not answer in time gets.** Its tree is sent TERM at the
+# deadline, what is left in its group is swept (`proc_sweep`, which says so), the
+# status is non-zero, and a sentence names the line and the bound on stderr — where
+# a caller's own refusals go, and so where a caller that discards those discards
+# it too: the first request of an iteration is `tracker_cache_prime`, which keeps
+# nothing it is told, and many reads of a field send stderr to `/dev/null`. A line
+# that answers once in a while late is named by the requests whose callers let
+# stderr through; one that never answers is named by the first of them.
+#
+# A non-zero status is what a line that *failed* has always had here, and both
+# callers keep what they did with one: the request goes out without a token, and
+# what the endpoint answers to that is said where it is read (`forge__api`,
+# `budget_check`). A line that answers in time is handed back exactly as
+# `proc_eval_bare` hands it, status included. A bound that is not a whole number
+# of seconds is refused before anything is evaluated: a check that cannot run must
+# not read as one that passed ([31]), and an unbounded wait is the one thing this
+# function exists to refuse.
+#
+# **What this does not hold**, written where it is claimed:
+#   - a bound a credential store does not fit in. A password manager waiting for a
+#     human to unlock it fails every request of an AFK night instead of holding the
+#     first one forever, each said where its caller lets it be. The forge's lever
+#     is `FORGE_TIMEOUT`; the usage line has none — its seconds are the endpoint's.
+#   - what survives the sweep: TERM and nothing after it, `proc_sweep`'s price. A
+#     process that ignores it, or that left the group, keeps running; it holds
+#     nothing of this call's past the grace, and nothing of the pack's at all.
+#   - a run killed while the line is held: the deadline gives up with the shell
+#     that armed it ([36]), and the line is left running.
+#   - a line that asks the terminal. Stdin is `/dev/null` since [106], and
+#     `/dev/tty` is not stdin: a line that opens it to prompt was served when a
+#     human started the run from a terminal, and in a group of its own — a
+#     background group of that terminal — it is stopped instead (SIGTTIN), then
+#     taken down at its bound. Measured in a pseudo-terminal on 15/10/2026: a
+#     `read </dev/tty` served bare, refused here at its bound. Nothing changes
+#     for an AFK night, where nobody answers either way; at the drain, a token
+#     command that prompts on the terminal no longer can. The price
+#     `proc_group_fork` already charges `TEST_CMD`.
+PROC__EVAL_FIRED=7
+proc_eval_bounded() {
+  local limit="$1" subject="$2" line="$3"
+  case "$limit" in
+    '' | 0 | *[!0-9]*)
+      printf 'ralph: %s was not evaluated: its bound is "%s", and a bound is a whole number of seconds\n' \
+        "$subject" "$limit" >&2
+      return 1
+      ;;
+  esac
+  (
+    local reader pid watch rc=0 fired=0 waited=0
+
+    exec 9> >(
+      eval "exec $PROC__ABOVE_STDERR"
+      exec cat
+    )
+    reader=$!
+    set -m
+    (
+      exec >&9 9>&-
+      proc_eval_bare "$line" 2>/dev/null
+    ) &
+    pid=$!
+    set +m
+    exec 9>&-
+
+    (
+      eval "exec $PROC__ABOVE_STDERR"
+      proc_countdown "$limit" "$pid" || exit 0
+      trap "exit $PROC__EVAL_FIRED" TERM
+      proc_self
+      [ "$(proc_parent_of "$pid")" != "$(proc_parent_of "$PROC_SELF")" ] || proc_kill_tree "$pid"
+      exit "$PROC__EVAL_FIRED"
+    ) >/dev/null &
+    watch=$!
+
+    proc_collect "$pid" || rc=$?
+    kill -TERM "$watch" 2>/dev/null || true
+    proc_collect "$watch" || fired=$?
+    proc_sweep "$pid" "$subject"
+
+    while kill -0 "$reader" 2>/dev/null; do
+      if [ "$waited" -ge 1 ]; then
+        proc_self
+        if [ "$(proc_parent_of "$reader")" = "$PROC_SELF" ]; then
+          proc_kill_tree "$reader"
+          printf 'ralph: something %s started still held its output a second after it returned: no longer read\n' \
+            "$subject" >&2
+        fi
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    if [ "$fired" = "$PROC__EVAL_FIRED" ]; then
+      printf 'ralph: %s did not answer within %ss: taken down, and refused as a line that failed\n' \
+        "$subject" "$limit" >&2
+      exit 1
+    fi
+    exit "$rc"
   )
 }
 
