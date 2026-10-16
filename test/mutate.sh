@@ -551,7 +551,7 @@ mutation "07 a file the session deleted is not restored" "$GATE" \
 # netting of the "could not undo" line. Emptied rather than removed — a caller that
 # gets an empty list is the failure mode, a caller that does not compile is not.
 mutation "06 the rollback never learns what it put back" "$FAILURES" \
-  's/^\$restored\nROLLBACK/\nROLLBACK/m' \
+  's/  proc_lines "\$restored"\n/  proc_lines ""\n/' \
   test/failures.bats "stray write is undone"
 
 mutation "07 what the session staged stays staged" "$FAILURES" \
@@ -1263,11 +1263,11 @@ mutation "24 the rollback only reports when it undid something" "$FAILURES" \
 # which is legitimate and therefore never put back, and a rule this run could not
 # put back at all.
 mutation "30 the snapshot obeys the rules the session left behind" "$GATE" \
-  's/\$\(gate_guarded_paths\)\n\$hidden\nFORCED/\$(gate_guarded_paths)\nFORCED/' \
+  's/    proc_lines "\$\(gate_guarded_paths\)"\$\x27\\n\x27"\$hidden"\n/    proc_lines "\$(gate_guarded_paths)"\n/' \
   test/gate.bats "does not hide what it wrote behind it"
 
 mutation "30 the same, where the frontier could not be put back" "$GATE" \
-  's/\$\(gate_guarded_paths\)\n\$hidden\nFORCED/\$(gate_guarded_paths)\nFORCED/' \
+  's/    proc_lines "\$\(gate_guarded_paths\)"\$\x27\\n\x27"\$hidden"\n/    proc_lines "\$(gate_guarded_paths)"\n/' \
   test/gate.bats "could not put back"
 
 # The pin records no working-tree rule, so *every* ignored path reads as newly
@@ -1369,14 +1369,14 @@ mutation "30 the fixture project has no local excludes, as before" "$HARNESS" \
 # next comment edit. The head and the feed are what carry [33] — one path per line
 # — and they are what this puts back into a word-splitting `for`.
 mutation "33 the forced paths are split on whitespace again" "$GATE" \
-  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      rc=0\n/    for path in \$(gate_guarded_paths) \$hidden; do\n      rc=0\n/; s/    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    done/' \
+  's/    proc_lines "\$\(gate_guarded_paths\)"\$\x27\\n\x27"\$hidden"\n    for path in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n      \[ -n "\$path" \] \|\| continue\n      rc=0\n/    for path in \$(gate_guarded_paths) \$hidden; do\n      rc=0\n/' \
   test/gate.bats "name has a space is a guard"
 
 # The same edit, judged by the other producer's test: the guarded paths and what
 # a rule hid during the iteration travel through one loop, so one entry per list
 # rather than one entry for the loop.
 mutation "33 the same, on a path a rule hid during the iteration" "$GATE" \
-  's/    while IFS= read -r path; do\n      \[ -n "\$path" \] \|\| continue\n      rc=0\n/    for path in \$(gate_guarded_paths) \$hidden; do\n      rc=0\n/; s/    done <<FORCED\n\$\(gate_guarded_paths\)\n\$hidden\nFORCED/    done/' \
+  's/    proc_lines "\$\(gate_guarded_paths\)"\$\x27\\n\x27"\$hidden"\n    for path in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n      \[ -n "\$path" \] \|\| continue\n      rc=0\n/    for path in \$(gate_guarded_paths) \$hidden; do\n      rc=0\n/' \
   test/gate.bats "name has a space does not buy it"
 
 # The pathspec half. A git pathspec is a pattern too, and it falls back to
@@ -1400,7 +1400,7 @@ mutation "33 the guarded paths are read as globs again" "$GATE" \
 # And the surface, whose list was expanded against the working tree before it was
 # matched against anything.
 mutation "33 a surface is cut into words by the shell again" "$GATE" \
-  's/  while IFS= read -r pattern; do\n    pattern="\$\{pattern%\/\}"\n    \[ -n "\$pattern" \] \|\| continue\n    case "\$file" in\n      \$pattern \| \$pattern\/\*\) return 0 ;;\n    esac\n  done <<SURFACE\n\$2\nSURFACE/  for pattern in \$2; do\n    pattern="\${pattern%\/}"\n    [ -n "\$pattern" ] || continue\n    case "\$file" in\n      \$pattern | \$pattern\/*) return 0 ;;\n    esac\n  done/' \
+  's/  proc_lines "\$2"\n  for pattern in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n/  for pattern in \$2; do\n/' \
   test/gate.bats "covers what it should"
 
 # ── [34] a refusal is not an empty measurement ───────────────────────────────
@@ -1901,7 +1901,7 @@ mutation "36 the session's grace fires at a pid that changed hands" "$MONITOR" \
 # before it makes any temporary directory of its own, so with only stale ones
 # staged the count reads the same either way.
 mutation "36 nothing names what earlier runs left in TMPDIR" "$LOOP" \
-  's/  while IFS= read -r leftovers; do\n    \[ -n "\$leftovers" \] \|\| continue\n    loop_log "\$leftovers"\n  done <<LEFTOVERS\n\$\(gate_leftovers \|\| true\)\nLEFTOVERS\n//' \
+  's/  proc_lines "\$\(gate_leftovers \|\| true\)"\n  for leftovers in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n    \[ -n "\$leftovers" \] \|\| continue\n    loop_log "\$leftovers"\n  done\n//' \
   test/gate.bats "left behind in TMPDIR"
 
 mutation "36 a run beside this one is counted as a leak" "$GATE" \
@@ -2307,7 +2307,7 @@ mutation "13 the sweep is not told what is in flight" "$LOOP" \
 # assignment now appears in both guards, and an anchor matching both would edit
 # the first and report VACUOUS about a healthy test.
 mutation "13 the tracker guard does not know what the loop wrote" "$FAILURES" \
-  's/  ours="\$\(failures__register_since "\$mark"\)"\n\n  while/  ours=" "\n\n  while/' \
+  's/  ours="\$\(failures__register_since "\$mark"\)"\n\n  proc_lines/  ours=" "\n\n  proc_lines/' \
   test/failures.bats "the loop wrote itself is left alone"
 
 # Both entries name the lib-level test and not the parallel run, and that is a
@@ -2747,7 +2747,7 @@ mutation "10 a red branch's output dies with the gate" "$GATE" \
 # Re-aimed by [96]: the branch's output is read into records rather than into a
 # file of its own, so the `tail` moved inside a heredoc substitution.
 mutation "10 the receipt keeps only what already scrolled past" "$RECEIPT" \
-  's/\$\(tail -"\$RECEIPT_MAX_LINES" "\$file"\)/\$(tail -20 "\$file")/' \
+  's/  while IFS= read -r line \|\| \[ -n "\$line" \]; do\n    if \[ "\$skip" -gt 0 \]; then\n/  skip=\$((total - 20))\n  while IFS= read -r line || [ -n "\$line" ]; do\n    if [ "\$skip" -gt 0 ]; then\n/' \
   test/receipt.bats "outlives the gate that collected it"
 
 # Re-aimed by [96]: same guarantee, one indent level up.
@@ -2859,7 +2859,7 @@ mutation "10 a rewritten journal is never noticed" "$LOOP" \
   test/receipt.bats "rewritten under the run is named"
 
 mutation "10 the run's own lines are counted in a subshell" "$LOOP" \
-  's/^      while read -r rid rdisposition; do$/      printf "%s\\n" "\$reclaimed" | while read -r rid rdisposition; do/m' \
+  's/^      for rdisposition in /      : | for rdisposition in /m' \
   test/receipt.bats "does not accuse itself"
 
 # [07]'s open question, answered in one word: the outcome says what happened to the
@@ -3045,7 +3045,7 @@ mutation "14 an iteration nothing judged is lesson material too" "$RETRO" \
 # formats. The guarantee is unchanged and it is still retro.bats that must notice
 # — the anchor is simply in the module that owns the shape now.
 mutation "14 an escalated rule lands on the frontier instead of the human sink" "$CAPABILITY" \
-  's/^\*\*Status:\*\* ready-for-human$/**Status:** ready-for-agent/m' \
+  's/"\*\*Status:\*\* ready-for-human$/"**Status:** ready-for-agent/m' \
   test/retro.bats "ticket on the human sink"
 
 # Moved file again, and not test: [47] took the deduplication out of
@@ -3260,7 +3260,7 @@ mutation "15 the preflight never asks about this tier" "$LOOP" \
 # current directory holds, and a test covering one says nothing about the other.
 
 mutation "37 the strays are recut into words" "$FAILURES" \
-  's/  while IFS= read -r id; do\n    \[ -n "\$id" \] \|\| continue\n    ! failures__in_list/  for id in \$(tracker_ids); do\n    ! failures__in_list/; s/  done <<IDS\n\$\(tracker_ids\)\nIDS/  done/' \
+  's/  proc_lines "\$\(tracker_ids\)"\n  for id in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n    \[ -n "\$id" \] \|\| continue\n    ! failures__in_list/  for id in \$(tracker_ids); do\n    ! failures__in_list/' \
   test/failures.bats "one stray, not two ghosts"
 
 mutation "37 the register exempts every word of an id" "$FAILURES" \
@@ -3272,7 +3272,7 @@ mutation "37 the quarantine note runs two ids together" "$FAILURES" \
   test/failures.bats "one stray, not two ghosts"
 
 mutation "37 the claim sweep walks words" "$CLAIM" \
-  's/  while IFS= read -r id; do\n    \[ -n "\$id" \] \|\| continue\n    status=/  for id in \$(tracker_ids); do\n    status=/; s/  done <<IDS\n\$\(tracker_ids\)\nIDS/  done/' \
+  's/  proc_lines "\$\(tracker_ids\)"\n  for id in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n    \[ -n "\$id" \] \|\| continue\n    status=/  for id in \$(tracker_ids); do\n    status=/' \
   test/claim.bats "carries a space is still swept"
 
 mutation "37 a sibling in flight exempts every word of its id" "$CLAIM" \
@@ -3287,7 +3287,7 @@ mutation "37 the ids in flight are handed over as a line of words" "$LOOP" \
   test/concurrency.bats "does not reclaim a claim this run is holding"
 
 mutation "37 the surface owner is looked up by words" "$GATE" \
-  's/  while IFS= read -r id; do\n    \[ -n "\$id" \] \|\| continue\n    \[ "\$id" != "\$self" \]/  for id in \$(tracker_ids); do\n    [ "\$id" != "\$self" ]/; s/  done <<IDS\n\$\(tracker_ids\)\nIDS/  done/' \
+  's/  proc_lines "\$ids"\n  for id in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n    \[ -n "\$id" \] \|\| continue\n    \[ "\$id" != "\$self" \]/  for id in \$ids; do\n    [ "\$id" != "\$self" ]/' \
   test/gate.bats "under a name with a space"
 
 mutation "37 a carrier is named by its first word" "$TRACKER_IFACE" \
@@ -3420,7 +3420,7 @@ mutation "39 the restore's admissions go into its own return value" "$GATE" \
 # path. The guarantee here is that the list is not word-split, so the mutation has
 # to word-split it.
 mutation "39 the durable commit stages a line of words" "$FAILURES" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    if ! GIT_INDEX_FILE="\$idx" proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then\n      refused="\$refused\$path\n"\n    fi\n  done <<CHANGED\n\$changed\nCHANGED/  GIT_INDEX_FILE="\$idx" proc_git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
+  's/  proc_lines "\$changed"\n  for path in [^\n]*\n    \[ -n "\$path" \] \|\| continue\n    if ! GIT_INDEX_FILE="\$idx" proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1; then\n.*?\n  done\n/  GIT_INDEX_FILE="\$idx" proc_git add -A --force -- \$changed >\/dev\/null 2>\&1 || true\n/s' \
   test/failures.bats "commits a path whose name carries a space"
 
 # Its twin at the other end of the same function: the caller's index is restaged
@@ -3431,7 +3431,7 @@ mutation "39 the durable commit stages a line of words" "$FAILURES" \
 # line. The first draft of this entry named the end-to-end test and came back
 # VACUOUS: it was measuring `concurrency__refresh`, one module over.
 mutation "39 the index is put back from a line of words" "$FAILURES" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done <<CHANGED\n\$changed\nCHANGED/  proc_git add -A --force -- \$changed >\/dev\/null 2>\&1 || true/' \
+  's/  proc_lines "\$changed"\n  for path in [^\n]*\n    \[ -n "\$path" \] \|\| continue\n    proc_git add -A --force -- ":\(literal\)\$path" >\/dev\/null 2>&1 \|\| true\n  done\n/  proc_git add -A --force -- \$changed >\/dev\/null 2>\&1 || true\n/' \
   test/failures.bats "no staged reversal, a name with a space included"
 
 # What that `|| true` costs when it fires, which is the general form of the defect
@@ -3452,7 +3452,7 @@ mutation "39 the unstaging is handed a line of words" "$FAILURES" \
 # exists to prevent — a delivered path left staged as a deletion in the tree a
 # human looks at in the morning.
 mutation "39 the tree refresh unstages a line of words" "$CONCURRENCY" \
-  's/  while IFS= read -r path; do\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && proc_git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done <<PATHS\n\$acted\nPATHS/  (cd "\$root" \&\& proc_git reset -q -- \$(printf \x27%s\x27 "\$acted" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true/' \
+  's/  proc_lines "\$acted"\n  for path in [^\n]*\n    \[ -n "\$path" \] \|\| continue\n    \(cd "\$root" && proc_git reset -q -- ":\(literal\)\$path" 2>\/dev\/null\) \|\| true\n  done\n/  (cd "\$root" \&\& proc_git reset -q -- \$(printf \x27%s\x27 "\$acted" | tr \x27\\n\x27 \x27 \x27) 2>\/dev\/null) || true\n/' \
   test/failures.bats "commits a path whose name carries a space"
 
 # The residue, at the one consumer that answers about it with a count rather than a
@@ -3683,7 +3683,7 @@ mutation "09 a session window is priced like a weekly one" "$SCHEDULER_LIB" \
 # A window name this pack does not know, given the widest ceiling instead of a
 # refusal — which is the fail-open this whole module is written against.
 mutation "09 an unknown window is priced at a week" "$SCHEDULER_LIB" \
-  's#CEILINGS\n  return 1\n\}#CEILINGS\n  scheduler__ceiling_max\n}#' \
+  's#    printf \x27%s\\n\x27 "\$seconds"\n    return 0\n  done\n  return 1\n\}#    printf \x27%s\\n\x27 "\$seconds"\n    return 0\n  done\n  scheduler__ceiling_max\n}#' \
   test/scheduler.bats "cannot price"
 
 # The instant from a session's own stream, held to what a pause costs. Without
@@ -3982,7 +3982,7 @@ mutation "91 the project's own programs are pinned by nobody" "$GATE" \
 # And the line that puts them on the manifest, which is a second place the same
 # guarantee is lost without the function above changing at all.
 mutation "91 the manifest never asks for the project's programs" "$GATE" \
-  's#\n\$\(gate_path_project_programs\)\nPROGRAMS#\nPROGRAMS#' \
+  's#  proc_lines "\$\(gate_path_programs\)"\$\x27\\n\x27"\$\(gate_path_project_programs\)"\n#  proc_lines "\$(gate_path_programs)"\n#' \
   test/gate.bats "out of the configuration"
 
 # And the same edit against a real run, which is where the ordering lives: the
@@ -4142,7 +4142,7 @@ mutation "50 the gap line reads the result without the status" "$FAILURES" \
 # tree that was never committed is accused of not being staged, `git add` having
 # refused a pathspec that matched nothing on either side.
 mutation "50 the gap line reads the status without the result" "$FAILURES" \
-  's/  done <<MISSED\n\$\(proc_git -c core.quotePath=false diff-tree -r --name-only "\$newtree" "\$tree" 2>\/dev\/null\)\nMISSED/  done <<MISSED\n\$refused\nMISSED/' \
+  's/  proc_lines "\$\(proc_git -c core.quotePath=false diff-tree -r --name-only "\$newtree" "\$tree" 2>\/dev\/null\)"\n/  proc_lines "\$refused"\n/' \
   test/failures.bats "deleted is not accused of not being staged"
 
 # The other half of the ticket, one module over: the refresh asked "is this path in
@@ -4157,7 +4157,7 @@ mutation "50 the tree refresh reads a path it never committed as a deletion" "$C
 # index entry back to HEAD, so walking the whole approved list unstages a human's
 # own staged edit at a name this run declined to commit.
 mutation "50 the tree refresh unstages what it did not touch" "$CONCURRENCY" \
-  's/  done <<PATHS\n\$acted\nPATHS\n  return 0/  done <<PATHS\n\$changed\nPATHS\n  return 0/' \
+  's/  proc_lines "\$acted"\n/  proc_lines "\$changed"\n/' \
   test/concurrency.bats "never put on the branch"
 
 # And the value that makes the question answerable at all. Without the tip the
@@ -4220,7 +4220,7 @@ mutation "16 a decision on a dead run is not told from a stray ticket" "$ROUTER"
 # human was answered by the end of the work-list: one dossier, EOF, and a stop
 # whose exit code reads exactly like a human who quit.
 mutation "16 the drain reads its work-list on the human's stdin" "$HUMAN_LOOP" \
-  's/  while IFS= read -r id <&3; do/  while IFS= read -r id; do/; s/  done 3<<SINK/  done <<SINK/' \
+  's/  proc_lines "\$sink"\n  for id in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n(.*?)\n  done\n\n  human_loop_log "drained/  while IFS= read -r id; do\n$1\n  done <<SINK\n\$sink\nSINK\n\n  human_loop_log "drained/s' \
   test/human-loop.bats "retry budget back"
 
 # The two flags a human-in-the-loop session must not carry, and they are the
@@ -4932,7 +4932,7 @@ mutation "11 the wiring tickets already opened are counted by nobody" "$PLAYTHRO
   test/playthrough.bats "past its bound"
 
 mutation "11 the same hole opens a second ticket instead of asking a human" "$PLAYTHROUGH" \
-  's/  tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" <<BODY \|\| rc=\$\?\n/  tracker_open_ticket "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" <<BODY || rc=\$?\n/' \
+  's/ \| tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" \|\| rc=\$\?\n/ | tracker_open_ticket "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" || rc=\$?\n/' \
   test/playthrough.bats "the same hole twice"
 
 mutation "11 a wiring ticket may declare the harness's own configuration" "$PLAYTHROUGH" \
@@ -5010,7 +5010,7 @@ mutation "65 the clause is printed over an empty list" "$PLAYTHROUGH" \
 # does not stop the run before the value gate is reached.
 
 mutation "79 a refused capability proposal comes back as one already waiting" "$CAPABILITY" \
-  's/  tracker_open_unique "\$slug" "\$title" <<BODY \|\| rc=\$\?\n/  tracker_open_unique "\$slug" "\$title" <<BODY\n/' \
+  's/ \| tracker_open_unique "\$slug" "\$title" \|\| rc=\$\?\n/ | tracker_open_unique "\$slug" "\$title"\n/' \
   test/capability.bats "is not an open it deduplicated"
 
 # The paired witness of the one above, and it is not decoration: both callers of
@@ -5026,11 +5026,11 @@ mutation "79 the two silences under a proposal are merged back into one" "$CAPAB
   test/capability.bats "is not one already waiting"
 
 mutation "79 a refused wiring ticket comes back as one already there" "$PLAYTHROUGH" \
-  's/  tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" <<BODY \|\| rc=\$\?\n/  tracker_open_unique "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title" <<BODY\n/' \
+  's/ \| tracker_open_unique "\$\(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title"\)" "\$title" \|\| rc=\$\?\n/ | tracker_open_unique "\$(playthrough__slug "\$PLAYTHROUGH_SLUG_PREFIX" "\$title")" "\$title"\n/' \
   test/playthrough.bats "is not read as one already there"
 
 mutation "79 the escalation of the value gate swallows its own refusal" "$PLAYTHROUGH" \
-  's/  capability_propose "\$\(playthrough__slug "\$PLAYTHROUGH_GAP_PREFIX" "\$title"\)" "\$title" <<BODY \|\| rc=\$\?\n/  capability_propose "\$(playthrough__slug "\$PLAYTHROUGH_GAP_PREFIX" "\$title")" "\$title" <<BODY\n/' \
+  's/ \| capability_propose "\$\(playthrough__slug "\$PLAYTHROUGH_GAP_PREFIX" "\$title"\)" "\$title" \|\| rc=\$\?\n/ | capability_propose "\$(playthrough__slug "\$PLAYTHROUGH_GAP_PREFIX" "\$title")" "\$title"\n/' \
   test/playthrough.bats "is not read as one already there"
 
 mutation "79 asking a human says so when nobody was asked" "$PLAYTHROUGH" \
@@ -5209,7 +5209,7 @@ mutation "62 only directories are counted, as the sentence used to say" "$GATE" 
 # as much that a quiet morning still drains as that a loud one is named.
 
 mutation "69 a drain says nothing about what earlier runs left outside it" "$HUMAN_LOOP" \
-  's/  while IFS= read -r leftovers; do\n    \[ -n "\$leftovers" \] \|\| continue\n    human_loop_log "\$leftovers"\n  done <<LEFTOVERS\n\$\(gate_leftovers \|\| true\)\nLEFTOVERS\n//' \
+  's/  proc_lines "\$\(gate_leftovers \|\| true\)"\n  for leftovers in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n    \[ -n "\$leftovers" \] \|\| continue\n    human_loop_log "\$leftovers"\n  done\n//' \
   test/human-loop.bats "left outside this repository"
 
 mutation "69 a drain says nothing about the worktrees a run left registered" "$HUMAN_LOOP" \
@@ -5225,7 +5225,7 @@ mutation "69 a repository nobody left a worktree in ends the drain" "$HUMAN_LOOP
   test/human-loop.bats "names nothing and refuses nothing"
 
 mutation "69 what a killed run left is a reason to refuse the human who came to look" "$HUMAN_LOOP" \
-  's/  local leftovers\n  while IFS= read -r leftovers; do\n/  local leftovers\n  if gate_leftovers >\/dev\/null 2>&1; then exit 2; fi\n  while IFS= read -r leftovers; do\n/' \
+  's/  local leftovers\n  proc_lines /  local leftovers\n  if gate_leftovers >\/dev\/null 2>&1; then exit 2; fi\n  proc_lines /' \
   test/human-loop.bats "left outside this repository"
 
 # ── [67] one file, read twice, and journalled without a witness ──────────────
@@ -6227,7 +6227,7 @@ mutation "81 the run throws its own seal away" "$LOOP" \
 # line a morning reader needs, which is exactly what the four unheld witnesses
 # cost before this ticket.
 mutation "81 the run stops without naming the witness" "$LOOP" \
-  's/^\$\(gate_witness_note \|\| true\)\n//m' \
+  's/  proc_lines "\$\(gate_witness_note \|\| true\)"\$\x27\\n\x27"/  proc_lines "/' \
   test/gate.bats "stops the night and the run names it"
 
 # The clause on the refusal itself, for the same reason one layer down: the
@@ -6465,7 +6465,7 @@ mutation "83 the iteration takes no census of what the seal cannot cover" "$LOOP
   test/retro.bats "forged for another ticket"
 
 mutation "83 the run never asks what its own iteration made" "$LOOP" \
-  's/^\$\(retro_state_note \|\| true\)\n//m' \
+  's/\$\x27\\n\x27"\$\(retro_state_note \|\| true\)"\n/\n/' \
   test/capability.bats "does not cross the bar"
 
 mutation "83 what a session wrote in the lesson workspace is never named" "$RETRO" \
@@ -7450,7 +7450,11 @@ mutation "104 git is handed the operator's environment back, hook directory and 
 
 # Call sites, each a different reason a census exists: the pilot's own git, a gate
 # snapshot that refreshes an index under the iteration's channels, and a git inside
-# an unquoted heredoc — the shape the lexer could not see until this ticket.
+# an unquoted heredoc — the shape the lexer could not see until this ticket. [108]
+# took that heredoc out of the pack (it was a list the pack walked, and a heredoc is
+# a named file under /var/tmp); the git is in a substitution inside the argument of
+# `proc_lines` now, which the lexer reads as it reads any double-quoted string. The
+# lexer's reading of heredoc bodies keeps its own entries, a few lines down.
 mutation "104 the pilot makes a worktree with a bare git" "$CONCURRENCY" \
   's/if ! \(cd "\$root" && proc_git worktree add/if ! (cd "\$root" \&\& git worktree add/' \
   test/gate.bats "goes through the one function that hands it nothing"
@@ -7459,8 +7463,8 @@ mutation "104 a gate snapshot runs git bare under the iteration's channels" "$GA
   's/diag="\$\(LC_ALL=C GIT_INDEX_FILE="\$index" proc_git add -A --ignore-errors 2>&1/diag="\$(LC_ALL=C GIT_INDEX_FILE="\$index" git add -A --ignore-errors 2>\&1/' \
   test/receipt.bats "operator's git configuration names holds nothing"
 
-mutation "104 a git inside an unquoted heredoc runs bare" "$GATE" \
-  's/^\$\(proc_git -c core\.quotePath=false diff-tree -r --name-status/\$(git -c core.quotePath=false diff-tree -r --name-status/m' \
+mutation "104 a git inside a substitution an argument carries runs bare" "$GATE" \
+  's/^  proc_lines "\$\(proc_git -c core\.quotePath=false diff-tree -r --name-status/  proc_lines "\$(git -c core.quotePath=false diff-tree -r --name-status/m' \
   test/gate.bats "goes through the one function that hands it nothing"
 
 # The lexer the census reads through, and the two halves of what it now reads.
@@ -7567,7 +7571,10 @@ mutation "106 a line the pack evaluates reads its caller's stdin" "$PROC" \
 # and bash gives such a fork `/dev/null` for stdin on its own: the closing above is
 # one of two carriers there, and taking it alone left the night green (VACUOUS on
 # the full run of 15/10/2026). So the night is asked with both gone — the closing,
-# and the caller's stdin handed to the fork explicitly.
+# and the caller's stdin handed to the fork explicitly. And since [108] the loop
+# that evaluates the line no longer has the list on stdin, so the test hands the run
+# a finite stdin of its own: on `/dev/null` both entries below were VACUOUS on the
+# full run of 16/10/2026 — the line drained nothing because there was nothing.
 mutation "106 a remote token command drains the quarantine it is evaluated in" "$PROC" \
   's/    exec <\/dev\/null\n    proc_git_hooks_given_back\n    eval "\$1"/    proc_git_hooks_given_back\n    eval "\$1"/; s/      proc_eval_bare "\$line" 2>\/dev\/null\n    \) &\n/      proc_eval_bare "\$line" 2>\/dev\/null\n    ) <&0 &\n/' \
   test/tracker-remote.bats "drains nothing of the quarantine"
@@ -7900,6 +7907,64 @@ mutation "107 a deadline told to stop in its walk loses its answer" "$PROC" \
 mutation "107 a line cut at its bound is handed back as an answer" "$PROC" \
   's/    if \[ "\$fired" = "\$PROC__EVAL_FIRED" \]; then\n.*?\n      exit 1\n    fi\n//s' \
   test/proc.bats "taken down at its bound, said, and refused"
+
+# ── [108] a heredoc is a file with a name, for an instant ────────────────────
+#
+# bash 3.2 makes every heredoc and here-string a named file under /var/tmp, and a
+# process of the user that keeps the descriptor rewrites what the reader has not
+# read yet. Every list the pack decides on went through one; they are walked by
+# `proc_lines` and split by `proc_split` now, and a census refuses any heredoc
+# read by anything but `cat`.
+
+# The walk itself, put back through a file: the spy finds the lines it walks.
+mutation "108 proc_lines walks its value through a heredoc" "$PROC" \
+  's/  PROC_LINES=\(\$1\)\n/  PROC_LINES=(\$(cat <<LIST\n\$1\nLIST\n))\n/' \
+  test/proc.bats "reaches nothing proc_lines hands back"
+
+# The three things `read` does to a line that `proc_split` has to do by hand.
+mutation "108 proc_split keeps the separators a line starts with" "$PROC" \
+  's/  __s="\$\{__s%%\$\x27\\n\x27\*\}"\n  __s="\$\{__s#"\$\{__s%%\[!\$__ws\]\*\}"\}"\n/  __s="\${__s%%\$\x27\\n\x27*}"\n/' \
+  test/proc.bats "makes of a line what read makes of it"
+
+mutation "108 proc_split counts every separator between two fields" "$PROC" \
+  's/    __s="\$\{__s#"\$__f"\}"\n    __s="\$\{__s#"\$\{__s%%\[!\$__ws\]\*\}"\}"\n/    __s="\${__s#"\$__f"}"\n    __s="\${__s#[\$__ws]}"\n/' \
+  test/proc.bats "makes of a line what read makes of it"
+
+mutation "108 proc_split hands the last name the separators a line ends with" "$PROC" \
+  's/  __s="\$\{__s%"\$\{__s##\*\[!\$__ws\]\}"\}"\n//' \
+  test/proc.bats "makes of a line what read makes of it"
+
+# The list the forced add walks, back in `<<FORCED`: the spy rewrites the third
+# guarded path before it is read, and the file under it is in no snapshot.
+mutation "108 the forced add walks its list through a heredoc" "$GATE" \
+  's/    proc_lines "\$\(gate_guarded_paths\)"\$\x27\\n\x27"\$hidden"\n    for path in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n(.*?)\n    done\n  fi\n  tree=/    while IFS= read -r path; do\n$1\n    done <<FORCED\n\$(gate_guarded_paths)\n\$hidden\nFORCED\n  fi\n  tree=/s' \
+  test/gate.bats "does not take a guarded path out of the snapshot"
+
+# A value read through a heredoc anywhere in the pack is what the census exists to
+# see; one site put back is enough.
+mutation "108 a list is read through a heredoc again" "$CLAIM" \
+  's/  proc_lines "\$2"\n  for line in \$\{PROC_LINES\[\@\]\+"\$\{PROC_LINES\[\@\]\}"\}; do\n(.*?)\n  done\n/  while IFS= read -r line; do\n$1\n  done <<LIST\n\$2\nLIST\n/s' \
+  test/gate.bats "hands a heredoc to nothing but cat"
+
+# The census, taken apart from its side: a reader nobody checks, a kind nobody
+# checks, and a lexer that marks nothing.
+mutation "108 the heredoc census admits any reader" "test/gate.bats" \
+  's/awk -F\x27\\t\x27 \x27NF >= 3 && !\(\$2 == "heredoc" && \$3 == "cat"\)\x27/awk -F\x27\\t\x27 \x27NF >= 3 \&\& !(\$2 == "heredoc")\x27/' \
+  test/gate.bats "tells a value it reads from prose it prints"
+
+mutation "108 the heredoc census admits a here-string cat reads" "test/gate.bats" \
+  's/awk -F\x27\\t\x27 \x27NF >= 3 && !\(\$2 == "heredoc" && \$3 == "cat"\)\x27/awk -F\x27\\t\x27 \x27NF >= 3 \&\& !(\$3 == "cat")\x27/' \
+  test/gate.bats "tells a value it reads from prose it prints"
+
+mutation "108 the lexer marks no heredoc" "test/gate.bats" \
+  's/      out = out \(marks \? " <<HEREDOC:" FNR " " : " "\)\n/      out = out " "\n/' \
+  test/gate.bats "hands a heredoc to nothing but cat"
+
+# The branch quoted from the end, read from the file itself now: the lines it
+# passes over are the ones the count says it dropped.
+mutation "108 a red branch is quoted from its beginning" "$RECEIPT" \
+  's/    skip=\$\(\(total - RECEIPT_MAX_LINES\)\)\n/    skip=0\n/' \
+  test/receipt.bats "counted rather than silently cut"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

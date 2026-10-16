@@ -112,11 +112,10 @@ apenas assim cada pelo pela pelos das dos ao aos'
 lang_known() {
   local code
   [ -n "${1:-}" ] || return 1
-  while IFS= read -r code; do
+  proc_lines "$(lang_codes)"
+  for code in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ "$code" = "$1" ] && return 0
-  done <<CODES
-$(lang_codes)
-CODES
+  done
   return 1
 }
 
@@ -125,12 +124,11 @@ CODES
 # can hand the scorer a table of its own and drive the ambiguity rule directly.
 lang_table() {
   local code
-  while IFS= read -r code; do
+  proc_lines "$(lang_codes)"
+  for code in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$code" ] || continue
     printf '%s %s\n' "$code" "$("lang_words_$code" | tr '\n' ' ')"
-  done <<CODES
-$(lang_codes)
-CODES
+  done
 }
 
 # ── measuring one text ───────────────────────────────────────────────────────
@@ -340,9 +338,8 @@ lang__expected() {
   local base="$1" file="$2" total hits dominant dhits
 
   if [ -n "$base" ] && proc_git cat-file -e "$base:$file" 2>/dev/null; then
-    read -r total hits dominant dhits <<MEASURE
-$(proc_git cat-file -p "$base:$file" 2>/dev/null | lang_measure '')
-MEASURE
+    proc_split $' \t' "$(proc_git cat-file -p "$base:$file" 2>/dev/null | lang_measure '')" \
+      total hits dominant dhits
     if [ "${total:-0}" -ge "$(lang_min_hits)" ] && lang_known "${dominant:-}"; then
       printf '%s file\n' "$dominant"
       return 0
@@ -382,7 +379,8 @@ lang_check() {
   min="$(lang_min_hits)"
   pct="$(lang_threshold_pct)"
 
-  while IFS= read -r file; do
+  proc_lines "$changed"
+  for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$file" ] || continue
     # A name git could not print as itself, asked before the prose filter because
     # a quoted name does not match `*.md` either — being dropped by the glob is
@@ -422,18 +420,15 @@ lang_check() {
     # A deleted prose file has no content to judge and is not a finding.
     proc_git cat-file -e "$now:$file" 2>/dev/null || continue
 
-    read -r expected why <<EXPECTED
-$(lang__expected "$base" "$file")
-EXPECTED
+    proc_split $' \t' "$(lang__expected "$base" "$file")" expected why
 
     # Piped into the scorer rather than held in a variable, and that is about the
     # real run rather than about taste: a session is entitled to write a large
     # document, and a command substitution would put the whole of it in this
     # shell's memory to count function words in it. What comes back is four
     # numbers.
-    read -r total hits dominant dhits <<MEASURE
-$(proc_git cat-file -p "$now:$file" 2>/dev/null | lang_measure "$expected")
-MEASURE
+    proc_split $' \t' "$(proc_git cat-file -p "$now:$file" 2>/dev/null | lang_measure "$expected")" \
+      total hits dominant dhits
 
     if [ "${total:-0}" -lt "$min" ]; then
       undecided=$((undecided + 1))
@@ -452,9 +447,7 @@ MEASURE
       printf 'wrote %s, whose prose reads as %s — this project writes durable prose in %s (%s%% of it was %s, and this gate wants %s%%)\n' \
         "$file" "$dominant" "$expected" "$share" "$expected" "$pct"
     fi
-  done <<PROSE
-$changed
-PROSE
+  done
 
   # The coverage line, out to the shell that forked this branch on the gate's note
   # channel, and no longer into a file in the gate's own temporary directory

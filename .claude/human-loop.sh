@@ -282,13 +282,13 @@ HUMAN_LOOP__FINDINGS=''
 human_loop__report_tracker_findings() {
   local subject outcome message
   HUMAN_LOOP__FINDINGS="$(tracker_preflight)" || true
-  while IFS="$(printf '\t')" read -r subject outcome message; do
+  proc_lines "$HUMAN_LOOP__FINDINGS"
+  for message in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$message" subject outcome message
     [ -n "$subject" ] || continue
     human_loop_log "$message"
     tracker_finding_said "$subject" "$outcome"
-  done <<FINDINGS
-$HUMAN_LOOP__FINDINGS
-FINDINGS
+  done
 }
 
 # The other half, called once both locks are held ([72]): the line that goes in
@@ -305,12 +305,12 @@ FINDINGS
 # and asking it twice would be two answers to one question.
 human_loop__journal_tracker_findings() {
   local subject outcome message
-  while IFS="$(printf '\t')" read -r subject outcome message; do
+  proc_lines "$HUMAN_LOOP__FINDINGS"
+  for message in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$message" subject outcome message
     [ -n "$subject" ] || continue
     router_journal "$subject" "$outcome" drain
-  done <<FINDINGS
-$HUMAN_LOOP__FINDINGS
-FINDINGS
+  done
 }
 
 # ── the locks, re-asked ──────────────────────────────────────────────────────
@@ -710,12 +710,11 @@ human_loop_main() {
   # both entry points of the pack, and a divergence between the two would be two
   # truths about one disk.
   local leftovers
-  while IFS= read -r leftovers; do
+  proc_lines "$(gate_leftovers || true)"
+  for leftovers in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$leftovers" ] || continue
     human_loop_log "$leftovers"
-  done <<LEFTOVERS
-$(gate_leftovers || true)
-LEFTOVERS
+  done
   if leftovers="$(concurrency_leftovers)"; then human_loop_log "$leftovers"; fi
 
   # The run-level words a reader gets wrong, said once before any ticket. Not a
@@ -748,16 +747,20 @@ LEFTOVERS
   # The order is taken once, before anything moves, and that is correct rather
   # than lazy: unblocking impact is a property of who names whom in `Blocked by:`,
   # and nothing a drain does to one ticket changes what another ticket is waiting
-  # for. A heredoc and never a pipe, so the counters below live in this shell.
+  # for. Walked in this shell and never through a pipe, so the counters below
+  # live in this shell.
   #
-  # **On a descriptor of its own, and that is the whole of it.** A `while read id`
-  # fed by a heredoc on stdin hands *that* stdin to everything it calls, so the
-  # first question put to a human was answered by the end of the work-list: the
-  # drain printed one dossier, read EOF, and stopped saying "stdin ended" — with
-  # the sink untouched and an exit code that reads exactly like a human who
-  # quit. The list travels on fd 3, stdin stays the human's, and the routed
-  # session gets the terminal the same way.
-  while IFS= read -r id <&3; do
+  # **Not on stdin, and that is the whole of it.** A `while read id` fed by a
+  # heredoc on stdin hands *that* stdin to everything it calls, so the first
+  # question put to a human was answered by the end of the work-list: the drain
+  # printed one dossier, read EOF, and stopped saying "stdin ended" — with the sink
+  # untouched and an exit code that reads exactly like a human who quit. The list
+  # then travelled on fd 3, by a heredoc, which bash 3.2 makes a named file under
+  # `/var/tmp` for an instant ([108]); it is an expansion now, handed to nothing
+  # this loop calls, so stdin stays the human's and the routed session gets the
+  # terminal the same way.
+  proc_lines "$sink"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     # A reading of the tracker for this ticket, taken in this shell and not in one
     # of the twenty forks below it ([75]). Here rather than once for the whole
@@ -798,14 +801,12 @@ LEFTOVERS
       # The one code that ends the drain rather than the ticket. Falling through
       # to `*)` would count a lost lock as "left where it was" and carry on to the
       # next ticket — which is the whole of what this stops. Exits ([57]); the
-      # `exit` is this process's, since the loop is fed by a heredoc and not a
-      # pipe and nothing here is a subshell ([47]).
+      # `exit` is this process's, since the loop walks a list in this shell and
+      # not a pipe, and nothing here is a subshell ([47]).
       4) human_loop__stop_lost_lock "$drained" "$left" "$id" ;;
       *) left=$((left + 1)) ;;
     esac
-  done 3<<SINK
-$sink
-SINK
+  done
 
   human_loop_log "drained $drained ticket(s), left $left where they were"
 

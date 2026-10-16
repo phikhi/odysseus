@@ -816,6 +816,48 @@ ignore_paths() {
   refute_file_exists "$PROJECT_DIR/vendor/rogue"
 }
 
+@test "a process that rewrites every heredoc it finds does not take a guarded path out of the snapshot" {
+  # [108], in the run. The forced add is what makes the gate judge an ignored
+  # file under a guarded path at all (the test above), and it walked its list —
+  # every guarded path, then every sealed one — through `<<FORCED`, which bash 3.2
+  # makes a named file under /var/tmp for an instant. Measured on `main` with the
+  # probe of this ticket: a process of this user found that file and rewrote it.
+  # That run still came out red — the effect on the verdict was not reproduced —
+  # so what this test holds is the narrower and checkable thing: the list never
+  # goes through a file such a process can find. The guarded path is the third one
+  # because that is the position the pass of 16/10 showed a line is read late.
+  #
+  # Started by the test rather than left by a session: what it does to the pack is
+  # the same from any process of this user, and the point here is the file the
+  # list was in, not how a session escapes its sweep ([92]).
+  [ "$(uname -s)" = Darwin ] || skip "this bash may pass a heredoc through a pipe, and there is no named file to watch"
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  set_config GUARDED_PATHS '.claude
+assets
+vendor'
+  ignore_paths 'assets/' 'vendor/'
+  script_session_writing vendor/rogue
+  heredoc_spy 120 vendor
+
+  run_loop
+  local alive=no
+  ! kill -0 "$PACK_BG_PID" 2>/dev/null || alive=yes
+  kill -KILL "$PACK_BG_PID" 2>/dev/null || true
+
+  # The witness: it was still looking when the run ended, and it found the
+  # heredocs this run still makes — the prose — so it was looking where they are.
+  assert_equal "$alive" yes
+  [ -s "$RALPH_TEST_DIR/spy.seen" ] ||
+    fail "the spy opened no heredoc during the whole run, so nothing below was measured"
+  # Nothing it found held the list, and the gate judged the file.
+  refute_file_exists "$RALPH_TEST_DIR/spy.vendor"
+  assert_failure 4
+  assert_output_contains "vendor/rogue"
+  assert_ticket_status 01-alpha ready-for-agent
+  refute_file_exists "$PROJECT_DIR/vendor/rogue"
+}
+
 @test "an ignored file outside the guarded paths is not judged, and the gate says so" {
   use_tickets 01-alpha
   ignore_paths 'cache/'
@@ -5257,7 +5299,7 @@ BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; state = "C"; top = 0; here
     if (c == SQ) { state = "S"; out = out " "; i++; continue }
     if (c == DQ) { state = "D"; out = out " "; i++; continue }
     if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|(]/)) break
-    if (three == "<<<") { out = out " "; i += 3; continue }
+    if (three == "<<<") { out = out (marks ? " <<<HERESTRING:" FNR " " : " "); i += 3; continue }
     if (two == "<<") {
       rest = substr(line, i + 2)
       hdash = 0
@@ -5267,7 +5309,7 @@ BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; state = "C"; top = 0; here
       hquoted = (q == SQ || q == DQ || q == BS)
       if (hquoted) rest = substr(rest, 2)
       if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) { hterm = substr(rest, RSTART, RLENGTH); heredoc = 1; hd = 0 }
-      out = out " "
+      out = out (marks ? " <<HEREDOC:" FNR " " : " ")
       i += 2
       continue
     }
@@ -5452,6 +5494,141 @@ $lexed" ;;
 $lexed" ;;
     esac
   done
+}
+
+# ── [108] a heredoc is a file with a name, for an instant ────────────────────
+#
+# bash 3.2 makes every heredoc and every here-string a named file,
+# `/var/tmp/sh-thd-<n>`, between the moment it creates it and the moment it unlinks
+# it after reopening it for the reader — in a directory every process of the user
+# lists. Measured on bash 3.2.57/darwin, a process that opens what it finds there
+# and keeps the descriptor rewrites a five-line `while read` list under a body that
+# forks **1252 times out of 1500 lines**, and the prose of a `cat <<X` 297 times
+# out of 300. The pack walked every list it decides on that way, so this census
+# asks the source what is still left.
+#
+# The criterion, written down because a census nobody can state is a guess that
+# happens to be green ([85]):
+#
+#   zone   `harness_pack_sources` — the pack's own shell, the three entry points
+#          and every lib, with nothing excluded and so nobody to name as the
+#          guard of an exclusion.
+#   code   [91]'s lexer, told to mark where it saw `<<` and `<<<` instead of
+#          dropping them, so a `<<` in a comment, a message or arithmetic is not
+#          a heredoc.
+#   form   a here-string is refused whatever reads it: it is the same file, for
+#          one line. A heredoc is admitted on one reader only, `cat`, which prints
+#          it whole as the prose it is — a prompt for a session or a judge, a
+#          rule, a message, a file the installer writes for a human to read. That
+#          prose is still a named file for an instant and still rewritable, which
+#          `docs/frontiere-de-confiance.md` says with the measure beside it; what
+#          it is not is a value the pack itself parses and decides on. Every other
+#          reader — `done`, `read`, `awk`, a function — parses what it is handed.
+#
+# What the criterion leaves to a reader and not to this test: a `cat <<X` whose
+# output is captured and then parsed would pass. No such site exists today — the
+# four ticket bodies that carried a `**Status:**` and a `**Write-surface:**` into a
+# tracker go through `printf` since this ticket — and the day one does, it is a
+# value through a file again with this census green.
+
+# Every heredoc and here-string of the pack's own code, as `file:line<TAB>kind<TAB>
+# reader`: the reader is the first word of the command the redirection belongs to,
+# past the keywords and the assignments that can stand in front of one.
+pack_heredocs() {
+  local root="$1" f
+  path_scan_lexer
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -v marks=1 -f "$RALPH_TEST_DIR/code.awk" "$f" |
+      awk -v file="$(basename "$f")" '
+        {
+          line = $0
+          while (match(line, /<<<?(HEREDOC|HERESTRING):[0-9]+/)) {
+            tok = substr(line, RSTART, RLENGTH)
+            pre = substr(line, 1, RSTART - 1)
+            line = substr(line, RSTART + RLENGTH)
+            kind = (tok ~ /HERESTRING/) ? "here-string" : "heredoc"
+            at = tok
+            sub(/^[^:]*:/, "", at)
+            gsub(/\$\(/, ";", pre)
+            n = split(pre, seg, /[;|&(){}]/)
+            reader = "?"
+            m = split(seg[n], w, /[ \t]+/)
+            for (k = 1; k <= m; k++) {
+              if (w[k] == "" || w[k] ~ /^(then|do|else|elif|if|while|until|!|time)$/) continue
+              if (w[k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+              reader = w[k]
+              break
+            }
+            printf "%s:%s\t%s\t%s\n", file, at, kind, reader
+          }
+        }'
+  done <<SOURCES
+$(harness_pack_sources "$root")
+SOURCES
+  return 0
+}
+
+# The records of <census> that are not a heredoc handed to `cat`.
+pack_heredocs_refused() {
+  printf '%s\n' "$1" | awk -F'\t' 'NF >= 3 && !($2 == "heredoc" && $3 == "cat")'
+}
+
+@test "the pack hands a heredoc to nothing but cat, and makes no here-string" {
+  local found refused
+  found="$(pack_heredocs "$RALPH_PACK_ROOT")"
+
+  # The floor, by form: the prose the pack prints through `cat` is still there —
+  # thirty-three sites on the day this was written — so a census that reads none
+  # of it is reading the wrong thing, and its empty refusal list below would be
+  # true for that reason alone ([89]).
+  [ "$(printf '%s\n' "$found" | awk -F'\t' '$3 == "cat"' | grep -c .)" -ge 20 ] ||
+    fail "the census found $(printf '%s\n' "$found" | grep -c .) heredocs, so it is reading the wrong thing:
+$found"
+
+  refused="$(pack_heredocs_refused "$found")"
+  [ -z "$refused" ] ||
+    fail "a value this pack reads goes through a named file under /var/tmp for an instant — walk it with proc_lines / proc_split, or pipe it (as file:line, kind, the word that reads it):
+$refused"
+}
+
+@test "the heredoc census tells a value it reads from prose it prints" {
+  local found
+  mkdir -p "$RALPH_TEST_DIR/planted/.claude/lib"
+  cat >"$RALPH_TEST_DIR/planted/.claude/lib/planted.sh" <<'PLANTED'
+planted_walk() {
+  while IFS= read -r x; do :; done <<LIST
+$1
+LIST
+  read -r a b <<ONE
+$2
+ONE
+  IFS=: read -ra dirs <<<"$PATH"
+  cat <<<"$1"
+  awk 'length' <<COUNT | sort
+$1
+COUNT
+  planted_open "$1" <<'BODY' || true
+**Status:** ready-for-agent
+BODY
+  body="$(
+    cat <<PROSE
+a sentence with a <<WORD in it, and $(planted_runs)
+PROSE
+  )"
+  cat <<'QUOTED'
+also prose
+QUOTED
+  # a comment that says done <<NOT and read <<<NOT
+  printf '%s\n' 'a string that says done <<NOT' "and <<<NOT"
+  echo "$((1 << 2))"
+}
+PLANTED
+  found="$(pack_heredocs "$RALPH_TEST_DIR/planted")"
+  assert_equal "$(pack_heredocs_refused "$found" | cut -f2,3)" "$(printf '%s\t%s\n' \
+    heredoc done heredoc read here-string read here-string cat heredoc awk heredoc planted_open)"
+  assert_equal "$(printf '%s\n' "$found" | awk -F'\t' '$2 == "heredoc" && $3 == "cat"' | cut -f1)" "$(printf '%s\n' \
+    planted.sh:17 planted.sh:21)"
 }
 
 @test "the shell that carries every verdict is one of the names the run pins" {

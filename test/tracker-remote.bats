@@ -1275,11 +1275,15 @@ DO
   # the run naming it. The paired witness is the same night with the script
   # untouched (s1, C0): both strays escalated.
   #
-  # The run is started with stdin on `/dev/null`, as s1 had to: a script that reads
-  # the stdin of a run started from a terminal waits for the terminal, and a call
-  # made outside that loop would hang the test instead of failing it. So only a
-  # call inside the loop has anything to read. The run ends in 4, the witness's
-  # too: one iteration and two strays is the staging, not the finding.
+  # Since [108] that loop walks its list by expansion, so the stdin a bare line
+  # would read there is the run's own, no longer the rest of the list — the
+  # closing of [106] and the walk of [108] both stand between the line and the
+  # strays now. So the run is handed a stdin of its own, finite and not empty:
+  # a line that reads its caller's stdin has something to drain and cannot hang
+  # the test on a terminal (s1 used `/dev/null`, which a bare line drains as
+  # nothing, and which is what left this test green with the closing removed on
+  # the full run of 16/10/2026). The run ends in 4, the witness's too: one
+  # iteration and two strays is the staging, not the finding.
   use_forge github
   forge_seed_many 1 1 bulk
   set_config ITER_CAP 1
@@ -1301,7 +1305,8 @@ printf 'tok-of-the-operator\n'
 TOK
 DO
 
-  run bash "$PACK_DIR/loop.sh" </dev/null
+  printf 'the run stdin line %s\n' 1 2 3 >"$RALPH_TEST_DIR/run.stdin"
+  run bash "$PACK_DIR/loop.sh" <"$RALPH_TEST_DIR/run.stdin"
   assert_equal "$status" 4
 
   # The script ran after the session rewrote it, or "it drained nothing" would be

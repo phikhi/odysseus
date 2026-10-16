@@ -940,14 +940,14 @@ proc__channel_alone() {
   # Who held it first, when anybody still does: that is the sentence a human can
   # act on. What was already written is said after it, and alone when its writer
   # let go before the listing.
-  while read -r word pid held; do
+  proc_lines "$verdict"
+  for held in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $' \t' "$held" word pid held
     case "$word" in
       held) holders="${holders:+$holders, }process $pid on its descriptor $held" ;;
       written) written="$pid" ;;
     esac
-  done <<VERDICT
-$verdict
-VERDICT
+  done
   if [ -n "$holders" ]; then
     PROC_CHANNEL_REFUSAL="it was held by $holders once its name was gone — opened in the instant between its creation and its unlink, which is what a process polling \$TMPDIR in a loop does"
     [ -z "$written" ] ||
@@ -1199,4 +1199,78 @@ proc_countdown() {
     waited=$((waited + 1))
   done
   return 0
+}
+
+# ── the lines of a value, and no file for them ([108]) ───────────────────────
+
+# The non-empty lines of $1, one element each, in `PROC_LINES`.
+#
+# What this replaces is `while read … done <<LIST`, and the reason is not style.
+# bash 3.2 makes every heredoc and every here-string a **named file**,
+# `/var/tmp/sh-thd-<n>` (`P_tmpdir`, not `$TMPDIR`), between the moment it creates
+# it and the moment it unlinks it after reopening it for the reader — and a
+# process of the same user that loops over that directory, opens what it finds and
+# keeps the descriptor, writes into the reader's input whenever it likes. Measured
+# on bash 3.2.57/darwin against a spy that does exactly that: a five-line
+# `while read` whose body forks read **1252 forged lines out of 1500**, a
+# `cat <<X` **297 out of 300**; a bare `read <<X`, which reads before anything can
+# be forked, 6 out of 300. The pack iterated every list it decides on that way —
+# the paths it force-stages, the ids it releases, the verdicts it reads.
+#
+# Word splitting on a newline makes no file and forks nothing, and it is linear:
+# twenty thousand lines, a megabyte, split in 0.04 s where the heredoc took 0.2 s.
+# The other expansion-only walk — `${rest%%$'\n'*}` then `${rest#*$'\n'}`, which
+# [98] used on lists that never hold more than a few lines — copies what is left of
+# the list on every line, and bash 3.2 does that slowly: 1.9 s for a thousand
+# lines, 47 s for five thousand. So that one stays where a list is bounded, and
+# this is what a list of unbounded length goes through.
+#
+# **An empty line is not an entry.** Splitting on IFS whitespace drops it, where a
+# heredoc handed it to the body like any other — and a heredoc also handed one to
+# a body when the list was empty. Every loop converted here had already decided the
+# same thing, with a `[ -n "$x" ] || continue` or a comparison an empty line cannot
+# pass; the one place a blank line is content, the transcript of a red branch in
+# the receipt, reads the file it is in instead.
+#
+# `set -f` because an unquoted expansion is also a glob, and a path called `*` is a
+# path. The pack never runs with `-f`, so turning it off again is putting things
+# back rather than guessing.
+#
+# The array is global and reused, which is safe for the one way it is meant to be
+# read: a `for` expands its words once, before the first iteration, so a body that
+# calls something that calls this again does not move the walk it is in. Read it as
+# `for x in ${PROC_LINES[@]+"${PROC_LINES[@]}"}` — bash 3.2 calls an empty array
+# unbound under `set -u`, and the alternative form is how it says nothing instead.
+# It is not assigned at the top of this file: every call assigns it whole, and
+# nothing reads it but the walk that follows a call.
+proc_lines() {
+  local IFS=$'\n'
+  set -f
+  PROC_LINES=($1)
+  set +f
+  return 0
+}
+
+# What `IFS=<chars> read -r NAME…` makes of the first line of $2, without the
+# heredoc it would read it from: leading and trailing <chars> dropped, a run of
+# them between two fields counted once, and the last NAME given the rest of the
+# line. Each NAME is assigned in the caller's scope by `printf -v`, which is why
+# every local here starts with two underscores — a NAME that matched one of them
+# would be assigned here and lost. Checked against `read` itself on eight thousand
+# generated lines, with tabs, spaces, backslashes and globs in them: no line where
+# the two disagree. Only whitespace <chars>, which is all the pack splits on.
+proc_split() {
+  local __ws="$1" __s="$2" __f
+  shift 2
+  __s="${__s%%$'\n'*}"
+  __s="${__s#"${__s%%[!$__ws]*}"}"
+  while [ "$#" -gt 1 ]; do
+    __f="${__s%%[$__ws]*}"
+    __s="${__s#"$__f"}"
+    __s="${__s#"${__s%%[!$__ws]*}"}"
+    printf -v "$1" '%s' "$__f"
+    shift
+  done
+  __s="${__s%"${__s##*[!$__ws]}"}"
+  printf -v "$1" '%s' "$__s"
 }

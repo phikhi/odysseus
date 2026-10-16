@@ -459,9 +459,7 @@ budget_check() {
       if [ "$name" = seven_day_opus ] && ! budget__spends_opus; then
         continue
       fi
-      read -r pct reset <<WINDOW
-$(budget__window "$BUDGET__CACHE_BODY" "$name")
-WINDOW
+      proc_split $' \t' "$(budget__window "$BUDGET__CACHE_BODY" "$name")" pct reset
       if [ -z "${pct:-}" ]; then
         missing="$missing $name"
         continue

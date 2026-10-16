@@ -360,13 +360,13 @@ retro__state_census() {
   local sealed path digest
   [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
   sealed="$(gate_witness_paths)" || return 1
-  while IFS="$(printf '\t')" read -r path digest; do
+  proc_lines "$(gate_witness_seal "$RALPH_RETRO_STATE")"
+  for digest in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$digest" path digest
     [ -n "$path" ] || continue
     if printf '%s\n' "$sealed" | grep -Fxq -- "$path"; then continue; fi
     printf '%s\t%s\n' "$path" "$digest"
-  done <<CENSUS
-$(gate_witness_seal "$RALPH_RETRO_STATE")
-CENSUS
+  done
   return 0
 }
 
@@ -375,13 +375,13 @@ CENSUS
 # what the two arms below say to a morning reader.
 retro__state_digest() {
   local list="$1" want="$2" path digest
-  while IFS="$(printf '\t')" read -r path digest; do
+  proc_lines "$list"
+  for digest in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$digest" path digest
     [ "$path" = "$want" ] || continue
     printf '%s\n' "$digest"
     return 0
-  done <<LIST
-$list
-LIST
+  done
   return 0
 }
 
@@ -407,7 +407,9 @@ retro_state_note() {
   held="$RETRO__STATE_HELD"
   if concurrency_may_overlap; then overlap=1; fi
 
-  while IFS="$(printf '\t')" read -r path digest; do
+  proc_lines "$now"
+  for digest in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$digest" path digest
     [ -n "$path" ] || continue
     was="$(retro__state_digest "$held" "$path")"
     [ "$was" != "$digest" ] || continue
@@ -426,18 +428,16 @@ retro_state_note() {
     else
       printf 'a file this run keeps in its lesson workspace is not the one this iteration was handed (%s), and nothing in this pack rewrites one there while a session runs: it is removed rather than put back, because this run kept no copy of it and a line appended to it is indistinguishable from one this run wrote ([80], [83])\n' "$path"
     fi
-  done <<NOW
-$now
-NOW
+  done
 
-  while IFS="$(printf '\t')" read -r path digest; do
+  proc_lines "$held"
+  for digest in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$digest" path digest
     [ -n "$path" ] || continue
     [ -z "$(retro__state_digest "$now" "$path")" ] || continue
     said=0
     printf 'a file this run keeps in its lesson workspace is gone (%s), and nothing in this run removed it: this run kept no copy of it, so whatever reads it next is served nothing ([83])\n' "$path"
-  done <<HELD
-$held
-HELD
+  done
 
   return "$said"
 }
@@ -714,16 +714,15 @@ retro_keep_brief() {
   [ -n "${RALPH_RETRO_STATE:-}" ] || return 0
   path="$(retro__brief_path "$ticket")"
   : >"$path.next" 2>/dev/null || return 0
-  while IFS= read -r name; do
+  proc_lines "$(receipt_branches)"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$name" ] || continue
     {
       printf '%s said:\n' "$name"
       receipt_branch_text "$name"
       printf '\n'
     } >>"$path.next" 2>/dev/null || true
-  done <<BRANCHES
-$(receipt_branches)
-BRANCHES
+  done
   if [ -s "$path.next" ]; then
     mv -f "$path.next" "$path" 2>/dev/null || rm -f "$path.next"
   else
@@ -963,8 +962,7 @@ retro__write_adr() {
 retro__escalate() {
   local ticket="$1" rule="$2" slug
   slug="retro-$(retro__slug "$rule")"
-  capability_propose "$slug" "$rule" <<BODY
-**Escalation:** the retro subagent of an autonomous run asked for a rule this loop must not write itself.
+  printf '%s\n' "**Escalation:** the retro subagent of an autonomous run asked for a rule this loop must not write itself.
 
 **What was asked**
 
@@ -980,8 +978,7 @@ is a human's decision.
 **Where it came from**
 
 The iteration on \`$ticket\`. Its audit receipt carries the verdicts and the
-findings the retro read.
-BODY
+findings the retro read." | capability_propose "$slug" "$rule"
   return 0
 }
 
@@ -1000,14 +997,14 @@ retro__record_lesson() {
 
   # Is this one already carried, in either section? A promoted lesson counted
   # again is not a new observation — it is the standing rule doing its job.
-  while IFS="$(printf '\t')" read -r id count path g; do
+  proc_lines "$(cat "$work" "$prom" 2>/dev/null)"
+  for g in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$g" id count path g
     [ -n "$id" ] || continue
     [ "$(retro__norm "$g")" = "$(retro__norm "$gist")" ] || continue
     hit="$id"
     break
-  done <<SEEN
-$(cat "$work" "$prom" 2>/dev/null)
-SEEN
+  done
 
   if [ -n "$hit" ]; then
     awk -F'\t' -v OFS='\t' -v want="$hit" \

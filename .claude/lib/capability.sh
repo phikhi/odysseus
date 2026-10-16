@@ -211,7 +211,8 @@ capability_inventory() {
       done
       ;;
     skill)
-      while IFS= read -r root; do
+      proc_lines "$(capability__roots)"
+      for root in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
         [ -n "$root" ] || continue
         [ -d "$root/.claude/skills" ] || continue
         for entry in "$root/.claude/skills"/*; do
@@ -219,12 +220,11 @@ capability_inventory() {
           name="$(basename "$entry")"
           printf '%s\t%s\n' "$name" "$root/.claude/skills/$name"
         done
-      done <<ROOTS
-$(capability__roots)
-ROOTS
+      done
       ;;
     agent | command)
-      while IFS= read -r root; do
+      proc_lines "$(capability__roots)"
+      for root in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
         [ -n "$root" ] || continue
         [ -d "$root/.claude/${kind}s" ] || continue
         for entry in "$root/.claude/${kind}s"/*.md; do
@@ -232,9 +232,7 @@ ROOTS
           name="$(basename "$entry" .md)"
           printf '%s\t%s\n' "$name" "$root/.claude/${kind}s/$name.md"
         done
-      done <<ROOTS
-$(capability__roots)
-ROOTS
+      done
       ;;
   esac
   return 0
@@ -244,12 +242,12 @@ ROOTS
 capability_covered() {
   local kind="$1" name="$2" have rest
   [ -n "$name" ] || return 1
-  while IFS="$(printf '\t')" read -r have rest; do
+  proc_lines "$(capability_inventory "$kind")"
+  for rest in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$rest" have rest
     [ "$have" = "$name" ] || continue
     return 0
-  done <<HAVE
-$(capability_inventory "$kind")
-HAVE
+  done
   return 1
 }
 
@@ -274,7 +272,9 @@ capability_route() {
   local name="$1" kind have where
   if [ -n "$name" ]; then
     for kind in lens skill agent command; do
-      while IFS="$(printf '\t')" read -r have where; do
+      proc_lines "$(capability_inventory "$kind")"
+      for where in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+        proc_split $'\t' "$where" have where
         [ "$have" = "$name" ] || continue
         if [ "$kind" = lens ]; then
           printf 'extend\t%s\t%s\n' "$kind" "$where"
@@ -282,9 +282,7 @@ capability_route() {
           printf 'reuse\t%s\t%s\n' "$kind" "$where"
         fi
         return 0
-      done <<HAVE
-$(capability_inventory "$kind")
-HAVE
+      done
     done
   fi
   printf 'create\t\t\n'
@@ -370,13 +368,11 @@ capability_bar() {
 capability_propose() {
   local slug="$1" title="$2" body rc=0
   body="$(cat)"
-  tracker_open_unique "$slug" "$title" <<BODY || rc=$?
-**Status:** ready-for-human
+  printf '%s\n' "**Status:** ready-for-human
 
 **Blocked by:** None
 
-$body
-BODY
+$body" | tracker_open_unique "$slug" "$title" || rc=$?
   return "$rc"
 }
 
@@ -652,7 +648,8 @@ BODY
 
 capability_surfaces() {
   local root
-  while IFS= read -r root; do
+  proc_lines "$(capability__roots)"
+  for root in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$root" ] || continue
     printf '%s\n' \
       "$root/.claude/agents" \
@@ -664,9 +661,7 @@ capability_surfaces() {
       "$root/.claude/CLAUDE.md" \
       "$root/CLAUDE.md" \
       "$root/.mcp.json"
-  done <<ROOTS
-$(capability__roots)
-ROOTS
+  done
   return 0
 }
 
@@ -700,13 +695,12 @@ capability_witness() {
   local dir="$1" path
   [ -n "$dir" ] && [ -d "$dir" ] || return 1
   : >"$dir/capability.witness" 2>/dev/null || return 1
-  while IFS= read -r path; do
+  proc_lines "$(capability_surfaces)"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     printf '%s\t%s\n' "$path" "$(capability__digest "$path")" \
       >>"$dir/capability.witness"
-  done <<PATHS
-$(capability_surfaces)
-PATHS
+  done
   return 0
 }
 

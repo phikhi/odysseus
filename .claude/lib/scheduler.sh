@@ -199,13 +199,12 @@ scheduler_candidates() {
 # the caller says so out loud; it is never an error.
 scheduler_chain() {
   local platform="${1:-}" mech
-  while IFS= read -r mech; do
+  proc_lines "$(scheduler_candidates "$platform")"
+  for mech in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$mech" ] || continue
     command -v "$mech" >/dev/null 2>&1 || continue
     printf '%s\n' "$mech"
-  done <<CANDIDATES
-$(scheduler_candidates "$platform")
-CANDIDATES
+  done
   return 0
 }
 
@@ -255,13 +254,13 @@ scheduler__ceilings() {
 # this module is a refusal ([27]).
 scheduler__ceiling() {
   local name seconds
-  while IFS="$(printf '\t')" read -r name seconds; do
+  proc_lines "$(scheduler__ceilings)"
+  for seconds in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$seconds" name seconds
     [ "$name" = "${1:-}" ] || continue
     printf '%s\n' "$seconds"
     return 0
-  done <<CEILINGS
-$(scheduler__ceilings)
-CEILINGS
+  done
   return 1
 }
 
@@ -661,23 +660,22 @@ scheduler_arm() {
   fi
 
   if [ -n "$programs" ]; then
-    while IFS= read -r line; do
+    proc_lines "$programs"
+    for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       [ -n "$line" ] || continue
       scheduler__log "$line"
-    done <<PROGRAMS
-$programs
-PROGRAMS
+    done
     scheduler__log "not arming a successor: the line this run would queue carries its own PATH, so a fresh shell days from now resolves those names the same way — and a fresh run adopts what it finds as the project's own and never says it again. A human has to look first"
     return 6
   fi
 
   if [ -n "$residue" ]; then
-    while IFS="$(printf '\t')" read -r kind name; do
+    proc_lines "$residue"
+    for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+      proc_split $'\t' "$name" kind name
       [ -n "$name" ] || continue
       scheduler__log "this run is leaving $name somewhere it did not find it ($kind), and could not put it back"
-    done <<RESIDUE
-$residue
-RESIDUE
+    done
     scheduler__log "not arming a successor: a fresh run pins the configuration it finds as its own baseline, so it would take that as the project's own and never say it again — a human has to look first"
     return 2
   fi
@@ -699,15 +697,14 @@ RESIDUE
   fi
 
   armed=''
-  while IFS= read -r mech; do
+  proc_lines "$chain"
+  for mech in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$mech" ] || continue
     if scheduler__submit "$mech" "$RALPH_SUCCESSOR_AT"; then
       armed="$mech"
       break
     fi
-  done <<CHAIN
-$chain
-CHAIN
+  done
 
   if [ -z "$armed" ]; then
     scheduler__log "every one-shot scheduler on this machine refused the successor — this run stops on the wall and a human resumes it"
@@ -719,11 +716,10 @@ CHAIN
 
   scheduler__log "armed a one-shot successor with $armed at $(scheduler__stamp "$RALPH_SUCCESSOR_AT" '%Y-%m-%dT%H:%M:%S%z' || printf '%s' "$RALPH_SUCCESSOR_AT") — the reset of $window as the ${source:-endpoint} gave it"
   scheduler__log "it is a new run and inherits nothing from this one: it re-reads the lesson index from the tree, takes its own baseline of what a fresh session loads, and knows nothing of the tickets this run retried"
-  while IFS= read -r line; do
+  proc_lines "$(scheduler_caveat "$armed")"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     scheduler__log "$line"
-  done <<CAVEAT
-$(scheduler_caveat "$armed")
-CAVEAT
+  done
   return 0
 }

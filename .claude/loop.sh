@@ -504,13 +504,13 @@ loop_preflight() {
 loop__report_tracker_findings() {
   local subject outcome message
   LOOP__FINDINGS="$(tracker_preflight)" || true
-  while IFS="$(printf '\t')" read -r subject outcome message; do
+  proc_lines "$LOOP__FINDINGS"
+  for message in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$message" subject outcome message
     [ -n "$subject" ] || continue
     loop_log "$message"
     tracker_finding_said "$subject" "$outcome"
-  done <<FINDINGS
-$LOOP__FINDINGS
-FINDINGS
+  done
 }
 
 # The other half, called once both locks are held ([72]): the line that goes in
@@ -528,12 +528,12 @@ FINDINGS
 # session's tree in between.
 loop__journal_tracker_findings() {
   local subject outcome message
-  while IFS="$(printf '\t')" read -r subject outcome message; do
+  proc_lines "$LOOP__FINDINGS"
+  for message in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$message" subject outcome message
     [ -n "$subject" ] || continue
     loop_journal_append "$subject" "$outcome" 0 0 0
-  done <<FINDINGS
-$LOOP__FINDINGS
-FINDINGS
+  done
 }
 
 # ── what an iteration hands back ([98]) ──────────────────────────────────────
@@ -1028,15 +1028,12 @@ loop__iterate() {
   # the same instant and for the same reason as the two above — before anything
   # below reads one of them, and well before the gate, the retro and the
   # capability bar do.
-  while IFS= read -r witness_note; do
+  proc_lines "$(gate_witness_note || true)"$'\n'"$(retro_index_note || true)"$'\n'"$(retro_state_note || true)"
+  for witness_note in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$witness_note" ] || continue
     loop_log "$ticket: $witness_note"
     receipt_note "$witness_note"
-  done <<WITNESSES
-$(gate_witness_note || true)
-$(retro_index_note || true)
-$(retro_state_note || true)
-WITNESSES
+  done
 
   # And a reading of the tracker taken **after** that session, in this
   # iteration's own memory ([75], [84]). The second of the two moments this entry
@@ -1486,14 +1483,13 @@ WITNESSES
 loop__next_ticket() {
   local inflight="$1" candidate frontier
   frontier="$(select_frontier)" || return 1
-  while IFS= read -r candidate; do
+  proc_lines "$frontier"
+  for candidate in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$candidate" ] || continue
     concurrency_clashes "$candidate" "$inflight" && continue
     printf '%s\n' "$candidate"
     return 0
-  done <<FRONTIER
-$frontier
-FRONTIER
+  done
   return 0
 }
 
@@ -1895,12 +1891,11 @@ loop__arm_successor() {
   programs="$(gate_path_residue "${RALPH_FRONTIER_COMMON:-}" || true)"
   lines="$(scheduler_arm "${RALPH_BUDGET_WINDOW:-}" "${RALPH_BUDGET_RESET:-}" \
     "${RALPH_BUDGET_SOURCE:-}" "$residue" "$programs")" || rc=$?
-  while IFS= read -r line; do
+  proc_lines "$lines"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     loop_log "$line"
-  done <<SUCCESSOR
-$lines
-SUCCESSOR
+  done
   loop_journal_append - "$(scheduler_outcome "$rc")" 0 0 0
   return 0
 }
@@ -2036,12 +2031,11 @@ loop_main() {
   # ([24]): a human reading the log in the morning sees it instead of having to
   # remember it exists. Nothing here removes anything — see gate_leftovers.
   local leftovers
-  while IFS= read -r leftovers; do
+  proc_lines "$(gate_leftovers || true)"
+  for leftovers in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$leftovers" ] || continue
     loop_log "$leftovers"
-  done <<LEFTOVERS
-$(gate_leftovers || true)
-LEFTOVERS
+  done
   # And what they left *inside* it: a worktree a killed run never removed stays
   # registered in the common git directory, where every later `git worktree` call
   # carries it. Counted and not pruned, for the reason above — this pack locks a
@@ -2160,12 +2154,11 @@ LEFTOVERS
   # And the zone this witness cannot cover on this backend, said out loud once for
   # the reason every unguarded zone is ([24]): a control that excludes something
   # has to name it.
-  while IFS= read -r leftovers; do
+  proc_lines "$(forensic_uncovered || true)"
+  for leftovers in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$leftovers" ] || continue
     loop_log "$leftovers"
-  done <<UNCOVERED
-$(forensic_uncovered || true)
-UNCOVERED
+  done
 
   # The user flow the terminal value gate will replay, copied here — before a
   # single session exists, which is the whole of what makes it a control ([11]).
@@ -2343,13 +2336,13 @@ UNCOVERED
       # witness, and every run that reclaimed anything would end by accusing itself
       # of a rewritten journal. `loop__finish` carries the same constraint for the
       # run's counters, for the same reason one layer down.
-      while read -r rid rdisposition; do
+      proc_lines "$reclaimed"
+      for rdisposition in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+        proc_split $' \t' "$rdisposition" rid rdisposition
         [ -n "$rid" ] || continue
         loop_log "reclaimed $rid from an owner that is gone -> $rdisposition"
         loop_journal_append "$rid" "reclaimed-$rdisposition" 0 0 0
-      done <<RECLAIMED
-$reclaimed
-RECLAIMED
+      done
     fi
 
     # No free slot: there is nothing to decide until one of them comes back.

@@ -833,31 +833,30 @@ tracker_preflight() {
   RALPH_TRACKER_REFUSED=''
 
   if [ -n "$sink" ]; then
-    while IFS= read -r name; do
+    proc_lines "$(LC_ALL=C sort -u "$sink")"
+    for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       [ -n "$name" ] || continue
       printf '%s\tunaddressable-name\t%s\n' "$name" "$(tracker__refuse_sentence "$name")"
       found=1
-    done <<REFUSED
-$(LC_ALL=C sort -u "$sink")
-REFUSED
+    done
     rm -f "$sink"
   fi
 
   [ -n "$ids" ] || return "$found"
 
-  while IFS= read -r nn; do
+  proc_lines "$(tracker__ambiguous_numbers "$ids")"
+  for nn in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$nn" ] || continue
     carriers="$(tracker__carriers "$ids" "$nn")"
     printf '%s\tambiguous-id\ttwo or more tickets carry the number %s (%s): a bare "%s" is never safe to resolve, so anything blocked on it can never enter the frontier\n' \
       "$nn" "$nn" "$(tracker__commas "$carriers")" "$nn"
     found=1
     ambiguous=1
-  done <<AMBIGUOUS
-$(tracker__ambiguous_numbers "$ids")
-AMBIGUOUS
+  done
   [ "$ambiguous" = 1 ] || return "$found"
 
-  while IFS= read -r id; do
+  proc_lines "$ids"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     raw="$(tracker_field "$id" 'Blocked by')" || continue
     for dep in $(printf '%s' "$raw" | tr ',' ' '); do
@@ -871,9 +870,7 @@ AMBIGUOUS
         "$(tracker__count "$(tracker__carriers "$ids" "$dep")")" \
         "$(tracker__commas "$(tracker__carriers "$ids" "$dep")")"
     done
-  done <<IDS
-$ids
-IDS
+  done
   return 1
 }
 
@@ -885,25 +882,23 @@ IDS
 tracker__carriers() {
   local ids="$1" nn="$2" id
   if tracker__holds_exactly "$ids" "$nn"; then return 0; fi
-  while IFS= read -r id; do
+  proc_lines "$ids"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     case "$id" in
       "$nn"-*) printf '%s\n' "$id" ;;
     esac
-  done <<IDS
-$ids
-IDS
+  done
   return 0
 }
 
 # Does any of these ids read exactly as this number.
 tracker__holds_exactly() {
   local ids="$1" nn="$2" id
-  while IFS= read -r id; do
+  proc_lines "$ids"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     if [ "$id" = "$nn" ]; then return 0; fi
-  done <<IDS
-$ids
-IDS
+  done
   return 1
 }
 
@@ -912,9 +907,7 @@ IDS
 # number nothing was ambiguous about was reported as ambiguous — and the report is
 # read by a human who then goes looking for a ticket called `99-my`.
 tracker__count() {
-  awk 'length { n++ } END { print n + 0 }' <<LIST
-$1
-LIST
+  printf '%s\n' "$1" | awk 'length { n++ } END { print n + 0 }'
 }
 
 tracker__is_ambiguous() {
@@ -928,7 +921,8 @@ tracker__is_ambiguous() {
 # lines above, and a digit string has no space to lose.
 tracker__ambiguous_numbers() {
   local ids="$1" id nn seen=' '
-  while IFS= read -r id; do
+  proc_lines "$ids"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     case "$id" in
       [0-9]*-*) nn="${id%%-*}" ;;
@@ -939,9 +933,7 @@ tracker__ambiguous_numbers() {
     seen="$seen$nn "
     tracker__is_ambiguous "$ids" "$nn" || continue
     printf '%s\n' "$nn"
-  done <<IDS
-$ids
-IDS
+  done
   return 0
 }
 
@@ -949,7 +941,5 @@ IDS
 # `tr '\n' ' '` then `s/ /, /g`, which turned one id carrying a space into two
 # names, in the very message a human reads to go find the file.
 tracker__commas() {
-  awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }' <<LIST
-$1
-LIST
+  printf '%s\n' "$1" | awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }'
 }

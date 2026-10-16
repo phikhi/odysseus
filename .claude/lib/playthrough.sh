@@ -485,14 +485,13 @@ playthrough__said() {
 # last-one-wins field.
 playthrough__said_all() {
   local tag="$1" stream="$2" line
-  while IFS= read -r line; do
+  proc_lines "$(lenses_findings "$stream" 2>/dev/null |
+    sed -n "s/^[[:space:]]*$PLAYTHROUGH_TOKEN-$tag:[[:space:]]*//p")"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     playthrough__oneline "$line"
     printf '\n'
-  done <<STEPS
-$(lenses_findings "$stream" 2>/dev/null |
-    sed -n "s/^[[:space:]]*$PLAYTHROUGH_TOKEN-$tag:[[:space:]]*//p")
-STEPS
+  done
   return 0
 }
 
@@ -617,7 +616,8 @@ playthrough__strangers() {
   local opened id nl
   nl=$'\n'
   opened="$nl$(playthrough__opened)$nl"
-  while IFS= read -r id; do
+  proc_lines "$(tracker_ids 2>/dev/null)"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     case "$id" in
       *-"$PLAYTHROUGH_SLUG_PREFIX"-*) ;;
@@ -627,9 +627,7 @@ playthrough__strangers() {
       *"$nl$id$nl"*) continue ;;
     esac
     printf '%s\n' "$id"
-  done <<IDS
-$(tracker_ids 2>/dev/null)
-IDS
+  done
   return 0
 }
 
@@ -648,30 +646,25 @@ IDS
 # read any name carrying the prefix.
 playthrough__opened_slug() {
   local slug="$1" id
-  while IFS= read -r id; do
+  proc_lines "$(playthrough__opened)"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     case "$id" in
       *-"$slug") return 0 ;;
     esac
-  done <<IDS
-$(playthrough__opened)
-IDS
+  done
   return 1
 }
 
 # How many entries in a one-per-line list.
 playthrough__count() {
-  awk 'length { n++ } END { print n + 0 }' <<LIST
-$1
-LIST
+  printf '%s\n' "$1" | awk 'length { n++ } END { print n + 0 }'
 }
 
 # A one-per-line list rendered for a human. Line by line and never `tr '\n' ' '`
 # then `s/ /, /g`, which turns one id carrying a space into two names in the very
 # sentence a human reads to go and find the file ([37]).
 playthrough__names() {
-  awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }' <<LIST
-$1
-LIST
+  printf '%s\n' "$1" | awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }'
 }
 
 # Whether a proposed write-surface may be handed to a session at all.
@@ -690,12 +683,11 @@ playthrough__surface_ok() {
   local surface="$1" sealed
   surface="$(gate_authored_list "$(printf '%s' "$surface" | tr -d '`,')")"
   [ -n "$surface" ] || return 1
-  while IFS= read -r sealed; do
+  proc_lines "$(gate_sealed_paths)"
+  for sealed in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$sealed" ] || continue
     if gate_in_surface "$sealed" "$surface"; then return 1; fi
-  done <<SEALED
-$(gate_sealed_paths)
-SEALED
+  done
   return 0
 }
 
@@ -793,8 +785,7 @@ playthrough__steps_or_prose() {
 
 playthrough__inject() {
   local title="$1" hole="$2" surface="$3" rc=0
-  tracker_open_unique "$(playthrough__slug "$PLAYTHROUGH_SLUG_PREFIX" "$title")" "$title" <<BODY || rc=$?
-**Status:** ready-for-agent
+  printf '%s\n' "**Status:** ready-for-agent
 
 **Blocked by:** None
 
@@ -814,15 +805,13 @@ The whole playthrough — the flow step by step, the commands and what they
 answered — is in \`docs/playthroughs/${FEATURE:-}.md\`.
 
 - [ ] The hole above is closed: the value reaches the user through the flow in \`spec.md\`.
-- [ ] The next playthrough of this feature is green.
-BODY
+- [ ] The next playthrough of this feature is green." | tracker_open_unique "$(playthrough__slug "$PLAYTHROUGH_SLUG_PREFIX" "$title")" "$title" || rc=$?
   return "$rc"
 }
 
 playthrough__escalate() {
   local title="$1" why="$2" rc=0
-  capability_propose "$(playthrough__slug "$PLAYTHROUGH_GAP_PREFIX" "$title")" "$title" <<BODY || rc=$?
-**Escalation:** the terminal value gate of an autonomous run could not close this feature, and this is not a hole a session may close on its own.
+  printf '%s\n' "**Escalation:** the terminal value gate of an autonomous run could not close this feature, and this is not a hole a session may close on its own.
 
 **What was found**
 
@@ -838,8 +827,7 @@ take decisions of that shape.
 **Where to read the whole of it**
 
 \`docs/playthroughs/${FEATURE:-}.md\` — the flow step by step, the commands the
-loop ran, and what they answered.
-BODY
+loop ran, and what they answered." | capability_propose "$(playthrough__slug "$PLAYTHROUGH_GAP_PREFIX" "$title")" "$title" || rc=$?
   return "$rc"
 }
 

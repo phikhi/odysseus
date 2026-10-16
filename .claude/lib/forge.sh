@@ -999,15 +999,14 @@ forge__body_at() {
 forge_ids() {
   local flavour="$1" line num slug id records
   records="$(forge__records "$flavour")" || return 1
-  while IFS= read -r line; do
+  proc_lines "$records"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     num="$(forge__field_at 1 "$line")" || continue
     slug="$(forge__field_at 2 "$line")" || slug=''
     id="$(forge__record_id "$num" "$slug")" || continue
     printf '%s\n' "$id"
-  done <<RECORDS
-$records
-RECORDS
+  done
   return 0
 }
 
@@ -1066,7 +1065,8 @@ forge_frontier() {
     printf 'forge: the tracker could not be listed — this is not an empty frontier\n' >&2
     return 1
   }
-  while IFS= read -r line; do
+  proc_lines "$records"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     num="$(forge__field_at 1 "$line")" || continue
     slug="$(forge__field_at 2 "$line")" || slug=''
@@ -1080,9 +1080,7 @@ forge_frontier() {
     [ "$(forge__field_of "$body" Status)" = "ready-for-agent" ] || continue
     forge__is_unblocked "$flavour" "$body" || continue
     printf '%s\n' "$id"
-  done <<RECORDS
-$records
-RECORDS
+  done
   return 0
 }
 
@@ -1424,14 +1422,14 @@ forge_sidecar_drift() {
   local dir="${1:-}" id kind was now clause
   [ -n "$dir" ] || return 1
   [ -f "$dir/sidecar" ] && [ -f "$dir/sidecar.base" ] || return 1
-  while IFS="$(printf '\t')" read -r id kind was now; do
+  proc_lines "$(forge__sidecar_moved "$dir" || true)"
+  for now in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$now" id kind was now
     [ -n "$kind" ] || continue
     clause="$(forge__sidecar_clause "$id" "$kind" "$was" "$now")"
     printf '%s\t%s\t%s\n' "$(forge__sidecar)" sidecar-drift \
       "the local record this backend keeps about a ticket moved while this run was in flight: $clause — this run read its own copy, so nothing it decided came from that line, and nothing here puts the file back or refuses over it"
-  done <<MOVED
-$(forge__sidecar_moved "$dir" || true)
-MOVED
+  done
   return 0
 }
 
@@ -1543,7 +1541,7 @@ forge_snapshot_moved() {
   [ -n "$before" ] || return 2
   now="$(forge__records "$flavour")" || return 2
   sep="$(printf '\001')"
-  moved="$(LC_ALL=C awk -F'\t' -v OFS='\t' -v sep="$sep" '
+  moved="$(printf '%s\n' "$before" "$sep" "$now" | LC_ALL=C awk -F'\t' -v OFS='\t' -v sep="$sep" '
     $0 == sep { half = 1; next }
     half == 0 {
       if ($1 != "") { was[$1] = $0; slug[$1] = $2; had[$1] = 1 }
@@ -1560,20 +1558,16 @@ forge_snapshot_moved() {
     # an issue somebody deleted, and what a human then reads is the sentence for a
     # ticket that could not be put back — which is exactly what happened.
     END { for (k in had) if (!(k in here)) print "edited", k, slug[k] }
-  ' <<STREAM | LC_ALL=C sort -t"$(printf '\t')" -k2,2n
-$before
-$sep
-$now
-STREAM
+  ' | LC_ALL=C sort -t"$(printf '\t')" -k2,2n
   )" || return 2
 
-  while IFS="$(printf '\t')" read -r outcome num slug; do
+  proc_lines "$moved"
+  for slug in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$slug" outcome num slug
     [ -n "$num" ] || continue
     id="$(forge__record_id "$num" "$slug")" || continue
     printf '%s\t%s\n' "$outcome" "$id"
-  done <<MOVED
-$moved
-MOVED
+  done
   return 0
 }
 
@@ -2015,14 +2009,13 @@ forge__create() {
 # decides; this stays a scan over lines, which is all it ever settled.
 forge__slug_taken() {
   local records="$1" slug="$2" line s
-  while IFS= read -r line; do
+  proc_lines "$records"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     s="$(forge__field_at 2 "$line")" || continue
     [ "$s" = "$slug" ] || continue
     return 0
-  done <<RECORDS
-$records
-RECORDS
+  done
   return 1
 }
 

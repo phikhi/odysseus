@@ -889,7 +889,9 @@ tracker_local_snapshot_moved() {
   # to the tickets, so nothing staged elsewhere moves.
   proc_git -C "$root" reset -q -- "$dir" 2>/dev/null || true
 
-  while IFS="$(printf '\t')" read -r status path; do
+  proc_lines "$diff"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$path" status path
     [ -n "$path" ] || continue
     # A name git prints quoted whatever `core.quotePath` says — a tab, a newline,
     # a quote — is a name nothing here can hand to `checkout-index` ([39]).
@@ -910,9 +912,7 @@ tracker_local_snapshot_moved() {
       A) printf 'added\t%s\n' "$id" ;;
       *) printf 'edited\t%s\n' "$id" ;;
     esac
-  done <<TRACKER
-$diff
-TRACKER
+  done
   return 0
 }
 

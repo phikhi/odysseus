@@ -225,12 +225,11 @@ forensic__manifest() {
   tab="$(printf '\t')"
 
   refs="$(forensic_failed_refs)" || return 1
-  while IFS= read -r line; do
+  proc_lines "$refs"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     printf 'ref\t%s\t%s\n' "${line#*"$tab"}" "${line%%"$tab"*}"
-  done <<REFS
-$refs
-REFS
+  done
 
   # Every entry under the directory and not only its regular files, which is the
   # criterion read literally: what this is about is a name the human sink points
@@ -246,12 +245,11 @@ REFS
   # started with into a receipt somebody deleted.
   if dir="$(forensic__receipt_dir)" && [ -d "$dir" ]; then
     listing="$(find "$dir" -mindepth 1 2>/dev/null)" || return 1
-    while IFS= read -r file; do
+    proc_lines "$(printf '%s\n' "$listing" | LC_ALL=C sort)"
+    for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       [ -n "$file" ] || continue
       printf 'receipt\t%s\t%s\n' "$file" "$(forensic__digest "$file")"
-    done <<RECEIPTS
-$(printf '%s\n' "$listing" | LC_ALL=C sort)
-RECEIPTS
+    done
   fi
 
   if file="$(forensic__playthrough)"; then
@@ -394,7 +392,7 @@ forensic__moved() {
   local dir="${1:-}" live moved
   [ -n "$dir" ] && [ -s "$dir/forensic.witness" ] || return 1
   live="$(forensic__manifest)" || return 1
-  moved="$(awk -F'\t' -v OFS='\t' \
+  moved="$(printf '%s\n' "$live" | awk -F'\t' -v OFS='\t' \
     -v reg="$dir/forensic.written" -v wit="$dir/forensic.witness" '
     BEGIN {
       while ((getline line < reg) > 0) { if (line != "") skip[line] = 1 }
@@ -412,9 +410,7 @@ forensic__moved() {
         if (w == n) continue
         print kind[k], k, w, n
       }
-    }' <<MANIFEST | LC_ALL=C sort
-$live
-MANIFEST
+    }' | LC_ALL=C sort
   )" || return 1
   [ -n "$moved" ] || return 1
   printf '%s\n' "$moved"
@@ -497,24 +493,24 @@ forensic__clause() {
 # `receipt forensic-drift` sends a human looking without saying where.
 forensic_drift() {
   local dir="${1:-}" kind key was now clause subject outcome message
-  while IFS="$(printf '\t')" read -r kind key was now; do
+  proc_lines "$(forensic__moved "$dir" || true)"
+  for now in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$now" kind key was now
     [ -n "$key" ] || continue
     clause="$(forensic__clause "$kind" "$key" "$was" "$now")"
     receipt_gap "the record the human sink sends somebody to read moved while this run was in flight: $clause — nothing here judged it, no rollback undoes it, and nothing puts it back"
     printf '%s\t%s\t%s\n' "$key" forensic-drift "$clause"
-  done <<MOVED
-$(forensic__moved "$dir" || true)
-MOVED
+  done
   # And the adapter's zone, passed on unchanged ([77]). The sentence is the
   # adapter's because only it knows what one of its records decides; both
   # channels are this module's, so an iteration has one reading and a run one
   # place that says what moved under it.
-  while IFS="$(printf '\t')" read -r subject outcome message; do
+  proc_lines "$(tracker_sidecar_drift "$dir" 2>/dev/null || true)"
+  for message in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$message" subject outcome message
     [ -n "$subject" ] || continue
     receipt_gap "$message"
     printf '%s\t%s\t%s\n' "$subject" "${outcome:-sidecar-drift}" "$message"
-  done <<SIDECAR
-$(tracker_sidecar_drift "$dir" 2>/dev/null || true)
-SIDECAR
+  done
   return 0
 }

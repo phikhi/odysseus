@@ -1076,3 +1076,105 @@ PLANT
   assert_output_contains "lsof is on no PATH directory"
   assert_equal "$(claude_call_count)" "0"
 }
+
+# ── the lines of a value, and no file for them ([108]) ───────────────────────
+
+@test "proc_lines hands back every line that is not empty, whole, and expands nothing" {
+  # Written to a file and sourced rather than built by `$(cat <<…)`: bash 3.2 reads
+  # the `)` of a case pattern inside a heredoc inside a substitution as the end of
+  # the substitution.
+  cat >"$RALPH_TEST_DIR/check.sh" <<'CHECK'
+cd "$(mktemp -d)" && : >aa && : >ab
+tab="$(printf '\t')"
+proc_lines "$(printf '%s\n' 'a*' '' '  two words  ' "${tab}tab-led" '?b' '' '$HOME')"
+printf '<%s>\n' "${PROC_LINES[@]}"
+printf 'count=%s\n' "${#PROC_LINES[@]}"
+case $- in *f*) echo 'noglob left on' ;; esac
+proc_lines ''
+for x in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do echo "never $x"; done
+printf 'empty=%s\n' "${#PROC_LINES[@]}"
+CHECK
+  pack_run ". \"$RALPH_TEST_DIR/check.sh\""
+  assert_success
+  assert_equal "$output" "$(printf '%s\n' '<a*>' '<  two words  >' "<$(printf '\t')tab-led>" '<?b>' '<$HOME>' 'count=5' 'empty=0')"
+}
+
+@test "proc_split makes of a line what read makes of it" {
+  # [108] took `read` off the lists the pack walks, because `read` needs something
+  # to read from and every form of that in bash 3.2 is a heredoc, a here-string —
+  # the same named file — or a fork. So the splitting `read` did is done by
+  # expansion, and the question is whether it is the same splitting. Asked of
+  # `read` itself, through the heredoc a test is allowed: the lines that tell two
+  # splitters apart are the ones with separators at either end, two of them in a
+  # row, more fields than names, fewer, and backslashes `-r` keeps.
+  cat >"$RALPH_TEST_DIR/check.sh" <<'CHECK'
+tab="$(printf '\t')"
+nl=$'\n'
+n=0 bad=0
+for s in a "a${tab}b${tab}c${tab}d" "${tab}lead" "trail${tab}${tab}" "a${tab}${tab}b" '' \
+  "  sp  ace  " 'x\y' '*' "a${tab} b" "${tab}${tab}" ' ' "one${tab}two"; do
+  for ws in "$tab" " $tab"; do
+    IFS="$ws" read -r r1 r2 r3 <<LINE || true
+$s
+LINE
+    proc_split "$ws" "$s" p1 p2 p3
+    IFS="$ws" read -r q1 <<LINE || true
+$s
+LINE
+    proc_split "$ws" "$s" o1
+    n=$((n + 1))
+    if [ "$r1|$r2|$r3|$q1" != "$p1|$p2|$p3|$o1" ]; then
+      bad=$((bad + 1))
+      printf 'differs on [%s]: read gave [%s] and proc_split [%s]\n' "$s" "$r1|$r2|$r3|$q1" "$p1|$p2|$p3|$o1"
+    fi
+  done
+done
+proc_split "$tab" "first${tab}line${nl}second${tab}line" a b
+printf 'checked=%s differs=%s first-line=[%s|%s]\n' "$n" "$bad" "$a" "$b"
+CHECK
+  pack_run ". \"$RALPH_TEST_DIR/check.sh\""
+  assert_success
+  assert_output_contains "checked=26 differs=0 first-line=[first|line]"
+}
+
+@test "a process that rewrites every heredoc it can find reaches nothing proc_lines hands back" {
+  # The measure, as a test. bash 3.2 makes a heredoc a named file under /var/tmp
+  # for an instant on every platform this pack runs on today; bash 5.1 and later
+  # pass a small one through a pipe on Linux, where there would be nothing to see.
+  [ "$(uname -s)" = Darwin ] || skip "this bash may pass a heredoc through a pipe, and there is no named file to watch"
+  local tag="$$-$RANDOM"
+  # Written before the spy starts, and run without a heredoc of the test's own:
+  # the spy rewrites any file holding one of its markers, its instructions included.
+  cat >"$RALPH_TEST_DIR/check.sh" <<CHECK
+honest=0 forged=0
+for i in \$(seq 1 200); do
+  while IFS= read -r x; do /usr/bin/true; done <<LIST
+WITNESS-$tag-\$i
+WITNESS-$tag-\$i-second
+LIST
+  proc_lines "WALKED-$tag-\$i
+WALKED-$tag-\$i-second
+WALKED-$tag-\$i-third"
+  for x in \${PROC_LINES[@]+"\${PROC_LINES[@]}"}; do
+    case "\$x" in
+      WALKED-$tag-*) honest=\$((honest + 1)) ;;
+      *) forged=\$((forged + 1)) ;;
+    esac
+  done
+done
+printf 'honest=%s forged=%s\n' "\$honest" "\$forged"
+CHECK
+  heredoc_spy 30 "WITNESS-$tag" "WALKED-$tag"
+  pack_run ". \"$RALPH_TEST_DIR/check.sh\""
+  kill -KILL "$PACK_BG_PID" 2>/dev/null || true
+  wait "$PACK_BG_PID" 2>/dev/null || true
+  assert_success
+
+  # The witness first: on this machine, in this run, the spy found the heredocs a
+  # `while read` was fed — so it was looking at the right place at the right time,
+  # and what follows is not true because it never woke up ([80]).
+  assert_file_exists "$RALPH_TEST_DIR/spy.WITNESS-$tag"
+  # And nothing it found ever held a line proc_lines was walking.
+  refute_file_exists "$RALPH_TEST_DIR/spy.WALKED-$tag"
+  assert_output_contains "honest=600 forged=0"
+}
