@@ -274,16 +274,15 @@ gate__tmp_leftovers() {
   # are globs, and `for name in $(gate_tmp_names)` would let the shell expand them
   # against whatever directory the run happens to stand in.
   set --
-  while IFS= read -r name; do
+  proc_lines "$(gate_tmp_names)"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$name" ] || continue
     if [ "$#" -eq 0 ]; then
       set -- -name "$name"
     else
       set -- "$@" -o -name "$name"
     fi
-  done <<NAMES
-$(gate_tmp_names)
-NAMES
+  done
   [ "$#" -gt 0 ] || return 1
   n="$(find "$tmp" -maxdepth 1 \( "$@" \) -mtime +0 2>/dev/null |
     wc -l | tr -d ' ')"
@@ -350,16 +349,15 @@ NAMES
 gate_guards() {
   local guard owner since list found=1
   list="$(gate__guard_paths)"
-  while IFS= read -r guard; do
+  proc_lines "$list"
+  for guard in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$guard" ] || continue
     [ -d "$guard" ] || continue
     owner="$(cat "$guard/pid" 2>/dev/null)" || owner=''
     since="$(cat "$guard/since" 2>/dev/null)" || since=''
     printf '%s\t%s\t%s\n' "$guard" "$owner" "$since"
     found=0
-  done <<GUARDS
-$list
-GUARDS
+  done
   return "$found"
 }
 
@@ -416,7 +414,9 @@ gate_guard_witness() {
 # ticket from whoever legitimately holds it.
 gate_guard_note() {
   local dir="${1:-}" guard owner since names='' n=0 when
-  while IFS="$(printf '\t')" read -r guard owner since; do
+  proc_lines "$(gate_guards || true)"
+  for since in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$since" guard owner since
     [ -n "$guard" ] || continue
     [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null || continue
     when='and it appeared while this run was already running'
@@ -426,9 +426,7 @@ gate_guard_note() {
     fi
     n=$((n + 1))
     names="$names; $guard is held by pid $owner${since:+ since $since}, $when"
-  done <<GUARDS
-$(gate_guards || true)
-GUARDS
+  done
   [ "$n" -gt 0 ] || return 1
   printf '%s exclusion guard(s) of this tree are held by a live process%s\n' \
     "$n" "$names"
@@ -469,7 +467,9 @@ GUARDS
 # `gate_guard_witness` writes down for the sentence a refused claim prints.
 gate__stale_guards() {
   local guard owner since gone='' live='' nd=0 nl=0 rc=1
-  while IFS="$(printf '\t')" read -r guard owner since; do
+  proc_lines "$(gate_guards || true)"
+  for since in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$since" guard owner since
     [ -n "$guard" ] || continue
     if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
       nl=$((nl + 1))
@@ -478,9 +478,7 @@ gate__stale_guards() {
       nd=$((nd + 1))
       gone="$gone $guard"
     fi
-  done <<GUARDS
-$(gate_guards || true)
-GUARDS
+  done
   if [ "$nd" -gt 0 ]; then
     printf '%s exclusion guard(s) left in this tree by an earlier run:%s — the owner is gone, nothing here removes them, and the next caller that needs one takes it over without a word\n' \
       "$nd" "$gone"
@@ -597,15 +595,14 @@ gate_authored_list() {
 # the zone line stayed quiet about the paths it did not.
 gate_under_path() {
   local file="$1" path
-  while IFS= read -r path; do
+  proc_lines "$2"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     path="${path%/}"
     [ -n "$path" ] || continue
     case "$file" in
       "$path" | "$path"/*) return 0 ;;
     esac
-  done <<PATHS
-$2
-PATHS
+  done
   return 1
 }
 
@@ -1042,7 +1039,8 @@ gate_frontier_pin() {
     return 1
   fi
 
-  while IFS= read -r file; do
+  proc_lines "$(gate__ignore_tree_rules)"
+  for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$file" ] || continue
     dir="$(dirname "$file")"
     mkdir -p "$rules/$dir" 2>/dev/null || continue
@@ -1050,9 +1048,7 @@ gate_frontier_pin() {
     # that is the right direction: the pin may only ever be wider than what the
     # rules say now, and a narrowing is something this ticket says nothing about.
     cp "$file" "$rules/$file" 2>/dev/null || true
-  done <<RULES
-$(gate__ignore_tree_rules)
-RULES
+  done
 
   # `info/` is created by git's default template, and this witness was told to use
   # an empty one: the directory has to be made rather than assumed. Probed the hard
@@ -1165,12 +1161,11 @@ gate__frontier_manifest() {
 
 gate__ignore_tree_manifest() {
   local file
-  while IFS= read -r file; do
+  proc_lines "$(gate__ignore_tree_rules)"
+  for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$file" ] || continue
     printf 'tree\t%s\t%s\n' "$file" "$(gate__digest "$file")"
-  done <<RULES
-$(gate__ignore_tree_rules)
-RULES
+  done
   return 0
 }
 
@@ -1353,7 +1348,8 @@ gate__config_manifest() {
   local tab cr name odd=''
   tab="$(printf '\t')"
   cr="$(printf '\r')"
-  while IFS= read -r name; do
+  proc_lines "$(gate__config_names)"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$name" ] || continue
     case "$name" in
       *"$tab"* | *"$cr"*)
@@ -1363,9 +1359,7 @@ gate__config_manifest() {
         ;;
     esac
     printf 'cfg\t%s\t%s\n' "$name" "$(gate__config_digest "$name")"
-  done <<NAMES
-$(gate__config_names)
-NAMES
+  done
   [ -z "$odd" ] ||
     printf 'cfg\t%s\t%s\n' "$GATE_CONFIG_ODD" \
       "$(printf '%s' "$odd" | cksum | awk '{ print $1 "." $2 }')"
@@ -1417,16 +1411,15 @@ gate__config_restore() {
       # again rather than read back out of a field that cannot hold them.
       tab="$(printf '\t')"
       cr="$(printf '\r')"
-      while IFS= read -r key; do
+      proc_lines "$(gate__config_names)"
+      for key in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
         [ -n "$key" ] || continue
         case "$key" in
           *"$tab"* | *"$cr"*)
             proc_git config --unset-all "$key" >/dev/null 2>&1 || true
             ;;
         esac
-      done <<NAMES
-$(gate__config_names)
-NAMES
+      done
       [ -z "$(gate__frontier_current "$GATE_CONFIG_ODD")" ]
       return
       ;;
@@ -1559,14 +1552,14 @@ gate_witness_mutable() {
 
 gate__witness_mode() {
   local want="$1" name mode
-  while IFS="$(printf '\t')" read -r name mode; do
+  proc_lines "$(gate_witness_mutable)"
+  for mode in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$mode" name mode
     if [ "$name" = "$want" ]; then
       printf '%s\n' "$mode"
       return 0
     fi
-  done <<MODES
-$(gate_witness_mutable)
-MODES
+  done
   printf 'fixed\n'
   return 0
 }
@@ -1611,7 +1604,9 @@ MODES
 gate_witness_moved() {
   local root="${1:-}" seal="${RALPH_WITNESS_SEAL:-}" path digest now mode moved=1
   [ -n "$seal" ] || return 1
-  while IFS="$(printf '\t')" read -r path digest; do
+  proc_lines "$seal"
+  for digest in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$digest" path digest
     [ -n "$path" ] || continue
     if [ -n "$root" ]; then
       case "$path" in
@@ -1639,9 +1634,7 @@ gate_witness_moved() {
       *) printf '%s\t%s\n' "$path" rewritten ;;
     esac
     moved=0
-  done <<SEAL
-$seal
-SEAL
+  done
   return "$moved"
 }
 
@@ -1650,11 +1643,11 @@ SEAL
 # refusal has to say what it refused to replay.
 gate_witness_intact() {
   local want="$1" path what
-  while IFS="$(printf '\t')" read -r path what; do
+  proc_lines "$(gate_witness_moved || true)"
+  for what in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$what" path what
     if [ "$path" = "$want" ]; then return 1; fi
-  done <<MOVED
-$(gate_witness_moved || true)
-MOVED
+  done
   return 0
 }
 
@@ -1668,7 +1661,9 @@ MOVED
 # half-truth as a night that does not stop.
 gate_witness_note() {
   local path what said=1
-  while IFS="$(printf '\t')" read -r path what; do
+  proc_lines "$(gate_witness_moved || true)"
+  for what in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$what" path what
     [ -n "$path" ] || continue
     case "$what" in
       gone)
@@ -1682,9 +1677,7 @@ gate_witness_note() {
         ;;
     esac
     said=0
-  done <<MOVED
-$(gate_witness_moved || true)
-MOVED
+  done
   return "$said"
 }
 
@@ -1694,13 +1687,13 @@ MOVED
 # and the receipt through `gate_witness_note`.
 gate__witness_clause() {
   local root="${1:-}" path what
-  while IFS="$(printf '\t')" read -r path what; do
+  proc_lines "$(gate_witness_moved "$root" || true)"
+  for what in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$what" path what
     [ -n "$path" ] || continue
     printf ' — %s is %s' "$path" "$what"
     return 0
-  done <<MOVED
-$(gate_witness_moved "$root" || true)
-MOVED
+  done
   return 0
 }
 
@@ -2175,7 +2168,9 @@ gate_frontier_put_back() {
 gate__frontier_detect() {
   local kind name rc=0
 
-  while IFS="$(printf '\t')" read -r kind name; do
+  proc_lines "$( { gate_frontier_moved || true; } )"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$name" kind name
     [ "$kind" = dir ] && [ -n "$name" ] || continue
     if gate__frontier_restore "$kind" "$name"; then
       printf 'moved the ignore frontier in %s, which decides what every check here can see — no write-surface may cover it (put back)\n' "$name"
@@ -2183,23 +2178,23 @@ gate__frontier_detect() {
       printf 'moved the ignore frontier in %s, which decides what every check here can see — and this run could not put it back\n' "$name"
     fi
     rc=1
-  done <<INSIDE
-$( { gate_frontier_moved || true; } )
-INSIDE
+  done
 
-  while IFS="$(printf '\t')" read -r kind name; do
+  proc_lines "$( { gate_frontier_moved || true; } )"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$name" kind name
     [ "$kind" = host ] && [ -n "$name" ] || continue
     printf 'moved the ignore frontier in %s, outside the repository — no write-surface may cover it, and nothing here can put it back\n' "$name"
     rc=1
-  done <<OUTSIDE
-$( { gate_frontier_moved || true; } )
-OUTSIDE
+  done
 
   # And the half that is not about seeing at all ([46]): what git *runs*, and what
   # it transforms on the way into a worktree. Said in its own words rather than
   # under the sentence above, because a human who reads "the ignore frontier" about
   # `core.fsmonitor` has been told the wrong thing about what just happened.
-  while IFS="$(printf '\t')" read -r kind name; do
+  proc_lines "$( { gate_frontier_moved || true; } )"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$name" kind name
     [ "$kind" = cfg ] && [ -n "$name" ] || continue
     if gate__frontier_restore "$kind" "$name"; then
       printf 'moved %s, which decides what git executes and what it hands the next session — no write-surface may cover it (put back)\n' "$name"
@@ -2207,9 +2202,7 @@ OUTSIDE
       printf 'moved %s, which decides what git executes and what it hands the next session — and this run could not put it back: what answers for it now is not written in this repository, and nothing here writes outside it\n' "$name"
     fi
     rc=1
-  done <<EXEC
-$( { gate_frontier_moved || true; } )
-EXEC
+  done
   return "$rc"
 }
 
@@ -2246,16 +2239,15 @@ gate__frontier_record() {
 '
   seen="$nl$(tail -n "+$(($(gate__frontier_mark "$mark") + 1))" "$common/ledger" 2>/dev/null ||
     true)$nl"
-  while IFS= read -r line; do
+  proc_lines "$findings"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     case "$seen" in
       *"$nl$tag$tab$line$nl"*) continue ;;
     esac
     printf '%s\t%s\n' "$tag" "$line" >>"$common/ledger"
     seen="$seen$tag$tab$line$nl"
-  done <<RECORD
-$findings
-RECORD
+  done
   return 0
 }
 
@@ -2292,13 +2284,13 @@ gate__frontier_share() {
   total="$(awk 'END { print NR + 0 }' "$ledger")"
   [ "$total" -gt "$seen" ] || return 0
 
-  while IFS="$(printf '\t')" read -r tag finding; do
+  proc_lines "$(tail -n "+$((seen + 1))" "$ledger" 2>/dev/null || true)"
+  for finding in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$finding" tag finding
     [ -n "$finding" ] || continue
     printf '%s\n' "$finding"
     [ "$tag" = "$pin" ] || foreign=1
-  done <<LEDGER
-$(tail -n "+$((seen + 1))" "$ledger" 2>/dev/null || true)
-LEDGER
+  done
 
   # And the line that says what nobody can be charged for. Printed only when a
   # movement this iteration did not see itself lands in its share — so it never
@@ -2629,7 +2621,8 @@ gate_path_where() {
 # several tests read positionally, does not move under a project's configuration.
 gate__path_manifest() {
   local name where digest seen=''
-  while IFS= read -r name; do
+  proc_lines "$(gate_path_programs)"$'\n'"$(gate_path_project_programs)"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$name" ] || continue
     case "$seen" in
       *" $name "*) continue ;;
@@ -2639,10 +2632,7 @@ gate__path_manifest() {
     digest='-'
     [ "$where" = '-' ] || digest="$(gate__digest "$where")"
     printf '%s\t%s\t%s\n' "$name" "$where" "$digest"
-  done <<PROGRAMS
-$(gate_path_programs)
-$(gate_path_project_programs)
-PROGRAMS
+  done
   return 0
 }
 
@@ -2724,7 +2714,9 @@ gate__path_clause() {
 # `git path-drift` there sends a human looking for something without saying where.
 gate_path_drift() {
   local dir="${1:-}" name was now clause subject
-  while IFS="$(printf '\t')" read -r name was now; do
+  proc_lines "$(gate__path_moved "$dir" || true)"
+  for now in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$now" name was now
     [ -n "$name" ] || continue
     clause="$(gate__path_clause "$name" "$was" "$now")"
     case "$now" in
@@ -2733,9 +2725,7 @@ gate_path_drift() {
     esac
     receipt_gap "a program this pack runs by name changed while this run was in flight: $clause — nothing here judged it, no rollback undoes it, and this run had already resolved that name, so what it buys is the next fresh shell"
     printf '%s\t%s\t%s\n' "$subject" path-drift "$clause"
-  done <<MOVED
-$(gate__path_moved "$dir" || true)
-MOVED
+  done
   return 0
 }
 
@@ -2749,13 +2739,13 @@ MOVED
 # the other.
 gate_path_residue() {
   local dir="${1:-}" name was now found=1
-  while IFS="$(printf '\t')" read -r name was now; do
+  proc_lines "$(gate__path_moved "$dir" || true)"
+  for now in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$now" name was now
     [ -n "$name" ] || continue
     gate__path_clause "$name" "$was" "$now"
     found=0
-  done <<MOVED
-$(gate__path_moved "$dir" || true)
-MOVED
+  done
   return "$found"
 }
 
@@ -2859,7 +2849,8 @@ gate_newly_hidden() {
   fence="
 $hidden
 "
-  while IFS= read -r path; do
+  proc_lines "$listing"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     case "$fence" in
       *"
@@ -2867,9 +2858,7 @@ $path
 "*) continue ;;
     esac
     printf '%s\n' "$path"
-  done <<LISTING
-$listing
-LISTING
+  done
   return 0
 }
 
@@ -2887,12 +2876,11 @@ gate_unguarded_ignored() {
   guarded="$(gate_guarded_paths)"
   hidden="$(gate_newly_hidden)" || hidden=""
 
-  while IFS= read -r file; do
+  proc_lines "$listing"
+  for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$file" ] || continue
     gate__ignored_walk "$file" "$guarded" "$hidden"
-  done <<IGNORED
-$listing
-IGNORED
+  done
   return 0
 }
 
@@ -2950,15 +2938,13 @@ $file
 # a directory that *is* one of those was dropped by the filters above.
 gate__ignored_holds_judged() {
   local dir="$1" path
-  while IFS= read -r path; do
+  proc_lines "$2"$'\n'".scratch/${FEATURE:-}"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     case "$path" in
       "$dir"?*) return 0 ;;
     esac
-  done <<JUDGED
-$2
-.scratch/${FEATURE:-}
-JUDGED
+  done
   return 1
 }
 
@@ -3251,7 +3237,8 @@ gate_tree_snapshot() {
     # character class and the forcing would land on `zone1`. The listing that
     # names what was not forced reads these paths literally (gate_under_path),
     # and the two halves have to mean the same thing by a guarded path.
-    while IFS= read -r path; do
+    proc_lines "$(gate_guarded_paths)"$'\n'"$hidden"
+    for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       [ -n "$path" ] || continue
       rc=0
       diag="$(LC_ALL=C GIT_INDEX_FILE="$index" proc_git add -A --force --ignore-errors -- ":(literal)$path" 2>&1 >/dev/null)" || rc=$?
@@ -3264,10 +3251,7 @@ gate_tree_snapshot() {
         gate__gap "cannot snapshot the guarded path $path — $(gate__git_said "$diag"), so there is no tree to hand back: a guarded path is one somebody named on purpose, and one that drops out of the tree in silence is the blind spot the forcing exists to close" >&2
         return 1
       fi
-    done <<FORCED
-$(gate_guarded_paths)
-$hidden
-FORCED
+    done
   fi
   tree="$(GIT_INDEX_FILE="$index" proc_git write-tree 2>/dev/null)" || tree=""
   rm -f "$index"
@@ -3385,7 +3369,9 @@ gate_restore_tree() {
     return 1
   fi
 
-  while IFS="$(printf '\t')" read -r status path; do
+  proc_lines "$(proc_git -c core.quotePath=false diff-tree -r --name-status "$base" "$now" 2>/dev/null)"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$path" status path
     [ -n "$path" ] || continue
     if gate_is_bookkeeping "$path"; then continue; fi
     # A name nothing here can address ([39]). Said rather than acted on, and that
@@ -3424,9 +3410,7 @@ gate_restore_tree() {
         ;;
     esac
     printf '%s\n' "$path"
-  done <<RESTORE
-$(proc_git -c core.quotePath=false diff-tree -r --name-status "$base" "$now" 2>/dev/null)
-RESTORE
+  done
 
   rm -f "$idx"
   return 0
@@ -3536,15 +3520,14 @@ RULE
 # the pattern in `case`, where an expansion is not word-split.
 gate_in_surface() {
   local file="$1" pattern
-  while IFS= read -r pattern; do
+  proc_lines "$2"
+  for pattern in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     pattern="${pattern%/}"
     [ -n "$pattern" ] || continue
     case "$file" in
       $pattern | $pattern/*) return 0 ;;
     esac
-  done <<SURFACE
-$2
-SURFACE
+  done
   return 1
 }
 
@@ -3570,7 +3553,8 @@ SURFACE
 gate__surface_owner() {
   local file="$1" self="$2" id ids theirs
   ids="$(tracker_ids)" || return 2
-  while IFS= read -r id; do
+  proc_lines "$ids"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     [ "$id" != "$self" ] || continue
     # The same three answers one ticket down ([82]). The list was readable and
@@ -3583,9 +3567,7 @@ gate__surface_owner() {
       printf '%s\n' "$id"
       return 0
     fi
-  done <<IDS
-$ids
-IDS
+  done
   return 1
 }
 
@@ -3646,7 +3628,8 @@ gate__scope_guard() {
     return 1
   fi
 
-  while IFS= read -r file; do
+  proc_lines "$changed"
+  for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$file" ] || continue
     # Asked before anything compares this string to a list ([39]). A quoted name
     # matches no pattern a human wrote and no path this pack carries, so every
@@ -3694,9 +3677,7 @@ gate__scope_guard() {
       if [ -z "$class" ]; then class=internal; fi
       printf 'wrote %s, outside the declared write-surface\n' "$file"
     fi
-  done <<SCOPE
-$changed
-SCOPE
+  done
 
   # The kind of overflow, to the shell that forked this branch, and no longer a
   # file in the gate's directory ([94]). What it decides is the retry budget:
@@ -3876,13 +3857,12 @@ gate_note() {
 gate_noted() {
   local name="${1:-}" key="${2:-}" line found=''
   [ -n "$name" ] && [ -n "$key" ] || return 1
-  while IFS= read -r line; do
+  proc_lines "${GATE_NOTES:-}"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     case "$line" in
       "$name $key "*) found="${line#"$name $key "}" ;;
     esac
-  done <<NOTES
-${GATE_NOTES:-}
-NOTES
+  done
   [ -n "$found" ] || return 1
   printf '%s\n' "$found"
   return 0
@@ -4632,12 +4612,11 @@ gate_run() {
     # session that moved an ignore rule *and* wrote nothing would otherwise leave
     # the one line naming it unprinted ([30]: a zone nobody guards gets named
     # every time round, not once in a document).
-    while IFS= read -r finding; do
+    proc_lines "${RALPH_GATE_FRONTIER:-}"
+    for finding in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       [ -n "$finding" ] || continue
       gate__say "$ticket: $finding"
-    done <<IGNORE
-${RALPH_GATE_FRONTIER:-}
-IGNORE
+    done
   else
     gate__start "$dir" tests \
       gate__command_branch "the project's test command" "$TEST_CMD"

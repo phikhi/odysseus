@@ -1740,3 +1740,65 @@ pack_iteration_pids() {
   ps -A -o pid= -o ppid= -o command= 2>/dev/null |
     awk -v p="${1:-$PACK_BG_PID}" '$2 == p && $0 ~ /loop\.sh/ { print $1 }'
 }
+
+# A process of this user that does what [108] measured, started in the background
+# with its pid in $PACK_BG_PID (which the teardown of the files that use it kills).
+# It lists /var/tmp in a loop, opens every `sh-thd-*` it finds there for reading
+# and writing, and keeps the descriptor; once bash has unlinked the file — the
+# reader is open by then — it reads it. A file whose content holds a line that
+# starts with one of the <marker>s is noted under that marker in
+# `$RALPH_TEST_DIR/spy.<marker>` and rewritten in place, every byte that is not a
+# newline turned into an `x`, so a reader that has not got there yet reads that
+# instead. Every file it opened is noted in `spy.seen`: the witness that it was
+# looking at the right place at the right time ([80]). It writes `spy.ready` once
+# it is looking, ignores TERM, and stops on its own after <seconds>.
+#
+# Bash 3.2 makes every heredoc and every here-string such a file, `P_tmpdir` and
+# not `$TMPDIR` — which is why this watches a directory the harness does not own.
+heredoc_spy() {
+  cat >"$RALPH_TEST_DIR/spy.pl" <<'SPY'
+use strict; use Fcntl;
+$SIG{TERM} = 'IGNORE'; $SIG{HUP} = 'IGNORE';
+my ($dir, $secs, @markers) = @ARGV;
+my (%held, %done);
+my $end = time + $secs;
+sub note { my ($f, $l) = @_; open my $o, '>>', "$dir/$f" or return; print $o $l; close $o }
+note('spy.ready', '');
+while (time < $end) {
+  for my $f (glob '/var/tmp/sh-thd*') {
+    next if $held{$f} || $done{$f};
+    next unless -O $f;
+    sysopen(my $fh, $f, O_RDWR) or next;
+    $held{$f} = $fh;
+    note('spy.seen', "$f\n");
+  }
+  for my $f (keys %held) {
+    my $fh = $held{$f};
+    my @st = stat $fh;
+    next unless @st && $st[3] == 0;
+    my $buf = '';
+    sysseek $fh, 0, 0;
+    sysread $fh, $buf, 1 << 20;
+    my $hit = 0;
+    for my $m (@markers) {
+      next unless $buf =~ /^\Q$m\E/m;
+      note("spy.$m", "--- $f\n$buf");
+      $hit = 1;
+    }
+    if ($hit) {
+      (my $forged = $buf) =~ s/[^\n]/x/g;
+      sysseek $fh, 0, 0;
+      syswrite $fh, $forged;
+    }
+    close $fh; delete $held{$f}; $done{$f} = 1;
+  }
+}
+SPY
+  perl "$RALPH_TEST_DIR/spy.pl" "$RALPH_TEST_DIR" "$@" </dev/null >/dev/null 2>&1 &
+  PACK_BG_PID=$!
+  local waited=0
+  while [ ! -e "$RALPH_TEST_DIR/spy.ready" ] && [ "$waited" -lt 50 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+}

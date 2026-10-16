@@ -660,7 +660,8 @@ router__tracker_state() {
   # it", so one field filled in with the empty string on a refusal is one ticket
   # the drain will report as emptied by the session — and will journal as
   # `tracker-drift`, in the run's own record.
-  while IFS= read -r id; do
+  proc_lines "$ids"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     status="$(router__now "$id" Status)" || return 1
     escalation="$(router__now "$id" Escalation)" || return 1
@@ -671,9 +672,7 @@ router__tracker_state() {
       "$(router__flat "$status")" "$tab" "$(router__flat "$escalation")" "$tab" \
       "$(router__flat "$failures")" "$tab" "$(router__flat "$blocked")" "$tab" \
       "$digest" "$tab" "$id"
-  done <<IDS
-$ids
-IDS
+  done
 }
 
 # Put one ticket back to the state this drain took it in, and only the two states
@@ -814,7 +813,8 @@ router_protect_tracker() {
     return 1
   fi
 
-  while IFS= read -r line; do
+  proc_lines "$ROUTER__PINNED_TRACKER"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     other="$(printf '%s' "$line" | cut -f6-)"
     [ -n "$other" ] || continue
@@ -896,11 +896,10 @@ router_protect_tracker() {
         ;;
     esac
     said=0
-  done <<PINNED
-$ROUTER__PINNED_TRACKER
-PINNED
+  done
 
-  while IFS= read -r other; do
+  proc_lines "$now_ids"
+  for other in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$other" ] || continue
     if printf '%s\n' "$ROUTER__PINNED_TRACKER" | cut -f6- | grep -qxF -- "$other"; then
       continue
@@ -909,9 +908,7 @@ PINNED
       "$other" "$id"
     router_journal "$other" tracker-drift created
     said=0
-  done <<IDS
-$now_ids
-IDS
+  done
 
   [ "$said" = 0 ] || return 1
   printf 'ralph: Only `Status:` and `Escalation:` are put back here. `Failures:`, `Blocked by:` and the body of every ticket are named and left as that session wrote them: there is no worktree, no scope-guard, no gate and no rollback on this path, and no verb that writes any of the three back without inventing state nothing measured.\n'
@@ -1049,7 +1046,8 @@ router_branch_note() {
   # else. Two arms and not one, because a human does two different things with
   # them — a ref that is gone sends the next drain to the wrong desk, a ref that
   # moved sends a human to read the wrong tree at the right name.
-  while IFS= read -r line; do
+  proc_lines "$ROUTER__PINNED_REFS"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     ref="${line#*$tab}"
     was="${line%%$tab*}"
@@ -1066,14 +1064,13 @@ router_branch_note() {
       router_journal "$who" ref-drift moved
       said=0
     fi
-  done <<PINNED
-$ROUTER__PINNED_REFS
-PINNED
+  done
 
   # And what appeared. Named and never removed, for the reason a ticket that
   # appeared is not deleted either ([21], [27]): this drain is not the author of
   # these refs, and a ref it deleted would be evidence destroyed by its own hand.
-  while IFS= read -r line; do
+  proc_lines "$now"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
     ref="${line#*$tab}"
     who="${ref#refs/heads/failed/}"
@@ -1085,9 +1082,7 @@ PINNED
       "$ref" "$id"
     router_journal "$who" ref-drift created
     said=0
-  done <<NOW
-$now
-NOW
+  done
 
   [ "$said" = 0 ] || return 1
   return 0
@@ -1544,7 +1539,8 @@ router_unblocks() {
     [0-9]*-*) nn="${id%%-*}" ;;
     *) nn="$id" ;;
   esac
-  while IFS= read -r other; do
+  proc_lines "$(tracker_ids)"
+  for other in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$other" ] || continue
     [ "$other" != "$id" ] || continue
     raw="$(tracker_field "$other" 'Blocked by' 2>/dev/null)" || raw=''
@@ -1560,9 +1556,7 @@ router_unblocks() {
         break
       fi
     done
-  done <<IDS
-$(tracker_ids)
-IDS
+  done
   printf '%s\n' "$n"
 }
 
@@ -1576,15 +1570,14 @@ IDS
 router_sink() {
   local id tab rows='' n
   tab="$(printf '\t')"
-  while IFS= read -r id; do
+  proc_lines "$(tracker_ids)"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     [ "$(tracker_field "$id" Status 2>/dev/null)" = ready-for-human ] || continue
     n="$(router_unblocks "$id")"
     rows="$rows$n$tab$id
 "
-  done <<IDS
-$(tracker_ids)
-IDS
+  done
   [ -n "$rows" ] || return 1
   printf '%s' "$rows" | sort -t"$tab" -k1,1nr -k2,2 | cut -f2-
   return 0

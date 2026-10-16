@@ -213,7 +213,8 @@ lenses__triggered_by() {
   # Same three answers on the other half of the question ([82]): a write-surface
   # nobody could read is not a ticket that touches nothing.
   surface="$(gate_write_surface "$ticket")" || return 0
-  while IFS= read -r entry; do
+  proc_lines "$surface"
+  for entry in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$entry" ] || continue
     # Both directions, because both sides are globs and neither is a path on
     # disk: a surface of `src` against a pattern of `src/auth/*` matches only one
@@ -221,9 +222,7 @@ lenses__triggered_by() {
     # only safe direction for it to be wrong in.
     gate_in_surface "$entry" "$paths" && return 0
     gate_in_surface "$paths" "$entry" && return 0
-  done <<SURFACE
-$surface
-SURFACE
+  done
   return 1
 }
 
@@ -675,21 +674,19 @@ PROMPT
 # error surfaces at no point in the run.
 lenses__patch() {
   local base="$1" tree="$2" max="$3" file line written=0
-  while IFS= read -r file; do
+  proc_lines "$(gate_changed_files "$base" "$tree")"
+  for file in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$file" ] || continue
-    while IFS= read -r line; do
+    proc_lines "$(proc_git diff-tree -p --no-color "$base" "$tree" -- ":(literal)$file" 2>/dev/null)"
+    for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       if [ "$written" -ge "$max" ]; then
         printf '... [cut at %s lines]\n' "$max"
         return 1
       fi
       printf '%s\n' "$line"
       written=$((written + 1))
-    done <<PATCH
-$(proc_git diff-tree -p --no-color "$base" "$tree" -- ":(literal)$file" 2>/dev/null)
-PATCH
-  done <<FILES
-$(gate_changed_files "$base" "$tree")
-FILES
+    done
+  done
   return 0
 }
 

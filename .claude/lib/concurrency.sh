@@ -231,13 +231,12 @@ concurrency_clashes() {
     [ "$other" != "$ticket" ] || continue
     theirs="$(gate_write_surface "$other")" || return 0
     [ -n "$theirs" ] || return 0
-    while IFS= read -r entry; do
+    proc_lines "$mine"
+    for entry in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
       [ -n "$entry" ] || continue
       gate_in_surface "$entry" "$theirs" && return 0
       gate_in_surface "$theirs" "$entry" && return 0
-    done <<SURFACE
-$mine
-SURFACE
+    done
   done
   return 1
 }
@@ -355,7 +354,8 @@ concurrency_worktree_path() {
 concurrency_provision() {
   local dir="$1" path root taken=0
   root="$(ralph_project_root)"
-  while IFS= read -r path; do
+  proc_lines "${WORKTREE_PROVISION:-}"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     path="${path%/}"
     [ -n "$path" ] || continue
     [ -e "$root/$path" ] || continue
@@ -365,9 +365,7 @@ concurrency_provision() {
       continue
     }
     taken=$((taken + 1))
-  done <<PROVISION
-${WORKTREE_PROVISION:-}
-PROVISION
+  done
   printf '%s\n' "$taken"
 }
 
@@ -597,7 +595,8 @@ concurrency__replay() {
     return 1
   fi
 
-  while IFS= read -r path; do
+  proc_lines "$changed"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     # `:(literal)`, the last of [33]'s readers to be recalled ([54]) — and not for
     # the family that ticket was opened on. `git ls-tree` does not wildmatch at
@@ -646,9 +645,7 @@ concurrency__replay() {
     fi
     (cd "$root" && GIT_INDEX_FILE="$idx" proc_git update-index --force-remove -- "$path" 2>/dev/null) || true
     removed=$((removed + 1))
-  done <<PATHS
-$changed
-PATHS
+  done
 
   newtree="$(cd "$root" && GIT_INDEX_FILE="$idx" proc_git write-tree 2>/dev/null)" || newtree=""
   rm -f "$idx"
@@ -715,7 +712,8 @@ concurrency__refresh() {
     return 0
   }
 
-  while IFS= read -r path; do
+  proc_lines "$changed"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     # `:(literal)`, because a path is not a pattern: a delivered `src/zone[1].txt`
     # asked about `src/zone1.txt` and got an answer about a file that is not it.
@@ -736,9 +734,7 @@ concurrency__refresh() {
     acted="$acted$path
 "
     n=$((n + 1))
-  done <<PATHS
-$changed
-PATHS
+  done
 
   rm -f "$idx"
   # The real index still describes what was there before the fold, which would
@@ -757,11 +753,10 @@ PATHS
   # is entitled to move either, and `git reset -- <path>` sets that entry back to
   # HEAD — which would quietly unstage a human's own staged edit at a name this run
   # just declined to commit. Same rule at both ends of the function.
-  while IFS= read -r path; do
+  proc_lines "$acted"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     (cd "$root" && proc_git reset -q -- ":(literal)$path" 2>/dev/null) || true
-  done <<PATHS
-$acted
-PATHS
+  done
   return 0
 }

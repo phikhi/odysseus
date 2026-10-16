@@ -270,11 +270,9 @@ receipt__take() {
 receipt__records() {
   local kind="$1"
   receipt__take
-  awk -F'\t' -v k="$kind" '
+  printf '%s\n' "${RECEIPT_STORE:-}" | awk -F'\t' -v k="$kind" '
     $1 == k { line = $0; sub(/^[^\t]*\t/, "", line); print line }
-  ' <<RECORDS
-${RECEIPT_STORE:-}
-RECORDS
+  '
   return 0
 }
 
@@ -292,12 +290,10 @@ receipt_fact() {
 receipt__fact() {
   [ -n "${RALPH_RECEIPT:-}" ] || return 0
   receipt__take
-  awk -F'\t' -v k="$1" '
+  printf '%s\n' "${RECEIPT_STORE:-}" | awk -F'\t' -v k="$1" '
     $1 == "fact" && $2 == k { line = $0; sub(/^[^\t]*\t[^\t]*\t/, "", line); out = line }
     END { if (out != "") print out }
-  ' <<FACTS
-${RECEIPT_STORE:-}
-FACTS
+  '
   return 0
 }
 
@@ -344,22 +340,30 @@ receipt_gap() {
 # findings is twenty lines that scrolled past on stdout. This receipt is the one
 # place they can survive the night.
 receipt_keep_branch() {
-  local name="$1" file="$2" total line
+  local name="$1" file="$2" total line skip=0
   [ -n "${RALPH_RECEIPT:-}" ] || return 0
   [ -n "$name" ] && [ -s "$file" ] || return 0
   total="$(awk 'END { print NR + 0 }' "$file")"
   if [ "$total" -gt "$RECEIPT_MAX_LINES" ]; then
-    receipt__put "branch"$'\t'"$name"$'\t'"(the first $((total - RECEIPT_MAX_LINES)) line(s) of $total are not kept here: this branch is quoted from the end)"
+    skip=$((total - RECEIPT_MAX_LINES))
+    receipt__put "branch"$'\t'"$name"$'\t'"(the first $skip line(s) of $total are not kept here: this branch is quoted from the end)"
     receipt__put "branch"$'\t'"$name"$'\t'
   fi
   # One record per line of output, which is what makes a branch'"'"'s text fit a store
   # of lines at all — and it is also what keeps this the one source here that cannot
   # forge a record: a line of a file has no newline in it to close one with.
-  while IFS= read -r line; do
+  #
+  # Read from the file itself, the first `skip` lines passed over, and not from a
+  # heredoc of `tail`: bash 3.2 makes a heredoc a named file under `/var/tmp` for an
+  # instant ([108]), and a blank line of a branch's output is content here, which
+  # `proc_lines` would drop. The last line is kept when it has no newline after it.
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$skip" -gt 0 ]; then
+      skip=$((skip - 1))
+      continue
+    fi
     receipt__put "branch"$'\t'"$name"$'\t'"$line"
-  done <<LINES
-$(tail -"$RECEIPT_MAX_LINES" "$file")
-LINES
+  done <"$file"
   receipt__put "branches"$'\t'"$name"
   return 0
 }
@@ -381,11 +385,9 @@ receipt_branches() {
 receipt_branch_text() {
   [ -n "${RALPH_RECEIPT:-}" ] || return 0
   receipt__take
-  awk -F'\t' -v n="$1" '
+  printf '%s\n' "${RECEIPT_STORE:-}" | awk -F'\t' -v n="$1" '
     $1 == "branch" && $2 == n { line = $0; sub(/^[^\t]*\t[^\t]*\t/, "", line); print line }
-  ' <<BRANCH
-${RECEIPT_STORE:-}
-BRANCH
+  '
   return 0
 }
 
@@ -514,7 +516,8 @@ receipt__evidence() {
 
 receipt__findings() {
   local name printed=0
-  while IFS= read -r name; do
+  proc_lines "$(receipt_branches)"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$name" ] || continue
     # A name whose kept output never made it to disk — `receipt_keep_branch`
     # tolerates a failed write — is not a heading with nothing under it.
@@ -527,9 +530,7 @@ receipt__findings() {
     printf '### %s — red\n\n' "$name"
     receipt_branch_text "$name" | sed 's/^/    /'
     printf '\n'
-  done <<BRANCHES
-$(receipt_branches)
-BRANCHES
+  done
   return 0
 }
 

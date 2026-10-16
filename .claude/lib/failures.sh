@@ -186,12 +186,11 @@ failures__frontier() {
   fi
 
   findings="$(gate_frontier)" || true
-  while IFS= read -r finding; do
+  proc_lines "$findings"
+  for finding in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$finding" ] || continue
     failures__say "$ticket: $finding"
-  done <<FRONTIER
-$findings
-FRONTIER
+  done
   return 0
 }
 
@@ -525,11 +524,10 @@ failures__register_since() {
 # `ticket`. An id is a file name a session chooses ([37]).
 failures__in_list() {
   local needle="$1" line
-  while IFS= read -r line; do
+  proc_lines "$2"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     if [ "$line" = "$needle" ]; then return 0; fi
-  done <<LIST
-$2
-LIST
+  done
   return 1
 }
 
@@ -547,13 +545,12 @@ LIST
 # iteration cannot be green.
 failures__strays() {
   local seen="$1" id
-  while IFS= read -r id; do
+  proc_lines "$(tracker_ids)"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     ! failures__in_list "$id" "$seen" || continue
     printf '%s\n' "$id"
-  done <<IDS
-$(tracker_ids)
-IDS
+  done
   return 0
 }
 
@@ -597,7 +594,8 @@ failures_quarantine_strays() {
   # leaves the frontier permanently, whatever this iteration did. The addition is
   # what moves, never the ticket that was already there: the pre-existing id is
   # the one other tickets point at.
-  while IFS= read -r stray; do
+  proc_lines "$strays"
+  for stray in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$stray" ] || continue
     ! failures__in_list "$stray" "$ours" || continue
     final="$stray"
@@ -616,9 +614,7 @@ failures_quarantine_strays() {
     fi
     tracker_mark_escalated "$final" decision || true
     kept="$(failures__append_line "$final" "$kept")"
-  done <<STRAYS
-$strays
-STRAYS
+  done
 
   # Nothing left once the loop's own creations are out: there is no quarantine, no
   # note naming a session that wrote nothing, and no non-zero to make a caller
@@ -652,9 +648,7 @@ failures__append_line() {
 
 # A one-per-line list rendered for a human, joined whole line by whole line.
 failures__join() {
-  awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }' <<LIST
-$1
-LIST
+  printf '%s\n' "$1" | awk 'length { if (n++) printf ", "; printf "%s", $0 } END { if (n) print "" }'
 }
 
 # Undo what the session wrote inside the tracker, and say that it did.
@@ -716,7 +710,9 @@ failures_protect_tracker() {
   # quarantine reads, from the same place ([42]).
   ours="$(failures__register_since "$mark")"
 
-  while IFS="$(printf '\t')" read -r outcome name; do
+  proc_lines "$moved"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$name" outcome name
     [ -n "$name" ] || continue
     case "$outcome" in
       blind)
@@ -764,9 +760,7 @@ failures_protect_tracker() {
         restored=$((restored + 1))
         ;;
     esac
-  done <<MOVED
-$moved
-MOVED
+  done
 
   # What restoring tickets and only tickets leaves behind, said on the window it
   # is paid in rather than once in a document ([24]'s rule for a zone nobody
@@ -871,7 +865,8 @@ failures_rollback() {
   # space in it, it answers yes for every word of it ([37]) — a false negative
   # nothing prints.
   paths="$restored"
-  while IFS= read -r path; do
+  proc_lines "$restored"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     # What the session staged is not work in progress either. Unstaging is scoped
     # to the paths this rollback put back, so an index a human left half-prepared
@@ -886,9 +881,7 @@ failures_rollback() {
     # did not — and the one in the durable commit was total.
     proc_git reset -q -- ":(literal)$path" 2>/dev/null || true
     undone=$((undone + 1))
-  done <<ROLLBACK
-$restored
-ROLLBACK
+  done
 
   if [ "$undone" -gt 0 ]; then
     failures__log "rolled back $undone path(s) the session touched"
@@ -948,13 +941,12 @@ failures__report_unrolled() {
 # line that says what this rollback could not undo.
 failures__minus() {
   local item
-  while IFS= read -r item; do
+  proc_lines "${1:-}"
+  for item in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$item" ] || continue
     ! failures__in_list "$item" "${2:-}" || continue
     printf '%s\n' "$item"
-  done <<LIST
-${1:-}
-LIST
+  done
   return 0
 }
 
@@ -1091,15 +1083,14 @@ failures_make_durable() {
   # because there is nothing on either side. Paired further down with the result,
   # which is the other half. Written above the loop rather than inside it so that
   # the body stays one anchorable shape for `test/mutate.sh`.
-  while IFS= read -r path; do
+  proc_lines "$changed"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     if ! GIT_INDEX_FILE="$idx" proc_git add -A --force -- ":(literal)$path" >/dev/null 2>&1; then
       refused="$refused$path
 "
     fi
-  done <<CHANGED
-$changed
-CHANGED
+  done
   newtree="$(GIT_INDEX_FILE="$idx" proc_git write-tree 2>/dev/null)" || newtree=""
   rm -f "$idx"
 
@@ -1130,13 +1121,12 @@ CHANGED
   # What used to be its loudest case is gone rather than quieter: since [50] the
   # staging above forces, so a guarded path the project ignores is committed
   # instead of named here.
-  while IFS= read -r path; do
+  proc_lines "$(proc_git -c core.quotePath=false diff-tree -r --name-only "$newtree" "$tree" 2>/dev/null)"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     failures__in_list "$path" "$refused" || continue
     failures__gap "$ticket: $path was approved by the gate and could not be staged — it is not in this commit"
-  done <<MISSED
-$(proc_git -c core.quotePath=false diff-tree -r --name-only "$newtree" "$tree" 2>/dev/null)
-MISSED
+  done
 
   # Nothing to record: everything the gate approved is already in HEAD. Reached
   # when a session committed its work and HEAD could not be moved back, and when
@@ -1176,12 +1166,11 @@ MISSED
   # state this block exists to prevent, reintroduced by fixing the other half. The
   # two calls succeed and fail together, being the same call on the same conditions,
   # so the index still ends up agreeing with the commit either way.
-  while IFS= read -r path; do
+  proc_lines "$changed"
+  for path in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$path" ] || continue
     proc_git add -A --force -- ":(literal)$path" >/dev/null 2>&1 || true
-  done <<CHANGED
-$changed
-CHANGED
+  done
   failures__log "$ticket: committed $(printf '%s\n' "$changed" | awk 'END { print NR }') path(s)"
   return 0
 }

@@ -228,7 +228,8 @@ claim_is_held() {
 claim_reclaim_stale() {
   local held="${1:-}" id status record disposition
 
-  while IFS= read -r id; do
+  proc_lines "$(tracker_ids)"
+  for id in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$id" ] || continue
     status="$(tracker_field "$id" Status)" || continue
     [ "$status" = claimed ] || continue
@@ -239,19 +240,16 @@ claim_reclaim_stale() {
     disposition="$(failures_after_dead_owner \
       "$id" "$(claim_owner_kind "$record")" "$record")" || disposition=unknown
     printf '%s %s\n' "$id" "$disposition"
-  done <<IDS
-$(tracker_ids)
-IDS
+  done
   return 0
 }
 
 # Whether this id is one of the entries in a one-per-line list, compared whole.
 claim__among() {
   local needle="$1" line
-  while IFS= read -r line; do
+  proc_lines "$2"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     if [ "$line" = "$needle" ]; then return 0; fi
-  done <<LIST
-$2
-LIST
+  done
   return 1
 }

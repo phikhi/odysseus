@@ -107,14 +107,22 @@ init__tmp_drop() {
 # One path per line and never a whitespace-joined list, which is [33]'s rule and
 # applies to this file's own bookkeeping as much as to the pack's: a project
 # directory may hold a space.
+#
+# Walked by expansion and not through a heredoc, which bash 3.2 makes a named file
+# under `/var/tmp` for an instant ([108]) — these are paths handed to `rm`. Not by
+# `proc_lines` either: this runs from the EXIT trap, which can fire before a single
+# lib of the pack is sourced, and the list is the handful of files this installer
+# made itself.
 init__cleanup() {
-  local f
-  while IFS= read -r f; do
+  local f rest="$INIT_TMPFILES"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *$'\n'*) f="${rest%%$'\n'*}" rest="${rest#*$'\n'}" ;;
+      *) f="$rest" rest='' ;;
+    esac
     [ -n "$f" ] || continue
     [ -e "$f" ] && rm -f "$f"
-  done <<TMPFILES
-$INIT_TMPFILES
-TMPFILES
+  done
   return 0
 }
 
@@ -179,12 +187,11 @@ init_project_owned() {
 
 init__is_project_owned() {
   local owned
-  while IFS= read -r owned; do
+  proc_lines "$(init_project_owned)"
+  for owned in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$owned" ] || continue
     [ "$owned" = "$1" ] && return 0
-  done <<OWNED
-$(init_project_owned)
-OWNED
+  done
   return 1
 }
 
@@ -349,15 +356,14 @@ init_preflight() {
   # would turn every iteration red for a reason that has nothing to do with any
   # ticket, and this is the only place in the pack that can say so before the
   # night. The set is asked of `gate_config_keys` and never retyped.
-  while IFS= read -r key; do
+  proc_lines "$(gate_config_keys)"
+  for key in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$key" ] || continue
     # The names git answers with, not the patterns asked for: a note that reads
     # `credential\..*\.helper` names a regex and not a setting anybody has.
     found="$found $(git -C "$INIT_TARGET" config --get-regexp "^$key\$" 2>/dev/null |
       sed 's/ .*//' | tr '\n' ' ')"
-  done <<KEYS
-$(gate_config_keys)
-KEYS
+  done
   found="$(printf '%s' "$found" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort -u |
     tr '\n' ' ' | sed 's/ *$//')"
   n="$(printf '%s' "$found" | wc -w | tr -d ' ')"
@@ -577,7 +583,9 @@ init_deposit() {
       init__die "the substrate at $INIT_SOURCE/.claude/skills carries links that resolve to nothing:$broken. Depositing them would put dangling names in the project, which is exactly what the README's \`cp -R\` recipe did"
   fi
 
-  while IFS="$INIT_TAB" read -r src dst; do
+  proc_lines "$(init_payload)"
+  for dst in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split "$INIT_TAB" "$dst" src dst
     [ -n "$src" ] || continue
     from="$INIT_SOURCE/$src"
     to="$INIT_TARGET/$dst"
@@ -613,21 +621,19 @@ init_deposit() {
       cp "$from" "$to" || init__die "cannot copy $src to $dst"
     fi
     n=$((n + 1))
-  done <<PAYLOAD
-$(init_payload)
-PAYLOAD
+  done
 
   # Asserted on what landed rather than on what was copied, which is the same
   # rule the rest of this pack is held to: a count of copies is not a project
   # that has the pack, and in the bootstrap flow above the count is zero by
   # construction.
-  while IFS="$INIT_TAB" read -r src dst; do
+  proc_lines "$(init_payload)"
+  for dst in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split "$INIT_TAB" "$dst" src dst
     [ -n "$dst" ] || continue
     [ -e "$INIT_TARGET/$dst" ] ||
       init__die "$dst is not in the project after the deposit — the pack source at $INIT_SOURCE is incomplete"
-  done <<PAYLOAD
-$(init_payload)
-PAYLOAD
+  done
 
   chmod +x "$INIT_TARGET/.claude"/*.sh 2>/dev/null || true
 
@@ -683,12 +689,11 @@ init_dirs() {
   local dir feature backend
   feature="$(init__answer_of FEATURE)"
   backend="$(init__effective TRACKER_BACKEND)"
-  while IFS= read -r dir; do
+  proc_lines "$(init_durable_dirs)"
+  for dir in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$dir" ] || continue
     mkdir -p "$INIT_TARGET/$dir" || init__die "cannot create $dir"
-  done <<DIRS
-$(init_durable_dirs)
-DIRS
+  done
 
   # The feature's own directory, whatever the backend: `loop_preflight` refuses
   # to start on a project that has not got it, and what lives in it — the
@@ -1088,15 +1093,14 @@ init_sweep() {
     init__say "  · nothing this pack's census names"
   concurrency_leftovers 2>/dev/null | sed 's/^/  · /' || true
 
-  while IFS= read -r name; do
+  proc_lines "$(gate_tmp_names)"
+  for name in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$name" ] || continue
     n="$(find "$tmp" -maxdepth 1 -name "$name" -mtime +7 2>/dev/null | wc -l | tr -d ' ')"
     [ "${n:-0}" -gt 0 ] || continue
     find "$tmp" -maxdepth 1 -name "$name" -mtime +7 -exec rm -rf {} + 2>/dev/null || true
     removed=$((removed + n))
-  done <<NAMES
-$(gate_tmp_names)
-NAMES
+  done
 
   # [13]: a killed run leaves its iteration worktrees registered in the common git
   # directory, and every later `git worktree` call carries the registration.
