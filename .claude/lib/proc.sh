@@ -407,6 +407,30 @@ printf -v PROC__ABOVE_STDERR '%s>&- ' {3..255}
 # on index refreshes no hook census sees ([51], `h1`), and a list is a thing that
 # has to be right again tomorrow.
 #
+# **And stdin, which [104] left to the caller and [110] took.** The sentence above
+# was true above stderr and false of fd 0: a program git launches inherits git's
+# stdin as it inherits the rest. `core.fsmonitor` is started on every verb that
+# reads the index, with no stdin of its own — measured on 17/10/2026, git 2.54
+# (Apple): `status`, `add`, `rm`, `reset`, `write-tree`, `checkout-index`,
+# `update-index`, `diff`, `diff-tree`, `ls-files` and `check-ignore` each handed it
+# the caller's stdin, and it read every line. What that stdin is depends on how the
+# run was started, not on anything here: the operator's terminal for a night started
+# by hand, the terminal a human answers on at the drain, a launcher's pipe. Measured
+# in a real run (`.scratch/ralph-pack/sondes/ticket-110/s2`): a night given forty
+# lines on stdin, a session that writes `core.fsmonitor` into `~/.gitconfig` — the
+# program read all forty, through the `ls-files` of a frontier pin. On a terminal it
+# reads what a human types, or waits for it with git waiting behind. Inside a loop
+# fed its list on stdin, which the pack wrote until [108], it was the rest of the
+# list: the pass of 16/10 (`g4`) watched a third guarded path drop out of the
+# force-staging.
+#
+# So stdin is `/dev/null`, here, for every call. Not a `</dev/null` at each of ninety
+# call sites, which is a discipline the ninety-first forgets; not a list of the verbs
+# that read the index, which the measure above already outgrew — the ticket that
+# opened this named six and git answered eleven. A caller that *feeds* git calls
+# `proc_git_fed`, below, and a census in `test/gate.bats` refuses a pipe or an input
+# redirection into `proc_git`, where nobody would read it any more.
+#
 # The shape of `proc_exec_bare`, with one difference that is the point: the
 # environment is **not** handed back — git keeps [102]'s token, or the hook directory
 # would be read again. A subshell and an `exec` with no command rather than a
@@ -416,10 +440,11 @@ printf -v PROC__ABOVE_STDERR '%s>&- ' {3..255}
 # made for whatever the caller wrote on this very call, `2>/dev/null` included.
 #
 # What a caller writes keeps its meaning, measured on bash 3.2.57: the status is
-# git's; stdin, stdout and stderr are the caller's; and an assignment in front —
-# `GIT_INDEX_FILE="$idx" proc_git read-tree …` — is exported to git for that call
-# and gone after it, as it was in front of git itself. The cost is no fork the bare
-# call did not make already, and 253 closes: 0.3 to 0.7 ms on a 12 ms `rev-parse`.
+# git's; stdout and stderr are the caller's, stdin is not (above); and an assignment
+# in front — `GIT_INDEX_FILE="$idx" proc_git read-tree …` — is exported to git for
+# that call and gone after it, as it was in front of git itself. The cost is no fork
+# the bare call did not make already, and 253 closes: 0.3 to 0.7 ms on a 12 ms
+# `rev-parse`.
 #
 # **What this does not take away**, written where it is claimed. A program git runs
 # still gets the environment the pack exported, still runs at the instant the pack
@@ -436,6 +461,31 @@ printf -v PROC__ABOVE_STDERR '%s>&- ' {3..255}
 # descriptors by path, Linux's `/proc/<pid>/fd`, it can walk up to the shell that ran
 # git and reopen what that shell holds — `proc_channel_open`'s bound, unchanged.
 proc_git() {
+  (
+    eval "exec $PROC__ABOVE_STDERR"
+    exec git "$@" </dev/null
+  )
+}
+
+# `proc_git` keeping the caller's stdin, for the one kind of call that feeds git: a
+# list piped into a verb that reads it (`check-ignore --stdin`, in
+# `gate_newly_hidden`). Everything else is `proc_git`'s — the subshell, the 253
+# closes, the token kept — and the census in `test/gate.bats` finds it only on the
+# right of a pipe, in the homes it lists.
+#
+# **What it cannot take away, written where it is claimed.** Git and whatever git
+# launches read the *same* pipe, and nothing on a pipe tells one reader from the
+# other: a `core.fsmonitor` started by that `check-ignore` read all seven lines before
+# git got to one, and git answered nothing (measured on 17/10/2026, git 2.54). Two
+# things hold it, and a caller added here has to be able to say both of its own pipe,
+# at the call. The launch is taken away where it can be: the witness `gate_newly_hidden`
+# asks is a repository with no index, so `--no-index` changes none of its answers and
+# git reads no index to refresh — measured, the same program is not started and the
+# answer is the clean one. And for whatever else git launches tomorrow, the direction:
+# a reader on that pipe can only *take* lines, never add one, so `check-ignore`
+# answers about fewer paths, fewer are "hidden by the pinned rules", and more are
+# forced into the snapshot and judged — a red, or noise, never a path let through.
+proc_git_fed() {
   (
     eval "exec $PROC__ABOVE_STDERR"
     exec git "$@"

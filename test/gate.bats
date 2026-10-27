@@ -1218,6 +1218,63 @@ FAKE
   assert_output_contains "this session moved the ignore frontier: .gitignore"
 }
 
+@test "the witness of the pinned rules answers whole when a program git launches reads stdin" {
+  # [110]. `gate_newly_hidden` is the one git of this pack that is fed: it pipes the
+  # ignored listing into `check-ignore --stdin`, inside the witness, and a program git
+  # launches there reads the same pipe. A `core.fsmonitor` from the operator's
+  # `~/.gitconfig` — set before the run, so [46] has nothing to say about it — read
+  # the whole listing before git got to it, git answered that nothing was hidden by
+  # the pinned rules, and everything the project already ignored was forced into the
+  # snapshot and judged as written. The witness has no index, so `--no-index` takes
+  # that launch away without changing an answer. And the run is given a stdin of its
+  # own, finite and not empty, which every other git of the night must not hand on.
+  use_tickets 01-alpha
+  set_config STERILE_K 1
+  perl -pi -e \
+    's|^\*\*Write-surface:\*\* .*|**Write-surface:** `src/alpha.txt`, `.gitignore`|' \
+    "$(ticket_file 01-alpha)"
+  harness__commit "test: a ticket that may write the ignore rules"
+  ignore_paths 'cache/'
+
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'lib/\n' >>.gitignore
+mkdir -p lib src cache
+printf 'rogue\n' >lib/rogue.sh
+printf 'before\n' >cache/payload
+printf 'written\n' >src/alpha.txt
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  # Planted last: every git from here on runs it, the harness's own included. It
+  # gives up after two seconds on a stdin that never ends.
+  cat >"$SHIM_STATE/stdin-reader" <<READER
+#!/usr/bin/env bash
+printf 'ran\n' >>"$SHIM_STATE/reader.log"
+while IFS= read -r -t 2 line; do printf 'READ %s\n' "\$line" >>"$SHIM_STATE/reader.log"; done
+printf '/\0'
+READER
+  chmod +x "$SHIM_STATE/stdin-reader"
+  git config --global core.fsmonitor "$SHIM_STATE/stdin-reader"
+  printf 'RUN-STDIN-%s\n' 1 2 3 4 5 6 >"$SHIM_STATE/run.stdin"
+
+  run_loop <"$SHIM_STATE/run.stdin"
+  assert_failure 4
+  grep -q '^ran$' "$SHIM_STATE/reader.log" ||
+    fail "the core.fsmonitor never ran in this run, so the witness was never asked under it"
+
+  # The rule the session wrote is judged, as without the reader.
+  assert_output_contains "wrote lib/rogue.sh, outside the declared write-surface"
+  assert_output_contains "this session moved the ignore frontier: .gitignore"
+  # And what the pinned rules hid is still hidden: the witness answered about it.
+  refute_output_contains "cache/payload"
+  if grep -q '^READ' "$SHIM_STATE/reader.log"; then
+    fail "a program git launched read a stdin of this run:
+$(grep '^READ' "$SHIM_STATE/reader.log")"
+  fi
+}
+
 @test "an ignore rule a ticket delivered counts from the next iteration" {
   # The legitimate case, and it has to survive: [19]'s installer writes a
   # `.gitignore` into every target project. So the same write is green when the
@@ -5902,9 +5959,12 @@ git_command_position='(^|[;&|({!]|(^|[ \t])(then|else|elif|do|if|while|until|exe
     fail "the scan found $(printf '%s\n' "$callers" | grep -c .) functions calling proc_git, so it is reading the wrong thing:
 $callers"
 
-  if [ "$found" != 'proc.sh:proc_git' ]; then
+  # Two homes since [110]: `proc_git`, which hands git `/dev/null` for stdin, and
+  # `proc_git_fed`, which keeps the caller's for a git it feeds — the census below
+  # says who may call that one.
+  if [ "$found" != "$(printf '%s\n' 'proc.sh:proc_git' 'proc.sh:proc_git_fed')" ]; then
     fail "git is run bare somewhere in the pack, so whatever configuration makes it run holds that shell's descriptors
-(expected only proc.sh:proc_git, found):
+(expected only proc.sh:proc_git and proc.sh:proc_git_fed, found):
 $found"
   fi
 
@@ -5916,6 +5976,60 @@ $found"
   [ -z "$opened" ] ||
     fail "init.sh opens a descriptor of its own, so the reason it may run git bare no longer holds:
 $opened"
+}
+
+# ── [110] the one git this pack feeds, and nothing fed to the others ─────────
+#
+# `proc_git` hands git `/dev/null` for stdin, so that a program git launches — a
+# `core.fsmonitor` on every index read — inherits nothing of the caller's: a
+# terminal, a launcher's pipe, the rest of a list. A git the pack *feeds* is called
+# `proc_git_fed`, and its pipe is shared with whatever git launches, which is a
+# claim each caller makes at the call (`proc.sh`). Three questions, asked of the
+# source through [91]'s lexer:
+#
+#   nothing feeds `proc_git`    a pipe or an input redirection into it would now be
+#                               read by nobody, and a list git was meant to answer
+#                               about would be answered as empty — in silence.
+#   `proc_git_fed` is fed       on the right of a pipe and nowhere else: called
+#                               bare, it hands git the caller's stdin for nothing,
+#                               which is the hole this ticket closed.
+#   and fed where it is named   one home, `gate_newly_hidden`, whose pipe can only
+#                               lose lines and whose loss forces more into the
+#                               snapshot. A second home is the finding: say what
+#                               its own pipe can lose, at the call, then name it here.
+#
+# The pipe is `|` with anything but `|` before it, so `||` is a command position and
+# not a pipe — written `[|]`, which survives the escapes `awk -v` applies. A pipe
+# broken over two lines is not seen as one; the pack writes none.
+proc_git_assign='([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*'
+proc_git_piped="(^|[^|])[|][ \\t]*${proc_git_assign}"
+proc_git_unpiped="(^|[;&({!]|[|][|]|(^|[ \\t])(then|else|elif|do|if|while|until|exec|nohup|time))[ \\t]*${proc_git_assign}"
+
+@test "nothing feeds a git this pack runs but the one call that says what its pipe can lose" {
+  local piped redirected unpiped fed
+
+  fed="$(pack_code_homes "$RALPH_PACK_ROOT" "${proc_git_piped}proc_git_fed([ \t]|\$)")"
+  piped="$(pack_code_homes "$RALPH_PACK_ROOT" "${proc_git_piped}proc_git([ \t]|\$)")"
+  redirected="$(pack_code_homes "$RALPH_PACK_ROOT" 'proc_git([ \t][^|;&]*)?[ \t][0-9]*<[^<(&]')"
+  unpiped="$(pack_code_homes "$RALPH_PACK_ROOT" "${proc_git_unpiped}proc_git_fed([ \t]|\$)")"
+
+  [ -z "$piped" ] ||
+    fail "a pipe feeds proc_git, which hands git /dev/null — the list reaches nobody, and git answers as if it were empty:
+$piped"
+  [ -z "$redirected" ] ||
+    fail "an input redirection feeds proc_git, which hands git /dev/null — what it names reaches nobody:
+$redirected"
+  [ -z "$unpiped" ] ||
+    fail "proc_git_fed is called without a pipe, so git and whatever git launches hold the caller's stdin for nothing:
+$unpiped"
+
+  # And the floor, last so that a finding above speaks first: the one fed call is
+  # found, through the same pipe pattern the first question uses. A pattern that
+  # matched no pipe at all would have emptied every answer above.
+  if [ "$fed" != 'gate.sh:gate_newly_hidden' ]; then
+    fail "the git this pack feeds is not where it is named (expected gate.sh:gate_newly_hidden, found):
+${fed:-<nothing — the scan reads the wrong thing>}"
+  fi
 }
 
 # ── [105] every curl this pack runs, holding nothing and reading nothing ─────

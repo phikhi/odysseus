@@ -2843,8 +2843,16 @@ gate_newly_hidden() {
   listing="$(proc_git ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" ||
     listing=""
   [ -n "$listing" ] || return 0
+  # The one git of this pack that is fed ([110]), so `proc_git_fed`, and what its
+  # pipe can lose said here. `--no-index` because a program git starts on an index
+  # read shares this pipe and was measured reading all of it, and git then answered
+  # nothing: the witness has no index — `gate_frontier_pin` adds nothing to it —
+  # so the flag changes no answer and takes that launch away. What it cannot take
+  # away is a reader git starts tomorrow for another reason, and that one can only
+  # lose lines: fewer paths answered as hidden by the pinned rules, more forced into
+  # the snapshot below and judged.
   hidden="$( (cd "$pin/rules" 2>/dev/null &&
-    printf '%s\n' "$listing" | proc_git check-ignore --stdin 2>/dev/null) || true)"
+    printf '%s\n' "$listing" | proc_git_fed check-ignore --no-index --stdin 2>/dev/null) || true)"
 
   fence="
 $hidden
