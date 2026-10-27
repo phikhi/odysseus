@@ -2897,6 +2897,13 @@ if [ "$forge" = rewrite ]; then
     printf '%s\n' "\$pin" >>"\$state/pin.forged"
   done
 fi
+if [ "$forge" = destroy ]; then
+  for pin in "\$TMPDIR"/ralph-ignore.*; do
+    [ -d "\$pin" ] || continue
+    rm -rf "\$pin"
+    printf '%s\n' "\$pin" >>"\$state/pin.destroyed"
+  done
+fi
 chmod -x "\$state/claude.script"
 exec claude "\$@"
 SCRIPT
@@ -3203,6 +3210,180 @@ FORGE
   assert_output_contains "moved .git/info/attributes"
   assert_output_contains "(put back)"
   assert_output_contains "left: 0"
+}
+
+# ── [109] a pin destroyed, and the frontier put back all the same ─────────────
+#
+# Destroying the pin closes the control ([30], [34]): the snapshot refuses, the
+# rollback refuses, the night stops. Measured on 13/10/2026, that was all it did —
+# `gate_frontier_moved` returned on a missing manifest, so nothing was put back
+# and the rule the session had appended to the shared `.git/info/exclude` was
+# still there after the stop, for the next run to pin as the project's own. The
+# pin copied its shared half from the run's witness, which the run's seal still
+# vouches for, so a destroyed pin is compared there, on that half only. The paired
+# witness is the one of [100] above: the same session with its pin intact.
+
+@test "a session that destroys its iteration's pin stops the night, and its rule does not outlive it" {
+  use_tickets 01-alpha
+  gate_pin_session destroy
+
+  run_loop_own_tmp
+  # The staging: a pin was found and destroyed.
+  assert_file_contains "$SHIM_STATE/pin.destroyed" "ralph-ignore."
+
+  # The price is unchanged — the existence check still closes the control.
+  assert_failure 4
+  assert_output_contains "refusing to snapshot a tree whose visibility nothing vouches for"
+  assert_output_contains "the rollback could not put this iteration's tree back"
+  refute_output_contains "-> resolved"
+  assert_ticket_status 01-alpha ready-for-agent
+
+  # What the stop leaves now: the frontier where the run found it — and said, on
+  # the one output a refused snapshot still prints. Before, the only trace was the
+  # zone line of [24], which named the path behind the rule only because the rule
+  # was still in place.
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "src/backdoor.txt"
+  assert_output_contains "the scope-guard could not read the working tree — refusing to pass it"
+  assert_output_contains "moved the ignore frontier in .git/info/exclude, which decides what every check here can see — no write-surface may cover it (put back)"
+}
+
+@test "a destroyed pin is compared on its shared half, not on the tree's rules" {
+  # The tree half of a destroyed pin has no reference left: compared against
+  # nothing, every `.gitignore` of the tree reads as moved, and the crash path —
+  # the one that names the tree's rules without a gate ([32]) — says this session
+  # moved them. The project's own `.gitignore` here is one nobody touched.
+  use_tickets 01-alpha
+  ignore_paths 'cache/'
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+state="$RALPH_SHIM_STATE"
+printf 'src/backdoor.txt\n' >>"$(git rev-parse --git-common-dir)/info/exclude"
+for pin in "$TMPDIR"/ralph-ignore.*; do
+  [ -d "$pin" ] || continue
+  rm -rf "$pin"
+  printf '%s\n' "$pin" >>"$state/pin.destroyed"
+done
+exit 1
+FAKE
+
+  run_loop_own_tmp
+  assert_file_contains "$SHIM_STATE/pin.destroyed" "ralph-ignore."
+  assert_failure 4
+  # The shared half was compared, and put back...
+  assert_output_contains "01-alpha: moved the ignore frontier in .git/info/exclude"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "src/backdoor.txt"
+  # ...and the tree's rules are not named as this session's.
+  refute_output_contains "this session moved the ignore frontier"
+}
+
+@test "a destroyed pin is compared against the run's witness only when its seal vouches for it" {
+  # The other reference a destroyed pin could be compared against is nothing, and
+  # that is what a run's witness the session rewrote leaves: every shared source
+  # would read as moved and be announced as one this run could not put back —
+  # `core.excludesFile` included, which nobody touched.
+  use_tickets 01-alpha
+  local script="$RALPH_TEST_DIR/pin-destroyed.sh"
+
+  # The witness: the run's witness intact, and the restore reads it.
+  {
+    gate_pin_setup
+    cat <<'FORGE'
+printf 'rule-a/\n' >>"$exclude"
+rm -rf "$RALPH_FRONTIER_PIN"
+gate_frontier_put_back
+printf 'left: %s\n' "$(grep -c 'rule-a/' "$exclude" || true)"
+rm -rf "$RALPH_FRONTIER_COMMON"
+FORGE
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "moved the ignore frontier in .git/info/exclude"
+  assert_output_contains "(put back)"
+  assert_output_contains "left: 0"
+
+  # The case: the run's witness set to the widened digest, the way a session that
+  # wanted its rule left in place would set it.
+  {
+    gate_pin_setup
+    cat <<'FORGE'
+printf 'rule-b/\n' >>"$exclude"
+digest="$(gate__digest "$exclude")"
+awk -F'\t' -v OFS='\t' -v d="$digest" \
+  '$1 == "dir" && $2 == ".git/info/exclude" { $3 = d } { print }' \
+  "$RALPH_FRONTIER_COMMON/manifest" >"$RALPH_FRONTIER_COMMON/manifest.forged"
+mv -f "$RALPH_FRONTIER_COMMON/manifest.forged" "$RALPH_FRONTIER_COMMON/manifest"
+rm -rf "$RALPH_FRONTIER_PIN"
+gate_frontier_moved || printf 'nothing to compare against\n'
+gate_frontier_put_back
+rm -rf "$RALPH_FRONTIER_COMMON"
+FORGE
+  } >"$script"
+  pack_run ". '$script'"
+  assert_success
+  assert_output_contains "nothing to compare against"
+  refute_output_contains "moved the ignore frontier"
+}
+
+@test "a pin that is gone vouches for nothing outside a run" {
+  # `gate_*` stays drivable outside a run, and there no census was taken — so the
+  # census vouches for anything, a manifest that is gone included. Read as an empty
+  # manifest, every shared source moved with the empty string for its target:
+  # `core.excludesFile` set to nothing and the repository's own keys on [46]'s list
+  # unset, each called put back.
+  use_tickets 01-alpha
+  pack_run '
+    RALPH_FRONTIER_PIN="$(gate_frontier_pin)"
+    rm -rf "$RALPH_FRONTIER_PIN"
+    gate_frontier_moved || printf "nothing to compare against\n"
+    gate_frontier_put_back
+    git config --get core.excludesFile || printf "core.excludesFile is not set\n"'
+  assert_success
+  assert_output_contains "nothing to compare against"
+  assert_output_contains "core.excludesFile is not set"
+  refute_output_contains "moved the ignore frontier"
+}
+
+@test "a retry that destroyed its pin is not told the frontier moved under concurrency" {
+  # A pin whose mark is gone reads the run's register from its start — the price
+  # [100] set, so that a mark rewritten never buys a smaller bill. At
+  # `MAX_PARALLEL=1` that is the first attempt's movement as well as this one's, and
+  # the line written for a movement another iteration saw said it happened "while
+  # more than one iteration was in flight" — false at the value shipped, and
+  # printed since the refusal carries the frontier. The bill stays the whole night;
+  # the sentence says so.
+  use_tickets 01-alpha
+  script_claude <<'FAKE'
+#!/usr/bin/env bash
+cat >/dev/null
+state="$RALPH_SHIM_STATE"
+n="$(cat "$state/seq" 2>/dev/null || echo 0)"
+n=$((n + 1))
+printf '%s\n' "$n" >"$state/seq"
+exclude="$(git rev-parse --git-common-dir)/info/exclude"
+mkdir -p src
+if [ "$n" = 1 ]; then
+  printf 'src/first.txt\n' >>"$exclude"
+  printf 'behind the first rule\n' >src/first.txt
+else
+  printf 'src/second.txt\n' >>"$exclude"
+  printf 'behind the second rule\n' >src/second.txt
+  for pin in "$TMPDIR"/ralph-ignore.*; do
+    [ -d "$pin" ] || continue
+    rm -rf "$pin"
+    printf '%s\n' "$pin" >>"$state/pin.destroyed"
+  done
+fi
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.02}'
+FAKE
+
+  run_loop_own_tmp
+  assert_file_contains "$SHIM_STATE/pin.destroyed" "ralph-ignore."
+  assert_equal "$(claude_call_count)" "2"
+  assert_failure 4
+  assert_output_contains "is every movement this run recorded, because this iteration's mark in the run's register is not the one its witness was taken with"
+  refute_output_contains "while more than one iteration was in flight"
+  refute_file_contains "$PROJECT_DIR/.git/info/exclude" "src/second.txt"
 }
 
 # ── [85] the census is held to its criterion by the calls that take a guard ──

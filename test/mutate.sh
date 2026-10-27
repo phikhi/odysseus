@@ -1311,8 +1311,11 @@ mutation "30 moving the frontier is not a finding" "$GATE" \
   's/^gate_frontier\(\) \{/gate_frontier() { return 0;/m' \
   test/gate.bats "widen the blind zone"
 
+# Anchored at the start of the line since [109], which put a second copy of the
+# same test, two spaces deeper, in the refusal above it: unanchored, this matched
+# inside that copy first and took away [109]'s carrier instead of this one.
 mutation "30 the scope-guard drops the frontier findings" "$GATE" \
-  's/  if \[ -n "\$\{RALPH_GATE_FRONTIER:-\}" \]; then/  if [ -n "" ]; then/' \
+  's/^  if \[ -n "\$\{RALPH_GATE_FRONTIER:-\}" \]; then/  if [ -n "" ]; then/m' \
   test/gate.bats "outside the repository is named"
 
 # The cause behind [24]'s consequence, which is the one line a human gets when the
@@ -2577,15 +2580,18 @@ mutation "41 the register is read from the beginning of the run" "$GATE" \
 
 # What nobody can be charged for, said out loud. A bill that cannot be contested
 # and is not explained is the half-truth this pack refuses everywhere else.
+#
+# Re-anchored by [109], which put a second sentence behind the same flag: the line
+# that guards both is the one these take away or keep.
 mutation "41 nothing names what cannot be attributed" "$GATE" \
-  's/  \[ "\$foreign" = 0 \] \|\| printf/  [ 1 = 0 ] \&\& printf/' \
+  's/  \[ "\$foreign" = 1 \] \|\| return 0\n/  return 0\n/' \
   test/concurrency.bats "charged to every iteration in flight"
 
 # And that the line is a *consequence of concurrency* rather than decoration:
 # printed unconditionally it appears at MAX_PARALLEL=1, where the iteration that
 # looked is the only one that could have written.
 mutation "41 the unattributable line is printed whatever the run does" "$GATE" \
-  's/  \[ "\$foreign" = 0 \] \|\| printf/  [ 0 = 0 ] \&\& printf/' \
+  's/  \[ "\$foreign" = 1 \] \|\| return 0\n//' \
   test/concurrency.bats "sequenced bills the session that wrote"
 
 # The run-level witness of the sources every worktree shares. Without it the pin
@@ -7801,7 +7807,7 @@ mutation "100 a name with a tab or a newline prints itself into the census" "$GA
 # whether the pin's manifest is asked about, whether the run's witness stands in
 # for it, and whether the copy put back is asked about.
 mutation "100 a rewritten manifest in the pin is what this iteration was handed" "$GATE" \
-  's/  if gate__frontier_pin_held "\$pin\/manifest"; then/  if true; then/' \
+  's/  if \[ -f "\$pin\/manifest" \] && gate__frontier_pin_held "\$pin\/manifest"; then/  if [ -f "\$pin\/manifest" ]; then/' \
   test/gate.bats "rewrites its iteration's pin is refused"
 
 mutation "100 nothing stands in for a pin whose manifest moved" "$GATE" \
@@ -8015,6 +8021,50 @@ mutation "108 the lexer marks no heredoc" "test/gate.bats" \
 mutation "108 a red branch is quoted from its beginning" "$RECEIPT" \
   's/    skip=\$\(\(total - RECEIPT_MAX_LINES\)\)\n/    skip=0\n/' \
   test/receipt.bats "counted rather than silently cut"
+
+# ── [109] a pin destroyed, and the frontier put back all the same ─────────────
+#
+# A destroyed pin closed the control and put nothing back. Each entry takes away
+# one thing the restore on that path now rests on: the comparison itself, the half
+# it is limited to, the seal it asks before using the run's witness, the manifest
+# that is gone outside a run, the refusal that says it, and the sentence that says
+# what the bill of a pin with no mark is.
+
+# The comparison. Without it the night stops as before, and the rule outlives it.
+mutation "109 a destroyed pin puts nothing back" "$GATE" \
+  's/    pinned="\$\(gate__frontier_pinned_manifest\)" \|\| return 1\n/    return 1\n/' \
+  test/gate.bats "destroys its iteration's pin stops the night"
+
+# The half. The tree's rules have no reference left, and compared against nothing
+# every one of them is named as this session's.
+mutation "109 a destroyed pin is compared on the tree's rules too" "$GATE" \
+  's/      gate__ignore_shared_manifest\n      gate__config_manifest\n      printf/      gate__frontier_manifest\n      printf/' \
+  test/gate.bats "compared on its shared half, not on the tree's rules"
+
+# The seal. A run's witness the session rewrote leaves nothing to compare against,
+# and compared against nothing every shared source is announced as moved.
+mutation "109 a destroyed pin is compared against a witness nothing vouches for" "$GATE" \
+  's/    pinned="\$\(gate__frontier_pinned_manifest\)" \|\| return 1\n/    pinned="\$(gate__frontier_pinned_manifest)" || :\n/' \
+  test/gate.bats "only when its seal vouches for it"
+
+# Outside a run nothing was censused, so the census vouches for a manifest that is
+# gone, read as an empty one: `core.excludesFile` set to nothing and the
+# repository's own keys on [46]'s list unset, each called put back.
+mutation "109 a manifest that is gone is vouched for outside a run" "$GATE" \
+  's/  if \[ -f "\$pin\/manifest" \] && gate__frontier_pin_held "\$pin\/manifest"; then/  if gate__frontier_pin_held "\$pin\/manifest"; then/' \
+  test/gate.bats "a pin that is gone vouches for nothing outside a run"
+
+# The refusal that says it. Without it the frontier is put back in silence, on the
+# one output a refused snapshot still prints.
+mutation "109 the scope-guard's refusal carries no frontier" "$GATE" \
+  's/      printf \x27%s\\n\x27 "\$RALPH_GATE_FRONTIER"\n/      :\n/' \
+  test/gate.bats "destroys its iteration's pin stops the night"
+
+# And the sentence. A mark that is gone reads the whole night, and the line for a
+# movement another pin saw is then no evidence of concurrency.
+mutation "109 a pin with no mark is told its bill is concurrency" "$GATE" \
+  's/  if \[ -n "\$mark" \] \|\|\n/  if true ||\n/' \
+  test/gate.bats "a retry that destroyed its pin is not told"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

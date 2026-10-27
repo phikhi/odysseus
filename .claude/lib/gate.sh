@@ -1917,12 +1917,42 @@ gate__frontier_pin_broken() {
 # The symmetric difference of two manifests: a line present in both appears twice
 # and `uniq -u` drops it. Names are unique inside one manifest, so nothing else
 # can pair up.
+#
+# **And a pin whose manifest is gone still has a shared half to answer from**
+# ([109]). Until then this returned on `[ -f "$pin/manifest" ]`, and that was the
+# whole of what a destroyed pin bought: the snapshot refuses and the night stops
+# ([30], [34]) — but nothing put back either, so a session that widened
+# `.git/info/exclude` and then removed its pin left the rule in place after the
+# stop. Measured on 13/10/2026, exit 4, and the rule still there for the next run
+# to pin as the project's own: the two-step laundering [34] closed for the tree,
+# open one directory up. The pin copied its shared half from the run's witness in
+# the first place ([41]), and `gate__frontier_pinned_manifest` already reads it
+# from there when the run's seal vouches for it ([100]) — so a destroyed pin is
+# compared on that half and on nothing else.
+#
+# Nothing else, because the tree half has no reference left: compared against
+# nothing, every `.gitignore` of the tree would read as moved, and
+# `gate_moved_tree_rules` would print them as this session's. It is not put back
+# on any path either — a tree rule is project work and goes with the rollback.
+# And nothing at all when nothing vouches for the run's witness: that comparison
+# would be against nothing too, and it would announce every shared source as moved
+# and not put back. The existence check is not relaxed by any of this — the
+# snapshot still refuses a pin it cannot read, and the night still stops; what
+# changes is that it stops with the frontier where the run found it.
 gate_frontier_moved() {
-  local pin="${RALPH_FRONTIER_PIN:-}" moved
+  local pin="${RALPH_FRONTIER_PIN:-}" pinned moved
   [ -n "$pin" ] || return 1
-  [ -f "$pin/manifest" ] || return 1
-  moved="$( { gate__frontier_manifest; gate__frontier_pinned_manifest || true; } |
-    LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
+  if [ -f "$pin/manifest" ]; then
+    moved="$( { gate__frontier_manifest; gate__frontier_pinned_manifest || true; } |
+      LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
+  else
+    pinned="$(gate__frontier_pinned_manifest)" || return 1
+    moved="$( {
+      gate__ignore_shared_manifest
+      gate__config_manifest
+      printf '%s\n' "$pinned" | awk -F'\t' '$1 != "tree" && $1 != ""'
+    } | LC_ALL=C sort | uniq -u | cut -f1,2 | LC_ALL=C sort -u)"
+  fi
   [ -n "$moved" ] || return 1
   printf '%s\n' "$moved"
 }
@@ -1940,9 +1970,17 @@ gate_frontier_moved() {
 # from here — `core.excludesFile` is set back to the value this names — so a
 # restore that trusted a manifest the session wrote would install the session's
 # frontier and call it put back.
+#
+# The pin's own manifest only when it is *there* ([109]). With no census — a
+# `gate_*` driven outside a run — `gate__frontier_pin_held` vouches for anything,
+# a file that is gone included, and that was harmless while the only caller
+# returned on a missing manifest first. It no longer does, and an empty manifest
+# vouched for is one against which every shared source moved, each with the empty
+# string as its target — measured: `core.excludesFile` set to nothing and the
+# repository's own `core.precomposeunicode` unset, both called put back.
 gate__frontier_pinned_manifest() {
   local pin="${RALPH_FRONTIER_PIN:-}" common="${RALPH_FRONTIER_COMMON:-}"
-  if gate__frontier_pin_held "$pin/manifest"; then
+  if [ -f "$pin/manifest" ] && gate__frontier_pin_held "$pin/manifest"; then
     cat "$pin/manifest" 2>/dev/null || true
     return 0
   fi
@@ -2298,8 +2336,25 @@ gate__frontier_share() {
   # that could have written. It is a finding like the others and rides on the
   # scope-guard's output: a bill nobody can contest has to be readable by the
   # person who gets it.
-  [ "$foreign" = 0 ] || printf '%s\n' \
-    'the ignore frontier above moved while more than one iteration was in flight — those sources are shared by every worktree, so nothing here can tell which session wrote them and every iteration in flight is charged'
+  #
+  # Unless this iteration's mark is not one it was handed ([109]). A pin whose
+  # `ledger-seen` is gone or rewritten reads from the start of the run — the price
+  # [100] set, so that rewriting the mark never buys a smaller bill — and then a
+  # line tagged by another pin may simply be an earlier iteration's: probed at
+  # `MAX_PARALLEL=1`, a retry that destroyed its pin was told the frontier had
+  # moved "while more than one iteration was in flight" about the movement its own
+  # first attempt had been billed for. Hidden until then behind the snapshot's
+  # refusal on the gate path; the refusal carries these findings now. The bill
+  # stays the whole night; the sentence says that is what it is.
+  [ "$foreign" = 1 ] || return 0
+  if [ -n "$mark" ] ||
+    { [ -f "$pin/ledger-seen" ] && gate__frontier_pin_held "$pin/ledger-seen"; }; then
+    printf '%s\n' \
+      'the ignore frontier above moved while more than one iteration was in flight — those sources are shared by every worktree, so nothing here can tell which session wrote them and every iteration in flight is charged'
+  else
+    printf '%s\n' \
+      "the ignore frontier above is every movement this run recorded, because this iteration's mark in the run's register is not the one its witness was taken with — nothing here can tell which of them came while it was in flight and which before it existed, and it is charged for all of them"
+  fi
   return 0
 }
 
@@ -3605,6 +3660,16 @@ gate__scope_guard() {
 
   if [ -z "$now" ] || ! changed="$(gate_changed_files "$base" "$now")"; then
     printf 'the scope-guard could not read the working tree — refusing to pass it\n'
+    # And the frontier all the same, which this output is the only carrier of
+    # ([109]). A snapshot refused over a destroyed pin is the night that stops, and
+    # since the frontier is put back on that path its own trace goes with it — the
+    # zone line of [24] named the path behind the rule only while the rule was in
+    # place. Silent here, the stopped night said that a witness was gone and
+    # nothing about what the session had moved, the same half-truth the
+    # nothing-delivered path in `gate_run` prints these findings to avoid.
+    if [ -n "${RALPH_GATE_FRONTIER:-}" ]; then
+      printf '%s\n' "$RALPH_GATE_FRONTIER"
+    fi
     return 1
   fi
 
