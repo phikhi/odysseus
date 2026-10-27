@@ -7481,6 +7481,56 @@ mutation "104 the installer opens a descriptor of its own" "$INIT" \
   's/^init_tree_preflight\(\) \{\n/init_tree_preflight() {\n  exec 9>\/dev\/null\n/m' \
   test/gate.bats "goes through the one function that hands it nothing"
 
+# ── [110] what git runs for this pack reads nothing of the caller's stdin ─────
+#
+# `proc_git`'s `/dev/null`, asked of the unit and of a night given a stdin of its
+# own. Then the one git this pack feeds: its stdin kept, its closes, the flag that
+# takes away the launch sharing its pipe, and the census of who may feed git at all
+# — each clause by an edit of its own, since the census answers four questions.
+mutation "110 a program git launches reads the caller's stdin" "$PROC" \
+  's/^    exec git "\$\@" <\/dev\/null$/    exec git "\$\@"/m' \
+  test/proc.bats "reads nothing of the caller's stdin"
+
+mutation "110 a program git launches in a night reads the run's stdin" "$PROC" \
+  's/^    exec git "\$\@" <\/dev\/null$/    exec git "\$\@"/m' \
+  test/gate.bats "the witness of the pinned rules answers whole"
+
+mutation "110 the fed git is handed nothing to read" "$PROC" \
+  's/(proc_git_fed\(\) \{\n  \(\n    eval "exec \$PROC__ABOVE_STDERR"\n    exec git "\$\@")\n/$1 <\/dev\/null\n/' \
+  test/proc.bats "keeps the token, its status"
+
+mutation "110 the fed git is handed nothing, and the pinned rules hide nothing" "$PROC" \
+  's/(proc_git_fed\(\) \{\n  \(\n    eval "exec \$PROC__ABOVE_STDERR"\n    exec git "\$\@")\n/$1 <\/dev\/null\n/' \
+  test/gate.bats "an ignore rule written by the session does not hide"
+
+mutation "110 the fed git holds the shell that ran it" "$PROC" \
+  's/proc_git_fed\(\) \{\n  \(\n    eval "exec \$PROC__ABOVE_STDERR"\n/proc_git_fed() {\n  (\n/' \
+  test/proc.bats "out of configuration holds nothing of the shell"
+
+mutation "110 the witness's git reads an index, and starts what reads its pipe" "$GATE" \
+  's/check-ignore --no-index --stdin/check-ignore --stdin/' \
+  test/gate.bats "the witness of the pinned rules answers whole"
+
+mutation "110 the witness is piped into a git that hands it /dev/null" "$GATE" \
+  's/\| proc_git_fed check-ignore/| proc_git check-ignore/' \
+  test/gate.bats "nothing feeds a git"
+
+mutation "110 the pinned rules are asked through /dev/null, and hide nothing" "$GATE" \
+  's/\| proc_git_fed check-ignore/| proc_git check-ignore/' \
+  test/gate.bats "an ignore rule written by the session does not hide"
+
+mutation "110 the fed git is called with nothing piped into it" "$GATE" \
+  's/(  \[ -n "\$listing" \] \|\| return 0\n)(  # The one git of this pack that is fed)/$1  proc_git_fed rev-parse --git-dir >\/dev\/null 2>&1 || true\n$2/' \
+  test/gate.bats "nothing feeds a git"
+
+mutation "110 a second git is fed without saying what its pipe can lose" "$ROUTER" \
+  's/    proc_git -c core\.quotePath=false ls-files --others --exclude-standard 2>\/dev\/null/    printf "" | proc_git_fed -c core.quotePath=false ls-files --others --exclude-standard 2>\/dev\/null/' \
+  test/gate.bats "nothing feeds a git"
+
+mutation "110 a file is redirected into a git that hands it /dev/null" "$ROUTER" \
+  's/    proc_git -c core\.quotePath=false ls-files --others --exclude-standard 2>\/dev\/null/    proc_git -c core.quotePath=false ls-files --others --exclude-standard 2>\/dev\/null <"\$RALPH_DIR\/lib\/proc.sh"/' \
+  test/gate.bats "nothing feeds a git"
+
 # ── [105] the curl this pack runs holds nothing and reads nothing ────────────
 #
 # The two halves of `proc_curl`, each taken out alone. The descriptors, asked of

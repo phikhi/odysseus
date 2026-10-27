@@ -488,19 +488,22 @@ proc__plant_git_programs() {
 # The three gestures a run makes most — an index refresh, an index written into a
 # scratch file, a ref moved — each written with a redirection on the call, which is
 # how the pack writes them and what makes bash save a copy of fd 2 ([101]). `$1` is
-# the word that runs git.
+# the word that runs git. And a fourth since [110], a list piped into a git that
+# reads it: `$2` is the word that runs that one, and its index read starts the
+# fsmonitor too.
 proc__git_gestures() {
   printf '%s\n' "$channels_and_the_old_shut"'
     proc_git_hooks_off
     '"$1"' status --porcelain >/dev/null 2>&1
     GIT_INDEX_FILE="$RALPH_SHIM_STATE/gesture.idx" '"$1"' read-tree HEAD 2>/dev/null
     '"$1"' update-ref refs/heads/ralph-probe HEAD 2>/dev/null
+    printf "probe\n" | '"$2"' check-ignore --stdin >/dev/null 2>&1 || true
   '
 }
 
 @test "a program git runs out of configuration holds nothing of the shell that ran it" {
   proc__plant_git_programs
-  pack_run "$(proc__git_gestures proc_git)"
+  pack_run "$(proc__git_gestures proc_git proc_git_fed)"
   assert_success
   assert_forger_found_nothing "$SHIM_STATE/hook.log" "a hook configured in the repository"
   assert_forger_found_nothing "$SHIM_STATE/fsmonitor.log" "a core.fsmonitor of the operator's ~/.gitconfig"
@@ -511,7 +514,7 @@ proc__git_gestures() {
   # [102] could not reach, and the reason [104] exists. The channels the caller
   # holds on 5, 4 and 11 are what each program finds.
   proc__plant_git_programs
-  pack_run "$(proc__git_gestures git)"
+  pack_run "$(proc__git_gestures git git)"
   assert_success
   local who
   for who in hook fsmonitor; do
@@ -521,11 +524,14 @@ proc__git_gestures() {
   done
 }
 
-@test "a git run that way keeps the token, its status, its streams and the assignment in front of it" {
+@test "a git run that way keeps the token, its status, its output streams and the assignment in front of it" {
   # What a caller writes around a git call is what it wrote around git itself, or
   # eighty-five call sites changed meaning when they changed name. And the one thing
   # `proc_exec_bare` does that this must not: hand the operator's environment back,
   # which would hand git the hook directory again.
+  #
+  # Stdin is the exception since [110], and both halves are asked: a list piped into
+  # `proc_git` reaches nobody, the same list piped into `proc_git_fed` reaches git.
   pack_run '
     proc_git_hooks_off
     printf "hooks=%s\n" "$(proc_git config core.hooksPath)"
@@ -533,7 +539,8 @@ proc__git_gestures() {
     proc_git rev-parse --verify --quiet refs/heads/ralph-no-such >/dev/null || rc=$?
     printf "status=%s\n" "$rc"
     printf "stderr=%s\n" "$(proc_git rev-parse --verify refs/heads/ralph-no-such 2>&1 >/dev/null || true)"
-    printf "stdin=%s\n" "$(printf "HEAD\n" | proc_git cat-file --batch-check | cut -d" " -f2)"
+    printf "fed=%s\n" "$(printf "HEAD\n" | proc_git_fed cat-file --batch-check | cut -d" " -f2)"
+    printf "unfed=[%s]\n" "$(printf "HEAD\n" | proc_git cat-file --batch-check)"
     GIT_INDEX_FILE="$RALPH_SHIM_STATE/own.idx" proc_git read-tree HEAD
     printf "after=[%s]\n" "${GIT_INDEX_FILE-unset}"
   '
@@ -541,9 +548,73 @@ proc__git_gestures() {
   assert_output_contains "hooks=/dev/null"
   assert_output_contains "status=1"
   assert_output_contains "stderr=fatal: Needed a single revision"
-  assert_output_contains "stdin=commit"
+  assert_output_contains "fed=commit"
+  assert_output_contains "unfed=[]"
   assert_output_contains "after=[unset]"
   assert_file_exists "$SHIM_STATE/own.idx"
+}
+
+# ── [110] what git runs for this pack reads nothing of the caller's stdin ────
+#
+# The descriptor [104] left: fd 0, which git reads when a caller feeds it and which
+# every program git launches inherited all the same. The program is a
+# `core.fsmonitor` of the operator's `~/.gitconfig` that notes that it ran and every
+# line it reads. The caller's stdin is a finite file of lines — never `/dev/null`,
+# which makes "it read nothing" true of a test that proves nothing ([108] replaying
+# [41]) — and the caller reads what is left of it afterwards, so both sides are
+# asked: nothing taken, everything still there. The reader gives up after two
+# seconds on a stdin that never ends, so a mutation of this test cannot hang a gate.
+
+proc__plant_stdin_reader() {
+  cat >"$SHIM_STATE/stdin-reader" <<READER
+#!/usr/bin/env bash
+printf 'ran\n' >>"$SHIM_STATE/reader.log"
+while IFS= read -r -t 2 line; do printf 'READ %s\n' "\$line" >>"$SHIM_STATE/reader.log"; done
+printf '/\0'
+READER
+  chmod +x "$SHIM_STATE/stdin-reader"
+  local i
+  for i in 1 2 3 4 5 6 7 8; do printf 'CALLER-LINE-%s\n' "$i"; done >"$SHIM_STATE/caller.stdin"
+  git config --global core.fsmonitor "$SHIM_STATE/stdin-reader"
+}
+
+# The verbs that start it, each the way the pack writes it: an index refresh, an
+# index built in a scratch file, the two listings the gate makes, a diff of two
+# trees. Twice the refresh, because git queries a new index only from its second
+# read. `$1` is the word that runs git.
+proc__git_readers() {
+  printf '%s\n' '
+    proc_git_hooks_off
+    '"$1"' status --porcelain >/dev/null 2>&1
+    '"$1"' status --porcelain >/dev/null 2>&1
+    GIT_INDEX_FILE="$RALPH_SHIM_STATE/reader.idx" '"$1"' read-tree HEAD 2>/dev/null
+    GIT_INDEX_FILE="$RALPH_SHIM_STATE/reader.idx" '"$1"' add -A --force >/dev/null 2>&1 || true
+    '"$1"' ls-files --others --exclude-standard >/dev/null 2>&1
+    '"$1"' diff-tree -r --name-only HEAD HEAD >/dev/null 2>&1
+    printf "left=%s\n" "$(grep -c "^CALLER-LINE-" || true)"
+  '
+}
+
+@test "a program git runs out of configuration reads nothing of the caller's stdin" {
+  proc__plant_stdin_reader
+  pack_run "$(proc__git_readers proc_git)" <"$SHIM_STATE/caller.stdin"
+  assert_success
+  grep -q '^ran$' "$SHIM_STATE/reader.log" ||
+    fail "the core.fsmonitor never ran, so 'it read nothing' proves nothing: $(cat "$SHIM_STATE/reader.log" 2>/dev/null)"
+  if grep -q '^READ' "$SHIM_STATE/reader.log"; then
+    fail "a program git launched read the caller's stdin:
+$(grep '^READ' "$SHIM_STATE/reader.log")"
+  fi
+  assert_output_contains "left=8"
+}
+
+@test "the paired witness: the same program under a bare git reads the caller's stdin" {
+  proc__plant_stdin_reader
+  pack_run "$(proc__git_readers git)" <"$SHIM_STATE/caller.stdin"
+  assert_success
+  grep -q '^READ CALLER-LINE-1$' "$SHIM_STATE/reader.log" ||
+    fail "the program under a bare git read none of the caller's stdin, so the probe sees nothing: $(cat "$SHIM_STATE/reader.log" 2>/dev/null)"
+  refute_output_contains "left=8"
 }
 
 # ── [105] the curl this pack runs holds nothing and reads nothing ────────────
