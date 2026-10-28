@@ -312,6 +312,111 @@ FAKE
   assert_equal "$output" ""
 }
 
+# ── [97] the stream has no name, and one reader ──────────────────────────────
+
+@test "what a session writes while it is being stopped still reaches the journal" {
+  # The monitor reads the stream as it is written and stops reading the moment it
+  # terminates a session — and a session asked to stop answers with the last
+  # events of its shutdown, a `result` among them. Until [97] every reader opened
+  # the stream's file after the session was collected, so those lines were read by
+  # construction. The file has no name now and the monitor's copy is the only one,
+  # so the rest is read once the session and its group are gone (`monitor_drain`):
+  # without it, turns and cost of every session the monitor stopped are lost.
+  set_config SOFT_LIMIT_TOKENS 5000
+  set_config STERILE_K 1
+  script_claude <<FAKE
+#!/usr/bin/env bash
+$SCRIPT_DELIVERS
+finish() {
+  echo '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":7,"total_cost_usd":0.7}'
+  exit 0
+}
+trap finish TERM
+echo '{"type":"system","subtype":"init","session_id":"s","model":"test-model"}'
+echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":9000,"output_tokens":5}},"session_id":"s"}'
+i=0
+while [ \$i -lt 300 ]; do
+  sleep 0.1
+  i=\$((i + 1))
+done
+FAKE
+
+  run_loop
+  assert_failure 4
+  assert_output_contains "crossed the 5000-token soft limit"
+  assert_file_contains "$FEATURE_DIR/run.log" "turns=7"
+}
+
+@test "the shell that spawned a session holds no end of its stream afterwards" {
+  # The write end is this shell's only between the open and the fork — after that
+  # the session is the one writer the file has — and the read end goes once the
+  # rest has been read. Asked by writing, never by listing ([96], [101]).
+  fd_forger
+  printf 'a prompt\n' >"$RALPH_TEST_DIR/prompt"
+  pack_run "proc_channel_preflight
+session_spawn '$RALPH_TEST_DIR/prompt' '$RALPH_TEST_DIR/stream' >/dev/null
+printf 'lines=%s\\n' \"\$(session_stream | grep -c .)\"
+\"\$RALPH_SHIM_STATE/fd-forger\" 'forged into a stream' \"\$RALPH_SHIM_STATE/forger.log\""
+  assert_success
+  # The session ran and its stream was read, or the rest proves nothing.
+  refute_output_contains "lines=0"
+  assert_forger_found_nothing "$SHIM_STATE/forger.log" "the shell that spawned the session"
+  # And nothing was left where the stream was made.
+  run bash -c "ls -a '$RALPH_TEST_DIR' | grep '^stream' || true"
+  assert_equal "$output" ""
+}
+
+@test "a session whose stream someone else holds is never spawned, and says who" {
+  # [103]'s window, at the stream: the file has a name from its `mktemp` to its
+  # unlink, and a process that opens it in that instant keeps it. The channel is
+  # refused, and so is the session — a retry would only hand the next file to the
+  # same process.
+  printf 'a prompt\n' >"$RALPH_TEST_DIR/prompt"
+  pack_run "proc_channel_preflight
+$(channel_window_held)
+rc=0
+session_spawn '$RALPH_TEST_DIR/prompt' '$RALPH_TEST_DIR/stream' || rc=\$?
+printf 'rc=%s\\nrefusal=%s\\nlines=%s\\n' \"\$rc\" \"\$RALPH_SESSION_REFUSAL\" \"\$(session_stream | grep -c .)\"
+kill \"\$(cat \"\$RALPH_SHIM_STATE/holder.pid\")\" 2>/dev/null || true"
+  assert_output_contains "rc=1"
+  assert_output_contains "refusal=it was held by process"
+  assert_output_contains "lines=0"
+  refute_output_contains "Bad file descriptor"
+  assert_equal "$(claude_call_count)" "0"
+}
+
+@test "a reader that stops before the end of a stream answers, and takes nothing down" {
+  # Every entry point runs under `errexit` and `pipefail`, and a stream is read as
+  # `session_stream | <reader>`. A reader that stops early — `head`, `grep -q`, one
+  # that answers without reading — closes the pipe on the writer, and the SIGPIPE
+  # it takes would be the pipeline's status: the assignment of an answer the reader
+  # did give would fail, and the shell with it. Measured before the writer ignored
+  # it: `rc=141` on a stream of a megabyte.
+  pack_run 'monitor_forget
+i=0
+while [ "$i" -lt 20000 ]; do
+  MONITOR_LINES[${#MONITOR_LINES[@]}]="{\"type\":\"user\",\"n\":$i,\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+  i=$((i + 1))
+done
+first="$(session_stream | head -1)"
+printf "first=%s\n" "$first"
+printf "after\n"'
+  assert_success
+  assert_output_contains 'first={"type":"user","n":0,'
+  assert_output_contains "after"
+}
+
+@test "the paired witness: nobody holds the stream, and the session runs" {
+  printf 'a prompt\n' >"$RALPH_TEST_DIR/prompt"
+  pack_run "proc_channel_preflight
+rc=0
+session_spawn '$RALPH_TEST_DIR/prompt' '$RALPH_TEST_DIR/stream' || rc=\$?
+printf 'rc=%s\\nrefusal=[%s]\\n' \"\$rc\" \"\$RALPH_SESSION_REFUSAL\""
+  assert_output_contains "rc=0"
+  assert_output_contains "refusal=[]"
+  assert_equal "$(claude_call_count)" "1"
+}
+
 # ── counting context ─────────────────────────────────────────────────────────
 
 @test "context counts cached tokens: they occupy the window all the same" {

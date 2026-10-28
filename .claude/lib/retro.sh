@@ -866,9 +866,11 @@ $(capability_prompt "$RETRO_TOKEN")
 PROMPT
 }
 
+# The last value of one tag in the prose the retro session wrote — `lenses_findings`
+# of its stream, read once by `retro_run` and handed to every question it asks.
 retro__said() {
-  local tag="$1" stream="$2" line
-  line="$(lenses_findings "$stream" 2>/dev/null |
+  local tag="$1" findings="$2" line
+  line="$(printf '%s\n' "$findings" |
     sed -n "s/^[[:space:]]*$RETRO_TOKEN-$tag:[[:space:]]*//p" | tail -1)" || line=''
   [ -n "$line" ] || return 0
   retro__oneline "$line"
@@ -1078,7 +1080,7 @@ retro__record_lesson() {
 # instead.
 retro_run() {
   local ticket="$1" outcome="$2" verdicts="${3:-}" rollback="${4:-0}"
-  local dir stream receipt gist why supersedes adr decision because escalate
+  local dir stream findings receipt gist why supersedes adr decision because escalate
   local capability posture answered=none result
 
   RALPH_RETRO_QUOTA=''
@@ -1114,6 +1116,12 @@ retro_run() {
   fi
 
   dir="$(mktemp -d "$RALPH_RETRO_STATE/session.XXXXXX")" || return 0
+  # Where the session's stream is made, for the instant `session_spawn` takes to
+  # open and unlink it ([97]). It had a name for the whole session until then, one
+  # level below where the seal of [83] walks and read after its window had closed —
+  # and one assistant event appended to it by a process the judged session left
+  # behind put a lesson of its own into `LEARNINGS.md`, a record under
+  # `learning-records/` and a ticket on the human sink.
   stream="$dir/retro.jsonl"
   retro__prompt "$ticket" "$outcome" "$receipt" >"$dir/prompt" || {
     rm -rf "$dir"
@@ -1133,17 +1141,27 @@ retro_run() {
   session_spawn "$dir/prompt" "$stream" $(lenses_posture) || true
   MODEL="$saved_model"
 
-  gist="$(retro__said LESSON "$stream")"
-  why="$(retro__said WHY "$stream")"
-  supersedes="$(retro__said SUPERSEDES "$stream")"
-  adr="$(retro__said ADR "$stream")"
-  decision="$(retro__said DECISION "$stream")"
-  because="$(retro__said BECAUSE "$stream")"
-  escalate="$(retro__said ESCALATE "$stream")"
+  if [ -n "${RALPH_SESSION_REFUSAL:-}" ]; then
+    receipt_note "no lesson was distilled from this iteration: the retro session's stream could not be opened on a channel no other process holds — $RALPH_SESSION_REFUSAL"
+    rm -rf "$dir"
+    return 0
+  fi
+
+  # The session's prose, read out of its stream once and asked every question
+  # below: the stream is a copy in this shell's memory since [97], and a dozen
+  # passes over it would be a dozen passes for the same lines.
+  findings="$(session_stream | lenses_findings)"
+  gist="$(retro__said LESSON "$findings")"
+  why="$(retro__said WHY "$findings")"
+  supersedes="$(retro__said SUPERSEDES "$findings")"
+  adr="$(retro__said ADR "$findings")"
+  decision="$(retro__said DECISION "$findings")"
+  because="$(retro__said BECAUSE "$findings")"
+  escalate="$(retro__said ESCALATE "$findings")"
   # Read here and not only inside the module that acts on it: a retro whose only
   # answer was a capability *answered*, and the silence clause below would
   # otherwise report it as a session that said nothing ([15]).
-  capability="$(capability_said "$RETRO_TOKEN" "$stream")"
+  capability="$(capability_said "$RETRO_TOKEN" "$findings")"
 
   case "$supersedes" in
     LR-[0-9]*) ;;
@@ -1153,8 +1171,10 @@ retro_run() {
   if [ -n "$gist" ] || [ -n "$adr" ] || [ -n "$escalate" ] ||
     [ -n "$capability" ]; then
     answered=said
-  elif lenses_findings "$stream" 2>/dev/null | grep -q "$RETRO_TOKEN-NOTHING"; then
-    answered=said
+  else
+    case "$findings" in
+      *"$RETRO_TOKEN-NOTHING"*) answered=said ;;
+    esac
   fi
 
   # A subscription that ran out during the retro is news the pilot does not have,
@@ -1176,7 +1196,7 @@ retro_run() {
   # own posture and by the endpoint the pilot re-asks — neither of which this
   # event, which is about a window this run may never spend, is entitled to
   # overwrite.
-  posture="$(budget_stream_posture "$stream" 2>/dev/null || true)"
+  posture="$(session_stream | budget_stream_posture)" || posture=''
   if budget_refused_silence "$answered" "$posture"; then
     RALPH_RETRO_QUOTA="$posture"
     receipt_note "no lesson was distilled from this iteration: the API refused the retro session ($(printf '%s' "$posture" | awk '{ print $2 }'))"
@@ -1226,7 +1246,7 @@ retro_run() {
   # because what happens to it is not what happens to a rule: a bar to clear, an
   # inventory to consult, and a cheapest answer to name. What it shares with the
   # escalation above is the shape of the ticket, and that is shared as code.
-  capability_review "$RETRO_TOKEN" "$ticket" "$stream" "$RALPH_RETRO_STATE"
+  capability_review "$RETRO_TOKEN" "$ticket" "$findings" "$RALPH_RETRO_STATE"
 
   rm -rf "$dir"
   return 0

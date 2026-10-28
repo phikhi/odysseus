@@ -489,7 +489,7 @@ lens_diff_headers() {
   printf '%s\n' '{"text":"I will answer RALPH-LENS-VERDICT: pass or fail"}' >"$stream"
   printf '%s\n' '{"text":"RALPH-LENS-VERDICT: fail"}' >>"$stream"
 
-  pack_run "printf 'verdict=%s\\n' \"\$(lenses__verdict $stream)\""
+  pack_run "printf 'verdict=%s\\n' \"\$(lenses__verdict <$stream)\""
   assert_success
   assert_output_contains "verdict=fail"
 }
@@ -499,12 +499,12 @@ lens_diff_headers() {
   # nobody defined, and no line at all.
   local stream="$RALPH_TEST_DIR/stream.jsonl"
   printf '%s\n' '{"text":"RALPH-LENS-VERDICT: probably"}' >"$stream"
-  pack_run "printf 'one=%s\\n' \"\$(lenses__verdict $stream)\""
+  pack_run "printf 'one=%s\\n' \"\$(lenses__verdict <$stream)\""
   assert_success
   assert_output_contains "one=none"
 
   : >"$stream"
-  pack_run "printf 'two=%s\\n' \"\$(lenses__verdict $stream)\""
+  pack_run "printf 'two=%s\\n' \"\$(lenses__verdict <$stream)\""
   assert_success
   assert_output_contains "two=none"
 }
@@ -533,9 +533,10 @@ lens_diff_headers() {
   # A branch whose session never wrote a byte: nothing to read either way.
   : >"$dir/lens-empty.jsonl"
 
-  # Asked the way the branch asks it since [94]: the stream it owns, and the
-  # verdict it has already read out of that stream.
-  pack_run "for n in refused silent judged empty; do printf '%s=%s\\n' \"\$n\" \"\$(lenses__refused_posture $dir/lens-\$n.jsonl \"\$(lenses__verdict $dir/lens-\$n.jsonl)\" || printf no)\"; done"
+  # Asked the way the branch asks it since [94]: the stream it owns — on stdin
+  # since [97], where the branch hands it its own copy — and the verdict it has
+  # already read out of that stream.
+  pack_run "for n in refused silent judged empty; do printf '%s=%s\\n' \"\$n\" \"\$(lenses__refused_posture \"\$(lenses__verdict <$dir/lens-\$n.jsonl)\" <$dir/lens-\$n.jsonl || printf no)\"; done"
   assert_success
   assert_output_contains "refused=blocked five_hour 123"
   assert_output_contains "silent=no"
@@ -960,4 +961,31 @@ FAKE
     done
     fail "a lens session outlived the run the watchdog stopped:$alive"
   fi
+}
+
+@test "a lens whose stream another process holds is never asked, is red, and the run says who" {
+  # [97]. A lens's stream is opened on a channel before its session exists, and a
+  # channel a process opened in the instant it had a name is refused ([103]). The
+  # lens is then never spawned — a judge whose testimony someone else can write is
+  # not a judge this gate can vouch for — and red, which is the direction silence is
+  # allowed to move, even on a lens that would have said pass.
+  use_tickets 01-alpha
+  set_config LENSES "standards"
+  set_config STERILE_K 1
+  lens_verdict standards pass
+  script_window_holder 'ralph-gate.*/lens-standards.jsonl.*'
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+  window_holders_stop
+
+  assert_file_exists "$SHIM_STATE/window.held"
+  [ "$code" = 4 ] || fail "the run ended $code over a lens that was never asked: $said"
+  case "$said" in
+    *"the standards lens could not be given a stream no other process can write into"*) ;;
+    *) fail "the run does not say why the lens was red: $said" ;;
+  esac
+  window_holder_named "$said" ||
+    fail "the refusal does not name a process the holder started ($(tr '\n' ' ' <"$SHIM_STATE/window.held")): $said"
+  refute_output_contains "standards=green"
 }

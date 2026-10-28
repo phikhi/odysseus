@@ -37,26 +37,64 @@
 # One prompt, one stream, from a file rather than a pipe: a pipeline would run
 # this in a subshell and RALPH_SOFT_LIMIT_HIT would die with it.
 #
+# **The stream has no name** ([97]). It is the one object four tiers draw an
+# answer from — a lens's verdict, the value gate's verdict and the hole it names,
+# the retro's lesson, a delivery's turns, cost and budget posture — and it used to
+# be a file the caller named, for as long as the session wrote into it and after.
+# A process the judged session left behind found it under `$TMPDIR` and appended
+# one line: `RALPH-LENS-VERDICT: pass` at the end of a lens that had answered
+# `fail` bought a green gate, a resolved ticket and a silent night (measured at the
+# triage of [97], `sondes/triage-97/q1`), and one assistant event at the end of a
+# retro's stream put a lesson of its own choosing into `LEARNINGS.md`, which every
+# later session reads. So the caller names a *place* now, and this file makes it
+# there, opens it twice, unlinks it and serves it only if nothing but this shell
+# holds it (`proc_channel_open`, [103]) — before `claude` exists. `claude` writes
+# its stdout into it, the monitor reads it forward and keeps what it reads, and
+# the stream is read back out of that copy by `session_stream`, the one way there
+# is to read it. Who can still write it: `claude`, and whatever `claude` hands its
+# stdout to — which for a judge with a read-only tool set is nobody else, and for
+# a delivery session is not something this pack can see (`docs/frontiere-de-
+# confiance.md`).
+#
+# A channel that cannot be served is **refused, and no session is spawned**: the
+# reason is in RALPH_SESSION_REFUSAL, beside the two other answers, and every
+# caller says it where it says things — a lens is red, a delivery is a failed
+# attempt, a retro distils nothing, the value gate judges nothing. A retry would
+# only hand the next file to the process that won the window ([103]).
+#
 # It lives in a lib rather than in the loop because three callers need it — the
 # loop's delivery iteration, the failure policy's re-slice and a review lens
 # ([06]) — and a lib that had to call back up into loop.sh for it would invert
 # the layering. Whoever spawns, the shape is the same: a session that inherited a
 # conversation would defeat the whole point of the pack.
 #
-# Anything after the two file arguments is passed to `claude` as it stands. That
+# Anything after the prompt and the place is passed to `claude` as it stands. That
 # is the one extension point, and it exists so that a caller which needs a
 # different posture — a review lens, which gets a read-only tool set — does not
 # retype the invocation. A second copy of these flags would be a second thing to
 # keep in step with reality, and only one of them would be under contract ([20]).
+#
+# The place is a path without its last characters: the file is `mktemp`'s, made
+# from it, so that its name is not one a process could have made first — a fixed
+# name in a directory anybody lists is a name somebody can put a link or a fifo at
+# ([94]). Where it is stays the caller's, so that the names [62] counts stay where
+# it counts them.
 session_spawn() {
-  local promptfile="$1" outfile="$2" pid rc=0 reaper=''
+  local promptfile="$1" place="$2" pid rc=0 reaper='' file=''
   shift 2
   RALPH_SOFT_LIMIT_HIT=0
   RALPH_SESSION_TIMEOUT=''
+  RALPH_SESSION_REFUSAL=''
+  monitor_forget
 
-  # Created before the spawn: the monitor follows the stream through an open
-  # descriptor, and a descriptor cannot be opened on a file that is not there.
-  : >"$outfile"
+  file="$(mktemp "$place.XXXXXX" 2>/dev/null)" || file=''
+  # Returned on, and not left to the spawn below to fail: the opener has closed both
+  # ends of a refused channel, so the redirection would refuse `claude` too — with a
+  # `Bad file descriptor` on the run's output instead of the sentence a caller says.
+  if ! proc_channel_open "$SESSION_STREAM_FD" "$SESSION_STREAM_BACK" "$file"; then
+    RALPH_SESSION_REFUSAL="$PROC_CHANNEL_REFUSAL"
+    return 1
+  fi
 
   # Job control, for exactly one fork. Without it a background child sits in the
   # shell's own process group, and then "what this session started" has no name
@@ -90,6 +128,10 @@ session_spawn() {
   # Called with `&`, and `$!` is still the session's own pid: the function ends in an
   # `exec`, so the background child it runs in *becomes* `claude` ([96] measured
   # that shape for the helper this replaces; [101] measured it again for this one).
+  #
+  # Its stdout is the stream's write end, and this shell lets go of that end the
+  # moment the fork is done: from then on the session is the only writer the file
+  # has. The read end stays here, with the monitor.
   set -m
   DISABLE_AUTO_COMPACT=1 proc_exec_bare claude -p \
     --model "$MODEL" \
@@ -97,11 +139,12 @@ session_spawn() {
     --verbose \
     --dangerously-skip-permissions \
     "$@" \
-    <"$promptfile" >"$outfile" &
+    <"$promptfile" >&"$SESSION_STREAM_FD" &
   pid=$!
   set +m
+  eval "exec $SESSION_STREAM_FD>&-"
 
-  if ! monitor_watch "$outfile" "$pid" "$SOFT_LIMIT_TOKENS"; then
+  if ! monitor_watch "$SESSION_STREAM_BACK" "$pid" "$SOFT_LIMIT_TOKENS"; then
     case "${MONITOR_STOPPED:-}" in
       soft-limit) RALPH_SOFT_LIMIT_HIT=1 ;;
       stall | wall) RALPH_SESSION_TIMEOUT="$MONITOR_STOPPED" ;;
@@ -124,7 +167,57 @@ session_spawn() {
     proc_collect "$reaper" || true
   fi
   proc_sweep "$pid" 'this session'
+  # And the rest of the stream, read once the session and its group are gone, so
+  # that what every reader reads is everything it wrote. The read end goes with it:
+  # once nothing holds the file, it is gone.
+  monitor_drain "$SESSION_STREAM_BACK"
+  eval "exec $SESSION_STREAM_BACK<&-"
   return "$rc"
+}
+
+# The two numbers a session's stream is opened on, as literal digits for the
+# reason every channel of this pack has them ([94]). The read end is 3, where the
+# monitor followed the stream when it still opened it by name. The write end is
+# held by `session_spawn` only between the open and the fork, and it is 7 because
+# 3 and 7 are the only two numbers free in all three shells a session is spawned
+# from: an iteration (which holds the receipt's 5 and 4 and the answer's 10), a lens
+# branch (which holds those, a prompt's read end on 6 and the gate's notes on 9 and
+# 8, and has closed the prompt's write end on 7 before it asks for a session), and
+# the pilot at the value gate (whose 11 to 254 are the read ends of iterations).
+# The census of every number is above `LOOP_SLOT_FD`, in `loop.sh`.
+SESSION_STREAM_FD=7
+SESSION_STREAM_BACK=3
+
+# Why the last `session_spawn` spawned nothing: the channel its stream would have
+# been written on was refused, and this is the clause `proc_channel_open` gave.
+# Empty after a session was spawned.
+RALPH_SESSION_REFUSAL=''
+
+# The stream of the last session this shell spawned, one event per line — the one
+# way there is to read it ([97]). Nothing when no session was spawned, including
+# when its channel was refused.
+#
+# Read it as `session_stream | <reader>`, and only that way: what reads a
+# session's stream is what draws a verdict, a record or a posture out of it, and
+# `test/gate.bats` finds every such reader by that shape and refuses one it has
+# not been told what it decides.
+#
+# Joined and written once rather than an element at a time: measured on a 20 MB
+# stream of 8 000 events, 0.57 s a reading against 1.15 s.
+#
+# And written by a subshell whose status is let go. A reader that stops before the
+# end — a `grep -q`, a `head`, a reader that answers without reading — closes the
+# pipe on this writer, and the SIGPIPE that kills it would, under the `pipefail`
+# every entry point sets, be the pipeline's status: the assignment of a reader's
+# answer would fail on a reader that did answer, and take an iteration down under
+# `errexit` (measured: `rc=141` on a stream of a megabyte). The subshell is what
+# the signal kills, and `|| true` is what keeps it from being anybody's answer.
+session_stream() {
+  [ -n "${MONITOR_LINES[*]+x}" ] || return 0
+  (
+    IFS=$'\n'
+    printf '%s\n' "${MONITOR_LINES[*]}" 2>/dev/null
+  ) || true
 }
 
 # What a session leaves running is taken back by `proc_sweep`, in lib/proc.sh:
@@ -203,8 +296,9 @@ session_spawn_interactive() {
   )
 }
 
-# Pull one field out of the final `result` event. Deliberately not jq: the pack
-# promises to run with nothing installed, and these fields are flat scalars.
+# Pull one field out of the final `result` event of the stream on stdin.
+# Deliberately not jq: the pack promises to run with nothing installed, and these
+# fields are flat scalars.
 #
 # A session that dies without emitting anything — crash, OOM, kill — is a
 # normal outcome here, so a missing result is empty, never an error.
@@ -217,8 +311,8 @@ session_spawn_interactive() {
 # reality, and then "the pack can read this format" is an assumption rather than
 # an assertion.
 session_result_field() {
-  local file="$1" key="$2" line
-  line="$(grep '"type":"result"' "$file" 2>/dev/null | tail -1)" || line=""
+  local key="$1" line
+  line="$(grep '"type":"result"' 2>/dev/null | tail -1)" || line=""
   [ -n "$line" ] || return 0
   printf '%s' "$line" |
     sed -n "s/.*\"$key\":\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p"

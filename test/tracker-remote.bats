@@ -2760,8 +2760,15 @@ remote__ceiling_refuses() {
   # A surface this pack cannot read is a clash, not a pass: the ticket runs alone.
   assert_output_contains "clash=0"
 
+  # The lister resolved first, the way the run resolves it before any session
+  # ([103]): since [97] a session's stream is a channel too, and in a shell that
+  # never resolved one every channel is refused — so a re-slice that went on past
+  # the refusal below would *also* spawn nothing, and this count would be zero for
+  # the wrong reason. Measured: without this line the mutation that lets the
+  # refusal travel came back VACUOUS.
   pack_run 'tracker_field() { case "$2" in "Write-surface") return 2 ;; *) tracker_local_field "$@" ;; esac; }
     set +e
+    proc_channel_preflight
     failures_reslice 01-alpha
     printf "reslice=%s\n" "$?"'
   # And a re-slice refuses **before** it opens a planning session, because the

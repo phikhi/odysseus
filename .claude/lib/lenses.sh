@@ -41,8 +41,9 @@
 #             This is why the lens fan is a phase of its own rather than three
 #             more branches in the objective fan: while `TEST_CMD` is running,
 #             nothing can attribute a write to a lens rather than to it.
-#   contain   the prompt and the stream live in the gate's temp directory, under
-#             TMPDIR, so the mechanism itself puts nothing in the repository.
+#   contain   the prompt and the stream are made in the gate's temp directory,
+#             under TMPDIR, and have no name there once they are open ([94],
+#             [97]), so the mechanism itself puts nothing in the repository.
 #
 # ── what nothing here holds ──────────────────────────────────────────────────
 #
@@ -59,14 +60,15 @@
 # one the whole budget half is built on — a signal read out of a stream may make a
 # run more cautious and never less.
 #
-# Who reads that stream moved with [94]. It is this branch, while the file is
-# still its own, and the three words go out to the gate on the note channel; the
-# gate used to open the file itself, after this branch was gone, which put the
-# answer on a file every process on the machine could write. What that does not
-# buy: the stream is a named file for as long as the session is writing into it,
-# so a process injecting into it *during* the session is injecting into the lens's
-# own testimony. Nothing above `session_spawn` can close that, and this module is
-# above it — ticket [97].
+# Who reads that stream moved with [94]. It is this branch, on its own copy, and
+# the three words go out to the gate on the note channel; the gate used to open the
+# file itself, after this branch was gone, which put the answer on a file every
+# process on the machine could write. What [94] could not buy from here was the
+# stream itself: a named file for as long as the session wrote into it, so a
+# process appending to it was writing the lens's own testimony — its verdict
+# included, which is the last line. Nothing above `session_spawn` could close that,
+# and [97] closed it there: the stream is opened on a channel with no name before
+# the session exists, and what this branch reads is what its judge wrote.
 
 # ── the registry ─────────────────────────────────────────────────────────────
 #
@@ -317,20 +319,21 @@ lenses_posture() {
 
 # The line a lens has to end on. Read as the *last* match in the stream, so a
 # model that quotes the instruction on its way to an answer does not decide the
-# verdict, and an absent one counts red.
+# verdict, and an absent one counts red. The last line of a stream nothing but the
+# judge writes ([97]): when the stream was a named file, the last line was
+# whatever a process the judged session left behind appended to it.
 LENSES_VERDICT_TOKEN='RALPH-LENS-VERDICT'
 
-# Where a lens's stream lives, in the gate's own temporary directory. One
-# definition and not two since [43], which gave that file a second reader; the
-# second reader is back inside the branch since [94], and the definition stays
-# here all the same — a second spelling would drift, and the symptom would be a
-# posture nobody could find rather than an error.
+# Where a lens's stream is made, in the gate's own temporary directory — the place
+# `session_spawn` makes its file at, opens and unlinks before the session exists
+# ([97]). A name for that instant and for no other.
 #
-# A named file, and the one object of this tier that could not be made nameless:
-# `session_spawn` hands the path to `claude` on a redirection and `monitor_watch`
-# follows it through a descriptor of its own, so the stream has to have a name for
-# as long as the session is writing into it. What that leaves open is a process
-# injecting into a lens's own testimony while it is being written — ticket [97].
+# It was the one object of this tier [94] could not make nameless, because the
+# stream had to have a name for as long as the session wrote into it: `claude` was
+# handed it on a redirection and `monitor_watch` opened it by path. What that left
+# open was a process appending its own verdict line to a lens's testimony, and it
+# won every time — the verdict is the *last* line. `session_spawn` hands `claude` a
+# descriptor now, and the monitor reads the other end.
 lenses__stream() {
   printf '%s/lens-%s.jsonl\n' "$1" "$2"
 }
@@ -350,7 +353,10 @@ lenses__stream() {
 # session asked the wrong question.
 #
 # Two numbers, literals for the reason the gate's two are, and 6 and 7 rather
-# than 8 and 9 because a lens branch holds all four at once.
+# than 8 and 9 because a lens branch holds all four at once. The write end is
+# closed before the lens asks for its session, and 7 is then the write end of the
+# session's own stream for the instant `session_spawn` holds it ([97]) — 3 and 7
+# being the only two numbers free in every shell that spawns one.
 LENSES_PROMPT_FD=7
 LENSES_PROMPT_BACK=6
 
@@ -444,7 +450,15 @@ lenses_review() {
   session_spawn "$promptfile" "$stream" $(lenses_posture) || rc=$?
   lenses__prompt_close
 
-  verdict="$(lenses__verdict "$stream")"
+  # A lens whose stream could not be opened on a channel nothing else holds was
+  # never asked: red, and the reason, like a prompt the gate could not vouch for.
+  if [ -n "${RALPH_SESSION_REFUSAL:-}" ]; then
+    printf 'the %s lens could not be given a stream no other process can write into — %s — refusing to spend a session on testimony this gate cannot vouch for\n' \
+      "$name" "$RALPH_SESSION_REFUSAL"
+    return 1
+  fi
+
+  verdict="$(session_stream | lenses__verdict)"
 
   # Asked here, in the branch that owns the stream, and sent out as three words
   # ([94]). The gate used to open this file itself once this branch was gone, and
@@ -452,11 +466,11 @@ lenses_review() {
   # a green iteration — the work rolled back, the ticket never billed and the
   # pilot stopping the night. Never fatal: a lens that cannot say it was refused
   # stays red and billed, which is the direction silence is allowed to move.
-  if posture="$(lenses__refused_posture "$stream" "$verdict")"; then
+  if posture="$(session_stream | lenses__refused_posture "$verdict")"; then
     gate_note posture "$posture" || true
   fi
 
-  lenses_findings "$stream"
+  session_stream | lenses_findings
 
   case "$verdict" in
     pass)
@@ -475,12 +489,12 @@ lenses_review() {
   esac
 }
 
-# The last verdict line in the stream, or `none`. Reading the whole stream rather
-# than the `result` field alone is deliberate: the pack's extractor stops at the
-# first comma, which a paragraph of findings has plenty of.
+# The last verdict line in the stream on stdin, or `none`. Reading the whole stream
+# rather than the `result` field alone is deliberate: the pack's extractor stops at
+# the first comma, which a paragraph of findings has plenty of.
 lenses__verdict() {
-  local stream="$1" seen
-  seen="$(grep -o "$LENSES_VERDICT_TOKEN:[[:space:]]*[A-Za-z]*" "$stream" 2>/dev/null |
+  local seen
+  seen="$(grep -o "$LENSES_VERDICT_TOKEN:[[:space:]]*[A-Za-z]*" 2>/dev/null |
     tail -1 | sed 's/.*:[[:space:]]*//' | tr 'A-Z' 'a-z')" || seen=""
   case "$seen" in
     pass) printf 'pass\n' ;;
@@ -506,9 +520,9 @@ lenses__verdict() {
 # event, and the tier that wrote that sentence a third time in prose is the tier
 # that got it backwards.
 #
-# Asked inside the branch since [94], on the stream while it is still this
-# branch's own, and given the verdict this branch has already read rather than
-# reading it a second time — one read of a file a session wrote, not two.
+# Asked inside the branch since [94], on the stream on stdin — the branch's own,
+# since [97] a copy in this branch's memory that nothing else can write — and given
+# the verdict this branch has already read rather than reading it a second time.
 #
 # It used to be the gate's, called on the same file after this branch was gone,
 # and that is the whole of what [94] moved: the answer decided whether the
@@ -519,16 +533,15 @@ lenses__verdict() {
 # for. What answers it is the gate's note channel: a descriptor opened on a file
 # with no name, which a subshell inherits and a stranger cannot find.
 lenses__refused_posture() {
-  local stream="$1" verdict="$2" posture
-  [ -f "$stream" ] || return 1
-  posture="$(budget_stream_posture "$stream")"
+  local verdict="$1" posture
+  posture="$(budget_stream_posture)"
   budget_refused_silence "$verdict" "$posture" || return 1
   printf '%s\n' "$posture"
   return 0
 }
 
-# The prose a session put in its stream, for the branch's output — which is what a
-# human reads in the morning and what the audit receipt will carry ([10]).
+# The prose a session put in the stream on stdin, for the branch's output — which is
+# what a human reads in the morning and what the audit receipt will carry ([10]).
 #
 # Public since [14], which gave it a second caller: the retro subagent answers in
 # tagged lines and they come back through the same NDJSON. A `__` with two callers
@@ -561,7 +574,7 @@ lenses_findings() {
         s = substr(s, i + 1)
       }
     }
-  ' "$1" 2>/dev/null |
+  ' 2>/dev/null |
     sed -e 's/\\n/\
 /g' -e 's/\\t/	/g' -e 's/\\"/"/g' -e 's/\\\\/\\/g'
   return 0

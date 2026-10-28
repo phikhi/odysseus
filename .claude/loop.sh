@@ -348,7 +348,7 @@ loop_journal_append() {
   printf '%s\n' "$line" >>"$journal"
   # And the witness, which is the answer to the one thing [21] left open about this
   # file. `run.log` lives under `.scratch/<feature>/`, which nothing in this pack
-  # guards and nothing can guard — the session's own stream is written there during
+  # guards and nothing can guard — the session's own prompt is written there during
   # the window being watched — so a session can rewrite the journal of the very run
   # that is judging it. Moving the file out of reach was the other exit and it is
   # the wrong one: this is the file a human opens in the morning, and a journal in
@@ -591,10 +591,13 @@ loop__journal_tracker_findings() {
 # closes it after every fork; a read end per iteration in flight, at the lowest
 # number of its range that no other one holds — taken from `LOOP_SLOTS`, never
 # probed, since a probe of a descriptor in bash lies ([101]). 3 to 9 are taken —
-# the monitor's stream (3), the receipt (5, 4), a lens's prompt (7, 6), the gate's
-# notes (9, 8) — and 255 is where bash keeps the script it reads. So the write end
-# is 10 and the read ends 11 to 254, which bounds `MAX_PARALLEL` at 244: refused
-# above that rather than read as less ([31]). bash saves a descriptor it redirects
+# a session's stream (3 to read, and 7 to write between its open and the fork:
+# `session_spawn`, [97]), the receipt (5, 4), a lens's prompt (7, 6, its write end
+# closed before its session's stream is opened on 7), the gate's notes (9, 8) —
+# and 255 is where bash keeps the script it reads; this paragraph is the one
+# census of every number the pack opens. So the write end is 10 and the read ends
+# 11 to 254, which bounds `MAX_PARALLEL` at 244: refused above that rather than
+# read as less ([31]). bash saves a descriptor it redirects
 # onto the lowest free number from 10 up, and none of that can be standing on one
 # of these when it is opened: `loop__start` is called bare from `loop_main`, itself
 # called bare, so no redirection of the pilot is pending at that instant.
@@ -918,10 +921,11 @@ loop__iterate() {
   receipt_fact provisioned "$provisioned"
 
   outfile="$(ralph_feature_dir)/.session.$$.$n.jsonl"
-  # `$$` is the pilot in every one of these shells — bash 3.2 has no BASHPID — so
-  # the iteration's number is what makes two concurrent streams two files. A single
-  # name would have both sessions writing one stream, and the smart-zone net
-  # reading the other one's tokens.
+  # Where the session's stream is made and its prompt written. The stream has a name
+  # only for the instant `session_spawn` takes to open and unlink it ([97]); the
+  # prompt keeps this one until the session is over. `$$` is the pilot in every one
+  # of these shells — bash 3.2 has no BASHPID — so the iteration's number is what
+  # makes two concurrent prompts two files.
   # Both taken before the spawn, and they are not the same snapshot. The tree
   # is the state this session inherited, and what the scope-guard measures it
   # against. The commit is where the rollback puts HEAD back: a tree object is
@@ -967,21 +971,30 @@ loop__iterate() {
   retro_hold_state || true
   rc=0
   loop_spawn_session "$ticket" "$outfile" || rc=$?
+  # A session that was never spawned, because the channel its stream would have
+  # been written on was held by somebody else ([97]). A failed attempt like a crash,
+  # and said: a process of this user is watching the places this pack makes files,
+  # and the pid is in the clause.
+  if [ -n "${RALPH_SESSION_REFUSAL:-}" ]; then
+    loop_log "$ticket: no session was spawned — the stream it would have written could not be opened on a channel no other process holds: $RALPH_SESSION_REFUSAL"
+    receipt_note "no session was spawned for this iteration: the stream it would have written could not be opened on a channel no other process holds — $RALPH_SESSION_REFUSAL"
+  fi
 
-  turns="$(session_result_field "$outfile" num_turns)"
-  cost="$(session_result_field "$outfile" total_cost_usd)"
-  tokens="$(monitor_peak_tokens "$outfile")"
+  turns="$(session_stream | session_result_field num_turns)"
+  cost="$(session_stream | session_result_field total_cost_usd)"
+  tokens="$(monitor_peak_tokens)"
   receipt_fact base "$base"
   receipt_fact turns "$turns"
   receipt_fact cost "$cost"
   receipt_fact tokens "$tokens"
-  # Read here because the stream is deleted at the end of this iteration, and
-  # kept as three words in this shell: what this says about the budget is read
+  # Read here, before anything else this iteration spawns replaces the stream this
+  # shell holds, and kept as three words: what this says about the budget is read
   # twice — once below to classify this iteration, once by the pilot before it
   # schedules the next one ([08]), which it gets in this iteration's answer. Until
   # [98] it was a file both of them re-read, so a session's survivor could rewrite
-  # the posture between the session and either reading.
-  posture="$(budget_stream_posture "$outfile")"
+  # the posture between the session and either reading; until [97] the stream it is
+  # read out of was a file too.
+  posture="$(session_stream | budget_stream_posture)"
 
   # **The second guard, and the one the probe of [44] lands on.** A session is the
   # longest thing an iteration waits for, so this is where a killed run is normally
@@ -1447,7 +1460,6 @@ loop__iterate() {
   fi
   receipt_close
 
-  rm -f "$outfile" "$outfile.tokens"
   # The answer, last ([98]). What the failure policy did about the ticket rides in
   # it for the journal line the pilot writes: bookkeeping and not a decision — the
   # decision was taken here, by the process that measured it, and this only says

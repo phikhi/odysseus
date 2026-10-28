@@ -101,7 +101,15 @@ contract__spawn() {
         prompt="$2"
         out="$3"
         shift 3
+        # The run resolves its lister of open files before any session ([103]);
+        # without it every channel is refused, the one of the stream first ([97]).
+        proc_channel_preflight || exit 1
         session_spawn "$prompt" "$out" "$@"
+        rc=$?
+        # The stream has no name while the session writes it, and lives in this
+        # shell afterwards: written out here, for the assertions below to read.
+        session_stream >"$out"
+        exit "$rc"
       ' _ "$RALPH_PACK_ROOT/.claude" "$prompt" "$out" "$@"
   ) || CONTRACT_EXIT=$?
   return 0
@@ -346,29 +354,29 @@ contract__check_result_fields() {
   local file="$1" value key
   for key in subtype is_error num_turns total_cost_usd session_id \
     stop_reason terminal_reason result; do
-    value="$(session_result_field "$file" "$key")"
+    value="$(session_result_field "$key" <"$file")"
     if [ -z "$value" ]; then
       contract__finding "the pack's extractor reads nothing for '$key' on the result event"
     fi
   done
 
-  value="$(session_result_field "$file" subtype)"
+  value="$(session_result_field subtype <"$file")"
   [ "$value" = success ] ||
     contract__finding "result subtype is '$value', not 'success', on a prompt that cannot fail"
 
-  value="$(session_result_field "$file" is_error)"
+  value="$(session_result_field is_error <"$file")"
   [ "$value" = false ] ||
     contract__finding "result is_error is '$value', not 'false', on a prompt that cannot fail"
 
   # The journal's two figures: an iteration that reports turns=0 cost=0 for a
   # session that ran is a receipt nobody can audit ([10]).
-  value="$(session_result_field "$file" num_turns)"
+  value="$(session_result_field num_turns <"$file")"
   case "$value" in
     '' | *[!0-9]*) contract__finding "num_turns is '$value', which the journal cannot report as a count" ;;
     0) contract__finding "num_turns is 0 for a session that answered" ;;
   esac
 
-  value="$(session_result_field "$file" total_cost_usd)"
+  value="$(session_result_field total_cost_usd <"$file")"
   case "$value" in
     '' | *[!0-9.]*) contract__finding "total_cost_usd is '$value', which the journal cannot report as a cost" ;;
   esac
@@ -391,7 +399,7 @@ contract__check_result_fields() {
 # would produce a perfectly well-formed stream about nothing.
 contract__check_prompt_landed() {
   local file="$1" marker="$2" answer
-  answer="$(session_result_field "$file" result)"
+  answer="$(session_result_field result <"$file")"
   case "$answer" in
     *"$marker"*) ;;
     *) contract__finding "the answer '$answer' does not contain the marker '$marker' the prompt asked for: the prompt on stdin did not reach the session" ;;

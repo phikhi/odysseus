@@ -4400,10 +4400,12 @@ survivor_stop() {
   # and this shell has not collected the fan yet. If it cannot get in there, it
   # writes no witness and the assertion below fails rather than passing quietly.
   #
-  # What this does not cover is the other window — a forge between the session's
-  # last write and the branch's own read of its stream. Nothing above
-  # `session_spawn` can close that one, and it is ticket [97]; the canary carries
-  # the skipped test that waits for it.
+  # The other window — a forge between the session's last write and the branch's
+  # own read of its stream — was [97]'s, and [97] closed it at `session_spawn`: the
+  # stream has no name for anything to rewrite, in this window or any other. The
+  # survivor still looks wherever the stream used to be and under any name made
+  # from it, so a stream given its name back would be rewritten here again; the
+  # canary carries the test of the verdict itself.
   set_config LENSES "standards spec"
   use_tickets 01-alpha
   script_claude <<'FAKE'
@@ -4438,14 +4440,16 @@ case "$prompt" in
         sleep 1
         [ -f "$state/slow.done" ] && break
         for d in "$TMPDIR"/ralph-gate.*; do
-          f="$d/lens-standards.jsonl"
-          [ -f "$f" ] || continue
-          grep -q "RALPH-LENS-VERDICT" "$f" 2>/dev/null || continue
-          {
-            printf "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"forged\"}\n"
-            printf "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"blocked\",\"resetsAt\":0,\"rateLimitType\":\"five_hour\",\"isUsingOverage\":false},\"uuid\":\"forged\",\"session_id\":\"forged\"}\n"
-          } >"$f"
+          [ -d "$d" ] || continue
           printf "%s\n" "$d" >>"$state/survivor.saw"
+          for f in "$d"/lens-standards*; do
+            [ -f "$f" ] || continue
+            grep -q "RALPH-LENS-VERDICT" "$f" 2>/dev/null || continue
+            {
+              printf "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"forged\"}\n"
+              printf "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"blocked\",\"resetsAt\":0,\"rateLimitType\":\"five_hour\",\"isUsingOverage\":false},\"uuid\":\"forged\",\"session_id\":\"forged\"}\n"
+            } >"$f"
+          done
         done
         break
       done
@@ -4462,7 +4466,7 @@ FAKE
   local out="$output"
   survivor_stop
 
-  # The forge landed, and it landed in the window this test is about.
+  # The survivor was there, in the window this test is about.
   assert_file_exists "$SHIM_STATE/survivor.saw"
 
   # And it bought nothing: the lens's own branch answered pass, so the gate is
@@ -6096,6 +6100,153 @@ $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
 $found"
   if [ "$found" != "$expected" ]; then
     fail "job control is armed somewhere other than the three forks that are named
+(expected on the left, found on the right):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
+}
+
+# ── [97] every reader of a session's stream, found and ranked ────────────────
+#
+# A session's stream is the one object four tiers draw an answer out of, and the
+# census of who reads it was written by hand twice — at the pass of 29/09/2026,
+# seven readers, and at the triage of [97], which found four more. Since [97]
+# there is one way to read a stream: `session_stream`, the copy the monitor kept,
+# piped into the reader (`session_stream | <reader>`). So the census is the
+# source's, not this file's: every place that names `session_stream`, the function
+# it is named in, and what it is piped into. What this file holds is the other
+# half — what each of those readers *decides* — and a reader it has not been told
+# about is red, whatever it is.
+#
+# Each answer, with what it buys:
+#
+#   verdict     a green or a red: a lens's, the value gate's
+#   durable     something written into the repository or the tracker that later
+#               sessions or a human read — the retro's lesson, ADR and escalation,
+#               the value gate's document and wiring ticket
+#   posture     whether an iteration is billed, a feature closes on a refusal, or
+#               the pilot pauses and stops the night
+#   accounting  turns and cost, for the journal and the audit receipt
+#   prose       what a red lens said, for its branch, the receipt and a retry
+pack_stream_reads() {
+  local root="$1" f out="$RALPH_TEST_DIR/stream-reads"
+  path_scan_lexer
+  : >"$out"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -f "$RALPH_TEST_DIR/code.awk" "$f" |
+      awk -v file="$(basename "$f")" '
+        /^[a-z_][a-z0-9_]*\(\)/ { fn = $0; sub(/\(\).*/, "", fn); next }
+        {
+          line = $0
+          while (match(line, /(^|[^a-z0-9_])session_stream([^a-z0-9_]|$)/)) {
+            rest = substr(line, RSTART + RLENGTH - 1)
+            reader = "(bare)"
+            if (match(rest, /^[ \t]*\|[ \t]*[a-z_][a-z0-9_]*/)) {
+              reader = substr(rest, RSTART, RLENGTH)
+              sub(/^[ \t]*\|[ \t]*/, "", reader)
+            }
+            printf "%s:%s %s\n", file, (fn == "" ? "(top level)" : fn), reader
+            line = rest
+            sub(/^[^a-z0-9_]?/, "", line)
+          }
+        }' >>"$out"
+  done <<SOURCES
+$(harness_pack_sources "$root")
+SOURCES
+  LC_ALL=C sort -u "$out"
+  return 0
+}
+
+@test "every reader of a session's stream is one this census knows what it decides" {
+  local found expected
+  found="$(pack_stream_reads "$RALPH_PACK_ROOT")"
+  # The class of each, beside it: a line moved here is a decision about what a
+  # session's stream is trusted with, and it is made here, in review.
+  expected="$(printf '%s\n' \
+    'lenses.sh:lenses_review lenses__refused_posture' `# posture` \
+    'lenses.sh:lenses_review lenses__verdict' `# verdict` \
+    'lenses.sh:lenses_review lenses_findings' `# prose` \
+    'loop.sh:loop__iterate budget_stream_posture' `# posture` \
+    'loop.sh:loop__iterate session_result_field' `# accounting` \
+    'playthrough.sh:playthrough_close budget_stream_posture' `# posture` \
+    'playthrough.sh:playthrough_close lenses_findings' `# durable` \
+    'playthrough.sh:playthrough_close playthrough__verdict' `# verdict` \
+    'retro.sh:retro_run budget_stream_posture' `# posture` \
+    'retro.sh:retro_run lenses_findings' `# durable` |
+    LC_ALL=C sort)"
+
+  # The floor first ([89]): a scan that found nothing would pass the comparison by
+  # emptying both sides of it.
+  [ "$(printf '%s\n' "$found" | grep -c .)" -ge 8 ] ||
+    fail "the scan found $(printf '%s\n' "$found" | grep -c .) readings, so it is reading the wrong thing:
+$found"
+  if [ "$found" != "$expected" ]; then
+    fail "a session's stream is read somewhere this census has not ranked
+(expected on the left, found on the right — a new line is a reader nobody has said what it decides; (bare) is a reading that is not piped into a reader at all):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
+}
+
+@test "every session the pack spawns has its stream's readers ranked, or none" {
+  # The other end of the same census: where a stream comes *from*. Five places
+  # spawn a session, and each one's readings are above — the delivery's in the
+  # iteration that called `loop_spawn_session` — except the re-slice, whose stream
+  # nothing reads: what that tier draws out of its session is the plan, judged
+  # whoever wrote it. Ranked as such rather than left out in silence.
+  local found expected
+  found="$(pack_code_homes "$RALPH_PACK_ROOT" '(^|[ \t;&|(])session_spawn([ \t]|$)')"
+  expected="$(printf '%s\n' \
+    'failures.sh:failures_reslice' `# read by nothing` \
+    'lenses.sh:lenses_review' \
+    'loop.sh:loop_spawn_session' `# read by loop__iterate` \
+    'playthrough.sh:playthrough_close' \
+    'retro.sh:retro_run' | LC_ALL=C sort)"
+  [ "$(printf '%s\n' "$found" | grep -c .)" -ge 4 ] ||
+    fail "the scan found $(printf '%s\n' "$found" | grep -c .) spawns, so it is reading the wrong thing:
+$found"
+  if [ "$found" != "$expected" ]; then
+    fail "a session is spawned somewhere this census does not know
+(expected on the left, found on the right):
+$(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
+  fi
+}
+
+# Where a name appears in the *raw* text of the pack, comments aside — the lexer
+# above erases strings, and `"${MONITOR_LINES[@]}"` is a string. A line outside
+# every function is `(top level)`: the closing brace of a function ends it.
+pack_raw_homes() {
+  local root="$1" pat="$2" f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -v file="$(basename "$f")" -v pat="$pat" '
+      /^[a-z_][a-z0-9_]*\(\)/ { fn = $0; sub(/\(\).*/, "", fn) }
+      /^[ \t]*#/ { next }
+      $0 ~ pat { printf "%s:%s\n", file, (fn == "" ? "(top level)" : fn) }
+      /^}/ { fn = "" }' "$f"
+  done <<SOURCES | LC_ALL=C sort -u
+$(harness_pack_sources "$root")
+SOURCES
+  return 0
+}
+
+@test "the copy of a stream is named nowhere but where it is kept and read" {
+  # `session_stream` is the one way to read a stream only if nothing reads the
+  # copy behind it directly, and nothing but the spawn holds the descriptors it
+  # is read from.
+  local found expected
+  found="$(pack_raw_homes "$RALPH_PACK_ROOT" '(^|[^A-Za-z0-9_])(MONITOR_LINES|SESSION_STREAM_FD|SESSION_STREAM_BACK)([^A-Za-z0-9_]|$)')"
+  expected="$(printf '%s\n' \
+    'monitor.sh:monitor_drain' \
+    'monitor.sh:monitor_forget' \
+    'monitor.sh:monitor_watch' \
+    'session.sh:(top level)' \
+    'session.sh:session_spawn' \
+    'session.sh:session_stream' | LC_ALL=C sort)"
+  [ "$(printf '%s\n' "$found" | grep -c .)" -ge 4 ] ||
+    fail "the scan found $(printf '%s\n' "$found" | grep -c .) sites, so it is reading the wrong thing:
+$found"
+  if [ "$found" != "$expected" ]; then
+    fail "the copy of a session's stream, or a descriptor it is read from, is named outside the two places that keep it
 (expected on the left, found on the right):
 $(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$found") || true)"
   fi

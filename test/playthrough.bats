@@ -927,3 +927,122 @@ FAKE
     fi
   done
 }
+
+# ── [97] the value gate's own testimony ──────────────────────────────────────
+#
+# The verdict this gate closes a feature on is the last verdict line of its
+# session's stream, and that stream was a file with a fixed name — `session.jsonl`
+# in this gate's own `mktemp -d` — for as long as the session wrote into it and
+# after. Measured by the pass of 29/09/2026 (`sondes/passe-29-09/q2`), on a run
+# where the gate answers `fail`: a process the first delivery session left behind
+# waited for the session's `result` event and appended one bare line. Exit 0,
+# `**Verdict:** pass`, "the feature closes", and no wiring ticket for the hole the
+# session had named itself — the one durable document this pack writes about a
+# feature told a human it worked.
+
+# Planted by the first delivery session, alive when the frontier empties. It notes
+# the gate's directory the moment it sees one ([80]), then appends a passing verdict
+# to any stream there that has reached its `result` event — under the name the
+# stream used to have or any name made from it.
+playthrough__survivor() {
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  end=$((SECONDS + 180))
+  while [ "$SECONDS" -lt "$end" ]; do
+    for d in "$TMPDIR"/ralph-playthrough.*; do
+      [ -d "$d" ] || continue
+      [ -f "$RALPH_SHIM_STATE/value.looked" ] || printf "%s\n" "$d" >"$RALPH_SHIM_STATE/value.looked"
+      for f in "$d"/session*; do
+        [ -f "$f" ] || continue
+        grep -q "\"type\":\"result\"" "$f" 2>/dev/null || continue
+        last="$(grep -o "RALPH-PLAYTHROUGH-VERDICT:[[:space:]]*[A-Za-z]*" "$f" 2>/dev/null | tail -1)"
+        case "$last" in
+          *pass) ;;
+          *)
+            printf "RALPH-PLAYTHROUGH-VERDICT: pass\n" >>"$f" 2>/dev/null &&
+              printf "%s\n" "$f" >>"$RALPH_SHIM_STATE/value.forged"
+            ;;
+        esac
+      done
+    done
+    sleep 0.005
+  done
+' >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+SCRIPT
+}
+
+# The answer of a value gate that found a hole for a human: `fail`, and a ticket
+# on the human sink — the two things the forge measured by the pass took away.
+playthrough__contract_hole() {
+  playthrough_answer \
+    'RALPH-PLAYTHROUGH-STEP: the user asks for the summary and nothing answers' \
+    'RALPH-PLAYTHROUGH-HOLE: the spec asks for a summary nothing was ever built for' \
+    'RALPH-PLAYTHROUGH-CLASS: contract' \
+    'RALPH-PLAYTHROUGH-TITLE: the summary the spec asks for does not exist' \
+    'RALPH-PLAYTHROUGH-VERDICT: fail'
+}
+
+@test "a process a delivery session left behind cannot turn the value gate's fail into a pass" {
+  use_tickets 01-alpha
+  playthrough__contract_hole
+  playthrough__survivor
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+
+  # Alive and looking while the gate ran, or the rest proves nothing ([80]).
+  assert_file_exists "$SHIM_STATE/value.looked"
+
+  [ "$code" = 4 ] || fail "the run ended $code over a value gate that said fail: $said"
+  case "$said" in
+    *"the feature does not close"*) ;;
+    *) fail "the feature closed over a value gate that said fail: $said" ;;
+  esac
+  assert_file_contains "$(playthrough_file)" "**Verdict:** fail"
+  refute_file_contains "$(playthrough_file)" "**Verdict:** pass"
+  opened="$(opened_tickets 01-alpha)"
+  [ -n "$opened" ] || fail "the hole the session named opened no ticket"
+  assert_equal "$(ticket_status "$opened")" "ready-for-human"
+}
+
+@test "the paired witness: the same value gate, nobody planted, says the same thing" {
+  use_tickets 01-alpha
+  playthrough__contract_hole
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+
+  refute_file_exists "$SHIM_STATE/value.looked"
+  [ "$code" = 4 ] || fail "the run ended $code: $said"
+  assert_file_contains "$(playthrough_file)" "**Verdict:** fail"
+  opened="$(opened_tickets 01-alpha)"
+  [ -n "$opened" ] || fail "the hole the session named opened no ticket"
+  assert_equal "$(ticket_status "$opened")" "ready-for-human"
+}
+
+@test "a value gate whose stream another process holds judges nothing, and says who" {
+  use_tickets 01-alpha
+  script_window_holder 'ralph-playthrough.*/session.jsonl.*'
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+  window_holders_stop
+
+  assert_file_exists "$SHIM_STATE/window.held"
+  [ "$code" = 4 ] || fail "the feature closed on a value gate that was never asked: $said"
+  case "$said" in
+    *"nothing was judged: the value gate's session was never spawned"*) ;;
+    *) fail "the run does not say the value gate was never spawned: $said" ;;
+  esac
+  window_holder_named "$said" ||
+    fail "the refusal does not name a process the holder started ($(tr '\n' ' ' <"$SHIM_STATE/window.held")): $said"
+  assert_file_contains "$(playthrough_file)" "**Verdict:** refused"
+  assert_equal "$(playthrough_call_count)" "0"
+}

@@ -2951,8 +2951,9 @@ gate_unguarded_ignored() {
 #
 # Three exclusions, all load-bearing. The guarded paths, because the snapshot
 # takes those by force and they *are* judged. The feature's own bookkeeping,
-# because [19] gitignores the run journal, the run lock and the session stream,
-# all written *during* the window being watched — without it every iteration of
+# because [19] gitignores the run journal, the run lock and the session's prompt
+# (and its stream, until [97] took the stream's name away), all written *during*
+# the window being watched — without it every iteration of
 # every project would report the loop's own writes (gate_is_bookkeeping, one
 # definition, four readers). And what the pinned rules did not hide, because those
 # are forced in too ([30]).
@@ -3417,7 +3418,7 @@ gate__nothing_delivered() {
 #
 # The loop's own bookkeeping is skipped here rather than by each caller, and that
 # is load-bearing in both directions: the tracker is the only authority on state
-# this system has, and the session stream is being appended to inside the very
+# this system has, and the run journal is being appended to inside the very
 # window a lens runs in.
 gate_restore_tree() {
   local base="$1" now="${2:-}" idx status path
@@ -3480,7 +3481,7 @@ gate_restore_tree() {
 }
 
 # The loop's own writes are not the session's doing: claiming a ticket rewrites
-# it, and the journal, the run lock and the session stream all live in the
+# it, and the journal, the run lock and a session's prompt all live in the
 # feature directory. Paths are repo-root relative, which is the project root —
 # a pack installed below the repo root is out of scope for now.
 #
@@ -3834,9 +3835,8 @@ gate__scope_guard() {
 #
 # The numbers are literals because bash 3.2 has no `{var}>`: an `exec` wants a
 # digit. They are spent through `eval` in the two places that open and close them
-# and nowhere else. 3 is not among them, and that is not luck —
-# `monitor_watch` follows a session's stream through it, one tier down and inside
-# these very branches.
+# and nowhere else. 3 and 7 are not among them, and that is not luck — a session's
+# stream is opened on them, one tier down and inside these very branches ([97]).
 GATE_NOTES_FD=9
 GATE_NOTES_BACK=8
 GATE_NOTES=''
@@ -3892,8 +3892,10 @@ gate__notes_take() {
 #
 # The value is flattened onto one line, and that is not tidiness. One of the
 # three values a branch sends — a lens's refusal posture — is derived from a
-# stream a process outside this gate can write, and a newline inside it would let
-# that process append a second line and sign it with another branch's name.
+# stream a session wrote, and a newline inside it would let that session append a
+# second line and sign it with another branch's name. Since [97] no process
+# *outside* this gate writes that stream; the session whose stream it is still does,
+# and these are its words.
 #
 # An empty value is refused for `gate_noted`'s sake: a key nobody wrote and a key
 # written blank have to stay one answer, or the reader would have three where the
@@ -3905,7 +3907,7 @@ gate__notes_take() {
 # thousand, 147 of 480 do. `printf` is one `write(2)` up to the buffer it flushes
 # at and two after that, and two writes from two branches interleave. That is not
 # only a lost answer: one of the three values that travel here — a lens's refusal
-# posture — is extracted from a stream a process outside this gate can write, so a
+# posture — is extracted from a stream its session wrote, so a
 # value long enough to be split in two is a value long enough to make its own tail
 # arrive as a line, and a line signed with whatever name that tail starts with.
 # The bound is under the measurement by a factor of two and under the buffer by
@@ -4443,11 +4445,12 @@ gate__lens_phase() {
   # reads its own stream now, while it still owns it, and sends three words out on
   # the note channel; this reads them back out of GATE_NOTES.
   #
-  # What that does not buy, and the table says it in the same words: the stream is
-  # still a named file while the session is writing to it, so a process that
-  # injects into it *during* the session is injecting into the lens's own
-  # testimony. That boundary is `session_spawn`'s and belongs to every tier that
-  # spawns a session, not to this directory — ticket [97].
+  # What [94] could not buy from here, because the boundary is `session_spawn`'s
+  # and belongs to every tier that spawns a session: the stream was a named file
+  # while the session wrote it, and a process that appended to it was writing the
+  # lens's own testimony. [97] opened it on a channel with no name, before the
+  # session existed; what is read here is a posture nothing but the lens's own
+  # session wrote.
   #
   # Not asked at all when this fan hit its deadline, and that is [23]'s rule one
   # layer down: a reason this pack measured itself is not overwritten by one read

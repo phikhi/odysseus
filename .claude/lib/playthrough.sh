@@ -468,12 +468,13 @@ playthrough__oneline() {
     cut -c1-240
 }
 
-# The last value of one tag, or nothing. The *last*, for the reason a lens verdict
-# is read that way: a model quoting the instruction on its way to an answer must
-# not decide it.
+# The last value of one tag in the prose the session wrote — `lenses_findings` of
+# its stream, read once by `playthrough_close` — or nothing. The *last*, for the
+# reason a lens verdict is read that way: a model quoting the instruction on its
+# way to an answer must not decide it.
 playthrough__said() {
-  local tag="$1" stream="$2" line
-  line="$(lenses_findings "$stream" 2>/dev/null |
+  local tag="$1" findings="$2" line
+  line="$(printf '%s\n' "$findings" |
     sed -n "s/^[[:space:]]*$PLAYTHROUGH_TOKEN-$tag:[[:space:]]*//p" | tail -1)" || line=''
   [ -n "$line" ] || return 0
   playthrough__oneline "$line"
@@ -484,8 +485,8 @@ playthrough__said() {
 # Every value of one tag, one per line — the steps, which are a list and not a
 # last-one-wins field.
 playthrough__said_all() {
-  local tag="$1" stream="$2" line
-  proc_lines "$(lenses_findings "$stream" 2>/dev/null |
+  local tag="$1" findings="$2" line
+  proc_lines "$(printf '%s\n' "$findings" |
     sed -n "s/^[[:space:]]*$PLAYTHROUGH_TOKEN-$tag:[[:space:]]*//p")"
   for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
     [ -n "$line" ] || continue
@@ -495,9 +496,11 @@ playthrough__said_all() {
   return 0
 }
 
+# The last verdict line of the stream on stdin, or `none` — the last line of a
+# stream nothing but the value gate's own session writes ([97]).
 playthrough__verdict() {
-  local stream="$1" seen
-  seen="$(grep -o "$PLAYTHROUGH_TOKEN-VERDICT:[[:space:]]*[A-Za-z]*" "$stream" 2>/dev/null |
+  local seen
+  seen="$(grep -o "$PLAYTHROUGH_TOKEN-VERDICT:[[:space:]]*[A-Za-z]*" 2>/dev/null |
     tail -1 | sed 's/.*:[[:space:]]*//' | tr 'A-Z' 'a-z')" || seen=''
   case "$seen" in
     pass) printf 'pass\n' ;;
@@ -702,7 +705,7 @@ playthrough__surface_ok() {
 # `LANG_ARTIFACT`: the shape of the document belongs to the pack, its content to
 # whoever wrote it.
 playthrough__write() {
-  local verdict="$1" outcome="$2" tree="$3" stream="$4"
+  local verdict="$1" outcome="$2" tree="$3" findings="$4"
   local runrc="$5" visrc="$6" runout="$7" visout="$8"
   local file dir
 
@@ -718,8 +721,8 @@ playthrough__write() {
     printf '**Tree:** %s\n\n' "${tree:-none}"
 
     printf '## The flow, step by step\n\n'
-    if [ -n "$stream" ] && [ -s "$stream" ]; then
-      playthrough__steps_or_prose "$stream"
+    if [ -n "$findings" ]; then
+      playthrough__steps_or_prose "$findings"
     else
       printf 'No session walked the flow. What follows is what the loop could measure on its own.\n\n'
     fi
@@ -747,18 +750,18 @@ playthrough__write() {
 # `pass` in one line has no steps to print, and a document with an empty section
 # reads like a playthrough nobody performed.
 playthrough__steps_or_prose() {
-  local stream="$1" steps
-  steps="$(playthrough__said_all STEP "$stream")" || steps=''
+  local findings="$1" steps
+  steps="$(playthrough__said_all STEP "$findings")" || steps=''
   if [ -n "$steps" ]; then
     printf '%s\n' "$steps" | sed 's/^/1. /'
     printf '\n'
     return 0
   fi
   # `|| true` on the pipeline and not on the last command: `head` closes its input
-  # on the line it stops at, so the scanner upstream takes a SIGPIPE — and this
+  # on the line it stops at, so the writer upstream takes a SIGPIPE — and this
   # runs inside the group that writes the document, where a non-zero status under
   # `errexit` would cut the file off at this section rather than report anything.
-  { lenses_findings "$stream" | head -n "$PLAYTHROUGH_TRANSCRIPT_LINES" |
+  { printf '%s\n' "$findings" | head -n "$PLAYTHROUGH_TRANSCRIPT_LINES" |
     sed 's/^/> /'; } || true
   printf '\n'
   return 0
@@ -872,7 +875,7 @@ playthrough__asked() {
 # zero whatever the substitution answered, which is [59] undone in one keyword.
 # `test/layering.bats` refuses the other form.
 playthrough_close() {
-  local dir tree spec stream verdict hole class title surface
+  local dir tree spec stream findings verdict hole class title surface
   local runrc=0 visrc=0 injected max id asked openrc rc=2 outcome=''
 
   # The tree is witnessed through the ignore rules **as they stand**, and the pin
@@ -897,6 +900,11 @@ playthrough_close() {
     playthrough__log 'no workspace for the value gate — the feature does not close on a measurement nobody could take'
     return 2
   }
+  # Where the session's stream is made, for the instant `session_spawn` takes to
+  # open and unlink it ([97]). It was this name, fixed, for the whole session and
+  # after: one bare line appended to it by a process a delivery session left behind
+  # turned a `fail` into `**Verdict:** pass`, closed the feature, and opened no
+  # ticket for the hole the session itself had named.
   stream="$dir/session.jsonl"
   : >"$dir/run.out"
   : >"$dir/visual.out"
@@ -979,11 +987,23 @@ playthrough_close() {
   # shellcheck disable=SC2046
   session_spawn "$dir/prompt" "$stream" $(lenses_posture) || true
 
-  verdict="$(playthrough__verdict "$stream")"
-  hole="$(playthrough__said HOLE "$stream")"
-  class="$(playthrough__said CLASS "$stream")"
-  title="$(playthrough__said TITLE "$stream")"
-  surface="$(playthrough__said SURFACE "$stream")"
+  if [ -n "${RALPH_SESSION_REFUSAL:-}" ]; then
+    outcome="nothing was judged: the value gate's session was never spawned — the stream it would have written could not be opened on a channel no other process holds: $RALPH_SESSION_REFUSAL"
+    playthrough__log "$outcome"
+    playthrough__write refused "$outcome" "$tree" '' "$runrc" "$visrc" \
+      "$dir/run.out" "$dir/visual.out" ||
+      playthrough__log 'and the document could not be written either'
+    rm -rf "$dir"
+    return 2
+  fi
+
+  verdict="$(session_stream | playthrough__verdict)"
+  # The prose once, for every tag below and for the document.
+  findings="$(session_stream | lenses_findings)"
+  hole="$(playthrough__said HOLE "$findings")"
+  class="$(playthrough__said CLASS "$findings")"
+  title="$(playthrough__said TITLE "$findings")"
+  surface="$(playthrough__said SURFACE "$findings")"
 
   # A session the API refused looked at nothing, so it accuses nobody ([43]). The
   # feature still does not close — silence never buys a green — but no ticket is
@@ -994,10 +1014,10 @@ playthrough_close() {
   # event. Asked the other way round, a feature would fail to close on a
   # subscription warning about tomorrow.
   if budget_refused_silence "$verdict" \
-    "$(budget_stream_posture "$stream" 2>/dev/null || true)"; then
+    "$(session_stream | budget_stream_posture)"; then
     outcome='nothing was judged: the API refused the value gate its session, so no ticket was opened on anything'
     playthrough__log "$outcome"
-    playthrough__write refused "$outcome" "$tree" "$stream" "$runrc" "$visrc" \
+    playthrough__write refused "$outcome" "$tree" "$findings" "$runrc" "$visrc" \
       "$dir/run.out" "$dir/visual.out" || true
     rm -rf "$dir"
     return 2
@@ -1066,7 +1086,7 @@ playthrough_close() {
   # Persisted, and the closure depends on it ([11] AC2): a green nobody can read
   # tomorrow is a green this loop is not entitled to. Written last, so it carries
   # the decision as well as the evidence.
-  if ! playthrough__write "$verdict" "$outcome" "$tree" "$stream" "$runrc" "$visrc" \
+  if ! playthrough__write "$verdict" "$outcome" "$tree" "$findings" "$runrc" "$visrc" \
     "$dir/run.out" "$dir/visual.out"; then
     playthrough__log "the playthrough could not be written to $(playthrough_path) — the feature does not close on a proof that exists nowhere"
     rm -rf "$dir"
