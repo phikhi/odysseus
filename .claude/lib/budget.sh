@@ -23,8 +23,10 @@
 # the pack until [98]**, and not of this module: the posture the pilot pauses on and
 # the outcome `STERILE_K` counts were both read out of files in `$TMPDIR/ralph-slot.*`
 # that a session's survivor could rewrite. They now cross from the iteration to the
-# pilot on an unlinked channel (`loop.sh`, "what an iteration hands back"), so the
-# stream is the one thing a session writes here, as this paragraph says. A pause never touches
+# pilot on an unlinked channel (`loop.sh`, "what an iteration hands back"), and since
+# [97] the stream they are read out of has no name either: it is the one thing a
+# session writes here, as this paragraph says — the session itself, and no process
+# it left behind. A pause never touches
 # `Failures:` — that field is the ticket's retry budget, and a subscription
 # running out is not an attempt at the ticket ([26] on what a named field owes).
 #
@@ -40,9 +42,9 @@
 #
 # Not gated is not the same as not *read*, and [43] is the difference. A lens the
 # API refused judged nothing, so the two readers below are pointed at its stream
-# too — by `lenses__refused_posture`, inside the lens branch, while the stream is
-# still that branch's own ([94]; it was the gate's, on the same file after the
-# branch was gone, until then). What comes back is a correction the pilot applies at the top of
+# too — by `lenses__refused_posture`, inside the lens branch, on that branch's own
+# copy of the stream ([94]; it was the gate's, on the same file after the branch
+# was gone, until then; [97] took the file's name away). What comes back is a correction the pilot applies at the top of
 # the next iteration, exactly like the delivery session's, and a ticket the gate
 # went red on for that reason alone is given back without a retry charged. It
 # still is not a decision taken inside the iteration: nothing sleeps down there.
@@ -329,7 +331,7 @@ budget__field() {
   printf '%s' "$1" | sed -n "s/.*\"$2\":\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p"
 }
 
-# What the last `rate_limit_event` of a session's stream says, as
+# What the last `rate_limit_event` of the session stream on stdin says, as
 # `<status> <window> <reset-epoch>`, or nothing at all.
 #
 # The *last*, not the first: a session that ran long enough to be told twice is
@@ -337,15 +339,15 @@ budget__field() {
 # `init` and a first thinking estimate — and nothing here depends on that position
 # ([20] found it moves).
 #
-# Read before the stream is deleted, and passed around as a string afterwards: it
-# is three words, and keeping the file alive to re-read them would keep a session's
-# own file alive to be re-read. Two callers since [43], one per half of an
-# iteration — the loop, on the delivery session's stream, and the gate, on a review
-# lens's — and both of them read it while the file is still theirs to read.
+# Read once, right after the session, and passed around as a string afterwards:
+# it is three words. Four callers — the loop on the delivery session's stream, a
+# review lens on its own, the retro and the value gate on theirs — and each of them
+# hands it `session_stream`, the copy of a stream nothing but its session could
+# write ([97]). Until then it was a file each of them opened by name, and a
+# posture is what bills an iteration or stops a night.
 budget_stream_posture() {
-  local file="${1:-}" line
-  [ -n "$file" ] && [ -f "$file" ] || return 0
-  line="$(grep '"type":"rate_limit_event"' "$file" 2>/dev/null | tail -1)" || line=''
+  local line
+  line="$(grep '"type":"rate_limit_event"' 2>/dev/null | tail -1)" || line=''
   [ -n "$line" ] || return 0
   printf '%s %s %s\n' \
     "$(budget__field "$line" status)" \

@@ -1195,3 +1195,30 @@ RM
   assert_ticket_status 01-alpha resolved
   assert_ticket_status 02-beta resolved
 }
+
+@test "a delivery whose stream another process holds spawns no session, and the run says who" {
+  # [97]. The second ticket's session is never spawned: the file its stream would
+  # have been written on was opened, in the instant it had a name, by a process the
+  # first session left behind. A failed attempt like a crash — nothing was
+  # delivered — and said, with the pid, since that process is watching the places
+  # this pack makes its files.
+  use_tickets 01-alpha 02-beta
+  set_config STERILE_K 1
+  script_window_holder "$FEATURE_DIR/.session.*.jsonl.*"
+
+  run_loop_own_tmp
+  local said="$output" code="$status"
+  window_holders_stop
+
+  assert_file_exists "$SHIM_STATE/window.held"
+  [ "$code" = 4 ] || fail "the run ended $code: $said"
+  case "$said" in
+    *"02-beta: no session was spawned — the stream it would have written could not be opened on a channel no other process holds"*) ;;
+    *) fail "the run does not say the second session was never spawned: $said" ;;
+  esac
+  window_holder_named "$said" ||
+    fail "the refusal does not name a process the holder started ($(tr '\n' ' ' <"$SHIM_STATE/window.held")): $said"
+  assert_ticket_status 01-alpha resolved
+  run ticket_status 02-beta
+  refute_output_contains "resolved"
+}

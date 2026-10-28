@@ -45,10 +45,12 @@
 #
 # There is a second reason for the wall clock, and it is a trust boundary rather
 # than a design taste. The stall deadline reads the session's own stream, and the
-# stream is a file in `.scratch/` that the session can append to — nothing in the
-# pack guards it ([21] stops at `issues/`). A session that wrote one byte a second
-# would defeat the stall and nothing else. The wall clock is measured from the
-# spawn, so there is nothing a session can write that moves it.
+# session writes that stream: it is `claude`'s stdout, and whatever `claude` hands
+# its stdout to writes it too. Since [97] nothing *else* can — the stream is a file
+# with no name, opened by `session_spawn` before the session exists — but a session
+# that emitted one byte a second would still defeat the stall and nothing else.
+# The wall clock is measured from the spawn, so there is nothing a session can
+# write that moves it.
 #
 # Both are measured with SECONDS, the shell's own clock. No fork per tick, and no
 # drift either: counting ticks would have to assume every tick costs 0.1 s, which
@@ -197,8 +199,7 @@ monitor__reaper() {
 }
 
 # Watch a session's stream while it runs. Returns 0 if it finished on its own,
-# non-zero if the monitor terminated it. The peak context seen is left in
-# <stream>.tokens for the journal.
+# non-zero if the monitor terminated it.
 #
 # Two outputs beside the return code, both read by `session_spawn` in the shell
 # that called this: MONITOR_STOPPED says *why* the session was terminated, and
@@ -208,25 +209,33 @@ monitor__reaper() {
 # cleanly answers 0 — so the exit status of a terminated session says nothing at
 # all about the deadline that terminated it ([28]).
 #
-# The stream is held open on a descriptor and read forward, so each tick picks
-# up exactly where the last one stopped and costs only what the session has
-# written since.
+# The stream is read forward from FD, the read end of a file `session_spawn`
+# opened and unlinked before the session existed ([97]), so each tick picks up
+# exactly where the last one stopped and costs only what the session has written
+# since.
+#
+# **And this is the stream's only reader**, which is the half of [97] that is not
+# about the name. Four tiers draw an answer out of a session's stream, the retro
+# a dozen of them, and each used to `grep` the file from its first byte. A file
+# with no name gives no way back to its first byte: a descriptor does not rewind,
+# `/dev/fd/N` is a `dup` of it on darwin — offset and all — and nothing this pack
+# promises to run with can `lseek`. So every line read here is also kept, in
+# MONITOR_LINES, in the memory of the shell that asked for the session, and that
+# copy is what every later reading reads (`session_stream`). What it costs is the
+# size of the stream, once, in that shell; the copies a reader makes are in its own
+# pipeline and gone with it. The peak context is kept the same way, in
+# MONITOR_PEAK: it used to be written beside the stream, to a file named
+# `<stream>.tokens` that any process could rewrite before the journal read it.
 monitor_watch() {
-  local file="$1" pid="$2" limit="${3:-${SOFT_LIMIT_TOKENS:-150000}}"
-  local partial='' peak=0 line alive rc=0
+  local fd="$1" pid="$2" limit="${3:-${SOFT_LIMIT_TOKENS:-150000}}"
+  local line alive rc=0
   local stall wall started idle
 
   MONITOR_STOPPED=''
   MONITOR_REAPER=''
+  monitor_forget
   stall="$(monitor__deadline "${SESSION_STALL_TIMEOUT:-0}")"
   wall="$(monitor__deadline "${SESSION_TIMEOUT:-0}")"
-
-  : >"$file.tokens"
-  if [ ! -r "$file" ]; then
-    printf 'ralph: monitor: cannot read the session stream at %s\n' "$file" >&2
-    return 1
-  fi
-  exec 3<"$file"
 
   started=$SECONDS
   idle=$SECONDS
@@ -239,16 +248,16 @@ monitor_watch() {
     # Half a line is still the session writing, and the stall deadline has to
     # count it as one: a stream that arrives in slow halves would otherwise look
     # exactly like silence, and the session would be killed for writing.
-    while IFS= read -r -u 3 line ||
-      { partial="$partial$line"; [ -z "$line" ] || idle=$SECONDS; false; }; do
-      line="$partial$line"
-      partial=''
+    while IFS= read -r -u "$fd" line ||
+      { MONITOR__PARTIAL="$MONITOR__PARTIAL$line"; [ -z "$line" ] || idle=$SECONDS; false; }; do
+      line="$MONITOR__PARTIAL$line"
+      MONITOR__PARTIAL=''
       idle=$SECONDS
+      MONITOR_LINES[${#MONITOR_LINES[@]}]="$line"
       monitor__tokens_of "$line"
       [ -n "$MONITOR_TOKENS" ] || continue
-      if [ "$MONITOR_TOKENS" -gt "$peak" ]; then
-        peak="$MONITOR_TOKENS"
-        printf '%s\n' "$peak" >"$file.tokens"
+      if [ "$MONITOR_TOKENS" -gt "$MONITOR_PEAK" ]; then
+        MONITOR_PEAK="$MONITOR_TOKENS"
       fi
       if [ "$MONITOR_TOKENS" -ge "$limit" ]; then
         # Graceful: the session gets a chance to stop cleanly, and the loop
@@ -287,10 +296,52 @@ monitor_watch() {
     sleep 0.1
   done
 
-  exec 3<&-
   return "$rc"
 }
 
+# What the session wrote after this monitor stopped watching: the lines of a
+# graceful shutdown after a TERM, and anything still arriving when a session it
+# did not stop was found gone. Called by `session_spawn` once the session has
+# been collected and its group swept, so that the copy every reader reads is the
+# whole stream and not the part that came while somebody was looking — a lens the
+# watchdog cut short still speaks through its last event ([43]).
+#
+# An unterminated last line is kept as a line. `grep` read the file that way when
+# the stream had a name, and a session killed in the middle of its last write
+# must not lose the half it wrote.
+monitor_drain() {
+  local fd="$1" line
+  while IFS= read -r -u "$fd" line; do
+    MONITOR_LINES[${#MONITOR_LINES[@]}]="$MONITOR__PARTIAL$line"
+    MONITOR__PARTIAL=''
+  done
+  line="$MONITOR__PARTIAL$line"
+  MONITOR__PARTIAL=''
+  [ -z "$line" ] || MONITOR_LINES[${#MONITOR_LINES[@]}]="$line"
+  return 0
+}
+
+# No stream at all, which is what a session that was never spawned has — and not
+# the stream of the session before it, which is what a refused spawn would
+# otherwise leave every reader reading. Called by `monitor_watch` and by
+# `session_spawn` before it opens anything. Never assigned when this file is
+# sourced, for MONITOR_LINES: an array of no elements is a name `set -u` calls
+# unbound in this shell, and the pack's census of its globals reads each one.
+monitor_forget() {
+  MONITOR_LINES=()
+  MONITOR_PEAK=0
+  MONITOR__PARTIAL=''
+  return 0
+}
+
+# The half line a tick found at the end of what had been written so far, carried
+# to the next tick and from the last one to `monitor_drain`.
+MONITOR__PARTIAL=''
+
+# The largest context the session's stream reported, for the journal and the
+# audit receipt. Zero when nothing reported one.
+MONITOR_PEAK=0
+
 monitor_peak_tokens() {
-  cat "$1.tokens" 2>/dev/null || echo 0
+  printf '%s\n' "${MONITOR_PEAK:-0}"
 }

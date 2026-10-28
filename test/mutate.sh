@@ -400,11 +400,11 @@ mutation "04 a key matches a longer key" "$MONITOR" \
 # removed here is that the half-line is *kept*, not that it counts as writing —
 # the entry below covers the other half of the same line.
 mutation "04 a partial stream line is dropped" "$MONITOR" \
-  's/\{ partial="\$partial\$line";/{ partial="";/' \
+  's/\{ MONITOR__PARTIAL="\$MONITOR__PARTIAL\$line";/{ MONITOR__PARTIAL="";/' \
   test/smart-zone.bats "split across two writes"
 
 mutation "04 the threshold is hard-coded" "$SESSION" \
-  's/! monitor_watch "\$outfile" "\$pid" "\$SOFT_LIMIT_TOKENS"/! monitor_watch "\$outfile" "\$pid" 150000/' \
+  's/! monitor_watch "\$SESSION_STREAM_BACK" "\$pid" "\$SOFT_LIMIT_TOKENS"/! monitor_watch "\$SESSION_STREAM_BACK" "\$pid" 150000/' \
   test/smart-zone.bats "not a hard-coded"
 
 # ── [05] the objective gate ──────────────────────────────────────────────────
@@ -642,7 +642,7 @@ mutation "07 a quarantined ticket is only logged, not taken off the frontier" "$
   test/failures.bats "own tickets"
 
 mutation "07 a plan is read even from a session that wrote the tracker" "$FAILURES" \
-  's/  if ! failures_quarantine_strays "\$ticket" "\$seen" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  's/  if ! failures_quarantine_strays "\$ticket" "\$seen" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt"\n    return 1\n  fi\n//' \
   test/failures.bats "whole plan refused"
 
 # Turned round by [13], and the label with it. [07] wrote "a git that refuses the
@@ -756,7 +756,7 @@ mutation "21 the tracker the session staged stays staged" "$TRACKER" \
   test/failures.bats "stay staged"
 
 mutation "21 a plan is read from a session that edited the tracker" "$FAILURES" \
-  's/  if ! failures_protect_tracker "\$ticket" "\$tracker_pin" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt" "\$out" "\$out.tokens"\n    return 1\n  fi\n//' \
+  's/  if ! failures_protect_tracker "\$ticket" "\$tracker_pin" "\$mark"; then\n    rm -f "\$plan" "\$plan.prompt"\n    return 1\n  fi\n//' \
   test/failures.bats "edits the tracker has its whole plan"
 
 mutation "21 a session's own commit survives its green gate" "$FAILURES" \
@@ -1648,9 +1648,13 @@ mutation "06 a containment that cannot see the tree shrugs" "$GATE" \
 # The path moved into `lenses__stream` with [43], which gave the stream a second
 # reader. Same guarantee, same test: the containment measures what a lens left in
 # the tree it was judging, and the mechanism's own file must not be in it.
-mutation "06 the lens stream is written into the tree it judges" "$LENSES_LIB" \
-  's/  printf '"'"'%s\/lens-%s.jsonl\\n'"'"' "\$1" "\$2"/  printf '"'"'lens-%s.jsonl\\n'"'"' "\$2"/' \
-  test/lenses.bats "wrote nothing says nothing"
+#
+# **Retired by [97], measured VACUOUS on 28/10/2026.** The stream has a name only
+# between its `mktemp` and its unlink, before the lens's session exists, so even
+# made in the judged tree it is gone long before the containment's snapshot. What
+# keeps the mechanism's own file out of the repository is that unlink (`97 … keeps
+# its name`); the place under TMPDIR is now defence in depth — it moves [103]'s
+# window, it does not close anything a test can see.
 
 # ── the phase, and what it costs
 
@@ -2696,9 +2700,16 @@ mutation "43 a stream that says nothing about quota is read as a refusal" "$BUDG
 # finished with a genuine refusal beside one the deadline cut. So the edit that
 # removes the guarantee has to put the read back in the parent **and** switch the
 # question off; either half on its own leaves it standing.
-mutation "43 a lens the watchdog killed speaks through its last event" "$GATE" \
-  's/      if posture="\$\(gate_noted "\$name" posture\)"; then/      if posture="\$(lenses__refused_posture "\$dir\/lens-\$name.jsonl" "\$(lenses__verdict "\$dir\/lens-\$name.jsonl")")"; then/; s/  if \[ "\$\{GATE_TIMED_OUT:-0\}" != 1 \]; then/  if true; then/' \
-  test/budget.bats "deadline killed is not read as a refusal"
+#
+# **Retired by [97], and on purpose rather than re-aimed.** The first half put the
+# read back in the parent by having the gate open `$dir/lens-$name.jsonl` after the
+# branch was gone. Since [97] that file has a name for the millisecond between its
+# `mktemp` and its unlink, before the lens's session exists, and the stream lives
+# in the branch's memory and dies with it: there is nothing left for a parent to
+# open, and the edit would have the gate's two readers — which take the stream on
+# stdin now — read the gate's own stdin. The guarantee is carried by structure, a
+# killed branch writing no note and keeping its stream to itself; the second half
+# alone was measured VACUOUS by [94].
 
 mutation "43 a refused lens cancels the red of a lens that judged" "$GATE" \
   's/    gate__all_in "\$RALPH_GATE_FAILED" "\$refused"; then/    true; then/' \
@@ -3120,7 +3131,7 @@ mutation "63 the retro asks the budget before it reads the answer" "$RETRO" \
   test/retro.bats "records the lesson it distilled"
 
 mutation "63 a retro that answered raises a posture the pilot has an answer for" "$RETRO" \
-  's/^  posture="\$\(budget_stream_posture "\$stream" 2>\/dev\/null \|\| true\)"$/  posture="\$(budget_stream_posture "\$stream" 2>\/dev\/null || true)"\n  RALPH_RETRO_QUOTA="\$posture"/m' \
+  's/^  posture="\$\(session_stream \| budget_stream_posture\)" \|\| posture=\x27\x27$/  posture="\$(session_stream | budget_stream_posture)" || posture=\x27\x27\n  RALPH_RETRO_QUOTA="\$posture"/m' \
   test/retro.bats "does not stop the night"
 
 # The shared half, mutated against the value gate rather than the retro: what has
@@ -3178,7 +3189,7 @@ mutation "15 the proposal does not say what already exists" "$CAPABILITY" \
 # The channel: without either of these two lines the whole tier is off and no
 # test of it can tell that from a subagent that had nothing to say.
 mutation "15 the capability review never runs" "$RETRO" \
-  's/^  capability_review "\$RETRO_TOKEN" "\$ticket" "\$stream" "\$RALPH_RETRO_STATE"$/  :/m' \
+  's/^  capability_review "\$RETRO_TOKEN" "\$ticket" "\$findings" "\$RALPH_RETRO_STATE"$/  :/m' \
   test/capability.bats "ticket on the human sink"
 
 mutation "15 the subagent is never told it may name one" "$RETRO" \
@@ -4910,7 +4921,7 @@ mutation "11 a value gate that answered no verdict at all closes the feature" "$
   test/playthrough.bats "without a verdict closes nothing"
 
 mutation "11 a session the API refused is reported as one that judged and said nothing" "$PLAYTHROUGH" \
-  's/  if budget_refused_silence "\$verdict" \\\n    "\$\(budget_stream_posture "\$stream" 2>\/dev\/null \|\| true\)"; then\n/  if false; then\n/' \
+  's/  if budget_refused_silence "\$verdict" \\\n    "\$\(session_stream \| budget_stream_posture\)"; then\n/  if false; then\n/' \
   test/playthrough.bats "the API refused"
 
 # And the ordering of that question, which is a guarantee of its own ([43]): the
@@ -4925,7 +4936,7 @@ mutation "11 an event about tomorrow outranks the verdict this session gave" "$P
 
 # The document, which is the other half of the closing condition.
 mutation "11 a green verdict closes the feature with nothing written down" "$PLAYTHROUGH" \
-  's/  if ! playthrough__write "\$verdict" "\$outcome" "\$tree" "\$stream" "\$runrc" "\$visrc" \\\n/  if false \&\& ! playthrough__write "\$verdict" "\$outcome" "\$tree" "\$stream" "\$runrc" "\$visrc" \\\n/' \
+  's/  if ! playthrough__write "\$verdict" "\$outcome" "\$tree" "\$findings" "\$runrc" "\$visrc" \\\n/  if false \&\& ! playthrough__write "\$verdict" "\$outcome" "\$tree" "\$findings" "\$runrc" "\$visrc" \\\n/' \
   test/playthrough.bats "nobody can read tomorrow"
 
 # The hybrid and its two bounds.
@@ -7162,12 +7173,15 @@ mutation "94 the language branch says nothing about what it covered" "$LANGLIB" 
   's/^    gate_note zone "\$zone" \|\| true\n//m' \
   test/lang.bats "the exemption is counted"
 
-mutation "94 the gate reopens a lens's stream after its branch is gone" "$GATE" \
-  's/      if posture="\$\(gate_noted "\$name" posture\)"; then/      if posture="\$(lenses__refused_posture "\$dir\/lens-\$name.jsonl" "\$(lenses__verdict "\$dir\/lens-\$name.jsonl")")"; then/' \
-  test/gate.bats "refusal posture of a lens is its own"
+# "94 the gate reopens a lens's stream after its branch is gone" — **retired by
+# [97]**, for the reason the [43] entry beside the watchdog is: the stream has no
+# name after its branch, nor before its session, so there is no file for a parent
+# to reopen, and the edit would have the gate read its own stdin. The test it aimed
+# at still runs, its survivor looking for the stream under any name made from the
+# old one; what keeps a stream out of a stranger's reach is `97 …` below.
 
 mutation "94 a refused lens never gets its posture out of its branch" "$LENSES_LIB" \
-  's/  if posture="\$\(lenses__refused_posture "\$stream" "\$verdict"\)"; then\n    gate_note posture "\$posture" \|\| true\n  fi\n//' \
+  's/  if posture="\$\(session_stream \| lenses__refused_posture "\$verdict"\)"; then\n    gate_note posture "\$posture" \|\| true\n  fi\n//' \
   test/gate.bats "lens the API really refused still gives the ticket back"
 
 # Re-aimed by [101], and not for the usual reason. These two removed
@@ -7733,7 +7747,7 @@ mutation "98 the witness lines never reach the answer" "$LOOP" \
 
 # And the iteration's own reading of it, which is no longer a file it re-reads.
 mutation "98 the iteration classifies on a posture it never read" "$LOOP" \
-  's/  posture="\$\(budget_stream_posture "\$outfile"\)"\n/  posture=\x27\x27\n/' \
+  's/  posture="\$\(session_stream \| budget_stream_posture\)"\n/  posture=\x27\x27\n/' \
   test/budget.bats "a session the API refused is not an attempt"
 
 # No entry for two things this ticket was told to cover, and the reason is a
@@ -8065,6 +8079,96 @@ mutation "109 the scope-guard's refusal carries no frontier" "$GATE" \
 mutation "109 a pin with no mark is told its bill is concurrency" "$GATE" \
   's/  if \[ -n "\$mark" \] \|\|\n/  if true ||\n/' \
   test/gate.bats "a retry that destroyed its pin is not told"
+
+# ── [97] a session's stream has no name, and one reader ──────────────────────
+#
+# The name, given back: both ends opened on the file `session_spawn` made, and
+# nothing unlinks it or asks who holds it. The three survivors of the tests below
+# are the ones the triage of [97] and the pass of 29/09 measured winning on the code
+# before it — a bare verdict line appended to a lens's stream and to the value
+# gate's, an assistant event appended to the retro's — and each looks under any name
+# made from the old one, so a stream given its name back is found again.
+mutation "97 a lens's stream keeps its name" "$SESSION" \
+  's/  if ! proc_channel_open "\$SESSION_STREAM_FD" "\$SESSION_STREAM_BACK" "\$file"; then/  if ! eval "exec 7<>\\"\\\$file\\" 3<\\"\\\$file\\""; then/' \
+  test/canary.bats "cannot forge a lens verdict"
+
+mutation "97 the value gate's stream keeps its name" "$SESSION" \
+  's/  if ! proc_channel_open "\$SESSION_STREAM_FD" "\$SESSION_STREAM_BACK" "\$file"; then/  if ! eval "exec 7<>\\"\\\$file\\" 3<\\"\\\$file\\""; then/' \
+  test/playthrough.bats "cannot turn the value gate's fail into a pass"
+
+mutation "97 the retro's stream keeps its name" "$SESSION" \
+  's/  if ! proc_channel_open "\$SESSION_STREAM_FD" "\$SESSION_STREAM_BACK" "\$file"; then/  if ! eval "exec 7<>\\"\\\$file\\" 3<\\"\\\$file\\""; then/' \
+  test/retro.bats "cannot put a lesson in the retro's mouth"
+
+# The write end kept past the fork: whatever this shell starts afterwards holds a
+# writer of a stream it is not the session of.
+mutation "97 the stream's write end outlives the fork" "$SESSION" \
+  's/  eval "exec \$SESSION_STREAM_FD>&-"\n//' \
+  test/smart-zone.bats "holds no end of its stream afterwards"
+
+# The rest of the stream left unread: what a session writes while it is being
+# stopped is the `result` that carries its turns and cost.
+mutation "97 a stream's last lines are never read" "$SESSION" \
+  's/  monitor_drain "\$SESSION_STREAM_BACK"\n//' \
+  test/smart-zone.bats "reaches the journal"
+
+# The monitor reads every line once and keeps none: everything read while the
+# session ran is gone from the only copy there is.
+mutation "97 the monitor keeps no line it reads" "$MONITOR" \
+  's/      MONITOR_LINES\[\$\{#MONITOR_LINES\[@\]\}\]="\$line"\n//' \
+  test/loop-happy-path.bats "each iteration appends a line to the run journal"
+
+# The peak no longer kept where the journal reads it from.
+mutation "97 the peak context is never kept" "$MONITOR" \
+  's/        MONITOR_PEAK="\$MONITOR_TOKENS"\n/        :\n/' \
+  test/smart-zone.bats "the peak context of a normal session is journalled"
+
+# A refused channel, said by nobody.
+mutation "97 a refused stream says nothing" "$SESSION" \
+  's/    RALPH_SESSION_REFUSAL="\$PROC_CHANNEL_REFUSAL"\n    return 1\n/    return 1\n/' \
+  test/smart-zone.bats "never spawned, and says who"
+
+# And left to fall through to the spawn, whose redirection then refuses `claude`
+# with a `Bad file descriptor` where the caller's sentence should be.
+mutation "97 a refused stream falls through to the spawn" "$SESSION" \
+  's/    RALPH_SESSION_REFUSAL="\$PROC_CHANNEL_REFUSAL"\n    return 1\n/    RALPH_SESSION_REFUSAL="\$PROC_CHANNEL_REFUSAL"\n/' \
+  test/smart-zone.bats "never spawned, and says who"
+
+# A reader that stops early taking the shell down under `pipefail`.
+mutation "97 a reader that stops early takes the shell down" "$SESSION" \
+  's/  \) \|\| true\n\}/  )\n}/' \
+  test/smart-zone.bats "a reader that stops before the end"
+
+# Each tier's sentence for a stream it could not have.
+mutation "97 a lens never says why it was not asked" "$LENSES_LIB" \
+  's/  if \[ -n "\$\{RALPH_SESSION_REFUSAL:-\}" \]; then\n    printf \x27the %s lens could not be given/  if false; then\n    printf \x27the %s lens could not be given/' \
+  test/lenses.bats "a lens whose stream another process holds"
+
+mutation "97 a delivery never says its session was not spawned" "$LOOP" \
+  's/  if \[ -n "\$\{RALPH_SESSION_REFUSAL:-\}" \]; then\n    loop_log "\$ticket: no session was spawned/  if false; then\n    loop_log "\$ticket: no session was spawned/' \
+  test/loop-happy-path.bats "a delivery whose stream another process holds"
+
+mutation "97 a retro never says its stream was refused" "$RETRO" \
+  's/  if \[ -n "\$\{RALPH_SESSION_REFUSAL:-\}" \]; then\n    receipt_note "no lesson was distilled from this iteration: the retro session/  if false; then\n    receipt_note "no lesson was distilled from this iteration: the retro session/' \
+  test/retro.bats "a retro whose stream another process holds"
+
+mutation "97 the value gate never says its stream was refused" "$PLAYTHROUGH" \
+  's/  if \[ -n "\$\{RALPH_SESSION_REFUSAL:-\}" \]; then\n    outcome="nothing was judged: the value gate/  if false; then\n    outcome="nothing was judged: the value gate/' \
+  test/playthrough.bats "a value gate whose stream another process holds"
+
+# The census, derived: a reader nobody ranked, a spawn nobody ranked, and the copy
+# read past `session_stream`.
+mutation "97 a reader of a stream nobody ranked" "$RETRO" \
+  's/  findings="\$\(session_stream \| lenses_findings\)"\n/  findings="\$(session_stream | lenses_findings)"\n  : "\$(session_stream | grep -c .)"\n/' \
+  test/gate.bats "every reader of a session's stream is one this census knows"
+
+mutation "97 a session spawned somewhere nobody ranked" "$CAPABILITY" \
+  's/^capability_review\(\) \{\n/capability_review() {\n  false && session_spawn \/dev\/null \/dev\/null\n/m' \
+  test/gate.bats "every session the pack spawns has its stream's readers ranked"
+
+mutation "97 the copy of a stream read past its one reader" "$RETRO" \
+  's/  findings="\$\(session_stream \| lenses_findings\)"\n/  findings="\$(session_stream | lenses_findings)"\n  : "\$\{MONITOR_LINES[*]+x\}"\n/' \
+  test/gate.bats "the copy of a stream is named nowhere"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

@@ -164,7 +164,7 @@ capability__name() {
 
 # One line, stripped and bounded, for everything that came out of a model. Same
 # job as `retro__oneline` and a copy of it on purpose: this module is handed a
-# stream by whoever spawned the session and not by that module, and a lib
+# session's prose by whoever spawned the session and not by that module, and a lib
 # reaching into a neighbour's internals is the mesh `test/layering.bats` refuses.
 capability__oneline() {
   printf '%s' "$*" |
@@ -424,8 +424,8 @@ PROMPT
 # ── reading the answer ───────────────────────────────────────────────────────
 
 capability__said() {
-  local token="$1" tag="$2" stream="$3" line
-  line="$(lenses_findings "$stream" 2>/dev/null |
+  local token="$1" tag="$2" findings="$3" line
+  line="$(printf '%s\n' "$findings" |
     sed -n "s/^[[:space:]]*$token-$tag:[[:space:]]*//p" | tail -1)" || line=''
   [ -n "$line" ] || return 0
   capability__oneline "$line"
@@ -496,14 +496,15 @@ capability__cheapest() {
   esac
 }
 
-# The whole of it, from a finished retro session's stream.
+# The whole of it, from the prose of a finished retro session — `lenses_findings` of
+# its stream, which the retro reads once and hands over.
 #
 # Never fatal and never a non-zero return, for the reason `retro_run` is neither:
 # this is the last paperwork of an iteration whose work is already marked, and a
 # proposal that could not be written must cost a line on the receipt rather than
 # the night.
 capability_review() {
-  local token="$1" ticket="$2" stream="$3" dir="$4"
+  local token="$1" ticket="$2" findings="$3" dir="$4"
   local said why kind name bar route decision candidate where slug id body prc
 
   if [ "${CAPABILITY:-on}" != on ]; then
@@ -511,7 +512,7 @@ capability_review() {
     return 0
   fi
 
-  said="$(capability__said "$token" "$CAPABILITY_TAG" "$stream")"
+  said="$(capability__said "$token" "$CAPABILITY_TAG" "$findings")"
   [ -n "$said" ] || return 0
 
   kind="$(printf '%s' "$said" | awk '{ print $1 }')"
@@ -537,7 +538,7 @@ capability_review() {
   decision="$(printf '%s' "$route" | cut -f1)"
   candidate="$(printf '%s' "$route" | cut -f2)"
   where="$(printf '%s' "$route" | cut -f3)"
-  why="$(capability__said "$token" "$CAPABILITY_WHY_TAG" "$stream")"
+  why="$(capability__said "$token" "$CAPABILITY_WHY_TAG" "$findings")"
   [ -n "$why" ] ||
     why='The retro named it and did not say in one line what went unreviewed without it.'
 

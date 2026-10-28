@@ -19,7 +19,8 @@
 # **Why the receipt does not read the journal, which is the whole design** ([21]).
 # `run.log` lives under `.scratch/<feature>/`, and nothing in this pack guards that
 # directory: the tracker's own protection stops at `issues/` and cannot be widened,
-# because the session stream is written *inside* the window being watched. So a
+# because the session's prompt is written *inside* the window being watched (and
+# its stream was, until [97] gave the stream no name). So a
 # session can rewrite the journal — and a receipt assembled from a source the judged
 # session can edit is not a receipt, it is a session's account of itself.
 #
@@ -155,15 +156,16 @@ RECEIPT_LEVEL=''
 
 # The channel a subshell answers on, as literal digits because bash 3.2 has no
 # `{var}>` and an `exec` wants a digit. Spent through `eval` in the four places
-# that open, shut, close and hand them over, and nowhere else. The numbers left:
-# `monitor_watch` has 3, the lens prompt of [94] has 7 and 6, and the gate's note
-# channel has 9 and 8.
+# that open, shut, close and hand them over, and nowhere else. Which number every
+# other channel of the pack is on is written once, above `LOOP_SLOT_FD` in
+# `loop.sh` — this paragraph used to keep a copy, and the copy went stale twice
+# ([98], [97]).
 RECEIPT_CHANNEL_FD=5
 RECEIPT_CHANNEL_BACK=4
 
 # How much of a red branch's output is kept. The findings of a review lens are the
-# only copy that survives the gate ([06]: the stream dies with the gate's temporary
-# directory), so this has to be generous; a test suite that prints a megabyte is
+# only copy that survives the gate ([06]: the stream dies with the lens's branch),
+# so this has to be generous; a test suite that prints a megabyte is
 # the reason it is not unbounded. What is dropped is always counted out loud.
 RECEIPT_MAX_LINES="${RECEIPT_MAX_LINES:-200}"
 
@@ -335,8 +337,9 @@ receipt_gap() {
 # What a red branch had to say, kept while the gate's directory still exists.
 #
 # Taken *during* the gate and not after it, which is [06]'s constraint and not a
-# convenience: a lens's prompt and stream live under the gate's `$TMPDIR`
-# directory, `gate_run` removes it, and after that the only trace of a model's
+# convenience: a lens's branch output lives under the gate's `$TMPDIR` directory —
+# its prompt and its stream have no name there ([94], [97]) and die with the branch
+# — `gate_run` removes it, and after that the only trace of a model's
 # findings is twenty lines that scrolled past on stdout. This receipt is the one
 # place they can survive the night.
 receipt_keep_branch() {
@@ -509,7 +512,7 @@ receipt__evidence() {
   else
     printf -- '- those are git **objects**, not refs, apart from the branch. They are exact and they belong to this iteration — a branch tip read afterwards is whatever a sibling has since made it — and the price of that is written here rather than discovered: once the branch has moved past them, a `git gc` may collect them, and a receipt kept longer than that names work the repository no longer holds.\n'
   fi
-  printf -- '- the session'"'"'s own stream: removed at the end of the iteration, and nothing kept it. It is the target project'"'"'s quota that pays for a stream, and a receipt is not a place to store megabytes of NDJSON.\n'
+  printf -- '- the session'"'"'s own stream: it never had a name, it was read into the memory of the iteration that spawned the session, and it went with it. It is the target project'"'"'s quota that pays for a stream, and a receipt is not a place to store megabytes of NDJSON.\n'
   printf '\nNone of that is inlined here on purpose.\n'
   return 0
 }
@@ -524,7 +527,7 @@ receipt__findings() {
     [ -n "$(receipt_branch_text "$name")" ] || continue
     if [ "$printed" = 0 ]; then
       printf '## Findings\n\n'
-      printf 'What each red branch had to say. For a review lens this is the only copy: the prompt and the stream live in the gate'"'"'s temporary directory, and the gate removes it.\n\n'
+      printf 'What each red branch had to say. For a review lens this is the only copy: the prompt and the stream have no name, and live only as long as the lens'"'"'s own branch.\n\n'
       printed=1
     fi
     printf '### %s — red\n\n' "$name"

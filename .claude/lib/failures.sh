@@ -1204,6 +1204,10 @@ failures_reslice() {
   # `set -e`: a bare assignment from a function that returns `2` ends the run.
   surface="$(gate_write_surface "$ticket")" || return 1
   plan="$(mktemp "${TMPDIR:-/tmp}/ralph-reslice.XXXXXX")" || return 1
+  # Where the planning session's stream is made, for the instant `session_spawn`
+  # takes to open and unlink it ([97]). Nothing reads that stream — what this tier
+  # draws out of the session is the plan below, judged whoever wrote it — so it
+  # is ranked as a stream read by nothing, and that is all.
   out="$plan.stream"
   : >"$plan"
 
@@ -1231,6 +1235,9 @@ failures_reslice() {
 
   failures__reslice_prompt "$ticket" "$plan" >"$plan.prompt"
   session_spawn "$plan.prompt" "$out" || rc=$?
+  if [ -n "${RALPH_SESSION_REFUSAL:-}" ]; then
+    failures__gap "$ticket: the re-slice session was never spawned — its stream could not be opened on a channel no other process holds: $RALPH_SESSION_REFUSAL"
+  fi
   if [ "${RALPH_SOFT_LIMIT_HIT:-0}" = 1 ]; then
     rc=1
     failures__gap "$ticket: the re-slice session crossed the soft limit too"
@@ -1276,17 +1283,17 @@ failures_reslice() {
   # cannot be redone afterwards, so the rest of what it produced is not worth
   # reading — whether it edited a ticket or created one.
   if ! failures_protect_tracker "$ticket" "$tracker_pin" "$mark"; then
-    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    rm -f "$plan" "$plan.prompt"
     return 1
   fi
   if ! failures_quarantine_strays "$ticket" "$seen" "$mark"; then
-    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    rm -f "$plan" "$plan.prompt"
     return 1
   fi
 
   if [ "$rc" != 0 ] || [ ! -s "$plan" ]; then
     failures__gap "$ticket: no re-slice plan came back"
-    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    rm -f "$plan" "$plan.prompt"
     return 1
   fi
 
@@ -1294,7 +1301,7 @@ failures_reslice() {
   total="$(printf '%s' "$headers" | grep -c . || true)"
   if [ "${total:-0}" -lt 2 ]; then
     failures__gap "$ticket: the plan does not split anything ($total ticket(s))"
-    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    rm -f "$plan" "$plan.prompt"
     return 1
   fi
 
@@ -1305,7 +1312,7 @@ failures_reslice() {
   # than none, and nothing here can be undone by a rollback — the tracker is
   # deliberately outside its reach.
   if ! failures__plan_is_sound "$ticket" "$plan" "$surface" "$lines" "$end"; then
-    rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+    rm -f "$plan" "$plan.prompt"
     return 1
   fi
 
@@ -1327,7 +1334,7 @@ failures_reslice() {
       "$ticket" | tracker_append_note "$child" || true
     children="$children $child"
   done
-  rm -f "$plan" "$plan.prompt" "$out" "$out.tokens"
+  rm -f "$plan" "$plan.prompt"
 
   children="${children# }"
   if [ -z "$children" ]; then

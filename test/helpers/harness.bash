@@ -1335,6 +1335,71 @@ rm() {
 SNIPPET
 }
 
+# The same instant raced in a whole run rather than staged in one shell ([97]): a
+# process the delivery session leaves behind, busy on purpose — the name lives for
+# the millisecond an external `rm` takes — that opens every file the pack makes at
+# the places given, the instant it sees one, and hands the descriptor to a `sleep`
+# that keeps it. Every channel made there is then refused, and every session whose
+# stream is made there is never spawned. A place is a glob, absolute or relative to
+# the run's own `$TMPDIR`. Each name is tried once: `exec 7>>` creates what it does
+# not find, and a holder started on every turn would be a fork bomb ([103]).
+#
+# Who held what, `<pid> <file>` a line, in `$SHIM_STATE/window.held`; take the
+# holders back with `window_holders_stop` once the run is over.
+script_window_holder() {
+  printf '%s\n' "$@" >"$SHIM_STATE/window.globs"
+  script_claude <<'SCRIPT'
+#!/usr/bin/env bash
+state="$RALPH_SHIM_STATE"
+nohup bash -c '
+  trap "" TERM
+  end=$((SECONDS + 120))
+  tried=""
+  globs="$(cat "$RALPH_SHIM_STATE/window.globs")"
+  while [ "$SECONDS" -lt "$end" ]; do
+    for g in $globs; do
+      case "$g" in /*) ;; *) g="$TMPDIR/$g" ;; esac
+      for f in $g; do
+        [ -f "$f" ] || continue
+        case "$tried" in *"<$f>"*) continue ;; esac
+        tried="$tried<$f>"
+        if exec 7>>"$f"; then
+          sleep 120 &
+          printf "%s %s\n" "$!" "$f" >>"$RALPH_SHIM_STATE/window.held"
+          exec 7>&-
+        fi
+      done
+    done
+  done
+' >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$state/survivor.pid"
+chmod -x "$state/claude.script"
+exec claude "$@"
+SCRIPT
+}
+
+window_holders_stop() {
+  local pid _
+  kill -KILL "$(cat "$SHIM_STATE/survivor.pid" 2>/dev/null)" 2>/dev/null || true
+  [ -f "$SHIM_STATE/window.held" ] || return 0
+  while read -r pid _; do
+    [ -n "$pid" ] && kill -KILL "$pid" 2>/dev/null || true
+  done <"$SHIM_STATE/window.held"
+  return 0
+}
+
+# Whether the run said that a process the holder started held a channel.
+window_holder_named() {
+  local said="$1" pid _
+  while read -r pid _; do
+    [ -n "$pid" ] || continue
+    case "$said" in
+      *"process $pid on its descriptor"*) return 0 ;;
+    esac
+  done <"$SHIM_STATE/window.held"
+  return 1
+}
+
 # A ticket-open guard nobody can take, which is how a test stages "the tracker
 # refused to open a ticket". It is the cheapest refusal the local backend has:
 # `tracker_local__open_guard_take` waits out its bound and gives up, and nothing
