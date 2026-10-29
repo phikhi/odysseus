@@ -316,7 +316,8 @@ gate__tmp_leftovers() {
 #     that nothing **names** the object, because nothing enumerated it.
 #   `<common git dir>/ralph.frontier.lock`    the restore's guard ([41]), in the
 #     same directory for the same reason.
-#   `$TMPDIR/ralph-retro.*/index.guard`       the lesson index's ([14]).
+#   `$TMPDIR/ralph-retro.*/records.guard`     the numbering of the lesson
+#     records ([14]; the index itself has one writer since [112], the pilot).
 #
 # The two directories are walked, because a claim guard is named after a ticket
 # and cannot be listed in advance; the other three are asked of the module that
@@ -1430,13 +1431,15 @@ gate__config_restore() {
 
 # ── the witnesses of the run, counted rather than listed ([81]) ───────────────
 #
-# A run puts twelve objects in `$TMPDIR` and reads them back as evidence: the
+# A run puts its witnesses in `$TMPDIR` and reads them back as evidence: the
 # rules every check sees through ([30], [41], [46]), the copy of the *global*
 # ignore rules ([30]), the PATH baseline ([52]), the witness of the three zones
 # nothing else looks at ([70]), the census of the exclusion guards this tree
 # already held and the copy of a remote backend's sidecar ([77]), the user flow
-# the value gate replays ([11], [68]), and the lesson index every prompt of the
-# night is served from ([14], [15]).
+# the value gate replays ([11], [68]), and the baseline of what a fresh session
+# loads as a capability ([15]). The lesson index every prompt of the night is
+# served from was one of them until [112]; it is in the pilot's memory now, and in
+# no file at all.
 #
 # What held them until this ticket was **a name**: a `mktemp` the pilot never
 # exports ([40]). Measured on 10/09/2026, one file per run, the session doing
@@ -1517,7 +1520,7 @@ gate_witness_paths() {
 # `sidecar.base` is the baseline it is compared against, so a rule that caught
 # both would take away the comparison it exists to protect.
 #
-# Two modes and two different admissions:
+# One mode, and the admission it makes:
 #
 #   grows      a register this run appends to — `ledger` ([41]), the pack's own
 #              register of what it is about to write ([70]), a remote backend's
@@ -1529,11 +1532,12 @@ gate_witness_paths() {
 #              one, so neither a census nor a digest reaches it. On the last of
 #              the four that costs the least there is: a line appended to it makes
 #              this pack read its tracker again.
-#   rewritten  the lesson index, which an iteration republishes on purpose
-#              ([14]). Held to its **existence** here; its content is held by the
-#              copy the iteration takes in its own memory before its session
-#              exists, which is `retro_hold_index` and the only place that can
-#              tell this run's republication from a session's rewrite.
+#
+# There was a second mode until [112], `rewritten`, for the lesson index: a file
+# this run republished on purpose, held here to its existence and put back by the
+# iteration after its session. A put-back is an instant, and what wrote the file
+# again after it went into every prompt of the night and into `LEARNINGS.md`. The
+# index is no file of this run any more, so the mode has nothing left to exempt.
 #
 # Enumerated here rather than read out of the pack at run time, for the oldest
 # reason in `docs/frontiere-de-confiance.md` and the one [62] gives in full: the
@@ -1545,8 +1549,7 @@ gate_witness_mutable() {
     ledger grows \
     forensic.written grows \
     sidecar grows \
-    tracker.writes grows \
-    index rewritten
+    tracker.writes grows
   return 0
 }
 
@@ -1581,8 +1584,6 @@ gate__witness_mode() {
 #                        sources" ([41]).
 #   the copy of the flow `playthrough_close` refuses to conclude, because its
 #                        fallback is the file on disk a session can write ([11]).
-#   the lesson index     `retro_index_note` puts it back and says so, because
-#                        this run republishes it on purpose ([14]).
 #   the capability
 #   baseline             named and no more: its reader is an event channel that
 #                        goes silent, not a control that falls back ([15]), and
@@ -1623,7 +1624,6 @@ gate_witness_moved() {
     fi
     mode="$(gate__witness_mode "${path##*/}")"
     case "$mode" in
-      rewritten) continue ;;
       grows)
         # The byte count is the tail of the digest — `cksum` answers with the CRC
         # and the length, and `gate__digest` joins them — so a register that grew
@@ -2501,8 +2501,9 @@ gate_frontier_residue() {
 #                       time: a wall, a reset, a claim's liveness ([08], [12]).
 #   cksum awk sed grep  the pack's own arithmetic — every digest, every manifest,
 #   tr cut sort uniq    every ledger and every verdict this file computes is read
-#   head tail wc cat    back through one of these.
-#   find ls cmp
+#   head tail wc cat    back through one of these. (`cmp` was one until [112],
+#   find ls             which took away the one comparison it made: the lesson
+#                       index is compared in memory now.)
 #   mktemp              the names of the four secrets that are secret because
 #                       nothing exports them ([30], [40]): a predictable one is
 #                       a register a session can find.
@@ -2528,7 +2529,7 @@ gate_frontier_residue() {
 gate_path_programs() {
   printf '%s\n' \
     git claude bash sh at systemd-run curl date cksum awk sed grep tr cut sort \
-    uniq head tail wc cat find ls cmp mktemp rm rmdir cp mv mkdir chmod \
+    uniq head tail wc cat find ls mktemp rm rmdir cp mv mkdir chmod \
     basename dirname ps sleep uname lsof
   return 0
 }

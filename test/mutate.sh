@@ -2989,20 +2989,23 @@ mutation "14 the same lesson is written twice" "$RETRO" \
   's/^    \[ "\$\(retro__norm "\$g"\)" = "\$\(retro__norm "\$gist"\)" \] \|\| continue$/    [ x = y ] || continue/m' \
   test/retro.bats "counted, not written twice"
 
+# Re-anchored by [112], which moved the promotion and the bound out of
+# `retro__record_lesson`'s files and into `retro__apply`, the pure function both the
+# iteration and the pilot call; the guarantees are unchanged and still retro.bats's.
 mutation "14 a recurrent lesson never leaves the working set" "$RETRO" \
-  "s/'\\\$2 \\+ 0 >= at \\+ 0 \\{ print \\}' \"\\\$work\" \\\\/'0 { print }' \"\\\$work\" \\\\/m" \
+  's/^    if \[ "\$count" -ge "\$at" \]; then$/    if false; then/m' \
   test/retro.bats "promoted out of the working set"
 
 mutation "14 a promotion happens without a word on the document" "$RETRO" \
-  's/^      receipt_note "a lesson this loop recorded was promoted/      : "a lesson this loop recorded was promoted/m' \
+  's/^        receipt_note "a lesson this loop recorded was promoted/        : "a lesson this loop recorded was promoted/m' \
   test/retro.bats "promoted out of the working set"
 
 mutation "14 the index grows past its bound" "$RETRO" \
-  's/^    awk -v keep="\$\{LEARNINGS_INDEX_MAX:-40\}" .NR <= keep. "\$work"/    awk -v keep="\${LEARNINGS_INDEX_MAX:-40}" "1" "\$work"/m' \
+  's/^    \[ "\$n" -le "\$max" \] \|\| continue$/    :/m' \
   test/retro.bats "drops its oldest line"
 
 mutation "14 what fell off the index is not counted out loud" "$RETRO" \
-  's/^    receipt_note "\$dropped lesson line\(s\) left the injected index/    : "\$dropped lesson line(s) left the injected index/m' \
+  's/^        receipt_note "\$a lesson line\(s\) left the injected index/        : "\$a lesson line(s) left the injected index/m' \
   test/retro.bats "drops its oldest line"
 
 mutation "14 a superseded record does not say what replaced it" "$RETRO" \
@@ -3018,8 +3021,11 @@ mutation "14 a lesson line is injected unquoted" "$RETRO" \
   's/^    printf .> %s\\n. "\$line"$/    printf "%s\\n" "\$line"/m' \
   test/retro.bats "markdown arrives as text"
 
+# Rewritten by [112]: the index is no copy in `$TMPDIR` any more, so overwriting
+# one (the edit this entry made until then) would change nothing and read VACUOUS.
+# The move it stands for is the same — a reader that goes to the tree.
 mutation "14 the index a prompt is served comes from the working tree" "$RETRO" \
-  's!^retro_index\(\) \{$!retro_index() { cat "\$(retro__index_path)" >"\$RALPH_RETRO_STATE/index" 2>/dev/null || true;!m' \
+  's!^retro_index\(\) \{$!retro_index() { RETRO__INDEX="\$(retro__parse "\$(cat "\$(retro__index_path)" 2>/dev/null)")";!m' \
   test/retro.bats "reaches no prompt at all"
 
 mutation "14 an index edited under the run is overwritten in silence" "$RETRO" \
@@ -3101,7 +3107,7 @@ mutation "14 an index that keeps nothing is accepted" "$RETRO" \
 # stops mattering.
 mutation "14 the index is published without taking the guard" "$RETRO" \
   's/^retro__guard_take\(\) \{/retro__guard_take() { return 0;/m' \
-  test/retro.bats "holds the index"
+  test/retro.bats "holds the records"
 
 # And the one route this module has to be silent on. Found by [45]'s own test
 # going red: a line here would be the only sentence in a section whose job is to
@@ -6259,21 +6265,16 @@ mutation "81 the value gate replays whatever is in its copy" "$PLAYTHROUGH" \
   's/  if ! gate_witness_intact "\$spec"; then/  if false; then/' \
   test/playthrough.bats "does not get the feature closed"
 
-# The lesson index, held by the copy the iteration keeps in its own memory —
-# without which the session of iteration 1 writes the prompt of iteration 2.
-mutation "81 a rewritten lesson index reaches the next prompt" "$RETRO" \
-  's/^retro_index_note\(\) \{/retro_index_note() { return 1;/m' \
-  "test/retro.bats" "does not write the next session's prompt"
-
-mutation "81 the iteration holds no copy of the index it was handed" "$LOOP" \
-  's/  retro_hold_index \|\| true\n//' \
-  "test/retro.bats" "does not write the next session's prompt"
-
-# And the one place the put-back must not happen: a sibling's lesson is a legal
-# move, and putting it back would drop it.
-mutation "81 a sibling's lesson is put back as a forgery" "$RETRO" \
-  's/  if concurrency_may_overlap; then/  if false; then/' \
-  test/retro.bats "named and never put back"
+# The three entries that held [81]'s put-back of the lesson index —
+# `retro_index_note` returning early, `retro_hold_index` not taken, the put-back
+# done above MAX_PARALLEL=1 — are retired by [112], which removed the mechanism
+# rather than the guarantee: the index is in no file of the run, so there is
+# nothing to put back. Measured before retiring them, on the branch of [112]: the
+# first two DRIFTED (their anchors are gone), and the third DRIFTED with "no test
+# matches" — while its anchor, `  if concurrency_may_overlap; then`, now applies to
+# the first such line left in retro.sh, which is [83]'s, and would have mutated the
+# wrong function under a label nobody re-read ([109]'s trap). What carries the
+# guarantee now is the [112] block below.
 
 # The two zones [77] left unenumerated. The fold's guard is the one that costs:
 # held by an owner that answers, a green iteration ends `not-integrated` and the
@@ -6282,7 +6283,7 @@ mutation "81 the guards of the common git directory are counted by nobody" "$GAT
   's/  concurrency_guards 2>\/dev\/null \|\| true\n//' \
   test/gate.bats "stale guard of the common git directory"
 
-mutation "81 the guard of the lesson index is counted by nobody" "$GATE" \
+mutation "81 the guard of the lesson records is counted by nobody" "$GATE" \
   's/  retro_guards 2>\/dev\/null \|\| true\n//' \
   test/gate.bats "three zones the pack locks in"
 
@@ -6448,8 +6449,11 @@ mutation "75 a listing that refused is kept as though it had answered" "$FORGE" 
 # And the two objects this ticket leaves outside the pack's own memory: the
 # register in the run's witness directory, and the drain's workspace.
 
+# Re-anchored by [112], which took `index rewritten` off the end of the list and
+# left `tracker.writes` as its last line, with no continuation after it. Same
+# move: the register is no longer one that may grow.
 mutation "75 the register of this run's writes is not one that may grow" "$GATE" \
-  's#    sidecar grows \\\n    tracker.writes grows \\#    sidecar grows \\#' \
+  's#    sidecar grows \\\n    tracker.writes grows\n#    sidecar grows\n#' \
   test/tracker-remote.bats "may only grow"
 
 mutation "75 the drain leaves its workspace where the next one counts it" "$HUMAN_LOOP" \
@@ -8169,6 +8173,98 @@ mutation "97 a session spawned somewhere nobody ranked" "$CAPABILITY" \
 mutation "97 the copy of a stream read past its one reader" "$RETRO" \
   's/  findings="\$\(session_stream \| lenses_findings\)"\n/  findings="\$(session_stream | lenses_findings)"\n  : "\$\{MONITOR_LINES[*]+x\}"\n/' \
   test/gate.bats "the copy of a stream is named nowhere"
+
+# ── [112] the lesson index is a state of the pilot, and in no file ───────────
+#
+# The index is read once from `LEARNINGS.md` into a variable of the pilot, every
+# reader is an expansion of the copy a fork inherits, an iteration hands back its
+# lesson and nothing else, and the pilot lands it. Every entry below puts back one
+# piece of what [81] had — a file the index goes through, a heredoc it is rendered
+# by, a pilot that takes what the iteration says the index is — or takes away one
+# sentence's condition. The run-real ones are measured against the survivor of
+# `script_index_survivor`, which won against [81] at the triage.
+
+# A reader remise sur un fichier: the copy written where the survivor looks, under
+# one of the names the index used to have, and the prompt read from it.
+mutation "112 the index a prompt is served is read from a file of the run" "$RETRO" \
+  's/    RETRO__INDEX="\$\(retro__parse "\$\{text%X\}"\)"\n  fi\n  return 0\n/    RETRO__INDEX="\$(retro__parse "\${text%X}")"\n  fi\n  retro__render "\$RETRO__INDEX" 0 >"\$dir\/index"\n  return 0\n/; s/  RETRO__INDEX="\$entries"\n/  RETRO__INDEX="\$entries"\n  retro__render "\$RETRO__INDEX" 0 >"\$RALPH_RETRO_STATE\/index"\n/; s/^retro_index\(\) \{\n  local work prom\n/retro_index() {\n  local work prom\n  RETRO__INDEX="\$(retro__parse "\$(cat "\$RALPH_RETRO_STATE\/index" 2>\/dev\/null)")"\n/m' \
+  test/retro.bats "puts no entry in the lesson index"
+
+# The same file under a name nobody listed — which only the derived half of the
+# survivor can find, by what the file holds.
+mutation "112 the index a prompt is served is read from a file nobody listed" "$RETRO" \
+  's/    RETRO__INDEX="\$\(retro__parse "\$\{text%X\}"\)"\n  fi\n  return 0\n/    RETRO__INDEX="\$(retro__parse "\${text%X}")"\n  fi\n  retro__render "\$RETRO__INDEX" 0 >"\$dir\/served"\n  return 0\n/; s/  RETRO__INDEX="\$entries"\n/  RETRO__INDEX="\$entries"\n  retro__render "\$RETRO__INDEX" 0 >"\$RALPH_RETRO_STATE\/served"\n/; s/^retro_index\(\) \{\n  local work prom\n/retro_index() {\n  local work prom\n  RETRO__INDEX="\$(retro__parse "\$(cat "\$RALPH_RETRO_STATE\/served" 2>\/dev\/null)")"\n/m' \
+  test/retro.bats "puts no entry in the lesson index"
+
+# The iteration's decision — already there, or new — taken on a file: the
+# survivor's line carrying the real gist under an id of its own makes the retro
+# count the lesson on a line nobody wrote, and the lesson never lands.
+mutation "112 the iteration decides already-there on a file of the run" "$RETRO" \
+  's/    RETRO__INDEX="\$\(retro__parse "\$\{text%X\}"\)"\n  fi\n  return 0\n/    RETRO__INDEX="\$(retro__parse "\${text%X}")"\n  fi\n  retro__render "\$RETRO__INDEX" 0 >"\$dir\/index"\n  return 0\n/; s/  RETRO__INDEX="\$entries"\n/  RETRO__INDEX="\$entries"\n  retro__render "\$RETRO__INDEX" 0 >"\$RALPH_RETRO_STATE\/index"\n/; s/  # again is not a new observation — it is the standing rule doing its job.\n  proc_lines "\$RETRO__INDEX"\n/  # again is not a new observation — it is the standing rule doing its job.\n  proc_lines "\$(retro__parse "\$(cat "\$RALPH_RETRO_STATE\/index" 2>\/dev\/null)")"\n/' \
+  test/retro.bats "puts no entry in the lesson index"
+
+# The two renders back through a heredoc — a named file under /var/tmp for an
+# instant, which `heredoc_spy` finds and rewrites.
+mutation "112 the document is rendered through a heredoc again" "$RETRO" \
+  's/^retro__render\(\) \{\n/retro__render() {\n  cat <<\x27HEAD\x27\n# LEARNINGS\nHEAD\n/m; s/^    \x27# LEARNINGS\x27 \\\n//m' \
+  test/retro.bats "rendered through no heredoc"
+
+mutation "112 the lessons block is rendered through a heredoc again" "$LOOP" \
+  's/^  \[ -n "\$lessons" \] \|\| return 0\n  printf \x27%s\\n\x27 \\\n    \x27\x27 \\\n    \x27## Lessons earlier iterations left\x27 \\\n/  [ -n "\$lessons" ] || return 0\n  cat <<LESSONS\n\n## Lessons earlier iterations left\nLESSONS\n  printf \x27%s\\n\x27 \\\n/m' \
+  test/retro.bats "rendered through no heredoc"
+
+# The pilot taking the index from its iteration rather than landing a lesson on
+# its own: above MAX_PARALLEL=1 the second answer drops the first lesson.
+mutation "112 the pilot adopts the iteration's index instead of landing its lesson" "$RETRO" \
+  's/  result="\$\(retro__apply "\$RETRO__INDEX" "\$lesson"\)"/  result="\$(retro__apply \x27\x27 "\$lesson")"/' \
+  test/concurrency.bats "both reach the index"
+
+# And the pilot that never lands at all, and the one that lands `none`.
+mutation "112 the pilot never lands a lesson" "$LOOP" \
+  's/    \*\) \[ -z "\$lesson" \] \|\| retro_land "\$ticket" "\$lesson" \|\| true ;;/    *) : ;;/' \
+  test/retro.bats "becomes one record and one index line"
+
+mutation "112 an answer with no lesson is landed as one" "$LOOP" \
+  's/  \[ "\$lesson" != none \] \|\| lesson=\x27\x27\n//' \
+  test/retro.bats "finds nothing writes nothing"
+
+# The answer's shape: one lesson record, written every time.
+mutation "112 a second lesson record is accepted" "$LOOP" \
+  's/ rollback-failed \| lesson \| outcome\)/ rollback-failed | outcome)/; s/          drift\) ;;\n/          drift | lesson) ;;\n/' \
+  test/retro.bats "answer was refused is not applied"
+
+mutation "112 an answer with nothing to say writes no lesson record" "$LOOP" \
+  's/    loop__record lesson none \|\| return 1\n/    :\n/' \
+  test/retro.bats "an answer that had none is refused too"
+
+# A lesson that does not land, said with its record.
+mutation "112 a lesson that does not land is not said" "$RETRO" \
+  's/^retro_strand\(\) \{/retro_strand() { return 0;/m' \
+  test/retro.bats "answer was refused is not applied"
+
+# Two equal gists of two iterations in flight: the record in excess says what
+# replaces it.
+mutation "112 the record in excess does not say what replaces it" "$RETRO" \
+  's/        retro__supersede_record "\$\(retro__records_dir\)" "\$a" "\$b"\n//' \
+  test/retro.bats "counted on the first"
+
+# The one read of `LEARNINGS.md` a run makes.
+mutation "112 a run does not start from the LEARNINGS.md the last one left" "$RETRO" \
+  's/    RETRO__INDEX="\$\(retro__parse "\$\{text%X\}"\)"\n//' \
+  test/retro.bats "starts from the LEARNINGS.md"
+
+# The sentences, and their conditions: said only of a file this run did not leave.
+mutation "112 the pilot says LEARNINGS.md was edited whether or not it was" "$RETRO" \
+  's/  if ! retro__tree_is_ours; then\n    retro__log "LEARNINGS.md is not what this run last wrote/  if true; then\n    retro__log "LEARNINGS.md is not what this run last wrote/' \
+  test/retro.bats "nobody else touched is never said to be edited"
+
+mutation "112 the receipt says LEARNINGS.md was edited whether or not it was" "$RETRO" \
+  's/  if ! concurrency_may_overlap && ! retro__tree_is_ours; then/  if true; then/' \
+  test/retro.bats "nobody else touched is never said to be edited"
+
+mutation "112 a publication something wrote into is not said" "$RETRO" \
+  's/  if ! retro__tree_is_ours; then\n    retro__log "LEARNINGS.md is not what this run has just written/  if false; then\n    retro__log "LEARNINGS.md is not what this run has just written/' \
+  test/retro.bats "written into while it was published"
 
 # ── the canary ───────────────────────────────────────────────────────────────
 

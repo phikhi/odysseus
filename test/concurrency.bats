@@ -102,6 +102,95 @@ git_subjects() {
   git -C "$PROJECT_DIR" log --format='%s'
 }
 
+# ── [112] two iterations in flight, one index ────────────────────────────────
+#
+# Until [112] the lesson index was one file both iterations republished under a
+# guard, and [81] could only name a rewrite of it above `MAX_PARALLEL=1`, never put
+# it back — a sibling's lesson moved it legally. The index is a variable of the
+# pilot now: each iteration was forked with the copy the pilot held, decides on
+# it, and hands back its lesson; the pilot lands one answer after another.
+#
+# **That both were forked before either landed is observed, not assumed**: the
+# prompt of each retro carries the index its iteration was forked with, and a run
+# that ground the two one after the other would show the first lesson in the
+# second retro's prompt. Without that, two lessons ending in the index would prove
+# nothing a sequenced run does not.
+concurrency__retros_saw_no_lesson() {
+  local n
+  for n in 1 2; do
+    case "$(retro_call_stdin "$n")" in
+      *"Observations earlier iterations left"*)
+        fail "retro $n was handed a lesson its sibling distilled, so the two iterations did not overlap and this proves nothing a sequenced run does not"
+        ;;
+    esac
+  done
+}
+
+@test "two lessons of two iterations in flight both reach the index" {
+  use_tickets 01-alpha 02-beta
+  set_config RETRO on
+  set_config MAX_PARALLEL 2
+  retro_answer_nth 1 "RALPH-RETRO-LESSON: the first thing this run learned"
+  retro_answer_nth 2 "RALPH-RETRO-LESSON: something else entirely, later on"
+
+  run_loop_own_tmp
+  assert_success
+  assert_equal "$(retro_call_count)" "2"
+  concurrency__retros_saw_no_lesson
+
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" "x1 learning-records/0001-"
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" "x1 learning-records/0002-"
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" "the first thing this run learned"
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" "something else entirely, later on"
+}
+
+@test "the same lesson from two iterations in flight is one line counted twice" {
+  # Both retros decided `new` on an index that had neither, so there are two
+  # records: the pilot counts the second on the first's line and the record in
+  # excess says what replaces it, rather than two lines saying the same thing.
+  use_tickets 01-alpha 02-beta
+  set_config RETRO on
+  set_config MAX_PARALLEL 2
+  retro_answer "RALPH-RETRO-LESSON: the gate reads the ticket before the session runs"
+
+  run_loop_own_tmp
+  assert_success
+  assert_equal "$(retro_call_count)" "2"
+  concurrency__retros_saw_no_lesson
+
+  run bash -c "grep -c '^- LR-' '$PROJECT_DIR/LEARNINGS.md'"
+  assert_equal "$output" "1"
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" " x2 learning-records/"
+  run bash -c "cat '$PROJECT_DIR'/learning-records/*.md"
+  assert_output_contains "**Status:** active"
+  assert_output_contains "**Status:** superseded by LR-000"
+}
+
+@test "above MAX_PARALLEL=1 a process the delivery session left behind puts no entry in the lesson index" {
+  # The run of `retro.bats` with two iterations in flight, which is where [81]'s
+  # put-back admitted it could do nothing: the index was named and left as it
+  # stood, and the triage of [112] measured the forged entry promoted in
+  # `LEARNINGS.md` and announced on a receipt (P3).
+  use_tickets 01-alpha 02-beta
+  set_config RETRO on
+  set_config MAX_PARALLEL 2
+  retro_answer "RALPH-RETRO-LESSON: read the suite before the ticket" \
+    "RALPH-RETRO-WHY: the suite says what the ticket assumes"
+  script_index_survivor "read the suite before the ticket"
+
+  run_loop_own_tmp
+  local said="$output" rc="$status"
+  stop_index_survivor
+
+  assert_file_exists "$SHIM_STATE/survivor.saw"
+  assert_file_exists "$SHIM_STATE/survivor.forged"
+
+  assert_equal "$rc" 0
+  assert_equal "$(retro_call_count)" "2"
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" "read the suite before the ticket"
+  assert_index_survivor_bought_nothing "$said"
+}
+
 # ── staging a run that is gone ([44]) ────────────────────────────────────────
 
 # A project suite that kills the run this iteration belongs to, and does not come
