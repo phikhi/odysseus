@@ -73,16 +73,20 @@
 # it. Its writers are subshells of the pilot, and a subshell inherits a variable
 # that was never exported.
 #
-# The same directory holds the loop's own copy of the index, and that is a control
-# and not a cache: every read that reaches a prompt comes from the copy, so a
-# session that finds the main working tree and rewrites `LEARNINGS.md` mid-run
-# cannot reach any prompt of that run. The copy is taken once, by the pilot, before
-# a session exists. Across runs it is the file on disk that seeds it, and that
-# limit is written down rather than implied.
+# The index itself is **not** in that directory, nor in any file of this run
+# ([112]). The pilot reads `LEARNINGS.md` once, before a session exists, and holds
+# its entries in a variable of its own shell; an iteration is a fork, so it
+# inherits that copy, and every read that reaches a prompt is an expansion of it.
+# What an iteration distils comes back to the pilot as **one lesson** on the
+# channel it answers on ([98]), and the pilot is the one process that applies it
+# and writes `LEARNINGS.md`. So there is no name between the file the run read and
+# the three places the index goes — the prompt of a delivery, the prompt of a
+# retro, and `LEARNINGS.md` — for anything to write into. Across runs it is the
+# file on disk that seeds it, and that limit is written down rather than implied.
 #
 # Public API
 #   retro_preflight              refuse the values that switch this off in silence
-#   retro_open                   the run's state directory (pilot, before any spawn)
+#   retro_open                   the run's state directory and the index (pilot)
 #   retro_close                  throw it away
 #   retro_index                  the working set, quoted, for a session's prompt
 #   retro_brief TICKET           what the last attempt at this ticket was told
@@ -90,9 +94,9 @@
 #   retro_drop_brief TICKET      the ticket is finished; forget it
 #   retro_wanted OUTCOME VERDICTS ROLLBACK   is this iteration lesson material
 #   retro_run TICKET OUTCOME     the subagent, and everything it writes
+#   retro_land TICKET LESSON     an iteration's lesson, applied and published (pilot)
+#   retro_strand TICKET LESSON   a lesson the pilot will not apply, named (pilot)
 #   retro_guards                 where this module puts an exclusion guard ([81])
-#   retro_hold_index             the iteration's own copy of the index, in memory
-#   retro_index_note             what a session did to it, put back and named
 #   retro_hold_state             the census of what the run's seal cannot cover ([83])
 #   retro_state_note             what a session did to it, removed and named
 
@@ -103,7 +107,7 @@
 # Assigned unconditionally, like `RALPH_RETRO_QUOTA` just below. The `${…:-}` that
 # stood here until [89] preserved exactly one thing: a value inherited from the
 # shell that started the run — and `retro_guards`, the census [85] derives, would
-# then hand the gate an `index.guard` under a directory the environment chose.
+# then hand the gate a `records.guard` under a directory the environment chose.
 RALPH_RETRO_STATE=''
 
 # The posture a refused retro session leaves behind, for the caller to hand to the
@@ -112,16 +116,44 @@ RALPH_RETRO_STATE=''
 # decide to pause ([08]).
 RALPH_RETRO_QUOTA=''
 
-# One iteration's own copy of the lesson index, taken before its session exists,
-# and whether there is one. In the **iteration's** memory rather than the pilot's,
-# which is the only level at which the question can be answered at all: an
-# iteration republishes this file on purpose ([14]), so a digest the pilot took at
-# `retro_open` would be stale after the first lesson — and a pilot that re-took it
-# every time would re-seal whatever a session had written into it. Held with the
-# `printf X` sentinel so an index that ends in no newline, or in several, comes
-# back exactly as it was.
-RETRO__INDEX_HELD=''
-RETRO__INDEX_HELD_SET=0
+# The lesson index this run serves every prompt from, as **entries**: one
+# `section<TAB>id<TAB>count<TAB>path<TAB>gist` line each, `section` being `working`
+# or `promoted` ([112]). Read once from `LEARNINGS.md` by `retro_open`, in the
+# pilot, and changed after that by `retro_land` alone, in the pilot again. An
+# iteration is a fork, so it carries the copy the pilot held when it was forked,
+# and nothing it does to that copy reaches anybody: a fork hands nothing back but
+# its answer ([83], [98]).
+#
+# A variable and never a file, which is the whole of this ticket. Until it, the
+# index was `$RALPH_RETRO_STATE/index`, put back by the iteration once after its
+# session ([81]); measured on 29/10/2026, a process the delivery session left
+# behind wrote it again right after the put-back, and its entry reached the retro,
+# the next delivery, the next retro and `LEARNINGS.md` — four files of this run on
+# the way (`work`, `prom`, `read.*/work` and the heredoc of the render) carried it
+# just as well, and none of them was compared to anything.
+RETRO__INDEX=''
+
+# What this run last wrote to `LEARNINGS.md`, or found there when `retro_open`
+# read it, and whether the file was there at all. Held with the `printf X`
+# sentinel so a file that ends in no newline, or in several, compares exactly. The
+# only thing it is for is a sentence: `LEARNINGS.md` lives in the main working
+# tree, which no scope-guard compares, and this run says so when the file there is
+# not the one it left.
+RETRO__WRITTEN=''
+RETRO__WRITTEN_SET=0
+
+# The lesson an iteration's retro distilled, for the caller to hand to the pilot in
+# the iteration's answer ([98]), or empty: `kind<TAB>id<TAB>path<TAB>supersedes
+# <TAB>gist`, `kind` being `new` (a record this iteration wrote) or `seen` (a line
+# its copy of the index already carried), `supersedes` a `-` when there is none —
+# so no field is ever empty, and the gist, the one field a model wrote, is last.
+# A variable for the reason `RALPH_RETRO_QUOTA` is one.
+RALPH_RETRO_LESSON=''
+
+# What the pilot has to journal about the lesson it just landed or refused, one
+# `subject<TAB>outcome` line each, for `loop.sh` to append to `run.log`: this
+# module does not write the journal, the entry point does.
+RALPH_RETRO_JOURNAL=''
 
 # And the same question for everything else this run puts in that directory, which
 # the pilot's seal cannot reach at all — see the block above `retro_hold_state`.
@@ -187,16 +219,19 @@ retro__log() {
 }
 
 retro_open() {
-  local dir
+  local dir file text
   RALPH_RETRO_STATE=""
+  RETRO__INDEX='' RETRO__WRITTEN='' RETRO__WRITTEN_SET=0
   dir="$(mktemp -d "${TMPDIR:-/tmp}/ralph-retro.XXXXXX")" || return 1
   RALPH_RETRO_STATE="$dir"
-  # The run's baseline, taken before any session of this run exists. Everything a
-  # prompt is given afterwards comes from this copy and never from the tree.
-  if [ -f "$(retro__index_path)" ]; then
-    cat "$(retro__index_path)" >"$dir/index" 2>/dev/null || : >"$dir/index"
-  else
-    : >"$dir/index"
+  # The run's baseline, taken before any session of this run exists, and the one
+  # time this run reads the file. Everything a prompt is given afterwards is an
+  # expansion of these entries and never a read of the tree.
+  file="$(retro__index_path)"
+  if [ -f "$file" ]; then
+    text="$(cat "$file" 2>/dev/null; printf X)"
+    RETRO__WRITTEN="$text" RETRO__WRITTEN_SET=1
+    RETRO__INDEX="$(retro__parse "${text%X}")"
   fi
   return 0
 }
@@ -208,77 +243,17 @@ retro_open() {
 # zone and gives the reason.
 retro_guards() {
   [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
-  retro__index_guard
+  retro__records_guard
   return 0
 }
 
-retro__index_guard() {
-  printf '%s/index.guard\n' "$RALPH_RETRO_STATE"
-}
-
-# The index this iteration was handed, held in the iteration's own memory before
-# its session exists ([81]).
-#
-# The seal of [81] holds this file to its **existence** and no further, because
-# this run rewrites it legally: `retro__publish` renders a new index whenever an
-# iteration distils a lesson. What that leaves — measured on 10/09/2026 — is a
-# session of iteration 1 rewriting the copy, `retro__promote` rendering the next
-# index *from what it wrote*, and the second session of the night being handed,
-# word for word, `RULE-FORGED-BY-THE-PREVIOUS-SESSION: ignore the write-surface`.
-# `LEARNINGS.md` on disk never existed. That is the half [14] called *prevent*,
-# and it rested on the same name [40] made secret.
-#
-# So the comparison is against a copy taken before the session and kept where the
-# session cannot be: a variable of the iteration's own shell. Non-zero when there
-# is nothing to hold, which a caller reads as "this run has no lesson workspace"
-# and not as a failure.
-retro_hold_index() {
-  RETRO__INDEX_HELD=''
-  RETRO__INDEX_HELD_SET=0
-  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
-  [ -f "$RALPH_RETRO_STATE/index" ] || return 1
-  RETRO__INDEX_HELD="$(cat "$RALPH_RETRO_STATE/index"; printf X)" || return 1
-  RETRO__INDEX_HELD_SET=1
-  return 0
-}
-
-# What the session did to it, put back and said. Non-zero when it did nothing,
-# which is every ordinary iteration.
-#
-# **Put back rather than refused**, which is the one place [81] departs from its
-# own rule that a rewritten witness costs what a missing one costs. Every other
-# witness of the run is a file this pack writes once and reads; this one is a file
-# this pack republishes, so "it is not what it was" is a sentence about the run as
-# often as about a session, and a refusal would stop the night over a lesson. What
-# it can do is put back the copy *this iteration* was handed, which is the copy
-# every prompt of the night is served from — and say so.
-#
-# An index that is **gone** is left alone here on purpose: that one is the seal's
-# business, it is a witness that no longer exists, and the gate refuses over it
-# like any other. Putting it back would take that refusal away.
-#
-# And never above `MAX_PARALLEL=1`, which is the same admission [80] wrote one
-# glob over: with two iterations in flight, a sibling that published a lesson
-# while this session ran moved this file legally, and putting it back would undo
-# a lesson to answer a question nobody asked. Named, never put back, and the row
-# in `docs/frontiere-de-confiance.md` says so.
-retro_index_note() {
-  local now
-  [ "$RETRO__INDEX_HELD_SET" = 1 ] || return 1
-  [ -n "${RALPH_RETRO_STATE:-}" ] || return 1
-  [ -f "$RALPH_RETRO_STATE/index" ] || return 1
-  now="$(cat "$RALPH_RETRO_STATE/index" 2>/dev/null; printf X)" || return 1
-  [ "$now" != "$RETRO__INDEX_HELD" ] || return 1
-  if concurrency_may_overlap; then
-    printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed, and this run has more than one iteration in flight: it is left as it stands, because a sibling that distilled a lesson moved it legally and putting it back would drop that lesson ([81])\n'
-    return 0
-  fi
-  if ! printf '%s' "${RETRO__INDEX_HELD%X}" >"$RALPH_RETRO_STATE/index" 2>/dev/null; then
-    printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed, and this run could not put it back: the next session of this night is served whatever is in it now ([81], [14])\n'
-    return 0
-  fi
-  printf 'the lesson index this run serves every prompt from is not the copy this iteration was handed — put back. It is inlined in the prompt of every fresh session, so what was in it is what the next session of this night would have been told ([81], [14])\n'
-  return 0
+# What the guard serialises since [112] is the **numbering** of the records:
+# `retro__next_number` reads the directory and the record is written under the
+# number it found, and two retros of two iterations in flight would otherwise take
+# the same one. The index has no guard any more, because it has one writer — the
+# pilot, a single shell that lands one answer after another.
+retro__records_guard() {
+  printf '%s/records.guard\n' "$RALPH_RETRO_STATE"
 }
 
 # ── what this run makes after the seal was taken ([83]) ──────────────────────
@@ -324,9 +299,9 @@ retro_index_note() {
 # for is *everything the run's own seal does not already cover*, so a third object
 # put here by a later ticket is held by the line that creates it and by nothing
 # else. The objects the seal does cover are left alone on purpose and their
-# keepers are one line apart, not implied: `gate_witness_note` names any of them
-# that moved, and `retro_index_note` just above puts the lesson index back,
-# because that one this run republishes on purpose.
+# keeper is one line apart, not implied: `gate_witness_note` names any of them
+# that moved. (The lesson index was the third voice here until [112]; it is in
+# no file of this directory any more.)
 #
 # **Removed rather than put back**, and that is a decision with an argument
 # rather than a shortcut. Putting back needs a copy of the content, in memory, of
@@ -537,56 +512,100 @@ retro__norm() {
 # everything after the first ` — ` and may contain anything the sanitiser above
 # leaves. Two sections: the working set, and the standing rules a promotion
 # drained out of it.
+#
+# **The document is not the state** ([112]). Until that ticket the text this
+# module rendered was read back as the next index, so whatever reached the text
+# between the render and the read *was* the index: measured with `heredoc_spy`, a
+# render that went through `cat <<'HEAD'` came back with its heading rewritten,
+# `## Working set` gone from the state, and the next lesson written twice instead
+# of counted. The state is the entries in `RETRO__INDEX`; the document is printed
+# from them, by `printf` and through no heredoc, and read only once, by
+# `retro_open`, at the start of a run.
+#
+# Every walk below is an expansion (`proc_lines`, `proc_split`) and never a file:
+# the reason is [108]'s, and this is the list it was written for.
 
-retro__entries() {
-  local file="$1" section="$2"
-  [ -f "$file" ] || return 0
-  awk -v want="$section" '
-    /^## Working set/  { sec = "working"; next }
-    /^## Promoted/     { sec = "promoted"; next }
-    sec != want        { next }
-    /^- LR-[0-9]+ x[0-9]+ / {
-      line = $0
-      sub(/^- /, "", line)
-      id = $2
-      count = substr($3, 2)
-      path = $4
-      gist = line
-      i = index(gist, " — ")
-      if (i == 0) next
-      gist = substr(gist, i + length(" — "))
-      printf "%s\t%s\t%s\t%s\n", id, count, path, gist
-    }
-  ' "$file"
+# The entries of a `LEARNINGS.md`'s text, one `section<TAB>id<TAB>count<TAB>path
+# <TAB>gist` line each. Pure: the text in, the entries out. A line is an entry
+# only in the shape this module writes, under one of its two headings; anything
+# else in the file is prose and carried by nothing.
+retro__parse() {
+  local section='' line rest id count path gist
+  proc_lines "$1"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    case "$line" in
+      '## Working set'*)
+        section=working
+        continue
+        ;;
+      '## Promoted'*)
+        section=promoted
+        continue
+        ;;
+    esac
+    [ -n "$section" ] || continue
+    case "$line" in
+      '- LR-'*' x'*' '*' — '*) ;;
+      *) continue ;;
+    esac
+    # Tabs and carriage returns in a hand-edited file would be fields of their own
+    # once the line is an entry.
+    line="${line//$'\t'/ }"
+    line="${line//$'\r'/ }"
+    rest="${line#- }"
+    id="${rest%% *}" rest="${rest#* }"
+    count="${rest%% *}" rest="${rest#* }"
+    path="${rest%% *}"
+    gist="${line#*' — '}"
+    case "$id" in LR- | LR-*[!0-9]*) continue ;; LR-*) ;; *) continue ;; esac
+    count="${count#x}"
+    case "$count" in '' | *[!0-9]*) continue ;; esac
+    [ "${#count}" -le 6 ] || continue
+    [ -n "$path" ] && [ -n "$gist" ] || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' "$section" "$id" "$((10#$count))" "$path" "$gist"
+  done
   return 0
 }
 
-# The document, rendered from two files of entries.
+# The lines of one section of ENTRIES, as the document writes them. Pure.
+retro__lines() {
+  local want="$2" line section id count path gist
+  proc_lines "$1"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section id count path gist
+    [ "$section" = "$want" ] || continue
+    printf -- '- %s x%s %s — %s\n' "$id" "$count" "$path" "$gist"
+  done
+  return 0
+}
+
+# The document, rendered from ENTRIES. Pure, and through no heredoc ([112]).
 #
 # Both sections are printed even when empty, which is the refusal `receipt__verdicts`
 # and `receipt__unjudged` both make ([45]): a section that simply vanished would
 # read as "there were no lessons" on exactly the runs where the retro never got to
 # look. An empty list here is not an empty subject.
 retro__render() {
-  local work="$1" prom="$2" dropped="${3:-0}"
-  cat <<'HEAD'
-# LEARNINGS
-
-What earlier iterations of this loop distilled, one line per lesson. The record
-behind each line carries the whole of it.
-
-This file is written by the loop, from a fresh subagent's answer, and it is read
-**into every fresh session's prompt**. It is therefore sealed the way the harness
-configuration is: no ticket's write-surface can cover it, and a session that
-writes it cannot be green. See `docs/frontiere-de-confiance.md`.
-
-## Working set
-
-Lessons still being carried. They are observations, not rules.
-
-HEAD
-  if [ -s "$work" ]; then
-    retro__lines <"$work"
+  local entries="$1" dropped="${2:-0}" work prom
+  work="$(retro__lines "$entries" working)"
+  prom="$(retro__lines "$entries" promoted)"
+  printf '%s\n' \
+    '# LEARNINGS' \
+    '' \
+    'What earlier iterations of this loop distilled, one line per lesson. The record' \
+    'behind each line carries the whole of it.' \
+    '' \
+    "This file is written by the loop, from a fresh subagent's answer, and it is read" \
+    "**into every fresh session's prompt**. It is therefore sealed the way the harness" \
+    "configuration is: no ticket's write-surface can cover it, and a session that" \
+    'writes it cannot be green. See `docs/frontiere-de-confiance.md`.' \
+    '' \
+    '## Working set' \
+    '' \
+    'Lessons still being carried. They are observations, not rules.' \
+    ''
+  if [ -n "$work" ]; then
+    printf '%s\n' "$work"
   else
     printf 'None. Nothing has been distilled yet, or every lesson has been promoted or superseded.\n'
   fi
@@ -594,53 +613,155 @@ HEAD
     printf '\n%s older entr(y/ies) left this working set to keep it under LEARNINGS_INDEX_MAX. The record files are still there; only the injected line is gone.\n' \
       "$dropped"
   fi
-  cat <<'MID'
-
-## Promoted
-
-Standing rules: lessons that recurred often enough to stop being observations.
-They are still injected, and they no longer take a slot in the working set. A
-promotion that would need a gate, a lint or a hook is not here — that one is a
-ticket on the human sink, because this loop does not build capabilities on its
-own.
-
-MID
-  if [ -s "$prom" ]; then
-    retro__lines <"$prom"
+  printf '%s\n' \
+    '' \
+    '## Promoted' \
+    '' \
+    'Standing rules: lessons that recurred often enough to stop being observations.' \
+    'They are still injected, and they no longer take a slot in the working set. A' \
+    'promotion that would need a gate, a lint or a hook is not here — that one is a' \
+    'ticket on the human sink, because this loop does not build capabilities on its' \
+    'own.' \
+    ''
+  if [ -n "$prom" ]; then
+    printf '%s\n' "$prom"
   else
     printf 'None.\n'
   fi
   return 0
 }
 
-retro__lines() {
-  local id count path gist
-  while IFS="$(printf '\t')" read -r id count path gist; do
-    [ -n "$id" ] || continue
-    printf -- '- %s x%s %s — %s\n' "$id" "$count" "$path" "$gist"
+# One lesson applied to ENTRIES: the entries that result, then what happened, as
+# `event<TAB>what<TAB>…` lines. **Pure** — no file, no variable outside its own
+# locals, its answer is what it prints — because two shells call it and they must
+# get the same answer from the same input ([112]): the iteration, on its copy, for
+# what its receipt says; the pilot, on its own, for the index of the night.
+#
+# LESSON is `kind<TAB>id<TAB>path<TAB>supersedes<TAB>gist` (see `RALPH_RETRO_LESSON`).
+# What is counted is decided on the **gist**, never on the id: the iteration decided
+# `new` or `seen` on the copy it was forked with, and above `MAX_PARALLEL=1` the
+# pilot's own may have moved since — a sibling's equal gist landed first, a line
+# superseded or dropped. So:
+#
+#   a line already carries the gist   counted on that line (a standing rule seen
+#                                     again is the rule doing its job, and stays as
+#                                     it is); a `new` whose id is not that line's is
+#                                     a record too many, said as `merge NEW OLD`
+#   no line carries it                a `new` is added at the top of the working set;
+#                                     a `seen` has nothing left to count, said as
+#                                     `lost ID`
+#
+# Then, in this order, as [14] wrote them: the line it supersedes leaves the
+# working set (before promotion and the bound, so that an entry on its way out
+# takes no slot from the one that replaced it); every line seen often enough moves
+# to the standing rules (`promote ID COUNT`); and the working set is cut to its
+# bound, the oldest lines first (`drop N`).
+retro__apply() {
+  local entries="$1" lesson="$2" kind id path supersedes gist
+  local line section eid count epath egist want hit='' landed
+  local work='' kept='' rising='' prom='' events='' at max n=0
+  at="${LEARNINGS_PROMOTE_AT:-3}" max="${LEARNINGS_INDEX_MAX:-40}"
+  proc_split $'\t' "$lesson" kind id path supersedes gist
+  want="$(retro__norm "$gist")"
+
+  proc_lines "$entries"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section eid count epath egist
+    case "$section" in working | promoted) ;; *) continue ;; esac
+    [ "$(retro__norm "$egist")" = "$want" ] || continue
+    hit="$eid"
+    break
   done
+
+  landed="${hit:-$id}"
+  if [ -n "$hit" ]; then
+    if [ "$kind" = new ] && [ "$hit" != "$id" ]; then
+      events="${events}event"$'\t'merge$'\t'"$id"$'\t'"$hit"$'\n'
+    fi
+  elif [ "$kind" = new ]; then
+    work=working$'\t'"$id"$'\t'1$'\t'"$path"$'\t'"$gist"$'\n'
+  else
+    events="${events}event"$'\t'lost$'\t'"$id"$'\n'
+    landed=''
+  fi
+
+  proc_lines "$entries"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section eid count epath egist
+    case "$section" in
+      working)
+        [ "$eid" != "$hit" ] || count=$((count + 1))
+        if [ "$eid" = "$supersedes" ] && [ "$eid" != "$landed" ]; then continue; fi
+        work="$work$section"$'\t'"$eid"$'\t'"$count"$'\t'"$epath"$'\t'"$egist"$'\n'
+        ;;
+      promoted) prom="$prom$line"$'\n' ;;
+    esac
+  done
+
+  proc_lines "$work"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section eid count epath egist
+    if [ "$count" -ge "$at" ]; then
+      rising="${rising}promoted"$'\t'"$eid"$'\t'"$count"$'\t'"$epath"$'\t'"$egist"$'\n'
+      events="${events}event"$'\t'promote$'\t'"$eid"$'\t'"$count"$'\n'
+      continue
+    fi
+    n=$((n + 1))
+    [ "$n" -le "$max" ] || continue
+    kept="$kept$line"$'\n'
+  done
+  [ "$n" -le "$max" ] || events="${events}event"$'\t'drop$'\t'"$((n - max))"$'\n'
+
+  printf '%s' "$kept$rising$prom$events"
   return 0
 }
 
-# Publish the index: the loop's own copy first, the tree second.
-#
-# Under a guard, because two iterations can be in flight ([13]) and this is a
-# read-modify-write of one file. And with a word about the tree before it is
-# overwritten: `LEARNINGS.md` lives in the main working tree, which is outside
-# every tree the scope-guard compares, so a session that found its way there could
-# have written it. The loop does not lose to that — every prompt is served from
-# the copy — but it says so rather than silently overwriting a change it did not
-# make.
-retro__publish() {
-  local work="$1" prom="$2" dropped="${3:-0}" file
+# Whether `LEARNINGS.md` is the one this run left there: what it last wrote, or
+# what `retro_open` found. Absent counts, both ways.
+retro__tree_is_ours() {
+  local file now
   file="$(retro__index_path)"
-  if [ -f "$file" ] && ! cmp -s "$file" "$RALPH_RETRO_STATE/index"; then
-    retro__log "LEARNINGS.md is not what this run last wrote — something outside this loop edited it. This run keeps its own copy; the edit is overwritten."
-    receipt_note "the lesson index in the working tree had been edited by something other than this loop, and was overwritten from the loop's own copy — no session of this run was ever handed the edited text"
+  if [ ! -f "$file" ]; then
+    [ "$RETRO__WRITTEN_SET" = 0 ]
+    return
   fi
-  retro__render "$work" "$prom" "$dropped" >"$RALPH_RETRO_STATE/index.next" || return 1
-  mv -f "$RALPH_RETRO_STATE/index.next" "$RALPH_RETRO_STATE/index" || return 1
-  state_atomic_write "$file" <"$RALPH_RETRO_STATE/index" || return 1
+  [ "$RETRO__WRITTEN_SET" = 1 ] || return 1
+  now="$(cat "$file" 2>/dev/null; printf X)"
+  [ "$now" = "$RETRO__WRITTEN" ]
+}
+
+# Publish the index, in the pilot and nowhere else ([112]): `LEARNINGS.md` is
+# printed from the pilot's own entries, fed to `state_atomic_write` by `printf`
+# and through no file of this run. One writer, so no guard: the pilot lands one
+# answer after another.
+#
+# With a word about the tree before it is overwritten: `LEARNINGS.md` lives in
+# the main working tree, which is outside every tree the scope-guard compares, so
+# a session that found its way there could have written it. The loop does not
+# lose to that — every prompt of this run is served from the pilot's entries — but
+# it says so rather than silently overwriting a change it did not make. **Only of
+# a file this run did not leave there**, which is the condition the sentence had
+# lost: until [112] it compared the tree with `$RALPH_RETRO_STATE/index`, so a
+# write into that copy made the sentence true of a tree nobody had touched.
+#
+# And a word after: the file is read back once written, so a write into the
+# temporary file `state_atomic_write` names for an instant — or into the file in
+# the instant after its `mv` — is said by this run rather than found by the next
+# one, which takes `LEARNINGS.md` as its baseline.
+retro__publish() {
+  local dropped="${1:-0}" file text
+  file="$(retro__index_path)"
+  if ! retro__tree_is_ours; then
+    retro__log "LEARNINGS.md is not what this run last wrote, nor what it found there when it started — something outside this loop edited it. This run keeps its own copy; the edit is overwritten."
+    RALPH_RETRO_JOURNAL="${RALPH_RETRO_JOURNAL}LEARNINGS.md"$'\t'edited-outside-this-run$'\n'
+  fi
+  text="$(retro__render "$RETRO__INDEX" "$dropped"; printf X)"
+  printf '%s' "${text%X}" | state_atomic_write "$file" || return 1
+  RETRO__WRITTEN="$text" RETRO__WRITTEN_SET=1
+  if ! retro__tree_is_ours; then
+    retro__log "LEARNINGS.md is not what this run has just written to it — something wrote into it while it was being published. This run's own prompts are served from its copy; the next run reads the file as its baseline."
+    RALPH_RETRO_JOURNAL="${RALPH_RETRO_JOURNAL}LEARNINGS.md"$'\t'written-into-while-published$'\n'
+  fi
   return 0
 }
 
@@ -649,9 +770,9 @@ retro__publish() {
 # owner that is gone; this waits for one that is merely busy.
 retro__guard_take() {
   local guard tries=120
-  guard="$(retro__index_guard)"
+  guard="$(retro__records_guard)"
   while [ "$tries" -gt 0 ]; do
-    state_guard_take "$guard" "learnings index guard" && return 0
+    state_guard_take "$guard" "lesson records guard" && return 0
     tries=$((tries - 1))
     sleep 0.05
   done
@@ -659,43 +780,26 @@ retro__guard_take() {
 }
 
 retro__guard_release() {
-  state_guard_release "$(retro__index_guard)"
+  state_guard_release "$(retro__records_guard)"
   return 0
 }
 
-# What a fresh session is handed. Served from the loop's own copy, never from the
-# tree — see the header — and quoted, because these lines carry text that
-# originated in a session.
-#
-# Two scratch files under a `mktemp` name rather than two fixed ones, because two
-# iterations can be in flight ([13]) and a fixed name would have one of them read
-# the other's half-written list. The fixed names are the state the guard protects;
-# these are not state at all.
+# What a fresh session is handed: an expansion of the entries this shell holds —
+# the pilot's at `retro_open`, an iteration's as it was forked — never a read of a
+# file, and quoted, because these lines carry text that originated in a session.
 retro_index() {
-  local scratch work prom
-  [ -n "${RALPH_RETRO_STATE:-}" ] || return 0
-  [ -s "$RALPH_RETRO_STATE/index" ] || return 0
-  scratch="$(mktemp -d "$RALPH_RETRO_STATE/read.XXXXXX")" || return 0
-  work="$scratch/work"
-  prom="$scratch/prom"
-  retro__entries "$RALPH_RETRO_STATE/index" promoted >"$prom" 2>/dev/null || : >"$prom"
-  retro__entries "$RALPH_RETRO_STATE/index" working >"$work" 2>/dev/null || : >"$work"
-  [ -s "$work" ] || [ -s "$prom" ] || {
-    rm -rf "$scratch"
-    return 0
-  }
+  local work prom
+  work="$(retro__lines "$RETRO__INDEX" working)"
+  prom="$(retro__lines "$RETRO__INDEX" promoted)"
+  [ -n "$work" ] || [ -n "$prom" ] || return 0
   {
-    if [ -s "$prom" ]; then
-      printf 'Standing rules distilled by earlier iterations:\n'
-      retro__lines <"$prom"
-      printf '\n'
+    if [ -n "$prom" ]; then
+      printf 'Standing rules distilled by earlier iterations:\n%s\n\n' "$prom"
     fi
-    if [ -s "$work" ]; then
-      printf 'Observations earlier iterations left:\n'
-      retro__lines <"$work"
+    if [ -n "$work" ]; then
+      printf 'Observations earlier iterations left:\n%s\n' "$work"
     fi
   } | retro__quote 0
-  rm -rf "$scratch"
   return 0
 }
 
@@ -984,87 +1088,150 @@ findings the retro read." | capability_propose "$slug" "$rule"
   return 0
 }
 
-# ── the index, mutated ───────────────────────────────────────────────────────
+# ── the index, decided and landed ([112]) ────────────────────────────────────
+#
+# Two shells and one function between them. The **iteration** decides, on the
+# copy it was forked with, whether its gist is a line that copy already carries
+# (`seen`) or a new one, and writes the record of a new one — under the guard,
+# because the numbers are taken by iterations in flight beside it. It publishes
+# nothing: it hands `RALPH_RETRO_LESSON` to its caller, which puts it in the answer
+# the pilot reads ([98]). The **pilot** lands it — `retro__apply` on its own
+# entries, then `LEARNINGS.md` written from them — one answer after another, so
+# two lessons of two iterations in flight both end in the index, which a guard on
+# a shared file was what held until then.
+#
+# What that costs, and it is written in `docs/frontiere-de-confiance.md`: an
+# iteration already in flight does not see a lesson its sibling distilled while it
+# ran, neither in the prompt of its delivery (it never did) nor in the prompt of
+# its retro (it did, from the shared file). So two equal gists of two iterations
+# in flight are two records, and the pilot counts the second on the first's line
+# and marks its record superseded; two *near* gists are two lines.
 
-# Add a gist, or count it again if it is already there. Everything it decides is
-# said where it is decided — a promotion is announced here, not by the caller —
-# so nothing but a status crosses back.
+# Add a gist, or count it again if it is already there — decided on this
+# iteration's own copy, and said on its receipt from that copy. Non-zero when the
+# record could not be written; then nothing crosses back.
 retro__record_lesson() {
-  local ticket="$1" outcome="$2" gist="$3" why="$4" supersedes="$5"
-  local work prom id='' count='' path='' g='' dropped=0 n=0 hit='' created=''
-  work="$RALPH_RETRO_STATE/work"
-  prom="$RALPH_RETRO_STATE/prom"
-  retro__entries "$RALPH_RETRO_STATE/index" working >"$work" || : >"$work"
-  retro__entries "$RALPH_RETRO_STATE/index" promoted >"$prom" || : >"$prom"
+  local ticket="$1" outcome="$2" gist="$3" why="$4" supersedes="${5:-}"
+  local line section id count path g hit='' hitpath='' created kind news what a b
+  RALPH_RETRO_LESSON=''
 
   # Is this one already carried, in either section? A promoted lesson counted
   # again is not a new observation — it is the standing rule doing its job.
-  proc_lines "$(cat "$work" "$prom" 2>/dev/null)"
-  for g in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
-    proc_split $'\t' "$g" id count path g
-    [ -n "$id" ] || continue
+  proc_lines "$RETRO__INDEX"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section id count path g
     [ "$(retro__norm "$g")" = "$(retro__norm "$gist")" ] || continue
-    hit="$id"
+    hit="$id" hitpath="$path"
     break
   done
 
   if [ -n "$hit" ]; then
-    awk -F'\t' -v OFS='\t' -v want="$hit" \
-      '$1 == want { $2 = $2 + 1 } { print }' "$work" >"$work.next" 2>/dev/null &&
-      mv -f "$work.next" "$work" || rm -f "$work.next"
-    id="$hit"
+    kind=seen id="$hit" path="$hitpath"
     retro__log "$ticket: a lesson already in the index was seen again ($hit) — counted, not written twice"
   else
     created="$(retro__write_record "$ticket" "$outcome" "$gist" "$why")" || return 1
-    id="${created%%	*}"
-    path="${created#*	}"
-    {
-      printf '%s\t1\t%s\t%s\n' "$id" "$path" "$gist"
-      cat "$work" 2>/dev/null
-    } >"$work.next" && mv -f "$work.next" "$work" || rm -f "$work.next"
-    retro__log "$ticket: lesson recorded — $path"
+    kind=new id="${created%%	*}" path="${created#*	}"
+    retro__log "$ticket: lesson recorded — $path; its line reaches the index once this iteration's answer reaches the pilot"
   fi
 
-  # Supersession before promotion and before the bound: an entry that is on its
-  # way out must not take a slot from the entry that replaced it.
   if [ -n "$supersedes" ]; then
-    awk -F'\t' -v want="$supersedes" '$1 != want { print }' "$work" >"$work.next" 2>/dev/null &&
-      mv -f "$work.next" "$work" || rm -f "$work.next"
     retro__supersede_record "$(retro__records_dir)" "$supersedes" "$id"
   fi
 
-  # Drain by promotion: a lesson seen often enough stops being an observation, and
-  # leaving the working set is what keeps the set a working set rather than a log.
-  awk -F'\t' -v at="${LEARNINGS_PROMOTE_AT:-3}" '$2 + 0 >= at + 0 { print }' "$work" \
-    >"$RALPH_RETRO_STATE/promoting" 2>/dev/null || : >"$RALPH_RETRO_STATE/promoting"
-  if [ -s "$RALPH_RETRO_STATE/promoting" ]; then
-    awk -F'\t' -v at="${LEARNINGS_PROMOTE_AT:-3}" '$2 + 0 < at + 0 { print }' "$work" \
-      >"$work.next" 2>/dev/null && mv -f "$work.next" "$work" || rm -f "$work.next"
-    cat "$RALPH_RETRO_STATE/promoting" "$prom" >"$prom.next" 2>/dev/null &&
-      mv -f "$prom.next" "$prom" || rm -f "$prom.next"
-  fi
+  RALPH_RETRO_LESSON="$kind"$'\t'"$id"$'\t'"$path"$'\t'"${supersedes:--}"$'\t'"$gist"
 
-  # And the bound, counted out loud rather than applied in silence: an index that
-  # quietly forgot its oldest line would read exactly like an index that never had
-  # it.
-  n="$(awk 'END { print NR + 0 }' "$work")"
-  if [ "$n" -gt "${LEARNINGS_INDEX_MAX:-40}" ]; then
-    dropped=$((n - ${LEARNINGS_INDEX_MAX:-40}))
-    awk -v keep="${LEARNINGS_INDEX_MAX:-40}" 'NR <= keep' "$work" >"$work.next" 2>/dev/null &&
-      mv -f "$work.next" "$work" || rm -f "$work.next"
-  fi
+  # What this iteration's receipt can say, from its own copy: at `MAX_PARALLEL=1`
+  # it is the pilot's by construction, and above it the pilot's own lines in
+  # `run.log` say what the night's index became. Everything said here is about an
+  # entry this run read at its start or a lesson this iteration distilled, because
+  # those are the only entries a copy can hold.
+  news="$(retro__apply "$RETRO__INDEX" "$RALPH_RETRO_LESSON")"
+  proc_lines "$news"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section what a b
+    [ "$section" = event ] || continue
+    case "$what" in
+      promote)
+        receipt_note "a lesson this loop recorded was promoted to a standing rule ($a, seen $b time(s)) and now reaches every fresh session's prompt — nothing here judged whether it is true"
+        ;;
+      drop)
+        receipt_note "$a lesson line(s) left the injected index to keep it under LEARNINGS_INDEX_MAX — the record files are still there, and no session will be told about them again"
+        ;;
+    esac
+  done
 
-  retro__publish "$work" "$prom" "$dropped" || return 1
-  [ "$dropped" = 0 ] ||
-    receipt_note "$dropped lesson line(s) left the injected index to keep it under LEARNINGS_INDEX_MAX — the record files are still there, and no session will be told about them again"
-  if [ -s "$RALPH_RETRO_STATE/promoting" ]; then
-    while IFS="$(printf '\t')" read -r id count path g; do
-      [ -n "$id" ] || continue
-      retro__log "$id promoted to a standing rule after $count occurrence(s)"
-      receipt_note "a lesson this loop recorded was promoted to a standing rule ($id, seen $count time(s)) and now reaches every fresh session's prompt — nothing here judged whether it is true"
-    done <"$RALPH_RETRO_STATE/promoting"
+  # And the tree, said where a receipt can carry it: at `MAX_PARALLEL=1` nothing
+  # in this pack writes `LEARNINGS.md` between the pilot's last publication and
+  # this line, so a file that is not the one this copy says the pilot left is a
+  # file something else wrote. Above it a sibling's lesson may have been published
+  # since this iteration was forked, and only the pilot can tell — in `run.log`.
+  if ! concurrency_may_overlap && ! retro__tree_is_ours; then
+    receipt_note "the lesson index in the working tree had been edited by something other than this loop, and is overwritten from the loop's own copy when this iteration's lesson lands — no session of this run was ever handed the edited text"
   fi
-  rm -f "$work" "$prom" "$RALPH_RETRO_STATE/promoting"
+  return 0
+}
+
+# One iteration's lesson, landed by the pilot: applied to the pilot's entries and
+# published. Called by `loop.sh` when it reads an answer it accepts, in the
+# pilot's own shell and never in a subshell — `RETRO__INDEX` has to be the run's
+# and not a copy. Never fatal: what it could not do it says, and the night goes on.
+retro_land() {
+  local ticket="$1" lesson="$2" result line section what a b entries='' dropped=0
+  RALPH_RETRO_JOURNAL=''
+  [ -n "${RALPH_RETRO_STATE:-}" ] || return 0
+  [ -n "$lesson" ] || return 0
+  result="$(retro__apply "$RETRO__INDEX" "$lesson")"
+  proc_lines "$result"
+  for line in ${PROC_LINES[@]+"${PROC_LINES[@]}"}; do
+    proc_split $'\t' "$line" section what a b
+    case "$section" in
+      working | promoted)
+        entries="$entries$line"$'\n'
+        continue
+        ;;
+      event) ;;
+      *) continue ;;
+    esac
+    case "$what" in
+      promote) retro__log "$a promoted to a standing rule after $b occurrence(s)" ;;
+      drop) dropped="$a" ;;
+      merge)
+        retro__supersede_record "$(retro__records_dir)" "$a" "$b"
+        retro__log "$ticket: lesson $a says what $b already said — an iteration in flight beside this one landed it first — so it is counted on $b, and the record of $a says what replaces it"
+        ;;
+      lost)
+        retro__log "$ticket: the lesson this iteration saw again ($a) has left the index since this iteration was forked — counted nowhere"
+        ;;
+    esac
+  done
+  RETRO__INDEX="$entries"
+  if ! retro__publish "$dropped"; then
+    retro__log "$ticket: the lesson index could not be written to LEARNINGS.md — this run's prompts are served from its own copy, and the file is what the next run starts from"
+    return 1
+  fi
+  return 0
+}
+
+# A lesson the pilot will not land, because the answer that carried it is no
+# answer at all — refused whole, or cut before its outcome ([98]). The record is
+# on disk with no line pointing at it, and that is said with its path, here and
+# in `run.log`: a lesson that does not reach the index must not read like a retro
+# that found nothing. The fields are the answer's and the answer was not trusted,
+# so they are quoted and never acted on.
+retro_strand() {
+  local ticket="$1" lesson="$2" kind id path supersedes gist
+  RALPH_RETRO_JOURNAL=''
+  [ -n "$lesson" ] || return 0
+  proc_split $'\t' "$lesson" kind id path supersedes gist
+  case "$kind" in
+    new)
+      retro__log "$ticket: the lesson its answer named ($id, $path) is not applied, because that answer was not read as one — the record exists and no line of the index points at it"
+      ;;
+    *)
+      retro__log "$ticket: the recurrence its answer named ($id) is not counted, because that answer was not read as one"
+      ;;
+  esac
+  RALPH_RETRO_JOURNAL="${path:-$id}"$'\t'lesson-not-applied$'\n'
   return 0
 }
 
@@ -1084,6 +1251,7 @@ retro_run() {
   local capability posture answered=none result
 
   RALPH_RETRO_QUOTA=''
+  RALPH_RETRO_LESSON=''
   [ -n "${RALPH_RETRO_STATE:-}" ] || return 0
 
   # **Silently, and only here** — the one route this module says nothing about at
@@ -1220,7 +1388,7 @@ retro_run() {
         receipt_note "the retro had a lesson for this iteration and this loop could not write it down — the index is unchanged"
       retro__guard_release
     else
-      receipt_note "the retro had a lesson for this iteration and the lesson index was busy for the whole of this iteration — the index is unchanged"
+      receipt_note "the retro had a lesson for this iteration and the lesson records were busy for the whole of this iteration — no record was written, and the index is unchanged"
     fi
   fi
 

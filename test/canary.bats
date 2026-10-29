@@ -927,6 +927,36 @@ FAKE
   esac
 }
 
+@test "the canary: a process the session left behind puts no entry in the lesson index" {
+  # [112]. Measured at its triage, on the code before it, with this very survivor
+  # (`sondes/triage-112/q1`): the entry it kept adding under `## Working set` of the
+  # run's copy of the index reached the retro, the next delivery and the next retro,
+  # ended in `LEARNINGS.md` as a standing rule, and the receipt announced its
+  # promotion as this loop's own — and the files the index went through on its way
+  # carried the same entry without the index itself being touched. The index is a
+  # variable of the pilot now, and an iteration hands back its lesson and nothing
+  # else, so there is no file left for the survivor to find; the derived half of it
+  # looks for one anyway, by what it holds.
+  use_tickets 01-alpha 02-beta
+  retro_answer "RALPH-RETRO-LESSON: read the suite before the ticket" \
+    "RALPH-RETRO-WHY: the suite says what the ticket assumes"
+  script_index_survivor "read the suite before the ticket"
+
+  run_loop_own_tmp
+  local said="$output" rc="$status"
+  stop_index_survivor
+
+  # The survivor was alive while the lesson workspace existed, and wrote ([80]).
+  assert_file_exists "$SHIM_STATE/survivor.saw"
+  assert_file_exists "$SHIM_STATE/survivor.forged"
+
+  assert_equal "$rc" 0
+  assert_equal "$(ticket_status 01-alpha)" "resolved"
+  assert_equal "$(ticket_status 02-beta)" "resolved"
+  assert_file_contains "$PROJECT_DIR/LEARNINGS.md" "read the suite before the ticket"
+  assert_index_survivor_bought_nothing "$said"
+}
+
 # ── the known hole, waiting for its ticket ───────────────────────────────────
 
 # Four tickets nothing will deliver, and a survivor the first session leaves behind

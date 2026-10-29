@@ -2505,13 +2505,14 @@ ASK
   assert_success
 
   # The floor, because a seal that came out empty would pass every assertion
-  # under it. Twelve is what a run of the local backend takes today: the nine of
-  # the shared witness, the copy of the user flow, the lesson index and the
-  # capability baseline. A ticket that adds a witness moves it up; one that takes
-  # a witness away has to say so here.
+  # under it. Eleven is what a run of the local backend takes today: the nine of
+  # the shared witness, the copy of the user flow and the capability baseline. A
+  # ticket that adds a witness moves it up; one that takes a witness away has to
+  # say so here — [112] took the lesson index away, which is in no file of the run
+  # any more (twelve until then).
   local total
   total="$(wc -l <"$report" | tr -d ' ')"
-  [ "$total" -ge 12 ] ||
+  [ "$total" -ge 11 ] ||
     fail "the seal covers $total witnesses, which is fewer than a run takes:
 $(cat "$report")"
 
@@ -2528,14 +2529,13 @@ $(cat "$report")"
   # here do not disappear, they change content. Each witness is rewritten in
   # place, and what the pack may still accept is asked of `gate_witness_mutable`
   # rather than decided here — a register this run appends to all night cannot be
-  # held to a digest, and the lesson index is republished by this run on purpose
-  # ([14]), so its content is held one layer over, by the copy the iteration keeps
-  # in its own memory.
+  # held to a digest. (The lesson index was the other exemption until [112]; it is
+  # in no file of the run any more.)
   #
   # Asked of `gate_witness_intact`, which is the one question every reader of a
   # witness asks: what each of them then *does* about a `1` is its own — the tree
-  # snapshot refuses, the value gate refuses to conclude, the lesson index is put
-  # back — and each of those lives in the file that owns it.
+  # snapshot refuses, the value gate refuses to conclude — and each of those lives
+  # in the file that owns it.
   use_tickets 01-alpha
 
   local script="$RALPH_TEST_DIR/witness-rewritten.sh"
@@ -2647,7 +2647,7 @@ while [ -e "$RALPH_SHIM_STATE/witness-digests.$n" ]; do n=$((n + 1)); done
 out="$RALPH_SHIM_STATE/witness-digests.$n"
 : >"$out"
 for f in "${TMPDIR:-/tmp}"/ralph-frontier.*/* "${TMPDIR:-/tmp}"/ralph-spec.* \
-  "${TMPDIR:-/tmp}"/ralph-retro.*/index; do
+  "${TMPDIR:-/tmp}"/ralph-retro.*/*; do
   [ -f "$f" ] || continue
   printf '%s %s\n' "${f##*/}" "$(cksum <"$f" | tr -d ' ')" >>"$out"
 done
@@ -2813,9 +2813,9 @@ ASK
   local script="$RALPH_TEST_DIR/guard-zones.sh"
   cat >"$script" <<'ASK'
 RALPH_RETRO_STATE="$(mktemp -d)"
-mkdir -p "$RALPH_RETRO_STATE/index.guard"
+mkdir -p "$RALPH_RETRO_STATE/records.guard"
 printf '%s
-' "$$" >"$RALPH_RETRO_STATE/index.guard/pid"
+' "$$" >"$RALPH_RETRO_STATE/records.guard/pid"
 gate__guard_paths
 gate_guards | cut -f1
 rm -rf "$RALPH_RETRO_STATE"
@@ -2825,7 +2825,7 @@ ASK
 
   assert_output_contains "ralph.frontier.lock"
   assert_output_contains "ralph.integrate.lock"
-  assert_output_contains "index.guard"
+  assert_output_contains "records.guard"
 }
 
 @test "a stale guard of the common git directory is named, like one in the tree" {
@@ -3598,8 +3598,8 @@ $(cat "$answer")"
   LC_ALL=C grep -q "^CENSUS$tab.*/ralph[.]frontier[.]lock\$" "$answer" ||
     fail "the common git directory is named by nobody:
 $(cat "$answer")"
-  LC_ALL=C grep -q "^CENSUS$tab.*/index[.]guard\$" "$answer" ||
-    fail "the lesson index's zone is named by nobody:
+  LC_ALL=C grep -q "^CENSUS$tab.*/records[.]guard\$" "$answer" ||
+    fail "the lesson records' zone is named by nobody:
 $(cat "$answer")"
   LC_ALL=C grep -q "^CENSUS$tab.*/01-alpha[.]md[.]guard\$" "$answer" ||
     fail "a ticket's own claim guard is named by nobody:
@@ -3736,8 +3736,8 @@ $(cat "$answer")"
 
   # The module with no state answers nothing and refuses nothing: the census still
   # names the zones of the modules that do have something to say.
-  ! LC_ALL=C grep -q "^CENSUS$tab.*/index[.]guard\$" "$answer" ||
-    fail "a lesson index with no workspace still named a zone:
+  ! LC_ALL=C grep -q "^CENSUS$tab.*/records[.]guard\$" "$answer" ||
+    fail "a lesson workspace that does not exist still named a zone:
 $(cat "$answer")"
   LC_ALL=C grep -q "^CENSUS$tab.*/ralph[.]frontier[.]lock\$" "$answer" ||
     fail "one module answering nothing took the whole census down:

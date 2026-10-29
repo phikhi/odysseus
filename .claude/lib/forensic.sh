@@ -30,7 +30,8 @@
 # waiting for a defect: **what this pack writes durably, outside every tree it
 # judges, for a human to read after the run is over.** Two members of that family
 # are already witnessed elsewhere and are deliberately not here — `LEARNINGS.md`,
-# which [14] copies before the first session because the *loop* reads it back, and
+# which [14] reads before the first session — into the pilot's memory since [112]
+# — because the *loop* reads it back, and
 # `run.log`, whose own lines each entry point counts (`loop_journal_verify`) and
 # which the human sink presents with its reserve since [67].
 #

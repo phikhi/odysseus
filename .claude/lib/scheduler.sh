@@ -18,8 +18,9 @@
 # Three things a run holds are therefore *not* handed on, and each of them is a
 # per-run baseline taken before the first session exists:
 #
-#   the lesson index   ([14]) copied into `$TMPDIR` at start-up, so the successor
-#                      re-reads `LEARNINGS.md` from the main tree as it stands.
+#   the lesson index   ([14]) read into the pilot's memory at start-up ([112]), so
+#                      the successor re-reads `LEARNINGS.md` from the main tree as
+#                      it stands.
 #   the capability     ([15], [46]) taken on both roots at start-up, so a drift
 #   witness            this run reported is the successor's baseline, and the
 #                      successor will never say it again.

@@ -214,7 +214,7 @@ RALPH_PLAYTHROUGH_SPEC=''
 # be asking "does the feature do what the last session said it promised".
 #
 # In `$TMPDIR` under a `mktemp` name the pilot never exports — the same secret as
-# the ignore pin ([30]), the tracker register ([40]) and the lesson index ([14]):
+# the ignore pin ([30]), the tracker register ([40]) and the lesson workspace ([14]):
 # the readers are subshells of the pilot, and `claude` is not.
 #
 # Across runs it is the file on disk that seeds it, and that limit is the lesson
